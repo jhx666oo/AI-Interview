@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   hashed_password TEXT NOT NULL,
+  plain_password TEXT DEFAULT '',
   full_name TEXT,
   role TEXT DEFAULT 'hr',
   is_active INTEGER DEFAULT 1,

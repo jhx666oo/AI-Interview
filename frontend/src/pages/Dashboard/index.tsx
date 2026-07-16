@@ -113,21 +113,24 @@ const Dashboard: React.FC = () => {
 
   // 漏斗阶段
   const funnelColors = ['#3B82F6', '#6366F1', '#8B5CF6', '#EC4899', '#EF4444', '#F59E0B'];
-  const maxFunnelCount = Math.max(...(overview?.funnel?.stages?.map(s => s.count) || [1]), 1);
+  const maxFunnelCount = Math.max(...((overview?.funnel?.stages || []).map(s => s.count || 0) || [1]), 1);
 
   // 岗位明细列
   // 筛选选项（动态从数据中提取）
   const divisionOptions = useMemo(() => {
+    if (!Array.isArray(positions)) return [];
     const set = new Set(positions.map(p => p.division).filter(Boolean));
     return Array.from(set).sort();
   }, [positions]);
   const statusOptions = useMemo(() => {
+    if (!Array.isArray(positions)) return [];
     const set = new Set(positions.map(p => p.status).filter(Boolean));
     return Array.from(set).sort();
   }, [positions]);
 
   // 筛选后的数据
   const filteredPositions = useMemo(() => {
+    if (!Array.isArray(positions)) return [];
     return positions.filter(p => {
       if (filterDivision && p.division !== filterDivision) return false;
       if (filterStatus && p.status !== filterStatus) return false;

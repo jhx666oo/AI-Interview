@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Table, Button, Space, message, Modal, Form, Input, Select, Tag, Tooltip, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert } from 'antd';
+import { Table, Button, Space, message, Modal, Form, Input, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
@@ -42,6 +42,8 @@ interface Position {
   responsible_person: string | null;
   personalized_requirements: string | null;
   capability_dimensions: string | null;
+  primary_interviewer: string | null;
+  secondary_interviewer: string | null;
   created_at: string;
   updated_at: string;
   stats: PositionStats;
@@ -247,6 +249,14 @@ const PositionsList: React.FC = () => {
         }
       } else {
         formVals.capability_dimensions = [];
+      }
+      // 任职要求 JSON 字符串 → 多选数组
+      if (res.requirements) {
+        try {
+          formVals.requirements = JSON.parse(res.requirements);
+        } catch {
+          // 旧的文本格式，保持原样（tags 组件会当单选显示）
+        }
       }
       form.setFieldsValue(formVals);
       setIsModalVisible(true);
@@ -476,6 +486,12 @@ const PositionsList: React.FC = () => {
       if (payload.capability_dimensions) {
         payload.capability_dimensions = JSON.stringify(payload.capability_dimensions);
       }
+      if (payload.requirements) {
+        // 多选/标签输入 → JSON 字符串数组
+        if (Array.isArray(payload.requirements)) {
+          payload.requirements = JSON.stringify(payload.requirements);
+        }
+      }
       if (editingId) {
         await request.put(`/positions/${editingId}`, payload);
         message.success('更新成功');
@@ -576,6 +592,20 @@ const PositionsList: React.FC = () => {
       key: 'responsible_person',
       render: (v: string) => v || <Text type="secondary">-</Text>
     },
+    { 
+      title: '一面面试官', 
+      dataIndex: 'primary_interviewer', 
+      key: 'primary_interviewer',
+      width: 110,
+      render: (v: string) => v || <Text type="secondary">-</Text>
+    },
+    { 
+      title: '二面面试官', 
+      dataIndex: 'secondary_interviewer', 
+      key: 'secondary_interviewer',
+      width: 110,
+      render: (v: string) => v || <Text type="secondary">-</Text>
+    },
     {
       title: '能力维度',
       key: 'dimensions',
@@ -600,16 +630,54 @@ const PositionsList: React.FC = () => {
           }
         }
         if (dimNames.length === 0) return <Text type="secondary" style={{ cursor: 'pointer', fontSize: 12 }}>暂无</Text>;
-        const showCount = Math.min(dimNames.length, 6);
+        const showCount = Math.min(dimNames.length, 4);
         const extra = dimNames.length - showCount;
         return (
           <div style={{ lineHeight: '22px', overflow: 'hidden' }}>
-            {dimNames.slice(0, showCount).map((name: string, i: number) => (
-              <Tag key={i} color="blue" style={{ margin: '1px 2px', fontSize: 11, lineHeight: '18px' }}>{name}</Tag>
-            ))}
+            {dimNames.slice(0, showCount).map((d: any, i: number) => {
+              const name = d.name || d;
+              const def = d.definition || '';
+              const beh = d.behavior || '';
+              const popContent = (
+                <div style={{ maxWidth: 320, wordBreak: 'break-word' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 14 }}>{name}</div>
+                  {def && <div style={{ marginBottom: 4, color: '#475569' }}><Text type="secondary">定义：</Text>{def}</div>}
+                  {beh && <div style={{ color: '#475569' }}><Text type="secondary">典型行为：</Text>{beh}</div>}
+                  {!def && !beh && <Text type="secondary">无详细信息</Text>}
+                </div>
+              );
+              return (
+                <Popover key={i} content={popContent} title={null} trigger="hover" placement="top">
+                  <Tag color="blue" style={{ margin: '1px 2px', fontSize: 11, lineHeight: '18px', cursor: 'pointer' }}>{name}</Tag>
+                </Popover>
+              );
+            })}
             {extra > 0 && <Tag style={{ margin: '1px 2px', fontSize: 11, lineHeight: '18px' }}>+{extra}</Tag>}
           </div>
         );
+      }
+    },
+    { 
+      title: '任职要求', 
+      dataIndex: 'requirements', 
+      key: 'requirements',
+      width: 300,
+      render: (v: string | null) => {
+        if (!v) return <Text type="secondary">-</Text>;
+        try {
+          const items = JSON.parse(v);
+          if (Array.isArray(items)) {
+            return (
+              <div style={{ lineHeight: '22px' }}>
+                {items.map((item: string, i: number) => (
+                  <Tag key={i} color="blue" style={{ margin: '1px 2px', fontSize: 11, lineHeight: '18px' }}>{item}</Tag>
+                ))}
+              </div>
+            );
+          }
+        } catch {}
+        // 旧数据：纯文本
+        return <Tooltip title={v}><Text ellipsis style={{ maxWidth: 260 }}>{v}</Text></Tooltip>;
       }
     },
     { 
@@ -800,6 +868,15 @@ const PositionsList: React.FC = () => {
             </Form.Item>
           </div>
 
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+            <Form.Item name="primary_interviewer" label="一面面试官" initialValue="杜雁玲">
+              <Input placeholder="默认：杜雁玲" size="large" />
+            </Form.Item>
+            <Form.Item name="secondary_interviewer" label="二面面试官" initialValue="何雨菱">
+              <Input placeholder="默认：何雨菱" size="large" />
+            </Form.Item>
+          </div>
+
           {/* 能力维度 — 多选 */}
           <Form.Item
             name="capability_dimensions"
@@ -835,8 +912,30 @@ const PositionsList: React.FC = () => {
             <Input.TextArea rows={4} placeholder="请输入详细的岗位职责描述" showCount maxLength={2000} style={{ padding: '8px 12px' }} />
           </Form.Item>
 
-          <Form.Item name="requirements" label="任职要求">
-            <Input.TextArea rows={4} placeholder="请输入任职资格要求" showCount maxLength={2000} style={{ padding: '8px 12px' }} />
+          <Form.Item name="requirements" label={
+            <Space>
+              <MergeCellsOutlined />
+              <span>任职要求（可多选 / 自定义输入回车添加）</span>
+            </Space>
+          }>
+            <Select
+              mode="tags"
+              size="large"
+              placeholder="选择或输入任职要求，按回车添加"
+              allowClear
+              tokenSeparators={[',', '，']}
+            >
+              <Select.Option value="本科及以上学历">本科及以上学历</Select.Option>
+              <Select.Option value="硕士及以上学历">硕士及以上学历</Select.Option>
+              <Select.Option value="3年以上相关工作经验">3年以上相关工作经验</Select.Option>
+              <Select.Option value="5年以上相关工作经验">5年以上相关工作经验</Select.Option>
+              <Select.Option value="精通前后端开发技术">精通前后端开发技术</Select.Option>
+              <Select.Option value="具备团队管理经验">具备团队管理经验</Select.Option>
+              <Select.Option value="具备良好的沟通协作能力">具备良好的沟通协作能力</Select.Option>
+              <Select.Option value="有大型项目架构经验">有大型项目架构经验</Select.Option>
+              <Select.Option value="英语流利可作为工作语言">英语流利可作为工作语言</Select.Option>
+              <Select.Option value="有相关行业经验">有相关行业经验</Select.Option>
+            </Select>
           </Form.Item>
 
           <Form.Item name="personalized_requirements" label="个性化需求">
@@ -1058,9 +1157,22 @@ const PositionsList: React.FC = () => {
                 color: '#334155',
                 lineHeight: 1.8
               }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {viewingRecord.requirements || '暂无要求'}
-                </ReactMarkdown>
+                {(() => {
+                  if (!viewingRecord.requirements) return '暂无要求';
+                  try {
+                    const items = JSON.parse(viewingRecord.requirements);
+                    if (Array.isArray(items)) {
+                      return (
+                        <div style={{ lineHeight: '22px' }}>
+                          {items.map((item: string, i: number) => (
+                            <Tag key={i} color="blue" style={{ margin: '1px 2px', fontSize: 12, lineHeight: '20px' }}>{item}</Tag>
+                          ))}
+                        </div>
+                      );
+                    }
+                  } catch {}
+                  return viewingRecord.requirements;
+                })()}
               </div>
             </div>
 

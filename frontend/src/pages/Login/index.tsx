@@ -36,8 +36,16 @@ const Login: React.FC = () => {
       await login((res as any).access_token);
       message.success('登录成功');
       navigate('/dashboard', { replace: true });
-    } catch (error) {
-      message.error('登录失败，请检查账号密码');
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const detail = error?.response?.data?.detail;
+      if (status === 400) {
+        message.error('请输入邮箱和密码');
+      } else if (detail?.includes('禁用')) {
+        message.error('该账号已被禁用，请联系管理员');
+      } else {
+        message.error('登录失败，请检查邮箱和密码是否正确');
+      }
     } finally {
       setLoading(false);
     }
@@ -74,7 +82,7 @@ const Login: React.FC = () => {
             name="password"
             rules={[{ required: true, message: '请输入密码!' }]}
           >
-            <Input.Password prefix={<LockOutlined />} placeholder="密码 (admin123)" />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码 (123456)" />
           </Form.Item>
 
           <Form.Item>
@@ -84,7 +92,7 @@ const Login: React.FC = () => {
           </Form.Item>
           
           <div style={{ textAlign: 'center' }}>
-             <Text type="secondary" style={{ fontSize: 12 }}>默认账号: admin@example.com / admin123</Text>
+             <Text type="secondary" style={{ fontSize: 12 }}>默认账号: admin@example.com / 123456</Text>
           </div>
         </Form>
       </Card>

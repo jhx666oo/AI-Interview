@@ -164,7 +164,7 @@ const UsersList: React.FC = () => {
     }
   };
 
-  const generateFeishuUrl = async (email: string, fullName: string) => {
+  const generateFeishuUrl = async (email: string) => {
     setFeishuUrlLoading(true);
     try {
       const res = await request.post('/auth/feishu-oauth-url', { email });
@@ -217,26 +217,17 @@ const UsersList: React.FC = () => {
   };
 
   const columns = [
-    { title: '姓名', dataIndex: 'full_name', key: 'full_name', width: 150 },
-    { title: '邮箱', dataIndex: 'email', key: 'email', width: 200 },
+    { title: '姓名', dataIndex: 'full_name', key: 'full_name', width: 150, fixed: 'left' as const },
+    { title: '邮箱', dataIndex: 'email', key: 'email', width: 200, fixed: 'left' as const },
     {
       title: '密码',
       key: 'password',
-      width: 120,
+      width: 200,
       render: (_: any, record: User) => (
         <Space>
-          {record.has_password
-            ? <Tag color="green">已设置</Tag>
-            : <Tag color="orange">未设置</Tag>
-          }
-          <Tooltip title="重置密码">
-            <Button
-              type="link"
-              size="small"
-              icon={<KeyOutlined />}
-              onClick={() => handleResetPassword(record)}
-            />
-          </Tooltip>
+          <Text copyable={{ text: (record as any).plain_password || '' }} style={{ fontFamily: 'monospace' }}>
+            {(record as any).plain_password || (record.has_password ? '******' : '—')}
+          </Text>
         </Space>
       ),
     },
@@ -274,9 +265,16 @@ const UsersList: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 280,
       render: (_: any, record: User) => (
         <Space size="small">
+          <Tooltip title="重置密码（123456）">
+            <Button
+              type="text"
+              icon={<KeyOutlined />}
+              onClick={() => handleResetPassword(record)}
+            />
+          </Tooltip>
           <Tooltip title="编辑">
             <Button
               type="text"
@@ -341,6 +339,7 @@ const UsersList: React.FC = () => {
         dataSource={data}
         loading={loading}
         rowKey="id"
+        scroll={{ x: 1550 }}
         pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
         rowSelection={{
           selectedRowKeys,
@@ -387,14 +386,18 @@ const UsersList: React.FC = () => {
               <Select.Option value="interviewer">面试官 (Interviewer)</Select.Option>
             </Select>
           </Form.Item>
+          {isEditModal && editingUser && (
+            <Form.Item label="用户邮箱（用于飞书授权）">
+              <Input value={editingUser.email} disabled />
+            </Form.Item>
+          )}
           <Form.Item label="飞书身份绑定">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <Button
                 onClick={() => {
-                  const email = form.getFieldValue('email');
-                  const name = form.getFieldValue('full_name');
-                  if (!email) { message.warning('请先填写邮箱'); return; }
-                  generateFeishuUrl(email, name);
+                  const email = editingUser?.email;
+                  if (!email) { message.warning('用户数据中缺少邮箱'); return; }
+                  generateFeishuUrl(email);
                 }}
                 loading={feishuUrlLoading}
                 icon={<KeyOutlined />}

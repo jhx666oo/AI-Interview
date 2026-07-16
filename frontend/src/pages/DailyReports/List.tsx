@@ -8,12 +8,20 @@ import {
   ThunderboltOutlined, LoadingOutlined, ReloadOutlined,
   DeleteOutlined, RobotOutlined, SendOutlined,
   ClockCircleOutlined, TeamOutlined, UserOutlined,
-  CheckCircleOutlined, FileTextOutlined
+  FileTextOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import ReactMarkdown from 'react-markdown';
 import dayjs from 'dayjs';
 
 const { Text, Title } = Typography;
+
+interface ContactItem {
+  id: string;
+  name: string;
+  role?: string;
+  avatar?: string;
+}
 
 const DailyReportsList: React.FC = () => {
   const [data, setData] = useState<any[]>([]);
@@ -26,6 +34,9 @@ const DailyReportsList: React.FC = () => {
   const [sendTargetType, setSendTargetType] = useState<'chat' | 'user'>('chat');
   const [sendTargetId, setSendTargetId] = useState('');
   const [sending, setSending] = useState(false);
+  // 联系人列表
+  const [contacts, setContacts] = useState<{ groups: ContactItem[]; users: ContactItem[] }>({ groups: [], users: [] });
+  const [contactsLoading, setContactsLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -71,11 +82,22 @@ const DailyReportsList: React.FC = () => {
     }
   };
 
-  // 打开发送对话框
-  const handleOpenSend = (record: any) => {
+  // 打开发送对话框 → 拉取飞书联系人
+  const handleOpenSend = async (record: any) => {
     setSendModal(record);
     setSendTargetType('chat');
     setSendTargetId('');
+    setContactsLoading(true);
+    try {
+      const res = await request.get('/feishu/contacts') as any;
+      if (res.ok) {
+        setContacts({ groups: res.groups || [], users: res.users || [] });
+      }
+    } catch {
+      // 加载失败，允许手动输入
+    } finally {
+      setContactsLoading(false);
+    }
   };
 
   // 执行发送
@@ -310,17 +332,15 @@ const DailyReportsList: React.FC = () => {
                                   <Space><RobotOutlined /> AI 摘要</Space>
                                 </Divider>
                                 {record.stats ? (
-                                  <pre style={{
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-word',
+                                  <div style={{
                                     background: '#f5f5f5',
                                     padding: 16,
                                     borderRadius: 8,
                                     fontSize: 13,
                                     lineHeight: 1.8,
                                   }}>
-                                    {record.stats}
-                                  </pre>
+                                    <ReactMarkdown>{record.stats}</ReactMarkdown>
+                                  </div>
                                 ) : (
                                   <Text type="secondary">无AI摘要</Text>
                                 )}
@@ -363,6 +383,7 @@ const DailyReportsList: React.FC = () => {
         confirmLoading={sending}
         okText="发送"
         cancelText="取消"
+        width={480}
       >
         {sendModal && (
           <div>
@@ -373,35 +394,57 @@ const DailyReportsList: React.FC = () => {
               message={`发送日报：${sendModal.title || sendModal.report_date}`}
             />
 
-            <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>
               <Text strong>发送目标</Text>
             </div>
+            <Select
+              value={sendTargetType}
+              onChange={(v) => { setSendTargetType(v); setSendTargetId(''); }}
+              style={{ width: '100%', marginBottom: 12 }}
+              options={[
+                { value: 'chat', label: <><TeamOutlined /> 飞书群聊</> },
+                { value: 'user', label: <><UserOutlined /> 飞书用户</> },
+              ]}
+            />
 
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Select
-                value={sendTargetType}
-                onChange={(v) => setSendTargetType(v)}
-                style={{ width: '100%' }}
-                options={[
-                  { value: 'chat', label: <><TeamOutlined /> 飞书群聊</> },
-                  { value: 'user', label: <><UserOutlined /> 飞书用户</> },
-                ]}
-              />
+            {/* 联系人选择器 + 自定义输入 */}
+            <Select
+              showSearch
+              value={sendTargetId || undefined}
+              onChange={(val) => setSendTargetId(val)}
+              style={{ width: '100%' }}
+              placeholder={
+                sendTargetType === 'chat'
+                  ? '选择群聊或输入 Chat ID'
+                  : '选择用户或输入 Open ID'
+              }
+              notFoundContent={contactsLoading ? <Spin size="small" /> : '未找到联系人，可手动输入'}
+              filterOption={(input, option: any) =>
+                option?.label?.toLowerCase().includes(input.toLowerCase()) ||
+                option?.value?.toLowerCase().includes(input.toLowerCase())
+              }
+              options={(() => {
+                const list = sendTargetType === 'chat' ? contacts.groups : contacts.users;
+                const opts = list.map((c) => ({
+                  value: c.id,
+                  label: (
+                    <Space>
+                      <span>{sendTargetType === 'chat' ? <TeamOutlined /> : <UserOutlined />}</span>
+                      <span>{c.name}</span>
+                      {c.role && <Tag style={{ fontSize: 10, lineHeight: '16px' }}>{c.role}</Tag>}
+                      <Text type="secondary" style={{ fontSize: 11 }}>{c.id}</Text>
+                    </Space>
+                  ),
+                }));
+                return opts;
+              })()}
+            />
 
-              <Input
-                placeholder={sendTargetType === 'chat' ? '请输入飞书群 Chat ID' : '请输入用户 Open ID'}
-                value={sendTargetId}
-                onChange={(e) => setSendTargetId(e.target.value)}
-              />
-
-              <div style={{ fontSize: 12, color: '#999', lineHeight: 1.6 }}>
-                {sendTargetType === 'chat' ? (
-                  <>Chat ID 可在飞书开放平台查看，或联系管理员获取。</>
-                ) : (
-                  <>Open ID 是用户在飞书的唯一标识，可在飞书开放平台查看。</>
-                )}
-              </div>
-            </Space>
+            <div style={{ marginTop: 6, fontSize: 12, color: '#999' }}>
+              {sendTargetType === 'chat'
+                ? '可从群聊列表选择，或直接输入 Chat ID'
+                : '可从已绑定飞书的用户中选择，或直接输入 Open ID'}
+            </div>
           </div>
         )}
       </Modal>

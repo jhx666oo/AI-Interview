@@ -17,8 +17,6 @@ binding = "DB"
 database_name = "ai-interview-db"
 database_id = "0eb6cbc3-93c7-4c9d-b933-57ff01a191cb"
 
-# Cron triggers - 在 Cloudflare Dashboard 中配置 Worker Cron 触发
-# 或使用外部定时服务调用 POST /api/cron/daily-report (10:00 每天)
-# 及 POST /api/cron/interview-reminder (10:00/15:00 每天)
-# [triggers]
-# crons = ["0 2 * * *", "0 7 * * *"]
+# Cron triggers - 每天凌晨 3 点自动清理超过 7 天的 PDF 缓存
+[triggers]
+crons = ["0 3 * * *"]

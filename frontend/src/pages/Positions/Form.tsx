@@ -181,6 +181,15 @@ const PositionForm: React.FC = () => {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+            <Form.Item name="primary_interviewer" label="一面面试官" initialValue="杜雁玲">
+              <Input placeholder="默认：杜雁玲" size="large" />
+            </Form.Item>
+            <Form.Item name="secondary_interviewer" label="二面面试官" initialValue="何雨菱">
+              <Input placeholder="默认：何雨菱" size="large" />
+            </Form.Item>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
             <Form.Item
               name="hiring_manager_id"
               label="招聘负责人"

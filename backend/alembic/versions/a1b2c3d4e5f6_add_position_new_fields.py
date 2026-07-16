@@ -19,6 +19,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # 先创建枚举类型（PostgreSQL 需要）
+    op.execute("CREATE TYPE positionurgency AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'URGENT')")
+    op.execute("CREATE TYPE positiontype AS ENUM ('FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP')")
     op.add_column('positions', sa.Column('urgency', sa.Enum('LOW', 'MEDIUM', 'HIGH', 'URGENT', name='positionurgency'), server_default='MEDIUM', nullable=True))
     op.add_column('positions', sa.Column('position_type', sa.Enum('FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP', name='positiontype'), server_default='FULL_TIME', nullable=True))
     op.add_column('positions', sa.Column('headcount', sa.Integer(), server_default='1', nullable=True))

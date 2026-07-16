@@ -51,6 +51,9 @@ interface MergedRow {
   evaluation2: string;
   feishu_record_id: string;
   resume_id: string;
+  interviewer: string;
+  primary_interviewer: string;
+  secondary_interviewer: string;
 }
 
 const InterviewsList: React.FC = () => {
@@ -121,6 +124,9 @@ const InterviewsList: React.FC = () => {
           evaluation2: matchedIv?.evaluation2 || '',
           feishu_record_id: c.feishu_record_id || c.id || '',
           resume_id: c.id || '',
+          interviewer: matchedIv?.interviewer || '',
+          primary_interviewer: matchedIv?.primary_interviewer || '',
+          secondary_interviewer: matchedIv?.secondary_interviewer || '',
         };
       });
 
@@ -175,6 +181,7 @@ const InterviewsList: React.FC = () => {
         feishu_record_id: scheduleRecord.feishu_record_id || scheduleRecord.resume_id,
         interview_time: interviewTime,
         interview_location: values.interview_location || '',
+        interviewer_name: values.interviewer_name || '杜雁玲',
       });
       message.success(`已安排面试：${name}`);
       setScheduleModalVisible(false);
@@ -235,6 +242,22 @@ const InterviewsList: React.FC = () => {
     }
   };
 
+  // == 发送面试提醒 ==
+  const handleSendReminder = async (record: MergedRow, interviewerName?: string) => {
+    const name = interviewerName || record.interviewer || '杜雁玲';
+    try {
+      await request.post(`/interviews/${record.interview_id}/notify-interviewer`, {
+        candidate_name: record.candidate_name,
+        position_applied: record.position_applied || record.position || '',
+        city: record.city || '',
+        interviewer_name: name,
+      });
+      message.success(`已提醒面试官：${name}`);
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '发送提醒失败');
+    }
+  };
+
   const handleViewEval = (record: MergedRow) => {
     setViewEvalRecord(record);
     setViewEvalVisible(true);
@@ -287,6 +310,19 @@ const InterviewsList: React.FC = () => {
       render: (_: any, r: MergedRow) => r.interview_time || '-',
     },
     {
+      title: '面试官', key: 'interviewer', width: 220,
+      render: (_: any, r: MergedRow) => {
+        if (!r.interview_id) return '-';
+        return (
+          <Space size={4} wrap>
+            {r.primary_interviewer && <Tag color="blue">一面：{r.primary_interviewer}</Tag>}
+            {r.secondary_interviewer && <Tag color="orange">二面：{r.secondary_interviewer}</Tag>}
+            {!r.primary_interviewer && !r.secondary_interviewer && <Tag color="purple">{r.interviewer || '待分配'}</Tag>}
+          </Space>
+        );
+      }
+    },
+    {
       title: '一面结果', key: 'result1', width: 90,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id || !r.result || r.result === 'pending') return <Tag>待评价</Tag>;
@@ -314,6 +350,8 @@ const InterviewsList: React.FC = () => {
           && r.result && r.result !== 'pending' && (!r.result2 || r.result2 === 'pending');
         // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
+        // 有面试记录 → 可发送面试提醒
+        const canRemind = r.interview_id;
 
         return (
           <Space size="small" wrap>
@@ -345,6 +383,28 @@ const InterviewsList: React.FC = () => {
               <Button size="small" icon={<DownloadOutlined />}
                 onClick={() => handleDownload(r)} />
             </Tooltip>
+            {canRemind && (
+              <>
+                {r.primary_interviewer && (
+                  <Button size="small" icon={<BellOutlined />}
+                    onClick={() => handleSendReminder(r, r.primary_interviewer)}>
+                    提醒一面
+                  </Button>
+                )}
+                {r.secondary_interviewer && (
+                  <Button size="small" icon={<BellOutlined />}
+                    onClick={() => handleSendReminder(r, r.secondary_interviewer)}>
+                    提醒二面
+                  </Button>
+                )}
+                {!r.primary_interviewer && !r.secondary_interviewer && (
+                  <Button size="small" icon={<BellOutlined />}
+                    onClick={() => handleSendReminder(r, '杜雁玲')}>
+                    提醒面试官
+                  </Button>
+                )}
+              </>
+            )}
           </Space>
         );
       }
@@ -417,6 +477,9 @@ const InterviewsList: React.FC = () => {
           </Form.Item>
           <Form.Item name="interview_location" label="面试地点 / 会议链接">
             <Input placeholder="例如：3楼会议室 / https://meeting.tencent.com/xxx（可选）" />
+          </Form.Item>
+          <Form.Item name="interviewer_name" label="面试官" initialValue="杜雁玲">
+            <Input placeholder="输入面试官姓名（默认杜雁玲，后期可修改）" />
           </Form.Item>
         </Form>
       </Modal>

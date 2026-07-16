@@ -24,21 +24,21 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class PositionStatus(str, enum.Enum):
-    OPEN = "open"
-    CLOSED = "closed"
-    PUBLISHED = "published"
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    PUBLISHED = "PUBLISHED"
 
 class PositionUrgency(str, enum.Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    URGENT = "urgent"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    URGENT = "URGENT"
 
 class PositionType(str, enum.Enum):
-    FULL_TIME = "full_time"
-    PART_TIME = "part_time"
-    CONTRACT = "contract"
-    INTERNSHIP = "internship"
+    FULL_TIME = "FULL_TIME"
+    PART_TIME = "PART_TIME"
+    CONTRACT = "CONTRACT"
+    INTERNSHIP = "INTERNSHIP"
 
 class Position(Base):
     __tablename__ = "positions"
@@ -64,15 +64,15 @@ class Position(Base):
     hiring_manager = relationship("User", foreign_keys=[hiring_manager_id])
 
 class QuestionCategory(str, enum.Enum):
-    TECHNICAL = "technical"
-    MANAGEMENT = "management"
-    HR = "hr"
-    OTHER = "other"
+    TECHNICAL = "TECHNICAL"
+    MANAGEMENT = "MANAGEMENT"
+    HR = "HR"
+    OTHER = "OTHER"
 
 class QuestionDifficulty(str, enum.Enum):
-    JUNIOR = "junior"
-    INTERMEDIATE = "intermediate"
-    SENIOR = "senior"
+    JUNIOR = "JUNIOR"
+    INTERMEDIATE = "INTERMEDIATE"
+    SENIOR = "SENIOR"
 
 class QuestionBank(Base):
     __tablename__ = "question_banks"
@@ -90,27 +90,27 @@ class QuestionBank(Base):
     position = relationship("Position")
 
 class ScreeningResult(str, enum.Enum):
-    PENDING = "pending"
-    PASSED = "passed"
-    REJECTED = "rejected"
-    WAITLIST = "waitlist"
+    PENDING = "PENDING"
+    PASSED = "PASSED"
+    REJECTED = "REJECTED"
+    WAITLIST = "WAITLIST"
 
 class ResumeStatus(str, enum.Enum):
-    PENDING_SCREENING = "pending_screening"
-    PENDING_REVIEW = "pending_review"
-    PENDING_DEPT_REVIEW = "pending_dept_review"  # 待用人部门初评
-    PENDING_HR_DECISION = "pending_hr_decision"  # 待HR综合决策
-    AUTO_REJECTED_PENDING_REVIEW = "auto_rejected_pending_review"  # AI建议淘汰，待人工确认
-    PENDING_INTERVIEW = "pending_interview"
-    INTERVIEW_PASSED = "interview_passed"  # Initial interview passed
-    INTERVIEW_FAILED = "interview_failed"
-    OFFER_PENDING = "offer_pending"
-    OFFER_ACCEPTED = "offer_accepted"
-    OFFER_REJECTED = "offer_rejected"
-    ONBOARDING = "onboarding"
-    COMPLETED = "completed"
-    REJECTED = "rejected"
-    WAITLIST = "waitlist"  # 备选
+    PENDING_SCREENING = "PENDING_SCREENING"
+    PENDING_REVIEW = "PENDING_REVIEW"
+    PENDING_DEPT_REVIEW = "PENDING_DEPT_REVIEW"  # 待用人部门初评
+    PENDING_HR_DECISION = "PENDING_HR_DECISION"  # 待HR综合决策
+    AUTO_REJECTED_PENDING_REVIEW = "AUTO_REJECTED_PENDING_REVIEW"  # AI建议淘汰，待人工确认
+    PENDING_INTERVIEW = "PENDING_INTERVIEW"
+    INTERVIEW_PASSED = "INTERVIEW_PASSED"  # Initial interview passed
+    INTERVIEW_FAILED = "INTERVIEW_FAILED"
+    OFFER_PENDING = "OFFER_PENDING"
+    OFFER_ACCEPTED = "OFFER_ACCEPTED"
+    OFFER_REJECTED = "OFFER_REJECTED"
+    ONBOARDING = "ONBOARDING"
+    COMPLETED = "COMPLETED"
+    REJECTED = "REJECTED"
+    WAITLIST = "WAITLIST"  # 备选
 
 class RejectReasonCategory(str, enum.Enum):
     SKILLS_MISMATCH = "skills_mismatch"  # 技能不符合

@@ -24,7 +24,8 @@ const ProfileSettings: React.FC = () => {
       refreshUser();
       window.history.replaceState({}, '', window.location.pathname);
     } else if (params.get('feishu_error') === '1') {
-      message.error('飞书身份绑定失败，请重试');
+      const errDetail = params.get('err');
+      message.error(errDetail ? `飞书绑定失败: ${errDetail}` : '飞书身份绑定失败，请重试');
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [refreshUser]);

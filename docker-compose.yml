@@ -7,9 +7,9 @@ services:
     ports:
       - "5433:5432"
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=ai_interview
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-123456}
+      - POSTGRES_DB=${POSTGRES_DB:-ai_interview}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: always

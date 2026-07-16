@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Popover } from 'antd';
+import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge } from 'antd';
 import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useNavigate } from 'react-router-dom';
@@ -41,7 +41,21 @@ const ResumesList: React.FC = () => {
 
   const [searchName, setSearchName] = useState('');
   const [searchStatus, setSearchStatus] = useState<string | undefined>(undefined);
+  const [searchPerson, setSearchPerson] = useState<string | undefined>(undefined);
+  const [responsiblePersons, setResponsiblePersons] = useState<string[]>([]);
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
+  const fetchResponsiblePersons = async () => {
+    try {
+      const res = await request.get('/positions');
+      // 从岗位列表收集所有非空责任人
+      const names: string[] = [];
+      (res || []).forEach((p: any) => {
+        if (p.responsible_person) names.push(p.responsible_person);
+      });
+      // 去重排序
+      setResponsiblePersons([...new Set(names)].sort());
+    } catch { /* ignore */ }
+  };
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewRecord, setPreviewRecord] = useState<any>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('');
@@ -239,11 +253,9 @@ const ResumesList: React.FC = () => {
       const params: any = {};
       if (searchName) params.candidate_name = searchName;
       if (searchStatus) params.status = searchStatus;
+      if (searchPerson) params.responsible_person = searchPerson;
 
-      // 如果是面试官，只显示被指派给自己的简历
-      if (user?.role === 'interviewer') {
-        params.reviewer_id = user.id;
-      }
+      // 不再区分 role，统一显示全部
 
       // 没有筛选条件且有缓存时直接复用
       if (!searchName && !searchStatus && !searchPosition && loadedRef.current && dataCache.current.length > 0) {
@@ -358,6 +370,7 @@ const ResumesList: React.FC = () => {
   useEffect(() => {
     fetchResumes();
     fetchPositions();
+    fetchResponsiblePersons();
     fetchQuestionBanks();
     fetchInterviewers();
     fetchCapDims();
@@ -372,6 +385,7 @@ const ResumesList: React.FC = () => {
   const handleReset = () => {
     setSearchName('');
     setSearchStatus(undefined);
+    setSearchPerson(undefined);
     setSearchPosition(undefined);
     setCardPage(1);
     dataCache.current = [];
@@ -779,10 +793,6 @@ const ResumesList: React.FC = () => {
   };
 
   const renderActionButtons = (record: any) => {
-    if (user?.role === 'interviewer') {
-      return <Button type="primary" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/resumes/${record.id}`)}>查看并评审</Button>;
-    }
-    const isAdminOrHr = user?.role === 'admin' || user?.role === 'hr';
     const isPending = record.status === 'pending_screening';
     const isApproved = record.status === 'approved';
     const isRejected = record.status === 'rejected';
@@ -790,7 +800,7 @@ const ResumesList: React.FC = () => {
       <Space size="small" wrap>
         <Tooltip title="预览"><Button type="text" size="small" icon={<FileTextOutlined style={{ color: '#6366F1' }} />} onClick={() => handlePreview(record)} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
-        {isAdminOrHr && isPending && (
+        {isPending && (
           <>
             <Button type="primary" size="small" icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => handleApproveToTalentPool(record)}>入库</Button>
             <Button size="small" icon={<CloseOutlined />} onClick={() => handleReject(record)}>不入库</Button>
@@ -916,41 +926,28 @@ const ResumesList: React.FC = () => {
     <div style={{ maxWidth: '100%' }}>
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
         <div>
-          <Title level={3} style={{ margin: 0, fontWeight: 600 }}>
-            {user?.role === 'interviewer' ? '我的待评审' : '简历管理'}
-          </Title>
-          <Text type="secondary" style={{ fontSize: 13 }}>
-            {user?.role === 'interviewer' ? '被指派给您的待评审简历' : '管理候选人简历及面试流程'}
-          </Text>
+          <Title level={3} style={{ margin: 0, fontWeight: 600 }}>简历管理</Title>
+          <Text type="secondary" style={{ fontSize: 13 }}>管理候选人简历及面试流程</Text>
         </div>
         <Space size="small">
-          {user?.role !== 'interviewer' && (
-            <>
-              <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
-                {pollingEnabled ? '解析中...' : '从飞书导入'}
-              </Button>
-              <Button size="small" icon={<RobotOutlined />} onClick={handleAutoEvaluateAll}
-                title="从PDF提取文本 → AI评分维度 → 保存显示（跳过已有评估的简历）">
-                AI自动评估
-              </Button>
-              <Button size="small" icon={<RobotOutlined />} onClick={handleBatchAIEvaluate}>
-                AI批量评估
-              </Button>
-              <Button size="small" icon={<SyncOutlined />} onClick={handleBatchReparse}>
-                全部重解析
-              </Button>
-              <Button size="small" danger icon={<CloseCircleOutlined />} onClick={handleClearRejected}>
-                清除已淘汰
-              </Button>
-              <Button type="primary" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
-              <Button icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
-            </>
-          )}
-          {user?.role === 'interviewer' && (
-            <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
-              {pollingEnabled ? '解析中...' : '从飞书导入'}
-            </Button>
-          )}
+          <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
+            {pollingEnabled ? '解析中...' : '从飞书导入'}
+          </Button>
+          <Button size="small" icon={<RobotOutlined />} onClick={handleAutoEvaluateAll}
+            title="从PDF提取文本 → AI评分维度 → 保存显示（跳过已有评估的简历）">
+            AI自动评估
+          </Button>
+          <Button size="small" icon={<RobotOutlined />} onClick={handleBatchAIEvaluate}>
+            AI批量评估
+          </Button>
+          <Button size="small" icon={<SyncOutlined />} onClick={handleBatchReparse}>
+            全部重解析
+          </Button>
+          <Button size="small" danger icon={<CloseCircleOutlined />} onClick={handleClearRejected}>
+            清除已淘汰
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
+          <Button icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
         </Space>
       </div>
 
@@ -1018,7 +1015,6 @@ const ResumesList: React.FC = () => {
         </Col>
       </Row>
 
-      {user?.role !== 'interviewer' && (
         <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px' } }}>          <Form layout="inline" size="small">
             <Form.Item label="候选人">
               <Input
@@ -1040,6 +1036,21 @@ const ResumesList: React.FC = () => {
                 <Select.Option value="pending_screening">待初筛</Select.Option>
                 <Select.Option value="approved">已入库</Select.Option>
                 <Select.Option value="rejected">已淘汰</Select.Option>
+              </Select>
+            </Form.Item>
+            <Form.Item label="负责人">
+              <Select
+                placeholder="全部负责人"
+                value={searchPerson}
+                onChange={val => { setSearchPerson(val); }}
+                style={{ width: 130 }}
+                allowClear
+                showSearch
+                optionFilterProp="children"
+              >
+                {responsiblePersons.map((name: string) => (
+                  <Select.Option key={name} value={name}>{name}</Select.Option>
+                ))}
               </Select>
             </Form.Item>
             <Form.Item label="岗位">
@@ -1081,7 +1092,6 @@ const ResumesList: React.FC = () => {
             </Form.Item>
           </Form>
         </Card>
-      )}
 
       {/* 候选人卡片列表 */}
       {loading ? (
@@ -1102,40 +1112,17 @@ const ResumesList: React.FC = () => {
               const matchCount = scoreDetails?.filter(d => d.score >= 3).length || 0;
               const totalDims = scoreDetails?.length || 0;
 
-              // 悬浮详情内容：AI 评估条件符合 X/Y
-              const popoverContent = (
-                <div style={{ maxWidth: 500, fontSize: 13, lineHeight: 1.8 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14, borderBottom: '1px solid #f0f0f0', paddingBottom: 6 }}>
-                    AI 评估条件符合 {matchCount}/{totalDims}
-                  </div>
-                  {scoreDetails?.map((d, i) => {
-                    const isMatch = d.score >= 3;
-                    return (
-                      <div key={i} style={{ marginBottom: 6, padding: '4px 0', borderBottom: i < scoreDetails.length - 1 ? '1px dashed #f5f5f5' : 'none' }}>
-                        <div style={{ fontWeight: 600, color: '#262626' }}>{d.name}</div>
-                        <div style={{ color: isMatch ? '#52c41a' : '#ff4d4f', fontSize: 12 }}>
-                          {isMatch ? '符合' : '不符合'} <span style={{ color: '#595959' }}>（分数：{d.score}）</span>
-                        </div>
-                        <div style={{ color: '#8c8c8c', fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 2 }}>
-                          {d.reason}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-
               return (
                 <Card
                   key={record.id}
                   size="small"
-                  style={{ border: '1px solid #f0f0f0' }}
-                  styles={{ body: { padding: '10px 16px' } }}
+                  style={{ border: '1px solid #f0f0f0', borderRadius: 8 }}
+                  styles={{ body: { padding: '12px 16px' } }}
                   hoverable
                   onClick={() => navigate(`/resumes/${record.id}`)}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer', minHeight: 36 }} onClick={e => e.stopPropagation()}>
-                    {/* 复选框 */}
+                  {/* 顶部：复选框 + 姓名 + 状态 + 操作 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, minHeight: 32 }}>
                     <Checkbox
                       checked={selectedRowKeys.includes(record.id)}
                       onChange={(e) => {
@@ -1145,65 +1132,55 @@ const ResumesList: React.FC = () => {
                           setSelectedRowKeys(selectedRowKeys.filter(k => k !== record.id));
                         }
                       }}
+                      onClick={e => e.stopPropagation()}
                     />
-
-                    {/* 姓名 + 基本信息 */}
-                    <div style={{ minWidth: 150, flexShrink: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14, lineHeight: '20px' }}>{record.candidate_name || '未知'}</div>
-                      <div style={{ color: '#8c8c8c', fontSize: 12, lineHeight: '18px' }}>
-                        {[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '—'}
-                      </div>
-                    </div>
-
-                    {/* 应聘岗位（标准岗位名） */}
+                    <span style={{ fontWeight: 600, fontSize: 15 }}>{record.candidate_name || '未知'}</span>
+                    <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+                      {[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '—'}
+                    </span>
                     {record.position_applied && (
-                      <div style={{ fontSize: 12, color: '#595959', minWidth: 110, maxWidth: 150, flexShrink: 0 }}>
-                        <span style={{ color: '#bfbfbf' }}>应聘：</span>
-                        <span style={{ wordBreak: 'break-word' }}>{record.standard_position || record.position_applied}</span>
-                        {(record.standard_position && record.standard_position !== record.position_applied) && (
-                          <Tooltip title={`原始岗位：${record.position_applied}`}>
-                            <InfoCircleOutlined style={{ marginLeft: 4, color: '#999', fontSize: 10 }} />
-                          </Tooltip>
-                        )}
-                      </div>
+                      <Tag style={{ margin: 0 }}>{record.standard_position || record.position_applied}</Tag>
                     )}
-
-                    {/* 状态标签 */}
-                    <div style={{ flexShrink: 0 }}>{statusTag(record.status)}</div>
-
-                    {/* AI 评估条件 */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flex: 1, minWidth: 0, maxWidth: '100%' }}>
-                      {scoreDetails && scoreDetails.length > 0 && (
-                        <Popover content={popoverContent} title={null} trigger="hover" placement="bottom">
-                          <span style={{ fontSize: 12, color: '#1677ff', whiteSpace: 'nowrap', cursor: 'pointer', background: '#f0f5ff', padding: '1px 6px', borderRadius: 4, flexShrink: 0, marginTop: 5 }}>
-                            AI {matchCount}/{totalDims}
-                          </span>
-                        </Popover>
-                      )}
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1, minWidth: 0, alignItems: 'flex-start' }}>
-                        {scoreDetails?.map((d: any, i: number) => {
-                          const isMatch = d.score >= 3;
-                          return (
-                            <Popover key={i} content={popoverContent} title={null} trigger="hover" placement="bottom">
-                              <span style={{ fontSize: 12, lineHeight: '20px', padding: '1px 8px', border: `1px solid ${isMatch ? '#b7eb8f' : '#ffccc7'}`, borderRadius: 4, whiteSpace: 'normal', wordBreak: 'break-word', display: 'inline-block', background: isMatch ? '#f6ffed' : '#fff2f0', maxWidth: 260 }}>
-                                <span style={{ marginRight: 2 }}>{isMatch ? '✅' : '❌'}</span>
-                                <span>{d.name}</span>
-                                <span style={{ marginLeft: 4, color: isMatch ? '#52c41a' : '#ff4d4f', fontWeight: 500 }}>{d.score}</span>
-                              </span>
-                            </Popover>
-                          );
-                        })}
-                        {(!scoreDetails || scoreDetails.length === 0) && (
-                          <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无评估</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* 操作按钮 */}
-                    <div style={{ flexShrink: 0, marginLeft: 'auto' }} onClick={e => e.stopPropagation()}>
+                    {statusTag(record.status)}
+                    <div style={{ marginLeft: 'auto' }} onClick={e => e.stopPropagation()}>
                       {renderActionButtons(record)}
                     </div>
                   </div>
+
+                  {/* 底部：AI 评估条件 — 竖排 */}
+                  {scoreDetails && scoreDetails.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 12, color: '#1677ff', fontWeight: 600, background: '#f0f5ff', padding: '1px 8px', borderRadius: 4 }}>
+                          AI 评估 {matchCount}/{totalDims} 符合
+                        </span>
+                        {totalScore != null && (
+                          <span style={{ fontSize: 12, color: '#8c8c8c' }}>综合分 {totalScore}</span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start', paddingLeft: 4 }}>
+                        {scoreDetails.map((d: any, i: number) => {
+                          const isMatch = d.score >= 3;
+                          const dimKey = `${record.id}_${i}`;
+                          return (
+                            <HoverDetail
+                              key={i}
+                              dimKey={dimKey}
+                              isMatch={isMatch}
+                              name={d.name}
+                              score={d.score}
+                              reason={d.reason}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {(!scoreDetails || scoreDetails.length === 0) && (
+                    <div style={{ marginTop: 4 }}>
+                      <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无 AI 评估</span>
+                    </div>
+                  )}
                 </Card>
               );
             })}
@@ -1754,5 +1731,81 @@ function DynamicPdfViewer({ pdfUrl }: { pdfUrl: string }) {
   if (loading) return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'80vh', color:'#999' }}>加载 PDF 引擎...</div>;
   return <Comp pdfUrl={pdfUrl} />;
 }
+
+/** 自定义 hover 浮层 — 跟随鼠标位置，不受 Ant Design Popover 布局影响 */
+const HoverDetail: React.FC<{
+  dimKey: string;
+  isMatch: boolean;
+  name: string;
+  score: number;
+  reason: string;
+}> = ({ dimKey, isMatch, name, score, reason }) => {
+  const [hover, setHover] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleEnter = (e: React.MouseEvent) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setPos({ x: e.clientX, y: e.clientY });
+      setHover(true);
+    }, 200);
+  };
+  const handleMove = (e: React.MouseEvent) => {
+    if (hover) setPos({ x: e.clientX, y: e.clientY });
+  };
+  const handleLeave = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setHover(false);
+  };
+
+  return (
+    <span
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12,
+        padding: '3px 10px', borderRadius: 4, cursor: 'default',
+        background: isMatch ? '#f6ffed' : '#fff2f0',
+        border: `1px solid ${isMatch ? '#b7eb8f' : '#ffccc7'}`,
+      }}
+      onMouseEnter={handleEnter}
+      onMouseMove={handleMove}
+      onMouseLeave={handleLeave}
+    >
+      <span style={{ width: 16, textAlign: 'center', flexShrink: 0 }}>
+        {isMatch ? '✅' : '❌'}
+      </span>
+      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 200 }}>
+        {name}
+      </span>
+      <span style={{ fontWeight: 600, color: isMatch ? '#52c41a' : '#ff4d4f', flexShrink: 0, minWidth: 20, textAlign: 'right' }}>
+        {score}
+      </span>
+      {hover && (
+        <span style={{
+          position: 'fixed',
+          left: pos.x + 18,
+          top: pos.y - 10,
+          transform: 'translateY(-100%)',
+          zIndex: 9999,
+          maxWidth: 320,
+          fontSize: 13,
+          lineHeight: 1.6,
+          background: '#fff',
+          border: '1px solid #d9d9d9',
+          borderRadius: 8,
+          padding: '10px 14px',
+          boxShadow: '0 6px 16px rgba(0,0,0,0.12)',
+          pointerEvents: 'none',
+          whiteSpace: 'normal',
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{name}</div>
+          <div style={{ color: isMatch ? '#52c41a' : '#ff4d4f', fontSize: 12, marginBottom: 4 }}>
+            {isMatch ? '符合' : '不符合'}（分数：{score}）
+          </div>
+          <div style={{ color: '#595959', fontSize: 12, whiteSpace: 'pre-wrap' }}>{reason}</div>
+        </span>
+      )}
+    </span>
+  );
+};
 
 export default ResumesList;
