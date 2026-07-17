@@ -380,7 +380,7 @@ const UsersList: React.FC = () => {
             </Form.Item>
           )}
           <Form.Item name="role" label="角色" initialValue="interviewer" rules={[{ required: true }]}>
-            <Select>
+            <Select getPopupContainer={trigger => trigger.parentElement || document.body}>
               <Select.Option value="admin">管理员 (Admin)</Select.Option>
               <Select.Option value="hr">HR</Select.Option>
               <Select.Option value="interviewer">面试官 (Interviewer)</Select.Option>
