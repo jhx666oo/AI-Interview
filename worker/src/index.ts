@@ -831,8 +831,8 @@ app.get('/api/dashboard/overview', authMiddleware, async (c) => {
     activePos, totalPos, totalResumes, scheduledIvs, completedIvs,
     passedIvs, offersRs, hiredRs, pendingOb, totalOb
   ] = await Promise.all([
-    db.prepare("SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open','published')").first(),
-    db.prepare("SELECT COALESCE(SUM(headcount),0) as cnt FROM positions WHERE status IN ('open','published')").first(),
+    db.prepare("SELECT COUNT(*) as cnt FROM positions").first(),
+    db.prepare("SELECT COALESCE(SUM(headcount),0) as cnt FROM positions").first(),
     db.prepare("SELECT COUNT(*) as cnt FROM resumes").first(),
     db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE status = 'scheduled'").first(),
     db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE status = 'completed'").first(),

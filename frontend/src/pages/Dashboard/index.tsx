@@ -103,8 +103,8 @@ const Dashboard: React.FC = () => {
 
   // KPI 卡片配置
   const kpiCards = [
-    { label: '在招岗位', value: overviewData?.active_positions ?? '-', unit: '个', color: '#3B82F6' },
-    { label: '在招人数', value: overviewData?.total_headcount ?? '-', unit: '人', color: '#10B981' },
+    { label: '岗位总数', value: overviewData?.active_positions ?? '-', unit: '个', color: '#3B82F6' },
+    { label: '编制总数', value: overviewData?.total_headcount ?? '-', unit: '人', color: '#10B981' },
     { label: '简历推送', value: overviewData?.total_resumes ?? '-', unit: '份', color: '#6366F1' },
     { label: '安排面试', value: overviewData?.scheduled_interviews ?? '-', unit: '场', color: '#F59E0B' },
     { label: '推送转化率', value: overviewData?.push_conversion_rate ?? '-', unit: '%', color: '#EF4444' },
