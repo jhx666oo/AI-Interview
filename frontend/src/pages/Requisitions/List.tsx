@@ -200,8 +200,8 @@ const RequisitionsList: React.FC = () => {
         title="人力需求管理"
         extra={
           <Space wrap>
-            <Input placeholder="搜索部门" prefix={<SearchOutlined />} value={searchDept} onChange={e => setSearchDept(e.target.value)} onPressEnter={fetchData} style={{ width: 200 }} allowClear />
-            <Select placeholder="状态筛选" allowClear style={{ width: 200 }} value={filterStatus} onChange={v => setFilterStatus(v)}>
+            <Input size="middle" placeholder="搜索部门" prefix={<SearchOutlined />} value={searchDept} onChange={e => setSearchDept(e.target.value)} onPressEnter={fetchData} style={{ width: 200 }} allowClear />
+            <Select size="middle" placeholder="状态筛选" allowClear style={{ width: 200 }} value={filterStatus} onChange={v => setFilterStatus(v)}>
               {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
