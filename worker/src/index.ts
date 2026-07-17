@@ -1226,7 +1226,7 @@ function extractResumeFile(fieldValue: any): { file_token?: string; name?: strin
       file_token: first.file_token || '',
       name: first.name || '',
       size: first.size || 0,
-      download_url: first.tmp_url || '',
+      download_url: first.download_url || first.tmp_url || '',
     };
   }
   return null;
@@ -2574,6 +2574,11 @@ app.get('/api/resumes/:id/file', async (c) => {
           if (item.file_token) { fileToken = item.file_token; if (item.name) attachmentFileName = item.name; }
         }
       }
+    }
+    // 如果 raw fields 没找到 download_url，用 parsed 数据兜底
+    if (!feishuDownloadUrl && fileToken) {
+      const parsed = parseTalentRecord(record);
+      if (parsed.resume_file?.download_url) feishuDownloadUrl = parsed.resume_file.download_url;
     }
 
     // 通过 download_url（batch API）或 tmp_url 下载 PDF
