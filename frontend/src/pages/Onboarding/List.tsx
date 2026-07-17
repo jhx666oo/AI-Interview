@@ -133,7 +133,7 @@ const OnboardingList: React.FC = () => {
           scroll={{ x: 1200 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
       </Card>
       <Modal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
-        onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnClose>
+        onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="resume_id" label="关联简历" rules={[{ required: true, message: '请选择简历' }]}>
             <Select showSearch placeholder="选择候选人简历" optionFilterProp="children">

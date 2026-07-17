@@ -278,7 +278,7 @@ const CapabilityDimensions: React.FC = () => {
         onCancel={() => setModalVisible(false)}
         onOk={handleSubmit}
         width={800}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical" preserve={false}>
           <Form.Item

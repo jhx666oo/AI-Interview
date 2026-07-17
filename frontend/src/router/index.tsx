@@ -55,7 +55,7 @@ const RoleRoute = ({ children, roles }: { children: React.ReactNode; roles: stri
 const LazyPage = ({ children }: { children: React.ReactNode }) => (
   <Suspense fallback={
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
-      <Spin size="large" tip="加载中..." />
+      <Spin size="large" description="加载中..." />
     </div>
   }>
     {children}

@@ -752,6 +752,51 @@ app.get('/api/ai-usage', authMiddleware, async (c) => {
   }
 });
 
+// 能力维度名称列表（岗位表单用）
+app.get('/api/capability-dimension-names', authMiddleware, async (c) => {
+  return c.json([
+    '沟通能力', '团队协作', '学习能力', '抗压能力', '逻辑思维',
+    '领导力', '项目管理', '技术能力', '数据分析', '产品思维',
+    '用户研究', '用户体验', '代码质量', '系统设计', '安全性',
+    '性能优化', '创新思维', '执行力', '自驱力', '适应能力',
+  ]);
+});
+
+// 评估维度设置（简历 AI 评估用）
+app.get('/api/settings/evaluation-dimensions', authMiddleware, async (c) => {
+  // 从 D1 settings 表读取，如无则返回默认值
+  try {
+    const row = await c.env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('evaluation_dimensions').first() as any;
+    if (row?.value) return c.json(JSON.parse(row.value));
+  } catch (e) { /* ignore */ }
+  return c.json([
+    { key: 'skill_match', label: '技能匹配度', weight: 30 },
+    { key: 'experience', label: '项目经验', weight: 25 },
+    { key: 'education', label: '教育背景', weight: 10 },
+    { key: 'communication', label: '沟通表达', weight: 15 },
+    { key: 'stability', label: '职业稳定性', weight: 10 },
+    { key: 'potential', label: '发展潜力', weight: 10 },
+  ]);
+});
+
+app.put('/api/settings/evaluation-dimensions', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json();
+    const items = body.items || [];
+    const db = c.env.DB;
+    // 确保 settings 表存在
+    await db.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT DEFAULT (datetime('now')))`).run();
+    await db.prepare(`INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
+      .bind('evaluation_dimensions', JSON.stringify(items), new Date().toISOString()).run();
+    return c.json({ ok: true, count: items.length });
+  } catch (e: any) {
+    return c.json({ detail: String(e?.message || e) }, 500);
+  }
+});
+
+// 兼容名（部分前端调 /capability-dimension-names 不带 /api 前缀的旧路径）
+app.get('/capability-dimension-names', (c) => c.redirect('/api/capability-dimension-names'));
+
 app.get('/api/dashboard/interviewers', authMiddleware, async (c) => {
   const db = c.env.DB;
   const interviewers = await db.prepare("SELECT * FROM users WHERE lower(role) = 'interviewer'").all();

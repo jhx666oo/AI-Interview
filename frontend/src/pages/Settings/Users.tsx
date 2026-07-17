@@ -353,7 +353,7 @@ const UsersList: React.FC = () => {
         onOk={handleOk}
         onCancel={handleCloseModal}
         confirmLoading={submitting}
-        destroyOnClose
+        destroyOnHidden
         width={560}
       >
         <Form form={form} layout="vertical">

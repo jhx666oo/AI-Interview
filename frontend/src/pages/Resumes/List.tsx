@@ -965,7 +965,7 @@ const ResumesList: React.FC = () => {
               title={<span style={{ fontSize: 13 }}>总简历数</span>}
               value={data.length}
               suffix="份"
-              valueStyle={{ color: '#1677ff', fontSize: 22, fontWeight: 600 }}
+              styles={{ content: { color: '#1677ff', fontSize: 22, fontWeight: 600 } }}
             />
           </Card>
         </Col>
@@ -975,7 +975,7 @@ const ResumesList: React.FC = () => {
               title={<span style={{ fontSize: 13 }}>待处理</span>}
               value={data.filter((r: any) => r.status === 'pending_screening').length}
               suffix="人"
-              valueStyle={{ color: '#fa8c16', fontSize: 22, fontWeight: 600 }}
+              styles={{ content: { color: '#fa8c16', fontSize: 22, fontWeight: 600 } }}
             />
           </Card>
         </Col>
@@ -985,7 +985,7 @@ const ResumesList: React.FC = () => {
               title={<span style={{ fontSize: 13 }}>已入库</span>}
               value={data.filter((r: any) => r.status === 'approved').length}
               suffix="人"
-              valueStyle={{ color: '#52c41a', fontSize: 22, fontWeight: 600 }}
+              styles={{ content: { color: '#52c41a', fontSize: 22, fontWeight: 600 } }}
             />
           </Card>
         </Col>
@@ -995,7 +995,7 @@ const ResumesList: React.FC = () => {
               title={<span style={{ fontSize: 13 }}>已入职</span>}
               value={statsCompletedOnboard}
               suffix="人"
-              valueStyle={{ color: '#722ed1', fontSize: 22, fontWeight: 600 }}
+              styles={{ content: { color: '#722ed1', fontSize: 22, fontWeight: 600 } }}
             />
           </Card>
         </Col>
@@ -1195,7 +1195,7 @@ const ResumesList: React.FC = () => {
         confirmLoading={submitting}
         width={500}
         centered
-        destroyOnClose
+        destroyOnHidden
         okText="上传"
         cancelText="取消"
       >
@@ -1238,7 +1238,7 @@ const ResumesList: React.FC = () => {
         confirmLoading={submitting}
         width={700}
         centered
-        destroyOnClose
+        destroyOnHidden
         okText="确认"
         cancelText="取消"
       >
@@ -1416,7 +1416,7 @@ const ResumesList: React.FC = () => {
         onCancel={handleCancelPreview}
         width={800}
         centered
-        destroyOnClose
+        destroyOnHidden
         footer={[
           <Button key="cancel" onClick={handleCancelPreview}>
             取消
@@ -1519,7 +1519,7 @@ const ResumesList: React.FC = () => {
         onOk={handleSaveEvalDims}
         width={700}
         centered
-        destroyOnClose
+        destroyOnHidden
         okText="保存"
         cancelText="取消"
       >
@@ -1589,7 +1589,7 @@ const ResumesList: React.FC = () => {
         footer={null}
         width={800}
         centered
-        destroyOnClose
+        destroyOnHidden
       >
         <div style={{ marginBottom: 16 }}>
           <Text type="secondary">

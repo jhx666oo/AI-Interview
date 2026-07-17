@@ -469,7 +469,7 @@ const InterviewsList: React.FC = () => {
         confirmLoading={scheduling}
         okText="确认安排"
         width={520}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={scheduleForm} layout="vertical" preserve={false}>
           <Form.Item name="interview_date" label="面试日期">

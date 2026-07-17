@@ -176,7 +176,7 @@ const Dashboard: React.FC = () => {
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
-        <Spin size="large" tip="加载看板数据..." />
+        <Spin size="large" description="加载看板数据..." />
       </div>
     );
   }
@@ -403,7 +403,7 @@ const Dashboard: React.FC = () => {
         <Table
           dataSource={filteredPositions}
           columns={positionColumns}
-          rowKey={(_, idx) => String(idx)}
+          rowKey="position"
           size="small"
           pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
           scroll={{ x: 1400 }}

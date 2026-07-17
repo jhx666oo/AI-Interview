@@ -176,7 +176,7 @@ const ProbationList: React.FC = () => {
           scroll={{ x: 1100 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
       </Card>
       <Modal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
-        onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={560} destroyOnClose>
+        onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={560} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="employee_name" label="员工姓名" rules={[{ required: true, message: '请输入姓名' }]}>
             <Input />
@@ -200,7 +200,7 @@ const ProbationList: React.FC = () => {
         </Form>
       </Modal>
       <Modal title="添加月度评估" open={reviewVisible} onCancel={() => setReviewVisible(false)}
-        onOk={handleReviewSubmit} width={520} destroyOnClose>
+        onOk={handleReviewSubmit} width={520} destroyOnHidden>
         <Form form={reviewForm} layout="vertical">
           <Form.Item name="month" label="评估月份" rules={[{ required: true, message: '请输入月份' }]}>
             <Input placeholder="如：第1个月" />

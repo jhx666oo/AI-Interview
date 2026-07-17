@@ -216,7 +216,7 @@ const RequisitionsList: React.FC = () => {
       </Card>
 
       <Modal title={editing ? '编辑需求' : '提报人力需求'} open={modalVisible} onCancel={() => setModalVisible(false)}
-        onOk={handleSubmit} width={640} destroyOnClose>
+        onOk={handleSubmit} width={640} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Row gutter={16}>
             <Col span={12}>

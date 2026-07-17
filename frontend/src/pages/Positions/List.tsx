@@ -814,7 +814,7 @@ const PositionsList: React.FC = () => {
         confirmLoading={submitting}
         width={880}
         centered
-        destroyOnClose
+        destroyOnHidden
         okText="保存"
         cancelText="取消"
       >
@@ -999,7 +999,7 @@ const PositionsList: React.FC = () => {
         onOk={handleSaveDimensions}
         width={800}
         centered
-        destroyOnClose
+        destroyOnHidden
         okText="保存"
         cancelText="取消"
         confirmLoading={dimLoading}
@@ -1078,7 +1078,7 @@ const PositionsList: React.FC = () => {
 
       <Drawer
         title="岗位详情"
-        width={800}
+        size="large"
         onClose={() => setIsDrawerVisible(false)}
         open={isDrawerVisible}
         extra={
