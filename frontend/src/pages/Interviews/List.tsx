@@ -425,15 +425,16 @@ const InterviewsList: React.FC = () => {
         }
         extra={
           <Space>
-            <Input.Search
+            <Input
+              size="middle"
               placeholder="搜索候选人姓名"
+              prefix={<SearchOutlined />}
               allowClear
               style={{ width: 200 }}
               value={search}
               onChange={e => setSearch(e.target.value)}
-              onSearch={v => setSearch(v)}
             />
-            <Select placeholder="筛选" allowClear style={{ width: 200 }}
+            <Select size="middle" placeholder="筛选" allowClear style={{ width: 200 }}
               value={filterStatus} onChange={v => setFilterStatus(v)}>
               <Select.Option value="approved">已入库</Select.Option>
               <Select.Option value="pending_interview">待安排面试</Select.Option>
