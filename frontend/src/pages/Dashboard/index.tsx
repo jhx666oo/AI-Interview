@@ -405,7 +405,7 @@ const Dashboard: React.FC = () => {
           columns={positionColumns}
           rowKey="position"
           size="small"
-          pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+          pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 条` }}
           scroll={{ x: 1400 }}
           locale={{ emptyText: '暂无岗位数据' }}
         />
