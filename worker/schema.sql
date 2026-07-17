@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS positions (
   headcount INTEGER DEFAULT 1,
   hiring_manager_id TEXT,
   responsible_person TEXT DEFAULT '',
+  primary_interviewer TEXT DEFAULT '',
+  secondary_interviewer TEXT DEFAULT '',
   personalized_requirements TEXT DEFAULT '',
   capability_dimensions TEXT DEFAULT '[]',
   created_at TEXT DEFAULT (datetime('now')),
