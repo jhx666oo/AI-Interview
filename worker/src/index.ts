@@ -1528,6 +1528,88 @@ registerCrud('interviews', 'interviews', { position_id: 'eq', status: 'eq' });
 registerCrud('background-checks', 'background_checks', { status: 'eq' });
 registerCrud('onboarding', 'onboarding_records', { status: 'eq' });
 registerCrud('probation', 'probation_records', { status: 'eq', result: 'eq' });
+
+// ==================== Onboarding / Probation 数据同步 ====================
+
+// 从 approved 简历派生入职记录
+app.post('/api/onboarding/sync-from-resumes', authMiddleware, async (c) => {
+  const db = c.env.DB;
+  try {
+    // 获取所有状态为 approved 的简历
+    const approved = await db.prepare('SELECT id, candidate_name, position_id, status, created_at FROM resumes WHERE status = ?').bind('approved').all();
+    let created = 0;
+    let skipped = 0;
+    const now = new Date().toISOString();
+    const departments = ['技术部', '产品部', '运营部', '市场部', '设计部', '服务部'];
+
+    for (const r of approved.results) {
+      // 检查是否已存在入职记录（按 resume_id 去重）
+      const exist = await db.prepare('SELECT id FROM onboarding_records WHERE resume_id = ?').bind(r.id).first();
+      if (exist) { skipped++; continue; }
+
+      const id = 'ob_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      const dept = departments[Math.floor(Math.random() * departments.length)];
+      const empId = 'EMP' + String(created + 1).padStart(3, '0');
+
+      // 尝试从 positions 表获取岗位名称
+      let positionTitle = '待定';
+      if (r.position_id) {
+        const pos = await db.prepare('SELECT title FROM positions WHERE id = ?').bind(r.position_id).first() as any;
+        if (pos?.title) positionTitle = pos.title;
+      }
+
+      await db.prepare(`INSERT INTO onboarding_records
+        (id, resume_id, position_id, candidate_name, employee_id, onboard_date, department, position_title,
+         contract_signed, contract_type, accounts_created, equipment_assigned, orientation_completed, orientation_date, status, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`      ).bind(
+        id, r.id, r.position_id || '', r.candidate_name, empId,
+        new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10), dept,
+        positionTitle, 0, 'fixed_term', 0, 0, 0, null,
+        'pending', '从已通过候选人自动生成', now, now
+      ).run();
+      created++;
+    }
+    return c.json({ ok: true, message: `入职记录同步完成：新增 ${created} 条，跳过 ${skipped} 条`, created, skipped });
+  } catch (e: any) {
+    console.error(`[OnboardingSync] 失败: ${e.message}`);
+    return c.json({ detail: '同步失败: ' + e.message }, 500);
+  }
+});
+
+// 从已完成 (completed) 入职记录派生试用期记录
+app.post('/api/probation/sync-from-onboarding', authMiddleware, async (c) => {
+  const db = c.env.DB;
+  try {
+    const completed = await db.prepare('SELECT * FROM onboarding_records WHERE status = ?').bind('completed').all();
+    let created = 0;
+    let skipped = 0;
+    const now = new Date().toISOString();
+
+    for (const ob of completed.results) {
+      const exist = await db.prepare('SELECT id FROM probation_records WHERE onboarding_id = ?').bind(ob.id).first();
+      if (exist) { skipped++; continue; }
+
+      const id = 'pb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      const start = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const end = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+
+      await db.prepare(`INSERT INTO probation_records
+        (id, onboarding_id, resume_id, position_id, employee_name, employee_id,
+         probation_start, probation_end, probation_months, monthly_reviews, final_assessment, result, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        id, ob.id, ob.resume_id, ob.position_id || '', ob.candidate_name, ob.employee_id,
+        start, end, 3, '[]', null, 'pending',
+        '从已完成入职记录自动生成', now, now
+      ).run();
+      created++;
+    }
+    return c.json({ ok: true, message: `试用期记录同步完成：新增 ${created} 条，跳过 ${skipped} 条`, created, skipped, note: '提示：需要入职状态为 completed 才会生成试用期记录' });
+  } catch (e: any) {
+    console.error(`[ProbationSync] 失败: ${e.message}`);
+    return c.json({ detail: '同步失败: ' + e.message }, 500);
+  }
+});
+
 registerCrud('workflows', 'workflows', { status: 'eq' });
 registerCrud('workflow-nodes', 'workflow_nodes', { workflow_id: 'eq' });
 registerCrud('workflow-edges', 'workflow_edges', { workflow_id: 'eq' });

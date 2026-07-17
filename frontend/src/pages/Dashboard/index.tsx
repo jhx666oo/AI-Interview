@@ -43,6 +43,12 @@ interface DashboardOverview {
   divisions: DivisionData[];
 }
 
+interface DashboardApiResponse {
+  metrics: OverviewData;
+  funnel: { stages: FunnelStage[] };
+  recent_activities: any[];
+}
+
 interface PositionDetail {
   division: string;
   hrbp: string;
@@ -75,11 +81,30 @@ const Dashboard: React.FC = () => {
     if (showLoading) setLoading(true);
     else setRefreshing(true);
     try {
-      const [overviewRes, positionsRes] = await Promise.all([
-        request.get('/dashboard/overview'),
-        request.get('/dashboard/positions'),
-      ]);
-      setOverview(overviewRes);
+      const res = (await request.get('/dashboard/overview')) as DashboardApiResponse;
+      // 后端返回 {metrics, funnel, recent_activities}，前端用 DashboardOverview 格式
+      const overview: DashboardOverview = {
+        overview: {
+          active_positions: res.metrics.active_positions,
+          total_headcount: res.metrics.total_positions,
+          total_resumes: res.metrics.total_resumes,
+          scheduled_interviews: res.metrics.total_interviews,
+          push_conversion_rate: res.metrics.total_resumes > 0 ? Math.round(res.metrics.pending_resumes / res.metrics.total_resumes * 100) : 0,
+          interview_pass_rate: res.metrics.interview_pass_rate,
+          offers: res.metrics.total_offers,
+          offer_conversion_rate: res.metrics.offer_accept_rate,
+          hired: res.metrics.accepted_offers,
+          hire_conversion_rate: 0,
+          pending_onboarding: 0,
+          last_updated: new Date().toISOString(),
+        },
+        funnel: res.funnel,
+        divisions: [],
+      };
+      setOverview(overview);
+
+      // 加载岗位明细
+      const positionsRes = await request.get('/dashboard/positions');
       setPositions((positionsRes as any).positions || positionsRes);
     } catch (e: any) {
       console.error('Dashboard error:', e);
