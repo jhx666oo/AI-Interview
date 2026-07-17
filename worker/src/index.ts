@@ -669,7 +669,10 @@ app.get('/api/dashboard/funnel', authMiddleware, async (c) => {
   return c.json({ stages: result, total_resumes: totalResumes, conversion_rate: totalResumes > 0 ? Math.round((result[4].count / totalResumes) * 100) : 0 });
 });
 
-app.get('/api/dashboard/positions-detail', authMiddleware, async (c) => {
+app.get('/api/dashboard/positions', authMiddleware, dashboardPositionsHandler);
+app.get('/api/dashboard/positions-detail', authMiddleware, dashboardPositionsHandler);
+
+async function dashboardPositionsHandler(c: any) {
   const db = c.env.DB;
   const positions = await db.prepare(`SELECT * FROM positions ORDER BY created_at DESC`).all();
 
