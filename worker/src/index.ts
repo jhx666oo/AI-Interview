@@ -436,6 +436,12 @@ app.put('/api/auth/change-password', authMiddleware, async (c) => {
 // 飞书 OAuth 回调地址（硬编码，确保与飞书开放平台配置完全一致）
 const FEISHU_REDIRECT_URI = 'https://ai-interview-22u.pages.dev/api/auth/feishu-callback';
 
+// 飞书 OAuth：获取 app_id 等配置
+app.get('/api/auth/feishu/config', async (c) => {
+  const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
+  return c.json({ app_id: appId });
+});
+
 // 飞书 OAuth：获取授权链接
 app.get('/api/auth/feishu-oauth-url', authMiddleware, async (c) => {
   const user = c.get('user');

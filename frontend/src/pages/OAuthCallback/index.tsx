@@ -80,8 +80,13 @@ const OAuthCallback: React.FC = () => {
                 onClick={() => {
                   request.get('/auth/feishu/authorize-url').then((res: any) => {
                     if (res.url) window.location.href = res.url;
-                  }).catch(() => {
-                    const appId = 'cli_aace77019aba9cdb';
+                  }).catch(async () => {
+                    // 获取当前 app_id（不再硬编码）
+                    let appId = '';
+                    try {
+                      const config = await request.get('/auth/feishu/config') as any;
+                      appId = config.app_id || '';
+                    } catch { /* ignore */ }
                     const redirectUri = encodeURIComponent(window.location.origin + '/oauth/callback');
                     window.location.href = `https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=${appId}&redirect_uri=${redirectUri}`;
                   });
