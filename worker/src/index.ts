@@ -2537,60 +2537,38 @@ app.get('/api/resumes/:id/file', async (c) => {
     let candidateName = f['姓名'] || 'resume';
     let attachmentFileName = candidateName + '.pdf';
 
-    // 重新获取记录（带 need_resource=true 可拿到附件 tmp_url）
+    // 从 record.fields 中找附件数据（download_url 通过 batch API 下载）
     let fileToken = '', feishuDownloadUrl = '';
-    try {
-      const token = await getFeishuToken(c.env);
-      const appToken = c.env.FEISHU_BITABLE_APP_TOKEN || FEISHU_CONFIG.appToken;
-      const detailResp = await fetch(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}?need_resource=true`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      const detailData = await detailResp.json() as any;
-      const detailFields = detailData.data?.record?.fields || {};
-      // 遍历字段找附件 tmp_url
-      for (const [, fieldValue] of Object.entries(detailFields)) {
-        if (Array.isArray(fieldValue) && fieldValue.length > 0) {
-          const item = fieldValue[0];
-          if (item && typeof item === 'object') {
-            if (item.tmp_url || item.download_url) {
-              feishuDownloadUrl = item.tmp_url || item.download_url;
-              if (item.name) attachmentFileName = item.name;
-              if (item.file_token) fileToken = item.file_token;
-              break;
-            }
-            if (item.file_token) fileToken = item.file_token;
+    for (const [, fieldValue] of Object.entries(f)) {
+      if (Array.isArray(fieldValue) && fieldValue.length > 0) {
+        const item = fieldValue[0];
+        if (item && typeof item === 'object') {
+          if (item.download_url || item.tmp_url) {
+            feishuDownloadUrl = item.download_url || item.tmp_url;
             if (item.name) attachmentFileName = item.name;
+            if (item.file_token) fileToken = item.file_token;
+            break;
           }
+          if (item.file_token) { fileToken = item.file_token; if (item.name) attachmentFileName = item.name; }
         }
       }
-    } catch (e) {
-      console.log(`[ResumeFile] 获取附件详情失败: ${e}`);
     }
 
-    // 如果有 download_url（需先调 batch API 拿临时链接）或 tmp_url
+    // 通过 download_url（batch API）或 tmp_url 下载 PDF
     if (feishuDownloadUrl) {
       let actualDownloadUrl = feishuDownloadUrl;
-      // 如果是 batch_get_tmp_download_url，需要先 POST 换取真实下载链接
+      // batch_get_tmp_download_url 需先 POST 换取真实临时下载链接
       if (feishuDownloadUrl.includes('batch_get_tmp_download_url')) {
         try {
-          const batchToken = await getFeishuToken(c.env);
-          const batchResp = await fetch(feishuDownloadUrl, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${batchToken}` },
-          });
-          const batchData = await batchResp.json() as any;
-          if (batchData.code === 0 && batchData.data?.tmp_download_urls?.[0]?.tmp_download_url) {
-            actualDownloadUrl = batchData.data.tmp_download_urls[0].tmp_download_url;
+          const bt = await getFeishuToken(c.env);
+          const br = await fetch(feishuDownloadUrl, { method: 'POST', headers: { Authorization: `Bearer ${bt}` } });
+          const bd = await br.json() as any;
+          if (bd.code === 0 && bd.data?.tmp_download_urls?.[0]?.tmp_download_url) {
+            actualDownloadUrl = bd.data.tmp_download_urls[0].tmp_download_url;
           }
-        } catch (e) {
-          console.log(`[ResumeFile] batch_get_tmp_download_url 失败: ${e}`);
-        }
+        } catch (e) { console.log(`[ResumeFile] batch失败: ${e}`); }
       }
-      const dlResp = await fetch(actualDownloadUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        redirect: 'follow',
-      });
+      const dlResp = await fetch(actualDownloadUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, redirect: 'follow' });
       if (dlResp.ok) {
         const ct = dlResp.headers.get('Content-Type') || 'application/pdf';
         // 缓存到 D1
