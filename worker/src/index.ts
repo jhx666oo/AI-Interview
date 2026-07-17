@@ -2553,8 +2553,8 @@ app.get('/api/resumes/:id/file', async (c) => {
         if (Array.isArray(fieldValue) && fieldValue.length > 0) {
           const item = fieldValue[0];
           if (item && typeof item === 'object') {
-            if (item.tmp_url) {
-              feishuDownloadUrl = item.tmp_url;
+            if (item.tmp_url || item.download_url) {
+              feishuDownloadUrl = item.tmp_url || item.download_url;
               if (item.name) attachmentFileName = item.name;
               if (item.file_token) fileToken = item.file_token;
               break;
@@ -2568,9 +2568,26 @@ app.get('/api/resumes/:id/file', async (c) => {
       console.log(`[ResumeFile] 获取附件详情失败: ${e}`);
     }
 
-    // 如果有 tmp_url（预签名临时URL），直接下载
+    // 如果有 download_url（需先调 batch API 拿临时链接）或 tmp_url
     if (feishuDownloadUrl) {
-      const dlResp = await fetch(feishuDownloadUrl, {
+      let actualDownloadUrl = feishuDownloadUrl;
+      // 如果是 batch_get_tmp_download_url，需要先 POST 换取真实下载链接
+      if (feishuDownloadUrl.includes('batch_get_tmp_download_url')) {
+        try {
+          const batchToken = await getFeishuToken(c.env);
+          const batchResp = await fetch(feishuDownloadUrl, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${batchToken}` },
+          });
+          const batchData = await batchResp.json() as any;
+          if (batchData.code === 0 && batchData.data?.tmp_download_urls?.[0]?.tmp_download_url) {
+            actualDownloadUrl = batchData.data.tmp_download_urls[0].tmp_download_url;
+          }
+        } catch (e) {
+          console.log(`[ResumeFile] batch_get_tmp_download_url 失败: ${e}`);
+        }
+      }
+      const dlResp = await fetch(actualDownloadUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
         redirect: 'follow',
       });
