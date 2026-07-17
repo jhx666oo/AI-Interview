@@ -1001,50 +1001,45 @@ const ResumesList: React.FC = () => {
         </Col>
       </Row>
 
-        <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px' } }}>          <Form layout="inline" size="small">
-            <Form.Item label="候选人">
-              <Input
-                placeholder="请输入姓名"
-                value={searchName}
-                onChange={e => setSearchName(e.target.value)}
-                style={{ width: 200 }}
-                allowClear
-              />
-            </Form.Item>
-            <Form.Item label="状态">
-              <Select
-                placeholder="请选择状态"
-                value={searchStatus}
-                onChange={val => setSearchStatus(val)}
-                style={{ width: 200 }}
-                allowClear
-              >
-                <Select.Option value="pending_screening">待初筛</Select.Option>
-                <Select.Option value="approved">已入库</Select.Option>
-                <Select.Option value="rejected">已淘汰</Select.Option>
-              </Select>
-            </Form.Item>
-            <Form.Item label="负责人">
-              <Select
-                placeholder="全部负责人"
-                value={searchPerson}
-                onChange={val => { setSearchPerson(val); }}
-                style={{ width: 200 }}
-                allowClear
-                showSearch
-                optionFilterProp="children"
-              >
-                {responsiblePersons.map((name: string) => (
-                  <Select.Option key={name} value={name}>{name}</Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-            <Form.Item label="岗位">
-              <Select
-                placeholder="请选择岗位"
-                value={searchPosition}
-                onChange={val => setSearchPosition(val)}
-                style={{ width: 180 }}
+        <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px', overflow: 'visible' } }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+            <Space size={12} wrap>
+            <Input size="small"
+              placeholder="候选人姓名"
+              value={searchName}
+              onChange={e => setSearchName(e.target.value)}
+              style={{ width: 160 }}
+              allowClear
+            />
+            <Select size="small"
+              placeholder="状态"
+              value={searchStatus}
+              onChange={val => setSearchStatus(val)}
+              style={{ width: 140 }}
+              allowClear
+            >
+              <Select.Option value="pending_screening">待初筛</Select.Option>
+              <Select.Option value="approved">已入库</Select.Option>
+              <Select.Option value="rejected">已淘汰</Select.Option>
+            </Select>
+            <Select size="small"
+              placeholder="负责人"
+              value={searchPerson}
+              onChange={val => { setSearchPerson(val); }}
+              style={{ width: 140 }}
+              allowClear
+              showSearch
+              optionFilterProp="children"
+            >
+              {responsiblePersons.map((name: string) => (
+                <Select.Option key={name} value={name}>{name}</Select.Option>
+              ))}
+            </Select>
+            <Select size="small"
+              placeholder="岗位"
+              value={searchPosition}
+              onChange={val => setSearchPosition(val)}
+              style={{ width: 140 }}
                 allowClear
                 showSearch
                 optionFilterProp="children"
@@ -1053,30 +1048,18 @@ const ResumesList: React.FC = () => {
                   <Select.Option key={p.id || p.title} value={p.title}>{p.title}</Select.Option>
                 ))}
               </Select>
-            </Form.Item>
             {selectedRowKeys.length > 0 && (
               <>
-                <Form.Item>
-                  <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
-                </Form.Item>
-                <Form.Item>
-                  <Button danger onClick={handleBatchReject}>批量淘汰</Button>
-                </Form.Item>
-                <Form.Item>
-                  <Button danger onClick={handleBatchDelete}>批量删除</Button>
-                </Form.Item>
-                <Form.Item>
-                  <Button onClick={() => setSelectedRowKeys([])}>取消选择</Button>
-                </Form.Item>
+                <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
+                <Button danger size="small" onClick={handleBatchReject}>批量淘汰</Button>
+                <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
+                <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
               </>
             )}
-            <Form.Item>
-              <Space>
-                <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
-                <Button onClick={handleReset}>重置</Button>
-              </Space>
-            </Form.Item>
-          </Form>
+            <Button type="primary" size="small" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
+            <Button size="small" onClick={handleReset}>重置</Button>
+            </Space>
+          </div>
         </Card>
 
       {/* 候选人卡片列表 */}
