@@ -1171,6 +1171,7 @@ function parseTalentRecord(record: any): any {
     age: f['年龄'] || null,
     education: getFirstValue(f['学历']) || '',
     ai_evaluation: aiEvalStr,
+    ai_review: aiEvalStr, // 兼容前端两个字段名
     screening_result: getFirstValue(f['AI简历初筛结果']) || '',
     advantage: advantageStr,
     risk: riskStr,
@@ -1185,14 +1186,35 @@ function parseTalentRecord(record: any): any {
     hr_pass_date: f['HR初筛通过日期'] || null,
     create_time: f['创建时间'] || null,
     status: mapHrReviewToStatus(getFirstValue(f['HR复核结果']) || ''),
-    match_score: extractScoreFromEval(aiEvalStr),
+    match_score: mapAIResultToScore(getFirstValue(f['AI简历初筛结果']) || '', aiEvalStr),
     feishu_record_id: record.record_id,
     email: getFirstValue(f['SourceID']) || '',
     // 保留原始字段以便扩展
     _raw_fields: f,
     // 简历附件信息（原始 PDF）
     resume_file: extractResumeFile(f['简历附件-批量导入']),
+    // 构造 parsed_data 供前端 Descriptions 使用
+    parsed_data: {
+      highest_degree: getFirstValue(f['学历']) || '',
+      school: '',
+      major: '',
+      years_of_experience: f['年龄'] ? Math.max(0, (f['年龄'] as number) - 22) : null,
+      recent_company: '',
+      contact: '',
+    },
   };
+}
+
+// 将 AI 初筛结果 + 评估文本映射为匹配度分数
+function mapAIResultToScore(screeningResult: string, aiEvalText: string): number {
+  const r = (screeningResult || '').trim();
+  if (r.includes('通过')) return 85;
+  if (r.includes('淘汰')) return 25;
+  if (r.includes('存疑')) return 55;
+  // 从文本中尝试提取分数
+  const extracted = extractScoreFromEval(aiEvalText);
+  if (extracted !== null && extracted >= 0 && extracted <= 100) return extracted;
+  return 50; // 默认中间值
 }
 
 // 从 Bitable 附件字段提取简历文件信息
