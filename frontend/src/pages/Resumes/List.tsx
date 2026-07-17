@@ -1067,7 +1067,7 @@ const ResumesList: React.FC = () => {
                 <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
               </>
             )}
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ marginLeft: 24, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ width: 1, height: 20, background: '#E2E8F0' }} />
               <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
               <Button onClick={handleReset}>重置</Button>
