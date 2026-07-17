@@ -124,7 +124,8 @@ CREATE TABLE IF NOT EXISTS interviews (
   status2 TEXT DEFAULT 'pending',
   suggestion TEXT,
   status TEXT DEFAULT 'scheduled',
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT
 );
 
 -- Interview Panels

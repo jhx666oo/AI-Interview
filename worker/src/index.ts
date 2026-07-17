@@ -1526,18 +1526,16 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
         // 更新
         await c.env.DB.prepare(
           `UPDATE positions SET 
-            department = ?, department_3rd = ?, city = ?, headcount = ?,
+            department = ?, location = ?, headcount = ?,
             urgency = ?, status = ?, description = ?, requirements = ?,
             responsible_person = ?, salary_range = ?,
-            primary_interviewer = ?, secondary_interviewer = ?,
             updated_at = ?
            WHERE id = ?`
         ).bind(
-          parsed.department || '', parsed.department_3rd || '', parsed.city || '',
+          parsed.department || '', parsed.city || '',
           parsed.headcount || 1, parsed.urgency || 'normal', parsed.status || 'open',
           parsed.description || '', parsed.requirements || '',
           parsed.responsible_person || '', parsed.salary_range || '',
-          parsed.primary_interviewer || '杜雁玲', parsed.secondary_interviewer || '何雨菱',
           now(), existing.id
         ).run();
         updated++;
@@ -1545,18 +1543,16 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
         // 新建
         const id = uuid();
         await c.env.DB.prepare(
-          `INSERT INTO positions (id, title, department, department_3rd, city, headcount, 
+          `INSERT INTO positions (id, title, department, location, headcount, 
             urgency, status, description, requirements, responsible_person, salary_range,
-            primary_interviewer, secondary_interviewer,
             created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           id, title,
-          parsed.department || '', parsed.department_3rd || '', parsed.city || '',
+          parsed.department || '', parsed.city || '',
           parsed.headcount || 1, parsed.urgency || 'normal', parsed.status || 'open',
           parsed.description || '', parsed.requirements || '',
           parsed.responsible_person || '', parsed.salary_range || '',
-          parsed.primary_interviewer || '杜雁玲', parsed.secondary_interviewer || '何雨菱',
           now(), now()
         ).run();
         created++;
@@ -1660,6 +1656,57 @@ app.post('/api/probation/sync-from-onboarding', authMiddleware, async (c) => {
     return c.json({ ok: true, message: `试用期记录同步完成：新增 ${created} 条，跳过 ${skipped} 条`, created, skipped, note: '提示：需要入职状态为 completed 才会生成试用期记录' });
   } catch (e: any) {
     console.error(`[ProbationSync] 失败: ${e.message}`);
+    return c.json({ detail: '同步失败: ' + e.message }, 500);
+  }
+});
+
+// 从 approved 简历派生面试记录
+app.post('/api/interviews/sync-from-resumes', authMiddleware, async (c) => {
+  const db = c.env.DB;
+  try {
+    // 获取已 approved 的简历（已通过 AI 初筛 + HR 复核）
+    const approved = await db.prepare("SELECT id, candidate_name, position_id FROM resumes WHERE status = 'approved'").all();
+    // 获取所有岗位作为可选面试岗位
+    const positions = await db.prepare("SELECT id, title FROM positions LIMIT 20").all();
+    const posList = positions.results as any[];
+    const rounds = [1, 2, 3]; // 一面/二面/终面
+    let created = 0, skipped = 0;
+    const now = new Date().toISOString();
+
+    for (const r of approved.results) {
+      // 检查是否已存在面试记录
+      const exist = await db.prepare('SELECT id FROM interviews WHERE resume_id = ?').bind(r.id).first();
+      if (exist) { skipped++; continue; }
+
+      // 匹配岗位：优先使用简历关联的 position_id，否则随机分配
+      let posId = r.position_id;
+      let posTitle = '';
+      if (!posId && posList.length > 0) {
+        const randPos = posList[Math.floor(Math.random() * posList.length)];
+        posId = randPos.id;
+        posTitle = randPos.title;
+      } else if (posId) {
+        const p = posList.find(x => x.id === posId);
+        posTitle = p?.title || '';
+      }
+
+      // 为每个 approved 简历创建一面记录
+      const round = rounds[Math.floor(Math.random() * rounds.length)];
+      const interviewDays = Math.floor(Math.random() * 14) + 1;
+      const interviewDate = new Date(Date.now() + interviewDays * 86400000).toISOString().replace('T', ' ').slice(0, 19);
+      const types = ['onsite', 'video', 'phone'];
+      const locations = ['公司会议室A', '公司会议室B', '线上视频面试', '电话面试'];
+
+      const id = 'iv_fs_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+
+      await db.prepare(`INSERT INTO interviews (id, resume_id, position_id, interviewer, round, interview_time, interview_type, interview_location, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)`)
+        .bind(id, r.id, posId, '', round, interviewDate, types[round - 1], locations[round - 1], now, now).run();
+      created++;
+    }
+    return c.json({ ok: true, message: `面试记录同步完成：新增 ${created} 条，跳过 ${skipped} 条`, created, skipped, source: 'approved 简历' });
+  } catch (e: any) {
+    console.error(`[InterviewSync] 失败: ${e.message}`);
     return c.json({ detail: '同步失败: ' + e.message }, 500);
   }
 });
