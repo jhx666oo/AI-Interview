@@ -9,6 +9,7 @@ import {
   ThunderboltOutlined, LoadingOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 
 const { Title } = Typography;
@@ -39,6 +40,7 @@ const RequisitionsList: React.FC = () => {
   const [searchDept, setSearchDept] = useState('');
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
   const [aiLoading, setAiLoading] = useState<string | null>(null);
+  const { selectedOwner } = useOwner();
 
   const handleAIJD = async (id: string) => {
     setAiLoading(id);
@@ -63,6 +65,7 @@ const RequisitionsList: React.FC = () => {
       const params: any = {};
       if (searchDept) params.department = searchDept;
       if (filterStatus) params.status = filterStatus;
+      if (selectedOwner) params.responsible_person = selectedOwner;
       const res = await request.get('/requisitions', { params });
       setData(res || []);
     } catch (e) {
@@ -70,7 +73,7 @@ const RequisitionsList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchDept, filterStatus]);
+  }, [searchDept, filterStatus, selectedOwner]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

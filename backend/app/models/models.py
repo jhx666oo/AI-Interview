@@ -145,7 +145,7 @@ class Resume(Base):
     # 其他岗位匹配信息（用于候选人更适合其他岗位的情况）
     other_position_matches = Column(JSON, nullable=True)
     # 淘汰相关字段
-    reject_reason_category = Column(Enum(RejectReasonCategory, values_callable=lambda obj: [e.value for e in obj]), nullable=True)
+    reject_reason_category = Column(Enum(RejectReasonCategory), nullable=True)
     reject_reason_detail = Column(Text, nullable=True)
     rejected_at = Column(DateTime, nullable=True)
     rejected_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
@@ -180,19 +180,19 @@ class DepartmentReview(Base):
     reviewer = relationship("User")
 
 class InterviewResult(str, enum.Enum):
-    PENDING = "pending"
-    PASSED = "passed"
-    REJECTED = "rejected"
-    WAITLIST = "waitlist"
-    HIRED = "hired"  # 录用
-    NEXT_ROUND = "next_round"  # 进入下一轮
+    PENDING = "PENDING"
+    PASSED = "PASSED"
+    REJECTED = "REJECTED"
+    WAITLIST = "WAITLIST"
+    HIRED = "HIRED"  # 录用
+    NEXT_ROUND = "NEXT_ROUND"  # 进入下一轮
 
 class InterviewStatus(str, enum.Enum):
-    SCHEDULED = "scheduled"
-    IN_PROGRESS = "in_progress"
-    ANALYZING = "analyzing"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
+    SCHEDULED = "SCHEDULED"
+    IN_PROGRESS = "IN_PROGRESS"
+    ANALYZING = "ANALYZING"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 class Interview(Base):
     __tablename__ = "interviews"
@@ -216,10 +216,10 @@ class Interview(Base):
     panel_members = Column(JSON) # List of user IDs for the panel
     audio_records = Column(JSON) # Audio file paths per question (aggregated or primary)
     transcripts = Column(JSON) # Transcribed text per question (aggregated or primary)
-    result = Column(Enum(InterviewResult, values_callable=lambda obj: [e.value for e in obj]), default=InterviewResult.PENDING)
+    result = Column(Enum(InterviewResult), default=InterviewResult.PENDING)
     evaluation = Column(Text)
     suggestion = Column(Text)
-    status = Column(Enum(InterviewStatus, values_callable=lambda obj: [e.value for e in obj]), default=InterviewStatus.SCHEDULED)
+    status = Column(Enum(InterviewStatus), default=InterviewStatus.SCHEDULED)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     resume = relationship("Resume")
@@ -246,13 +246,13 @@ class InterviewPanel(Base):
     interviewer_user = relationship("User")
 
 class OfferStatus(str, enum.Enum):
-    DRAFT = "draft"
-    PENDING = "pending"
-    SENT = "sent"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
-    EXPIRED = "expired"
-    WITHDRAWN = "withdrawn"
+    DRAFT = "DRAFT"
+    PENDING = "PENDING"
+    SENT = "SENT"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+    WITHDRAWN = "WITHDRAWN"
 
 class Offer(Base):
     __tablename__ = "offers"
@@ -338,14 +338,14 @@ class OfferTemplate(Base):
     creator = relationship("User")
 
 class CodingTestStatus(str, enum.Enum):
-    DRAFT = "draft"
-    PUBLISHED = "published"
-    CLOSED = "closed"
+    DRAFT = "DRAFT"
+    PUBLISHED = "PUBLISHED"
+    CLOSED = "CLOSED"
 
 class CodingTestType(str, enum.Enum):
-    ALGORITHM = "algorithm"
-    CHOICE = "choice"
-    ESSAY = "essay"
+    ALGORITHM = "ALGORITHM"
+    CHOICE = "CHOICE"
+    ESSAY = "ESSAY"
 
 class CodingTest(Base):
     __tablename__ = "coding_tests"
@@ -379,9 +379,9 @@ class CodingTest(Base):
     submissions = relationship("CodingSubmission", back_populates="coding_test")
 
 class CodingSubmissionStatus(str, enum.Enum):
-    DRAFT = "draft"
-    SUBMITTED = "submitted"
-    EVALUATED = "evaluated"
+    DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
+    EVALUATED = "EVALUATED"
 
 class CodingSubmission(Base):
     __tablename__ = "coding_submissions"

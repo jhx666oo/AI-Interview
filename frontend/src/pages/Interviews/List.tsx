@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
+import { useOwner } from '../../contexts/OwnerContext';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -58,6 +59,7 @@ interface MergedRow {
 
 const InterviewsList: React.FC = () => {
   const { user } = useAuth();
+  const { selectedOwner } = useOwner();
   const [data, setData] = useState<MergedRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
@@ -86,7 +88,7 @@ const InterviewsList: React.FC = () => {
       // 同时拉候选人 + 面试记录
       const [candidates, interviews] = await Promise.all([
         request.get('/talent-pool', { params: { candidate_name: search || undefined } }).catch(() => []),
-        request.get('/interviews').catch(() => []),
+        request.get('/interviews', { params: { owner_name: selectedOwner || undefined } }).catch(() => []),
       ]);
 
       // 构建 interview 索引（按 resume_id/feishu_record_id/候选人名 关联）
@@ -148,7 +150,7 @@ const InterviewsList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [search, filterStatus]);
+  }, [search, filterStatus, selectedOwner]);
 
   useEffect(() => { fetchMergedData(); }, [fetchMergedData]);
 
@@ -251,6 +253,7 @@ const InterviewsList: React.FC = () => {
         position_applied: record.position_applied || record.position || '',
         city: record.city || '',
         interviewer_name: name,
+        interview_time: record.interview_time || '',
       });
       message.success(`已提醒面试官：${name}`);
     } catch (e: any) {

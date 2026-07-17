@@ -77,10 +77,10 @@ const Dashboard: React.FC = () => {
     try {
       const [overviewRes, positionsRes] = await Promise.all([
         request.get('/dashboard/overview'),
-        request.get('/dashboard/positions-detail'),
+        request.get('/dashboard/positions'),
       ]);
       setOverview(overviewRes);
-      setPositions(positionsRes);
+      setPositions((positionsRes as any).positions || positionsRes);
     } catch (e: any) {
       console.error('Dashboard error:', e);
       message.error('获取看板数据失败: ' + (e.response?.data?.detail || e.message));

@@ -10,17 +10,17 @@ from sqlalchemy.orm import relationship
 # New models for comprehensive recruitment workflow
 
 class RequisitionStatus(str, enum.Enum):
-    DRAFT = "draft"
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    CLOSED = "closed"
+    DRAFT = "DRAFT"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CLOSED = "CLOSED"
 
 class RequisitionUrgency(str, enum.Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    URGENT = "urgent"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    URGENT = "URGENT"
 
 class JobRequisition(Base):
     """人力需求提报"""
@@ -33,14 +33,14 @@ class JobRequisition(Base):
     employment_type = Column(String, default="full_time")
     salary_range = Column(String)
     budget = Column(Float)
-    urgency = Column(Enum(RequisitionUrgency, values_callable=lambda obj: [e.value for e in obj]), default=RequisitionUrgency.MEDIUM)
+    urgency = Column(Enum(RequisitionUrgency), default=RequisitionUrgency.MEDIUM)
     expected_date = Column(DateTime)
     description = Column(Text)
     requirements = Column(Text)
     reporting_to = Column(String)
     requested_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     position_id = Column(UUID(as_uuid=True), ForeignKey("positions.id"), nullable=True)
-    status = Column(Enum(RequisitionStatus, values_callable=lambda obj: [e.value for e in obj]), default=RequisitionStatus.DRAFT)
+    status = Column(Enum(RequisitionStatus), default=RequisitionStatus.DRAFT)
     approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     approved_at = Column(DateTime, nullable=True)
     rejection_reason = Column(Text, nullable=True)
@@ -54,13 +54,13 @@ class JobRequisition(Base):
 
 
 class ChannelType(str, enum.Enum):
-    INTERNAL_REFERRAL = "internal_referral"
-    JOB_PLATFORM = "job_platform"
-    CAMPUS = "campus"
-    HEADHUNTER = "headhunter"
-    OFFLINE = "offline"
-    SHORT_VIDEO = "short_video"
-    TALENT_POOL = "talent_pool"
+    INTERNAL_REFERRAL = "INTERNAL_REFERRAL"
+    JOB_PLATFORM = "JOB_PLATFORM"
+    CAMPUS = "CAMPUS"
+    HEADHUNTER = "HEADHUNTER"
+    OFFLINE = "OFFLINE"
+    SHORT_VIDEO = "SHORT_VIDEO"
+    TALENT_POOL = "TALENT_POOL"
 
 class RecruitmentChannel(Base):
     """招聘渠道管理"""
@@ -68,7 +68,7 @@ class RecruitmentChannel(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
-    channel_type = Column(Enum(ChannelType, values_callable=lambda obj: [e.value for e in obj]), default=ChannelType.JOB_PLATFORM)
+    channel_type = Column(Enum(ChannelType), default=ChannelType.JOB_PLATFORM)
     position_id = Column(UUID(as_uuid=True), ForeignKey("positions.id"), nullable=True)
     url = Column(String, nullable=True)
     contact = Column(String, nullable=True)
@@ -84,10 +84,10 @@ class RecruitmentChannel(Base):
 
 
 class TalentPoolStatus(str, enum.Enum):
-    AVAILABLE = "available"
-    CONTACTED = "contacted"
-    PLACED = "placed"
-    BLACKLISTED = "blacklisted"
+    AVAILABLE = "AVAILABLE"
+    CONTACTED = "CONTACTED"
+    PLACED = "PLACED"
+    BLACKLISTED = "BLACKLISTED"
 
 class TalentPoolEntry(Base):
     """人才库沉淀"""
@@ -105,7 +105,7 @@ class TalentPoolEntry(Base):
     expected_salary = Column(String)
     source = Column(String)
     tags = Column(ARRAY(String))
-    status = Column(Enum(TalentPoolStatus, values_callable=lambda obj: [e.value for e in obj]), default=TalentPoolStatus.AVAILABLE)
+    status = Column(Enum(TalentPoolStatus), default=TalentPoolStatus.AVAILABLE)
     notes = Column(Text)
     last_contacted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -115,15 +115,15 @@ class TalentPoolEntry(Base):
 
 
 class BackgroundCheckStatus(str, enum.Enum):
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 class BackgroundCheckResult(str, enum.Enum):
-    PASSED = "passed"
-    FAILED = "failed"
-    CONCERNS = "concerns"
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    CONCERNS = "CONCERNS"
 
 class BackgroundCheck(Base):
     """背景调查"""
@@ -133,12 +133,12 @@ class BackgroundCheck(Base):
     resume_id = Column(UUID(as_uuid=True), ForeignKey("resumes.id"), nullable=False)
     position_id = Column(UUID(as_uuid=True), ForeignKey("positions.id"), nullable=True)
     candidate_name = Column(String, nullable=False)
-    status = Column(Enum(BackgroundCheckStatus, values_callable=lambda obj: [e.value for e in obj]), default=BackgroundCheckStatus.PENDING)
+    status = Column(Enum(BackgroundCheckStatus), default=BackgroundCheckStatus.PENDING)
     work_verification = Column(JSON)
     education_verification = Column(JSON)
     reference_check = Column(JSON)
     criminal_check = Column(Text, nullable=True)
-    overall_result = Column(Enum(BackgroundCheckResult, values_callable=lambda obj: [e.value for e in obj]), nullable=True)
+    overall_result = Column(Enum(BackgroundCheckResult), nullable=True)
     conducted_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     conducted_at = Column(DateTime, nullable=True)
     report_path = Column(String, nullable=True)
@@ -152,10 +152,10 @@ class BackgroundCheck(Base):
 
 
 class OnboardingStatus(str, enum.Enum):
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    WITHDRAWN = "withdrawn"
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    WITHDRAWN = "WITHDRAWN"
 
 class OnboardingRecord(Base):
     """入职管理"""
@@ -178,7 +178,7 @@ class OnboardingRecord(Base):
     mentor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     orientation_completed = Column(Boolean, default=False)
     orientation_date = Column(DateTime, nullable=True)
-    status = Column(Enum(OnboardingStatus, values_callable=lambda obj: [e.value for e in obj]), default=OnboardingStatus.PENDING)
+    status = Column(Enum(OnboardingStatus), default=OnboardingStatus.PENDING)
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -190,10 +190,10 @@ class OnboardingRecord(Base):
 
 
 class ProbationResult(str, enum.Enum):
-    PENDING = "pending"
-    CONFIRMED = "confirmed"
-    EXTENDED = "extended"
-    TERMINATED = "terminated"
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    EXTENDED = "EXTENDED"
+    TERMINATED = "TERMINATED"
 
 class ProbationRecord(Base):
     """试用期跟踪与转正"""
@@ -210,7 +210,7 @@ class ProbationRecord(Base):
     probation_months = Column(Integer, default=3)
     monthly_reviews = Column(JSON)
     final_assessment = Column(Text, nullable=True)
-    result = Column(Enum(ProbationResult, values_callable=lambda obj: [e.value for e in obj]), default=ProbationResult.PENDING)
+    result = Column(Enum(ProbationResult), default=ProbationResult.PENDING)
     confirmed_at = Column(DateTime, nullable=True)
     confirmed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     new_title = Column(String, nullable=True)

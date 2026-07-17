@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge } from 'antd';
+import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress } from 'antd';
 import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -44,6 +45,7 @@ const ResumesList: React.FC = () => {
   const [searchPerson, setSearchPerson] = useState<string | undefined>(undefined);
   const [responsiblePersons, setResponsiblePersons] = useState<string[]>([]);
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
+  const { selectedOwner } = useOwner();
   const fetchResponsiblePersons = async () => {
     try {
       const res = await request.get('/positions');
@@ -253,7 +255,8 @@ const ResumesList: React.FC = () => {
       const params: any = {};
       if (searchName) params.candidate_name = searchName;
       if (searchStatus) params.status = searchStatus;
-      if (searchPerson) params.responsible_person = searchPerson;
+      const personFilter = searchPerson || selectedOwner;
+      if (personFilter) params.responsible_person = personFilter;
 
       // 不再区分 role，统一显示全部
 
@@ -376,6 +379,11 @@ const ResumesList: React.FC = () => {
     fetchCapDims();
     fetchEvalDims();
   }, []);
+
+  // 全局负责人筛选变化时自动刷新
+  useEffect(() => {
+    fetchResumes();
+  }, [selectedOwner]);
 
   const handleSearch = () => {
     setCardPage(1);
@@ -929,31 +937,29 @@ const ResumesList: React.FC = () => {
           <Title level={3} style={{ margin: 0, fontWeight: 600 }}>简历管理</Title>
           <Text type="secondary" style={{ fontSize: 13 }}>管理候选人简历及面试流程</Text>
         </div>
-        <Space size="small">
-          <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
-            {pollingEnabled ? '解析中...' : '从飞书导入'}
-          </Button>
-          <Button size="small" icon={<RobotOutlined />} onClick={handleAutoEvaluateAll}
-            title="从PDF提取文本 → AI评分维度 → 保存显示（跳过已有评估的简历）">
-            AI自动评估
-          </Button>
-          <Button size="small" icon={<RobotOutlined />} onClick={handleBatchAIEvaluate}>
-            AI批量评估
-          </Button>
-          <Button size="small" icon={<SyncOutlined />} onClick={handleBatchReparse}>
-            全部重解析
-          </Button>
-          <Button size="small" danger icon={<CloseCircleOutlined />} onClick={handleClearRejected}>
-            清除已淘汰
-          </Button>
+        <Space size="small" wrap>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
           <Button icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
+          <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
+            {pollingEnabled ? '解析中...' : '刷新数据'}
+          </Button>
+          <Dropdown menu={{
+            items: [
+              { key: 'auto', label: 'AI 自动评估', icon: <RobotOutlined />, onClick: handleAutoEvaluateAll },
+              { key: 'batch', label: 'AI 批量评估', icon: <RobotOutlined />, onClick: handleBatchAIEvaluate },
+              { key: 'reparse', label: '全部重解析', icon: <SyncOutlined />, onClick: handleBatchReparse },
+              { type: 'divider' },
+              { key: 'clear', label: '清除已淘汰', icon: <CloseCircleOutlined />, danger: true, onClick: handleClearRejected },
+            ]
+          }}>
+            <Button size="small" icon={<RobotOutlined />}>AI 工具</Button>
+          </Dropdown>
         </Space>
       </div>
 
-      {/* 统计卡片 */}
+      {/* 统计卡片：精简为 4 项 */}
       <Row gutter={12} style={{ marginBottom: 16 }}>
-        <Col span={4}>
+        <Col span={6}>
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>总简历数</span>}
@@ -963,53 +969,33 @@ const ResumesList: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={4}>
+        <Col span={6}>
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
-              title={<span style={{ fontSize: 13 }}>简历初筛</span>}
-              value={data.filter((r: any) => r.status === 'approved' || r.status === 'rejected').length}
+              title={<span style={{ fontSize: 13 }}>待处理</span>}
+              value={data.filter((r: any) => r.status === 'pending_screening').length}
               suffix="人"
-              valueStyle={{ color: '#722ed1', fontSize: 22, fontWeight: 600 }}
+              valueStyle={{ color: '#fa8c16', fontSize: 22, fontWeight: 600 }}
             />
           </Card>
         </Col>
-        <Col span={4}>
+        <Col span={6}>
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
-              title={<span style={{ fontSize: 13 }}>面试</span>}
+              title={<span style={{ fontSize: 13 }}>已入库</span>}
               value={data.filter((r: any) => r.status === 'approved').length}
               suffix="人"
               valueStyle={{ color: '#52c41a', fontSize: 22, fontWeight: 600 }}
             />
           </Card>
         </Col>
-        <Col span={4}>
-          <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
-            <Statistic
-              title={<span style={{ fontSize: 13 }}>Offer沟通</span>}
-              value={statsOffer}
-              suffix="人"
-              valueStyle={{ color: '#fa8c16', fontSize: 22, fontWeight: 600 }}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
-            <Statistic
-              title={<span style={{ fontSize: 13 }}>待入职</span>}
-              value={statsPendingOnboard}
-              suffix="人"
-              valueStyle={{ color: '#1677ff', fontSize: 22, fontWeight: 600 }}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
+        <Col span={6}>
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>已入职</span>}
               value={statsCompletedOnboard}
               suffix="人"
-              valueStyle={{ color: '#52c41a', fontSize: 22, fontWeight: 600 }}
+              valueStyle={{ color: '#722ed1', fontSize: 22, fontWeight: 600 }}
             />
           </Card>
         </Col>
@@ -1135,9 +1121,11 @@ const ResumesList: React.FC = () => {
                       onClick={e => e.stopPropagation()}
                     />
                     <span style={{ fontWeight: 600, fontSize: 15 }}>{record.candidate_name || '未知'}</span>
-                    <span style={{ color: '#8c8c8c', fontSize: 12 }}>
-                      {[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '—'}
-                    </span>
+                    <Tooltip title={[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '暂无信息'}>
+                      <span style={{ color: '#bfbfbf', fontSize: 12, cursor: 'default', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {[genderText, ageText, record.education].filter(Boolean).join(' · ') || '—'}
+                      </span>
+                    </Tooltip>
                     {record.position_applied && (
                       <Tag style={{ margin: 0 }}>{record.standard_position || record.position_applied}</Tag>
                     )}
@@ -1147,7 +1135,7 @@ const ResumesList: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* 底部：AI 评估条件 — 竖排 */}
+                  {/* AI 评估维度 — 横向标签式 */}
                   {scoreDetails && scoreDetails.length > 0 && (
                     <div style={{ marginTop: 4 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -1158,19 +1146,19 @@ const ResumesList: React.FC = () => {
                           <span style={{ fontSize: 12, color: '#8c8c8c' }}>综合分 {totalScore}</span>
                         )}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start', paddingLeft: 4 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 4 }}>
                         {scoreDetails.map((d: any, i: number) => {
                           const isMatch = d.score >= 3;
-                          const dimKey = `${record.id}_${i}`;
+                          const color = d.score >= 4 ? '#52c41a' : d.score >= 3 ? '#1677ff' : d.score >= 2 ? '#fa8c16' : '#ff4d4f';
                           return (
-                            <HoverDetail
-                              key={i}
-                              dimKey={dimKey}
-                              isMatch={isMatch}
-                              name={d.name}
-                              score={d.score}
-                              reason={d.reason}
-                            />
+                            <Tooltip key={i} title={d.reason || d.name}>
+                              <Tag
+                                color={isMatch ? (d.score >= 4 ? 'green' : 'blue') : (d.score >= 2 ? 'orange' : 'red')}
+                                style={{ margin: 0, cursor: 'pointer', fontSize: 11, lineHeight: '18px' }}
+                              >
+                                {d.name} {d.score}/5
+                              </Tag>
+                            </Tooltip>
                           );
                         })}
                       </div>

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Table, Button, Space, message, Modal, Form, Input, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useOwner } from '../../contexts/OwnerContext';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -93,6 +94,7 @@ const PositionsList: React.FC = () => {
   const [searchStatus, setSearchStatus] = useState<string | undefined>(undefined);
   const [syncLoading, setSyncLoading] = useState(false);
   const [deduping, setDeduping] = useState(false);
+  const { selectedOwner } = useOwner();
 
   // 检测重复岗位
   const duplicateGroups = useMemo(() => {
@@ -166,7 +168,8 @@ const PositionsList: React.FC = () => {
       const res = await request.get('/positions', {
           params: {
               title: searchTitle,
-              status: searchStatus
+              status: searchStatus,
+              responsible_person: selectedOwner || undefined,
           }
       });
       setData(res);
@@ -191,7 +194,7 @@ const PositionsList: React.FC = () => {
     fetchUsers();
     fetchDimensionsMap();
     fetchAllDimNames();
-  }, [searchTitle, searchStatus]);
+  }, [searchTitle, searchStatus, selectedOwner]);
 
   const fetchAllDimNames = async () => {
     try {
@@ -543,13 +546,16 @@ const PositionsList: React.FC = () => {
       title: '岗位名称',
       dataIndex: 'title', 
       key: 'title',
+      width: 180,
+      fixed: 'left' as const,
       render: (text: string) => <span style={{ fontWeight: 500, color: '#0F172A' }}>{text}</span>
     },
-    { title: '部门', dataIndex: 'department', key: 'department', render: (v: string) => v || '-' },
+    { title: '部门', dataIndex: 'department', key: 'department', width: 100, render: (v: string) => v || '-' },
     { 
       title: '类型', 
       dataIndex: 'position_type', 
       key: 'position_type',
+      width: 90,
       render: (type: string) => {
         const config = positionTypeConfig[type] || { color: 'default', text: type };
         return <Tag color={config.color} style={{ border: 'none' }}>{config.text}</Tag>;
@@ -559,6 +565,7 @@ const PositionsList: React.FC = () => {
       title: '紧急度', 
       dataIndex: 'urgency', 
       key: 'urgency',
+      width: 80,
       render: (urgency: string) => {
         const config = urgencyConfig[urgency] || { color: 'default', text: urgency };
         return <Tag color={config.color} style={{ border: 'none' }}>{config.text}</Tag>;
@@ -568,6 +575,7 @@ const PositionsList: React.FC = () => {
       title: '状态', 
       dataIndex: 'status', 
       key: 'status',
+      width: 80,
       render: (status: string) => {
         let color = 'default';
         let text = '已关闭';
@@ -584,12 +592,14 @@ const PositionsList: React.FC = () => {
     { 
       title: '招聘进度', 
       key: 'stats',
+      width: 130,
       render: (_: any, record: Position) => renderStats(record.stats)
     },
     { 
       title: '责任人', 
       dataIndex: 'responsible_person', 
       key: 'responsible_person',
+      width: 90,
       render: (v: string) => v || <Text type="secondary">-</Text>
     },
     { 
@@ -609,7 +619,7 @@ const PositionsList: React.FC = () => {
     {
       title: '能力维度',
       key: 'dimensions',
-      width: 220,
+      width: 200,
       render: (_: any, record: Position) => {
         // 优先读岗位自身的 capability_dimensions
         let dimNames: string[] = [];
@@ -661,7 +671,7 @@ const PositionsList: React.FC = () => {
       title: '任职要求', 
       dataIndex: 'requirements', 
       key: 'requirements',
-      width: 300,
+      width: 280,
       render: (v: string | null) => {
         if (!v) return <Text type="secondary">-</Text>;
         try {
@@ -684,7 +694,7 @@ const PositionsList: React.FC = () => {
       title: '个性化需求', 
       dataIndex: 'personalized_requirements', 
       key: 'personalized_requirements',
-      width: 200,
+      width: 170,
       ellipsis: true,
       render: (v: string) => v || <Text type="secondary">-</Text>
     },
@@ -692,7 +702,8 @@ const PositionsList: React.FC = () => {
       title: '创建时间', 
       dataIndex: 'created_at', 
       key: 'created_at',
-      render: (date: string) => <span style={{ color: '#64748B' }}>{new Date(date).toLocaleDateString()}</span>
+      width: 110,
+      render: (date: string) => <span style={{ color: '#64748B', fontSize: 13 }}>{new Date(date).toLocaleDateString()}</span>
     },
     {
       title: '操作',
@@ -785,11 +796,13 @@ const PositionsList: React.FC = () => {
         dataSource={data} 
         loading={loading} 
         rowKey="id" 
-        scroll={{ x: 1300 }}
+        scroll={{ x: 1950 }}
         pagination={{ pageSize: 10, showSizeChanger: true }}
         rowSelection={{
+          fixed: true,
           selectedRowKeys,
           onChange: setSelectedRowKeys,
+          columnWidth: 40,
         }}
       />
 

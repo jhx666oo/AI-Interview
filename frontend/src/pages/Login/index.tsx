@@ -82,7 +82,7 @@ const Login: React.FC = () => {
             name="password"
             rules={[{ required: true, message: '请输入密码!' }]}
           >
-            <Input.Password prefix={<LockOutlined />} placeholder="密码 (123456)" />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码 (admin123)" />
           </Form.Item>
 
           <Form.Item>
@@ -92,7 +92,7 @@ const Login: React.FC = () => {
           </Form.Item>
           
           <div style={{ textAlign: 'center' }}>
-             <Text type="secondary" style={{ fontSize: 12 }}>默认账号: admin@example.com / 123456</Text>
+             <Text type="secondary" style={{ fontSize: 12 }}>默认账号: admin@example.com / admin123</Text>
           </div>
         </Form>
       </Card>

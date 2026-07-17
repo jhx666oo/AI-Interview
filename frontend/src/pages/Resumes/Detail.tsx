@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Descriptions, Tag, Button, Row, Col, Typography, message, Divider, Spin, Progress, Modal, Form, Input, Space, Select, Rate, List, Avatar, Statistic, Empty } from 'antd';
+import { Card, Descriptions, Tag, Button, Row, Col, Typography, message, Divider, Spin, Progress, Modal, Form, Input, Space, Select, Rate, List, Avatar, Statistic, Empty, Tabs } from 'antd';
 import { useParams, useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
 import ReactMarkdown from 'react-markdown';
@@ -615,8 +615,20 @@ const ResumeDetail: React.FC = () => {
               </>
             )}
           </Descriptions>
+        </Card>
 
-          <Divider style={{ borderColor: '#E2E8F0' }}><Space><RobotOutlined style={{ color: '#6366F1' }} /> AI 智能初筛评价</Space></Divider>
+        <Tabs
+          style={{ marginTop: 16 }}
+          items={[
+            {
+              key: 'ai',
+              label: (<Space><RobotOutlined style={{ color: '#6366F1' }} />AI 智能分析</Space>),
+              children: (<>
+          {/* AI 智能初筛评价 */}
+          <Card bordered={false} style={{ borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', border: '1px solid #E2E8F0' }}>
+          <div style={{ marginBottom: 8 }}>
+            <Text strong style={{ fontSize: 16, color: '#6366F1' }}>AI 智能初筛评价</Text>
+          </div>
           {resume.ai_review ? (
             typeof resume.ai_review === 'object' ? (
               <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
@@ -763,10 +775,15 @@ const ResumeDetail: React.FC = () => {
               </div>
             </>
           )}
-        </Card>
-
-        {/* 部门评审区域 */}
-        {renderDepartmentReviewSection()}
+        </Card></>
+            )},
+            {
+              key: 'reviews',
+              label: (<Space><TeamOutlined />部门评审</Space>),
+              children: (<>{renderDepartmentReviewSection()}</>)
+            },
+          ]}
+        />
       </div>
       </div>
 

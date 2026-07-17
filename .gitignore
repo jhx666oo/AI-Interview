@@ -102,6 +102,14 @@ try-*.py
 search_*.py
 try_mail_app.py
 
+# Worker secrets (Cloudflare local dev vars - NEVER commit)
+worker/.dev.vars
+worker/.dev.vars.*
+**/.dev.vars
+
+# Screenshots / temp images
+users_page.png
+
 # Worker temp files
 worker/_*.txt
 worker/_*.sql

@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { createBrowserRouter, Navigate, useLocation } from 'react-router-dom';
 import AppLayout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
+import { OwnerProvider } from '../contexts/OwnerContext';
 import { Spin } from 'antd';
 
 // 关键页面（首屏立即加载）
@@ -85,7 +86,9 @@ const router = createBrowserRouter([
     path: '/',
     element: (
       <ProtectedRoute>
-        <AppLayout />
+        <OwnerProvider>
+          <AppLayout />
+        </OwnerProvider>
       </ProtectedRoute>
     ),
     children: [
