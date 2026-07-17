@@ -1137,6 +1137,20 @@ function recordToFeishuFields(fields: Record<string, string>, record: any): Reco
   return result;
 }
 
+function getFirstRichText(v: any): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v)) {
+    // Rich text: [{text: '...', type: 'text'}, ...]
+    return v.map((seg: any) => (typeof seg === 'string' ? seg : (seg.text || seg.content || ''))).join('');
+  }
+  if (typeof v === 'object') {
+    if (v.text) return v.text;
+    if (v.content) return v.content;
+  }
+  return String(v);
+}
+
 function getFirstValue(v: any): string | null {
   if (v === null || v === undefined) return null;
   if (Array.isArray(v)) return v.length > 0 ? String(v[0]) : null;
@@ -1260,8 +1274,8 @@ function parseRequisitionRecord(record: any): any {
     status,
     reason: getFirstValue(f['招聘理由']) || '',
     notes: getFirstValue(f['说明']) || '',
-    description: getFirstValue(f['招聘JD']) || '',
-    requirements: getFirstValue(f['岗位职责与任职要求']) || '',
+    description: getFirstRichText(f['招聘JD']) || '',
+    requirements: getFirstRichText(f['岗位职责与任职要求']) || '',
     capability_requirements: getFirstValue(f['岗位能力提取']) || '',
     capability_dimensions: getFirstValue(f['岗位能力维度要求']) || '',
     city_tier: getFirstValue(f['城市等级']) || '',
@@ -1551,6 +1565,7 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
             department = ?, location = ?, headcount = ?,
             urgency = ?, status = ?, description = ?, requirements = ?,
             responsible_person = ?, salary_range = ?,
+            primary_interviewer = ?, secondary_interviewer = ?,
             updated_at = ?
            WHERE id = ?`
         ).bind(
@@ -1558,6 +1573,7 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
           parsed.headcount || 1, parsed.urgency || 'normal', parsed.status || 'open',
           parsed.description || '', parsed.requirements || '',
           parsed.responsible_person || '', parsed.salary_range || '',
+          parsed.primary_interviewer || '', parsed.secondary_interviewer || '',
           now(), existing.id
         ).run();
         updated++;
@@ -1567,14 +1583,16 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
         await c.env.DB.prepare(
           `INSERT INTO positions (id, title, department, location, headcount, 
             urgency, status, description, requirements, responsible_person, salary_range,
+            primary_interviewer, secondary_interviewer,
             created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           id, title,
           parsed.department || '', parsed.city || '',
           parsed.headcount || 1, parsed.urgency || 'normal', parsed.status || 'open',
           parsed.description || '', parsed.requirements || '',
           parsed.responsible_person || '', parsed.salary_range || '',
+          parsed.primary_interviewer || '', parsed.secondary_interviewer || '',
           now(), now()
         ).run();
         created++;
