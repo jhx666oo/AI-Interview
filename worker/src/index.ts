@@ -2559,7 +2559,7 @@ app.get('/api/resumes/:id/file', async (c) => {
     let candidateName = f['姓名'] || 'resume';
     let attachmentFileName = candidateName + '.pdf';
 
-    // 从 record.fields 中找附件数据（download_url 通过 batch API 下载）
+    // 从 record.fields 中找附件数据
     let fileToken = '', feishuDownloadUrl = '';
     for (const [, fieldValue] of Object.entries(f)) {
       if (Array.isArray(fieldValue) && fieldValue.length > 0) {
@@ -2575,47 +2575,14 @@ app.get('/api/resumes/:id/file', async (c) => {
         }
       }
     }
-    // 如果 raw fields 没找到 download_url，用 parsed 数据兜底
     if (!feishuDownloadUrl && fileToken) {
       const parsed = parseTalentRecord(record);
       if (parsed.resume_file?.download_url) feishuDownloadUrl = parsed.resume_file.download_url;
     }
 
-    // 通过 download_url（batch API）或 tmp_url 下载 PDF
+    // 如果有 download_url，直接 302 重定向到飞书下载链接
     if (feishuDownloadUrl) {
-      let actualDownloadUrl = feishuDownloadUrl;
-      // batch_get_tmp_download_url 需先 POST 换取真实临时下载链接
-      if (feishuDownloadUrl.includes('batch_get_tmp_download_url')) {
-        try {
-          const bt = await getFeishuToken(c.env);
-          const br = await fetch(feishuDownloadUrl, { method: 'POST', headers: { Authorization: `Bearer ${bt}` } });
-          const bd = await br.json() as any;
-          if (bd.code === 0 && bd.data?.tmp_download_urls?.[0]?.tmp_download_url) {
-            actualDownloadUrl = bd.data.tmp_download_urls[0].tmp_download_url;
-          }
-        } catch (e) { console.log(`[ResumeFile] batch失败: ${e}`); }
-      }
-      const dlResp = await fetch(actualDownloadUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, redirect: 'follow' });
-      if (dlResp.ok) {
-        const ct = dlResp.headers.get('Content-Type') || 'application/pdf';
-        // 缓存到 D1
-        try {
-          const arrBuf = await dlResp.clone().arrayBuffer();
-          const b64 = bufToB64(new Uint8Array(arrBuf));
-          await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS resume_files (id TEXT PRIMARY KEY, content TEXT, file_name TEXT, created_at TEXT)').run();
-          await c.env.DB.prepare('INSERT OR REPLACE INTO resume_files (id, content, file_name, created_at) VALUES (?, ?, ?, ?)')
-            .bind(recordId, b64, attachmentFileName, new Date().toISOString()).run();
-        } catch {}
-        const disposition = isDownload ? 'attachment' : 'inline';
-        return new Response(dlResp.body, {
-          status: 200,
-          headers: {
-            'Content-Type': ct,
-            'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
-            'Access-Control-Allow-Origin': '*',
-          },
-        });
-      }
+      return c.redirect(feishuDownloadUrl);
     }
 
     // D1 缓存兜底
