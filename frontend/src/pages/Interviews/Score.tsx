@@ -735,7 +735,7 @@ const InterviewScore: React.FC = () => {
             <Title level={4} style={{ color: '#64748B' }}>评分已提交</Title>
             <Text type="secondary">等待其他面试官提交评分...</Text>
             <div style={{ marginTop: 24 }}>
-              <Space direction="vertical" size="small">
+              <Space orientation="vertical" size="small">
                 {panelMembers.map((memberId: string) => {
                   const panel = interview.panels?.find((p: any) => String(p.interviewer_id) === String(memberId));
                   const isMe = String(memberId) === String(user?.id);
@@ -1080,7 +1080,7 @@ const InterviewScore: React.FC = () => {
                         
                         if (fullRecording) {
                           return (
-                            <Space direction="vertical" size="small">
+                            <Space orientation="vertical" size="small">
                               <Text type="danger" strong>录制中: {formatTime(fullRecordingTime)}</Text>
                               <Button type="primary" danger size="small" onClick={stopFullRecording}>
                                 停止录制
@@ -1091,7 +1091,7 @@ const InterviewScore: React.FC = () => {
                         
                         if (fullRecordingBlob) {
                           return (
-                            <Space direction="vertical" size="small">
+                            <Space orientation="vertical" size="small">
                               <Text type="success">录音已完成 ({formatTime(fullRecordingTime)})</Text>
                               <Button type="primary" size="small" loading={uploadingRecording} onClick={uploadFullRecording}>
                                 上传并分析

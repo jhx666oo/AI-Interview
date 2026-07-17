@@ -171,7 +171,7 @@ const OnboardingList: React.FC = () => {
           <Form.Item name="notes" label="备注"><TextArea rows={2} /></Form.Item>
         </Form>
       </Modal>
-      <Drawer title="入职详情" open={detailVisible} onClose={() => setDetailVisible(false)} width={560}>
+      <Drawer size="large">
         {current && (
           <Descriptions column={1} bordered>
             <Descriptions.Item label="姓名">{current.candidate_name}</Descriptions.Item>

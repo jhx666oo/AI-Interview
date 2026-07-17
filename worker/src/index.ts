@@ -3629,15 +3629,7 @@ app.get('/api/settings/prompts', authMiddleware, async (c) => {
   } catch { return c.json({ prompts: {} }); }
 });
 
-app.get('/api/settings/prompts/:key', authMiddleware, async (c) => {
-  const row = await c.env.DB.prepare('SELECT prompt_configs FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
-  if (!row?.prompt_configs) return c.json({ detail: 'Not found' }, 404);
-  try {
-    const configs = JSON.parse(row.prompt_configs);
-    return c.json(configs[c.req.param('key')] || { detail: 'Not found' }, 404);
-  } catch { return c.json({ detail: 'Not found' }, 404); }
-});
-
+// 变量列表必须在 :key 通配路由之前注册
 app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
   const variables_by_prompt: Record<string, Array<{ name: string; description: string }>> = {
     generate_jd: [
@@ -3697,6 +3689,15 @@ app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
     }
   }
   return c.json({ variables_by_prompt, all_variables });
+});
+
+app.get('/api/settings/prompts/:key', authMiddleware, async (c) => {
+  const row = await c.env.DB.prepare('SELECT prompt_configs FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
+  if (!row?.prompt_configs) return c.json({ detail: 'Not found' }, 404);
+  try {
+    const configs = JSON.parse(row.prompt_configs);
+    return c.json(configs[c.req.param('key')] || { detail: 'Not found' }, 404);
+  } catch { return c.json({ detail: 'Not found' }, 404); }
 });
 
 app.put('/api/settings/prompts/:key', authMiddleware, async (c) => {

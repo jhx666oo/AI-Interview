@@ -475,7 +475,7 @@ const ResumeDetail: React.FC = () => {
                       }
                       description={
                         review.is_completed ? (
-                          <Space direction="vertical" style={{ width: '100%' }}>
+                          <Space orientation="vertical" style={{ width: '100%' }}>
                             <Space>
                               <Text type="secondary">技术: {review.technical_score}/10</Text>
                               <Text type="secondary">经验: {review.experience_score}/10</Text>

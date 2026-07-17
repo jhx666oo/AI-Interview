@@ -151,7 +151,7 @@ const BackgroundChecksList: React.FC = () => {
           </>)}
         </Form>
       </Modal>
-      <Drawer title="背调详情" open={detailVisible} onClose={() => setDetailVisible(false)} width={640}>
+      <Drawer size="large">
         {current && (
           <Descriptions column={1} bordered>
             <Descriptions.Item label="候选人">{current.candidate_name}</Descriptions.Item>

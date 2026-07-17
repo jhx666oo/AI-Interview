@@ -119,7 +119,7 @@ const ProfileSettings: React.FC = () => {
         <Text type="secondary">更新你的个人资料与登录密码</Text>
       </div>
 
-      <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Space orientation="vertical" size="large" style={{ width: '100%' }}>
         <Card title="个人资料" styles={{ body: { paddingTop: 8 } }}>
           <Form form={profileForm} layout="vertical">
             <Form.Item label="邮箱" name="email">

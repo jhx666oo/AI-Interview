@@ -261,7 +261,7 @@ const SystemSettingsPage: React.FC = () => {
             name="llm_api_key"
             label="API Key"
             extra={
-              <Space direction="vertical" size={4}>
+              <Space orientation="vertical" size={4}>
                 <Text type="secondary">
                   {meta?.llm_api_key_set
                     ? `已设置${meta?.llm_api_key_last4 ? `（末 4 位：${meta.llm_api_key_last4}）` : ''}`

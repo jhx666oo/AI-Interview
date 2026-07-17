@@ -322,7 +322,7 @@ const CapabilityDimensions: React.FC = () => {
                       )
                     }
                   >
-                    <Space direction="vertical" style={{ width: '100%' }}>
+                    <Space orientation="vertical" style={{ width: '100%' }}>
                       <Form.Item
                         {...restField}
                         name={[name, 'name']}

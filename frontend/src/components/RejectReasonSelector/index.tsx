@@ -23,7 +23,7 @@ const RejectReasonSelector: React.FC<RejectReasonSelectorProps> = ({
   showDetail = true
 }) => {
   return (
-    <Space direction="vertical" style={{ width: '100%' }} size="middle">
+    <Space orientation="vertical" style={{ width: '100%' }} size="middle">
       <Form.Item
         name="reject_reason_category"
         label="淘汰原因"

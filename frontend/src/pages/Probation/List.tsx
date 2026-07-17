@@ -212,7 +212,7 @@ const ProbationList: React.FC = () => {
           <Form.Item name="suggestion" label="导师建议"><TextArea rows={2} /></Form.Item>
         </Form>
       </Modal>
-      <Drawer title="试用详情" open={detailVisible} onClose={() => setDetailVisible(false)} width={600}>
+      <Drawer size="large">
         {current && (<>
           <Descriptions column={1} bordered style={{ marginBottom: 24 }}>
             <Descriptions.Item label="姓名">{current.employee_name}</Descriptions.Item>
