@@ -2595,8 +2595,8 @@ app.get('/api/resumes/:id/file', async (c) => {
       if (Array.isArray(fieldValue) && fieldValue.length > 0) {
         const item = fieldValue[0];
         if (item && typeof item === 'object') {
-          if (item.download_url || item.tmp_url) {
-            feishuDownloadUrl = item.download_url || item.tmp_url;
+          if (item.url || item.download_url || item.tmp_url) {
+            feishuDownloadUrl = item.url || item.download_url || item.tmp_url;
             if (item.name) attachmentFileName = item.name;
             if (item.file_token) fileToken = item.file_token;
             break;
@@ -2626,24 +2626,31 @@ app.get('/api/resumes/:id/file', async (c) => {
       } catch {}
     }
 
-    // 2. 通过 downloadFeishuAttachment 下载并缓存
-    if (fileToken) {
-      const dlResp = await downloadFeishuAttachment(c.env, fileToken, feishuDownloadUrl);
-      if (dlResp) {
-        try {
-          const arrBuf = await dlResp.clone().arrayBuffer();
-          const b64 = bufToB64(new Uint8Array(arrBuf));
-          await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS resume_files (id TEXT PRIMARY KEY, content TEXT, file_name TEXT, created_at TEXT)').run();
-          await c.env.DB.prepare('INSERT OR REPLACE INTO resume_files (id, content, file_name, created_at) VALUES (?, ?, ?, ?)')
-            .bind(recordId, b64, attachmentFileName, new Date().toISOString()).run();
-        } catch {}
-        const disposition = isDownload ? 'attachment' : 'inline';
-        return new Response(dlResp.body, { status: 200, headers: {
-          'Content-Type': 'application/pdf',
-          'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
-          'Access-Control-Allow-Origin': '*',
-        }});
-      }
+    // 2. 用 feishuDownloadUrl 直接下载（带 bitablePerm 的 Drive URL，无需额外权限）
+    if (feishuDownloadUrl) {
+      try {
+        const feishuToken = await getFeishuToken(c.env);
+        const dlResp = await fetch(feishuDownloadUrl, {
+          headers: { Authorization: `Bearer ${feishuToken}` },
+          redirect: 'follow',
+        });
+        if (dlResp.ok) {
+          const ct = dlResp.headers.get('Content-Type') || 'application/pdf';
+          try {
+            const arrBuf = await dlResp.clone().arrayBuffer();
+            const b64 = bufToB64(new Uint8Array(arrBuf));
+            await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS resume_files (id TEXT PRIMARY KEY, content TEXT, file_name TEXT, created_at TEXT)').run();
+            await c.env.DB.prepare('INSERT OR REPLACE INTO resume_files (id, content, file_name, created_at) VALUES (?, ?, ?, ?)')
+              .bind(recordId, b64, attachmentFileName, new Date().toISOString()).run();
+          } catch {}
+          const disposition = isDownload ? 'attachment' : 'inline';
+          return new Response(dlResp.body, { status: 200, headers: {
+            'Content-Type': ct,
+            'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
+            'Access-Control-Allow-Origin': '*',
+          }});
+        }
+      } catch (e) { console.log(`[ResumeFile] 下载失败: ${e}`); }
     }
 
     // 最终兜底：返回引导页面（含飞书链接让用户手动打开）

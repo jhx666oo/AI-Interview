@@ -154,9 +154,6 @@ const ResumeDetail: React.FC = () => {
   const fileApiUrl = id ? `/api/resumes/${id}/file?token=${encodeURIComponent(token)}` : '';
   const downloadUrl = id ? `/api/resumes/${id}/file?download=true&token=${encodeURIComponent(token)}` : '';
   const pdfPreviewUrl = fileApiUrl ? getMaximizedPdfPreviewUrl(fileApiUrl) : '';
-  // 飞书直链（从 parsed resume 中获取，绕过 API 代理限制）
-  const feishuDownloadUrl = resume?.resume_file?.download_url || '';
-  const feishuRecordUrl = id ? `https://ywwlaii6ga7.feishu.cn/base/NVh9bDiNRaF0ZysxjeLc5ID2n9c?table=tblWkwsoTIPhzusI&record=${id}` : '';
   const statusInfo = getStatusInfo(resume.status, resume.parse_status);
 
   // AI初筛
@@ -513,36 +510,21 @@ const ResumeDetail: React.FC = () => {
       <div style={{ flex: 1, background: '#fff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '16px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#F8FAFC' }}>
           <Title level={5} style={{ margin: 0 }}>简历原件预览</Title>
-          <Space>
-            {feishuDownloadUrl && (
-              <Button type="primary" icon={<FilePdfOutlined />} onClick={() => window.open(feishuDownloadUrl, '_blank')}>
-                在飞书中预览
-              </Button>
-            )}
-            <Button icon={<DownloadOutlined />} onClick={() => window.open(feishuRecordUrl, '_blank')}>
-              飞书打开
-            </Button>
-          </Space>
+          <Button type="primary" icon={<DownloadOutlined />} href={downloadUrl} target="_blank">
+            下载原件
+          </Button>
         </div>
-        <div style={{ flex: 1, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ flex: 1, background: '#F1F5F9' }}>
           {id ? (
-            feishuDownloadUrl ? (
-              <div style={{ textAlign: 'center', padding: 40 }}>
-                <FilePdfOutlined style={{ fontSize: 48, color: '#6366F1', marginBottom: 16 }} />
-                <div style={{ fontSize: 16, fontWeight: 600, color: '#0F172A', marginBottom: 8 }}>{resume?.resume_file?.name || '简历文件'}</div>
-                <Text type="secondary">点击「在飞书中预览」直接查看 PDF</Text>
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', padding: 40, color: '#94A3B8' }}>
-                <FilePdfOutlined style={{ fontSize: 48, marginBottom: 16 }} />
-                <div>暂无简历文件</div>
-                <Button type="link" onClick={() => window.open(feishuRecordUrl, '_blank')} style={{ marginTop: 8 }}>
-                  在飞书中查看记录
-                </Button>
-              </div>
-            )
+            <iframe
+              src={pdfPreviewUrl}
+              style={{ width: '100%', height: '100%', border: 'none', display: 'block', background: '#fff' }}
+              title="Resume Preview"
+            />
           ) : (
-            <div style={{ color: '#94A3B8' }}>暂无文件</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94A3B8' }}>
+              暂无文件
+            </div>
           )}
         </div>
       </div>
