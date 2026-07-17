@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Button, Avatar, Space, Dropdown, theme, Badge, Select } from 'antd';
+import { Layout, Menu, Button, Avatar, Space, Dropdown, theme, Badge } from 'antd';
 import {
   DashboardOutlined,
   UserOutlined,
@@ -22,7 +22,6 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { useOwner } from '../../contexts/OwnerContext';
 import request from '../../utils/request';
 
 const { Header, Sider, Content } = Layout;
@@ -31,23 +30,11 @@ const AppLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { logout, user } = useAuth();
-  const { selectedOwner, setSelectedOwner } = useOwner();
-  const [ownerList, setOwnerList] = useState<string[]>([]);
   const {
     token: { colorBgContainer, borderRadiusLG },
   } = theme.useToken();
   const role = (user as any)?.role?.value ?? (user as any)?.role;
 
-  // 加载负责人列表（从职位表中提取不重复的责任人）
-  useEffect(() => {
-    request.get('/positions').then((res: any) => {
-      const list = Array.isArray(res) ? res : (res?.data || res?.list || []);
-      const owners = [...new Set(
-        list.map((p: any) => p.responsible_person).filter(Boolean)
-      )] as string[];
-      setOwnerList(owners.sort());
-    }).catch(() => {});
-  }, []);
 
   const handleLogout = () => {
     logout();
@@ -218,18 +205,6 @@ const AppLayout: React.FC = () => {
           <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#0F172A' }}>
             {pageTitle}
           </h2>
-          <Select
-            allowClear
-            showSearch
-            placeholder="筛选负责人"
-            style={{ minWidth: 180 }}
-            value={selectedOwner}
-            onChange={(val) => setSelectedOwner(val)}
-            options={ownerList.map(name => ({ label: name, value: name }))}
-            filterOption={(input, option) =>
-              (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
-            }
-          />
           <Space size="large">
             <Button type="text" icon={<BellOutlined style={{ fontSize: '18px', color: '#64748B' }} />} />
             <Dropdown menu={userMenu}>
