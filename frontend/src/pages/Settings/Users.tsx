@@ -344,6 +344,7 @@ const UsersList: React.FC = () => {
         rowSelection={{
           selectedRowKeys,
           onChange: (keys) => setSelectedRowKeys(keys),
+          columnWidth: 48,
         }}
       />
 
