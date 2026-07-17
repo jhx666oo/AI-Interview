@@ -2538,7 +2538,7 @@ app.get('/api/resumes/:id/file', async (c) => {
     let attachmentFileName = candidateName + '.pdf';
 
     // 重新获取记录（带 need_resource=true 可拿到附件 tmp_url）
-    let fileToken = '', feishuDownloadUrl = '', attachmentFileName = candidateName + '.pdf';
+    let fileToken = '', feishuDownloadUrl = '';
     try {
       const token = await getFeishuToken(c.env);
       const appToken = c.env.FEISHU_BITABLE_APP_TOKEN || FEISHU_CONFIG.appToken;
