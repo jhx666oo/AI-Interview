@@ -1004,22 +1004,22 @@ const ResumesList: React.FC = () => {
         <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px', overflow: 'visible' } }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
             <Space size={4}>
-              <Text style={{ fontSize: 12, color: '#333' }}>候选人：</Text>
-              <Input size="small"
+              <Text style={{ fontSize: 13, color: '#333' }}>候选人：</Text>
+              <Input
                 placeholder="姓名"
                 value={searchName}
                 onChange={e => setSearchName(e.target.value)}
-                style={{ width: 110 }}
+                style={{ width: 130 }}
                 allowClear
               />
             </Space>
             <Space size={4}>
-              <Text style={{ fontSize: 12, color: '#333' }}>状态：</Text>
-              <Select size="small"
+              <Text style={{ fontSize: 13, color: '#333' }}>状态：</Text>
+              <Select
                 placeholder="全部"
                 value={searchStatus}
                 onChange={val => setSearchStatus(val)}
-                style={{ width: 100 }}
+                style={{ width: 120 }}
                 allowClear
               >
                 <Select.Option value="pending_screening">待初筛</Select.Option>
@@ -1028,12 +1028,12 @@ const ResumesList: React.FC = () => {
               </Select>
             </Space>
             <Space size={4}>
-              <Text style={{ fontSize: 12, color: '#333' }}>负责人：</Text>
-              <Select size="small"
+              <Text style={{ fontSize: 13, color: '#333' }}>负责人：</Text>
+              <Select
                 placeholder="全部"
                 value={searchPerson}
                 onChange={val => { setSearchPerson(val); }}
-                style={{ width: 100 }}
+                style={{ width: 120 }}
                 allowClear
                 showSearch
                 optionFilterProp="children"
@@ -1044,12 +1044,12 @@ const ResumesList: React.FC = () => {
               </Select>
             </Space>
             <Space size={4}>
-              <Text style={{ fontSize: 12, color: '#333' }}>岗位：</Text>
-              <Select size="small"
+              <Text style={{ fontSize: 13, color: '#333' }}>岗位：</Text>
+              <Select
                 placeholder="全部"
                 value={searchPosition}
                 onChange={val => setSearchPosition(val)}
-                style={{ width: 110 }}
+                style={{ width: 130 }}
                 allowClear
                 showSearch
                 optionFilterProp="children"
@@ -1067,9 +1067,11 @@ const ResumesList: React.FC = () => {
                 <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
               </>
             )}
-            <span style={{ width: 1, height: 20, background: '#E2E8F0', margin: '0 4px' }} />
-            <Button type="primary" size="small" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
-            <Button size="small" onClick={handleReset}>重置</Button>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 1, height: 20, background: '#E2E8F0' }} />
+              <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
+              <Button onClick={handleReset}>重置</Button>
+            </div>
           </div>
         </Card>
 
