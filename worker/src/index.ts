@@ -5721,14 +5721,9 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       }
     } catch {}
 
-    // 如果面试官未绑定飞书，直接用系统 token 发送（硬编码 open_id 属于旧小七应用，不可用）
+    // 面试官未绑定飞书 → 直接返回提示（硬编码 open_id 都来自旧小七应用，跨应用不可用）
     if (!token || !openId) {
-      token = await getFeishuToken(c.env);
-      openId = await getInterviewerOpenId(c.env, interviewerName);
-      // 硬编码的 open_id 来自旧小七应用，跨应用发消息会失败
-      if (!openId || openId === FEISHU_CONFIG.defaultHrOpenId) {
-        return c.json({ detail: `通知失败: 面试官「${interviewerName}」尚未在系统中绑定飞书账号，请让其前往「个人中心 - 绑定飞书」完成绑定后重试` }, 400);
-      }
+      return c.json({ detail: `通知失败: 面试官「${interviewerName}」尚未在系统中绑定飞书账号，请让其前往「个人中心 - 绑定飞书」完成绑定后重试` }, 400);
     }
 
     const interviewTime = body.interview_time || '';
