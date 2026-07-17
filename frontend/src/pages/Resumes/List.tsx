@@ -1003,30 +1003,33 @@ const ResumesList: React.FC = () => {
 
         <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px', overflow: 'visible' } }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
-            <Space size={12} wrap>
+            <Space size={8} wrap>
+            <Text type="secondary" style={{ fontSize: 12 }}>候选人：</Text>
             <Input size="small"
-              placeholder="候选人姓名"
+              placeholder="姓名"
               value={searchName}
               onChange={e => setSearchName(e.target.value)}
-              style={{ width: 160 }}
+              style={{ width: 120 }}
               allowClear
             />
+            <Text type="secondary" style={{ fontSize: 12 }}>状态：</Text>
             <Select size="small"
-              placeholder="状态"
+              placeholder="全部"
               value={searchStatus}
               onChange={val => setSearchStatus(val)}
-              style={{ width: 140 }}
+              style={{ width: 110 }}
               allowClear
             >
               <Select.Option value="pending_screening">待初筛</Select.Option>
               <Select.Option value="approved">已入库</Select.Option>
               <Select.Option value="rejected">已淘汰</Select.Option>
             </Select>
+            <Text type="secondary" style={{ fontSize: 12 }}>负责人：</Text>
             <Select size="small"
-              placeholder="负责人"
+              placeholder="全部"
               value={searchPerson}
               onChange={val => { setSearchPerson(val); }}
-              style={{ width: 140 }}
+              style={{ width: 110 }}
               allowClear
               showSearch
               optionFilterProp="children"
@@ -1035,11 +1038,12 @@ const ResumesList: React.FC = () => {
                 <Select.Option key={name} value={name}>{name}</Select.Option>
               ))}
             </Select>
+            <Text type="secondary" style={{ fontSize: 12 }}>岗位：</Text>
             <Select size="small"
-              placeholder="岗位"
+              placeholder="全部"
               value={searchPosition}
               onChange={val => setSearchPosition(val)}
-              style={{ width: 140 }}
+              style={{ width: 120 }}
                 allowClear
                 showSearch
                 optionFilterProp="children"
