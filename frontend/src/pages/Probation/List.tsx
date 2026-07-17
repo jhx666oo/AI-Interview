@@ -139,7 +139,7 @@ const ProbationList: React.FC = () => {
       render: (v: string) => { const c = resultConfig[v] || { color: 'default', text: v }; return <Tag color={c.color}>{c.text}</Tag>; } },
     { title: '转正日期', dataIndex: 'confirmed_at', key: 'confirmed_at', width: 110,
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-' },
-    { title: '操作', key: 'action', width: 300, fixed: 'right' as const,
+    { title: '操作', key: 'action', width: 300,
       render: (_: any, record: any) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>
@@ -173,7 +173,7 @@ const ProbationList: React.FC = () => {
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增试用</Button>
         </Space>}>
         <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1300 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
+          scroll={{ x: 1500 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
       </Card>
       <Modal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={560} destroyOnHidden>

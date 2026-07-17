@@ -175,7 +175,7 @@ const RequisitionsList: React.FC = () => {
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-'
     },
     {
-      title: '操作', key: 'action', width: 280, fixed: 'right' as const,
+      title: '操作', key: 'action', width: 280,
       render: (_: any, record: any) => (
         <Space size="small">
           {record.status === 'pending' && (
@@ -210,7 +210,7 @@ const RequisitionsList: React.FC = () => {
         }
       >
         <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1400 }}
           pagination={{ pageSize: 10, showSizeChanger: true }}
         />
       </Card>

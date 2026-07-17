@@ -103,7 +103,7 @@ const OnboardingList: React.FC = () => {
       render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '已完成' : '未完成'}</Tag> },
     { title: '状态', dataIndex: 'status', key: 'status', width: 90,
       render: (v: string) => { const c = statusConfig[v] || { color: 'default', text: v }; return <Tag color={c.color}>{c.text}</Tag>; } },
-    { title: '操作', key: 'action', width: 180, fixed: 'right' as const,
+    { title: '操作', key: 'action', width: 180,
       render: (_: any, record: any) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>
@@ -130,7 +130,7 @@ const OnboardingList: React.FC = () => {
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增入职</Button>
         </Space>}>
         <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1200 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
+          scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
       </Card>
       <Modal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>
