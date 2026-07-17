@@ -329,8 +329,63 @@ CREATE TABLE IF NOT EXISTS talent_pool (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Daily Reports
+CREATE TABLE IF NOT EXISTS daily_reports (
+  id TEXT PRIMARY KEY,
+  report_date TEXT NOT NULL,
+  total_resumes INTEGER DEFAULT 0,
+  pending_screening INTEGER DEFAULT 0,
+  approved INTEGER DEFAULT 0,
+  rejected INTEGER DEFAULT 0,
+  total_interviews INTEGER DEFAULT 0,
+  total_offers INTEGER DEFAULT 0,
+  total_onboarding INTEGER DEFAULT 0,
+  ai_summary TEXT,
+  stats TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- System Configs
+CREATE TABLE IF NOT EXISTS system_configs (
+  id TEXT PRIMARY KEY,
+  prompt_configs TEXT,
+  mail_config TEXT,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Resume Files (PDF 缓存)
+CREATE TABLE IF NOT EXISTS resume_files (
+  id TEXT PRIMARY KEY,
+  content TEXT,
+  file_name TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- AI Usage
+CREATE TABLE IF NOT EXISTS ai_usage (
+  date TEXT PRIMARY KEY,
+  total_tokens INTEGER DEFAULT 0,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Settings
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Background Checks
 CREATE TABLE IF NOT EXISTS background_checks (
+  id TEXT PRIMARY KEY,
+  resume_id TEXT,
+  candidate_name TEXT,
+  status TEXT DEFAULT 'pending',
+  result TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
   id TEXT PRIMARY KEY,
   resume_id TEXT NOT NULL,
   position_id TEXT,
