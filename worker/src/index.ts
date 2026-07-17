@@ -4576,39 +4576,27 @@ async function downloadFeishuAttachment(env: Env, fileToken: string, feishuDownl
       }
     }
 
-    // 方法1：用飞书 Open API 的 Drive 下载接口（POST）
-    // 设置 Accept: application/json 让 API 返回 JSON 而不是 302 重定向
+    // 方法1：用飞书 Open API 的 Drive 下载接口（POST），跟随重定向直接下载
     const postResp = await fetch(
       `https://open.feishu.cn/open-apis/drive/v1/medias/${fileToken}/download`,
       {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-        redirect: 'manual',  // 不自动跟随重定向，先看 JSON
+        headers: { Authorization: `Bearer ${token}` },
+        redirect: 'follow',
       }
     );
-    const postBody = await postResp.text();
-    try {
-      const bodyJson = JSON.parse(postBody);
-      if (bodyJson.code === 0 && bodyJson.data?.tmp_download_urls?.[0]?.tmp_download_url) {
-        const tmpUrl = bodyJson.data.tmp_download_urls[0].tmp_download_url;
-        // 用临时 URL 下载实际的 PDF 文件
-        const fileResp = await fetch(tmpUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          redirect: 'follow',
+    if (postResp.ok) {
+      const ct = postResp.headers.get('Content-Type') || 'application/pdf';
+      if (ct && !ct.includes('json')) {
+        const headers = new Headers({
+          'Content-Type': ct,
+          'Content-Disposition': 'inline; filename="resume.pdf"',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=3600',
         });
-        if (fileResp.ok) {
-          const fct = fileResp.headers.get('Content-Type') || 'application/pdf';
-          // 缓存到 D1（如果外层调用需要）
-          const headers = new Headers({
-            'Content-Type': fct,
-            'Content-Disposition': 'inline; filename="resume.pdf"',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'public, max-age=3600',
-          });
-          return new Response(fileResp.body, { status: 200, headers });
-        }
+        return new Response(postResp.body, { status: 200, headers });
       }
-    } catch {}  // JSON 解析失败就继续下一个方法
+    }
 
     // 方法2：Open API GET 方式（同样加 Accept: application/json 防止重定向）
     const getResp = await fetch(
