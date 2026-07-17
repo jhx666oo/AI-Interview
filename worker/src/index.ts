@@ -2537,7 +2537,66 @@ app.get('/api/resumes/:id/file', async (c) => {
     let candidateName = f['姓名'] || 'resume';
     let attachmentFileName = candidateName + '.pdf';
 
-    // 第一优先级：从 D1 直接读取简历文件 base64 内容（新上传或已缓存的简历）
+    // 重新获取记录（带 need_resource=true 可拿到附件 tmp_url）
+    let fileToken = '', feishuDownloadUrl = '', attachmentFileName = candidateName + '.pdf';
+    try {
+      const token = await getFeishuToken(c.env);
+      const appToken = c.env.FEISHU_BITABLE_APP_TOKEN || FEISHU_CONFIG.appToken;
+      const detailResp = await fetch(
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}?need_resource=true`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const detailData = await detailResp.json() as any;
+      const detailFields = detailData.data?.record?.fields || {};
+      // 遍历字段找附件 tmp_url
+      for (const [, fieldValue] of Object.entries(detailFields)) {
+        if (Array.isArray(fieldValue) && fieldValue.length > 0) {
+          const item = fieldValue[0];
+          if (item && typeof item === 'object') {
+            if (item.tmp_url) {
+              feishuDownloadUrl = item.tmp_url;
+              if (item.name) attachmentFileName = item.name;
+              if (item.file_token) fileToken = item.file_token;
+              break;
+            }
+            if (item.file_token) fileToken = item.file_token;
+            if (item.name) attachmentFileName = item.name;
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`[ResumeFile] 获取附件详情失败: ${e}`);
+    }
+
+    // 如果有 tmp_url（预签名临时URL），直接下载
+    if (feishuDownloadUrl) {
+      const dlResp = await fetch(feishuDownloadUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        redirect: 'follow',
+      });
+      if (dlResp.ok) {
+        const ct = dlResp.headers.get('Content-Type') || 'application/pdf';
+        // 缓存到 D1
+        try {
+          const arrBuf = await dlResp.clone().arrayBuffer();
+          const b64 = bufToB64(new Uint8Array(arrBuf));
+          await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS resume_files (id TEXT PRIMARY KEY, content TEXT, file_name TEXT, created_at TEXT)').run();
+          await c.env.DB.prepare('INSERT OR REPLACE INTO resume_files (id, content, file_name, created_at) VALUES (?, ?, ?, ?)')
+            .bind(recordId, b64, attachmentFileName, new Date().toISOString()).run();
+        } catch {}
+        const disposition = isDownload ? 'attachment' : 'inline';
+        return new Response(dlResp.body, {
+          status: 200,
+          headers: {
+            'Content-Type': ct,
+            'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+    }
+
+    // D1 缓存兜底
     if (recordId) {
       try {
         const fileRow: any = await c.env.DB.prepare('SELECT content, file_name FROM resume_files WHERE id = ?').bind(recordId).first();
@@ -2556,88 +2615,7 @@ app.get('/api/resumes/:id/file', async (c) => {
       } catch {}
     }
 
-    // 第二优先级：扫描 Bitable 所有字段中可能的附件数据
-    let fileToken = '';
-    let feishuDownloadUrl = '';
-
-    // 遍历所有字段找 attachment 数据（file_token）
-    for (const [fieldName, fieldValue] of Object.entries(f)) {
-      if (Array.isArray(fieldValue) && fieldValue.length > 0) {
-        // Bitable 附件字段格式: [{ file_token: "...", name: "...", size: ..., type: "pdf", tmp_url: "..." }]
-        const item = fieldValue[0];
-        if (item && typeof item === 'object' && item.file_token) {
-          fileToken = item.file_token;
-          // 也用 tmp_url 作为备选下载地址
-          if (item.tmp_url) feishuDownloadUrl = item.tmp_url;
-          break;
-        }
-        // 也可能是 link 格式: [{ text: "...", link: "..." }]
-        if (item && typeof item === 'object' && item.link && item.link.includes('/download/all/')) {
-          const linkMatch = item.link.match(/\/download\/all\/([^\/\?]+)/);
-          if (linkMatch) {
-            fileToken = linkMatch[1];
-            feishuDownloadUrl = item.link;
-            break;
-          }
-        }
-      }
-    }
-
-    // 如果通过通用扫描找到了 file_token，拼出飞书下载 URL
-    if (fileToken && !feishuDownloadUrl) {
-      const feishuHost = c.env.FEISHU_HOST || 'ywwlaii6ga7';
-      const mountToken = c.env.FEISHU_BASE_TOKEN || 'NVh9bDiNRaF0ZysxjeLc5ID2n9c';
-      feishuDownloadUrl = `https://${feishuHost}.feishu.cn/space/api/box/stream/download/all/${fileToken}?mount_node_token=${mountToken}&mount_point=bitable`;
-    }
-
-    // 方法A：用 Bitable 附件 API 下载（无需 Drive 权限）
-    if (fileToken) {
-      try {
-        // 找到附件字段的 field_id
-        let attachmentFieldId = '';
-        for (const [fieldName, fieldValue] of Object.entries(f)) {
-          if (Array.isArray(fieldValue) && fieldValue.length > 0) {
-            const item = fieldValue[0];
-            if (item && typeof item === 'object' && item.file_token) {
-              attachmentFieldId = fieldName;
-              break;
-            }
-          }
-        }
-        if (attachmentFieldId) {
-          const bitableToken = await getFeishuToken(c.env);
-          const appToken = c.env.FEISHU_BITABLE_APP_TOKEN || FEISHU_CONFIG.appToken;
-          const dlUrl = `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}/attachments/${attachmentFieldId}/download`;
-          const dlResp = await fetch(dlUrl, {
-            headers: { Authorization: `Bearer ${bitableToken}` },
-            redirect: 'follow',
-          });
-          if (dlResp.ok) {
-            const ct = dlResp.headers.get('Content-Type') || 'application/pdf';
-            // 缓存到 D1
-            try {
-              const arrBuf = await dlResp.clone().arrayBuffer();
-              const b64 = bufToB64(new Uint8Array(arrBuf));
-              await c.env.DB.prepare('INSERT OR REPLACE INTO resume_files (id, content, file_name, created_at) VALUES (?, ?, ?, ?)')
-                .bind(recordId, b64, attachmentFileName, new Date().toISOString()).run();
-            } catch {}
-            const disposition = isDownload ? 'attachment' : 'inline';
-            return new Response(dlResp.body, {
-              status: 200,
-              headers: {
-                'Content-Type': ct,
-                'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
-                'Access-Control-Allow-Origin': '*',
-              },
-            });
-          }
-        }
-      } catch (e) {
-        console.log(`[ResumeFile] Bitable附件下载失败: ${e}`);
-      }
-    }
-
-    // 通过 downloadFeishuAttachment 多方法下载 PDF
+    // 最后通过 downloadFeishuAttachment 尝试
     if (fileToken) {
       const dlResp = await downloadFeishuAttachment(c.env, fileToken, feishuDownloadUrl);
       if (dlResp) {
@@ -2651,7 +2629,6 @@ app.get('/api/resumes/:id/file', async (c) => {
           },
         });
       }
-      console.log(`[ResumeFile] downloadFeishuAttachment returned null for ${recordId}`);
     }
 
     // 最终兜底：返回引导页面（含飞书链接让用户手动打开）
