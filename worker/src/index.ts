@@ -727,7 +727,7 @@ async function dashboardPositionsHandler(c: any) {
   }));
 
   return c.json(result);
-});
+}
 
 // AI 每日 token 用量查询
 app.get('/api/ai-usage', authMiddleware, async (c) => {
