@@ -372,9 +372,9 @@ const ResumeDetail: React.FC = () => {
     // 基础操作
     if (!isEditing) {
       buttons.push(
-        <Button key="ai-screen" type="primary" loading={aiScreening} icon={<ThunderboltOutlined />} onClick={handleAIScreen} style={{background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)', border: 'none'}}>AI初筛</Button>,
-        <Button key="reparse" icon={<ReloadOutlined />} onClick={handleReparse} disabled={resume?.parse_status === 'processing'}>重新解析</Button>,
-        <Button key="edit" icon={<EditOutlined />} onClick={() => setIsEditing(true)}>编辑</Button>
+        <Button size="small" key="ai-screen" type="primary" loading={aiScreening} icon={<ThunderboltOutlined />} onClick={handleAIScreen} style={{background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)', border: 'none'}}>AI初筛</Button>,
+        <Button size="small" key="reparse" icon={<ReloadOutlined />} onClick={handleReparse} disabled={resume?.parse_status === 'processing'}>重新解析</Button>,
+        <Button size="small" key="edit" icon={<EditOutlined />} onClick={() => setIsEditing(true)}>编辑</Button>
       );
     } else {
       buttons.push(
@@ -387,26 +387,26 @@ const ResumeDetail: React.FC = () => {
     // 根据状态显示不同操作
     if (resume.status === 'auto_rejected_pending_review') {
       buttons.push(
-        <Button key="confirm-reject" danger icon={<CloseCircleOutlined />} onClick={() => setIsRejectModalVisible(true)}>确认淘汰</Button>,
-        <Button key="override" type="primary" icon={<CheckCircleOutlined />} onClick={handleOverrideRejection}>恢复评审</Button>
+        <Button size="small" key="confirm-reject" danger icon={<CloseCircleOutlined />} onClick={() => setIsRejectModalVisible(true)}>确认淘汰</Button>,
+        <Button size="small" key="override" type="primary" icon={<CheckCircleOutlined />} onClick={handleOverrideRejection}>恢复评审</Button>
       );
     } else if (resume.status === 'pending_review') {
       // 待评审状态：可以直接HR决策，指派评审人在部门评审卡片头部
       buttons.push(
-        <Button key="hr-decision" icon={<SolutionOutlined />} onClick={() => setIsHRDecisionModalVisible(true)}>直接决策</Button>
+        <Button size="small" key="hr-decision" icon={<SolutionOutlined />} onClick={() => setIsHRDecisionModalVisible(true)}>直接决策</Button>
       );
     } else if (resume.status === 'pending_hr_decision') {
       buttons.push(
-        <Button key="hr-decision" type="primary" icon={<SolutionOutlined />} onClick={() => setIsHRDecisionModalVisible(true)}>HR决策</Button>
+        <Button size="small" key="hr-decision" type="primary" icon={<SolutionOutlined />} onClick={() => setIsHRDecisionModalVisible(true)}>HR决策</Button>
       );
     } else if (resume.status === 'pending_interview') {
       // 初审通过，可以安排面试
       buttons.push(
-        <Button key="schedule-interview" type="primary" icon={<TeamOutlined />} onClick={() => navigate('/resumes')}>安排面试</Button>
+        <Button size="small" key="schedule-interview" type="primary" icon={<TeamOutlined />} onClick={() => navigate('/resumes')}>安排面试</Button>
       );
     } else if (resume.status !== 'rejected' && resume.status !== 'completed') {
       buttons.push(
-        <Button key="reject" danger icon={<CloseCircleOutlined />} onClick={() => setIsRejectModalVisible(true)}>淘汰</Button>
+        <Button size="small" key="reject" danger icon={<CloseCircleOutlined />} onClick={() => setIsRejectModalVisible(true)}>淘汰</Button>
       );
     }
 
@@ -572,28 +572,26 @@ const ResumeDetail: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <div style={{ textAlign: 'center' }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>匹配度</Text>
                 <div style={{ marginTop: 4 }}>
                   <Progress
                     type="circle"
                     percent={resume.match_score}
-                    width={50}
-                    format={percent => <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A' }}>{percent}%</span>}
+                    width={44}
+                    format={percent => <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>{percent}%</span>}
                     strokeColor={resume.match_score >= 80 ? '#10B981' : resume.match_score >= 60 ? '#F59E0B' : '#EF4444'}
                   />
                 </div>
               </div>
-              <div>
-                <Tag color={statusInfo.color} style={{ fontSize: 14, padding: '4px 10px', margin: 0 }}>
-                  {statusInfo.text}
-                </Tag>
-              </div>
+              <Tag color={statusInfo.color} style={{ fontSize: 13, padding: '4px 10px', margin: 0 }}>
+                {statusInfo.text}
+              </Tag>
 
-              <Space>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {renderActionButtons()}
-              </Space>
+              </div>
             </div>
           </div>
 
