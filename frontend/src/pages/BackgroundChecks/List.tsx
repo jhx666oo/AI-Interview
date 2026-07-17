@@ -103,7 +103,7 @@ const BackgroundChecksList: React.FC = () => {
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 120,
       render: (v: string) => dayjs(v).format('YYYY-MM-DD')
     },
-    { title: '操作', key: 'action', width: 180, fixed: 'right' as const,
+    { title: '操作', align: 'center' as const, key: 'action', width: 180, fixed: 'right' as const,
       render: (_: any, record: any) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>

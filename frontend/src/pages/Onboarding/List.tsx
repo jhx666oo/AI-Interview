@@ -103,7 +103,7 @@ const OnboardingList: React.FC = () => {
       render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '已完成' : '未完成'}</Tag> },
     { title: '状态', dataIndex: 'status', key: 'status', width: 90,
       render: (v: string) => { const c = statusConfig[v] || { color: 'default', text: v }; return <Tag color={c.color}>{c.text}</Tag>; } },
-    { title: '操作', key: 'action', width: 180,
+    { title: '操作', align: 'center' as const, key: 'action', width: 180,
       render: (_: any, record: any) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>

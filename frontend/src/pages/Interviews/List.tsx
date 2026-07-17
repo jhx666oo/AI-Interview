@@ -342,7 +342,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', key: 'action', width: 340, fixed: 'right' as const,
+      title: '操作', align: 'center' as const, key: 'action', width: 340, fixed: 'right' as const,
       render: (_: any, r: MergedRow) => {
         // 已入库但未安排面试 → 安排面试
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;

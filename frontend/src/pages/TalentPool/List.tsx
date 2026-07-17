@@ -149,7 +149,7 @@ const TalentPoolList: React.FC = () => {
       render: (v: string) => v ? dayjs(v).format('MM-DD HH:mm') : '-'
     },
     {
-      title: '操作', key: 'action', width: 180, fixed: 'right' as const,
+      title: '操作', align: 'center' as const, key: 'action', width: 180, fixed: 'right' as const,
       render: (_: any, record: any) => (
         <Space size="small">
           <Tooltip title="下载简历">

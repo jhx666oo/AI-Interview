@@ -139,7 +139,7 @@ const ProbationList: React.FC = () => {
       render: (v: string) => { const c = resultConfig[v] || { color: 'default', text: v }; return <Tag color={c.color}>{c.text}</Tag>; } },
     { title: '转正日期', dataIndex: 'confirmed_at', key: 'confirmed_at', width: 110,
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-' },
-    { title: '操作', key: 'action', width: 300,
+    { title: '操作', align: 'center' as const, key: 'action', width: 300,
       render: (_: any, record: any) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>

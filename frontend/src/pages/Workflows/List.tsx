@@ -181,7 +181,7 @@ const WorkflowsList: React.FC = () => {
       render: (date: string) => new Date(date).toLocaleString(),
     },
     {
-      title: '操作',
+      title: '操作', align: 'center' as const,
       key: 'action',
       width: 200,
       render: (_: any, record: Workflow) => (
