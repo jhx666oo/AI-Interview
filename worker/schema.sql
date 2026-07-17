@@ -557,3 +557,24 @@ CREATE TABLE IF NOT EXISTS interviewer_mappings (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Capability Dimensions
+CREATE TABLE IF NOT EXISTS capability_dimensions (
+  id TEXT PRIMARY KEY,
+  position_name TEXT NOT NULL,
+  dimensions_json TEXT DEFAULT '[]',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Recruitment Tasks
+CREATE TABLE IF NOT EXISTS recruitment_tasks (
+  id TEXT PRIMARY KEY,
+  position_name TEXT NOT NULL,
+  status TEXT DEFAULT 'pending',
+  assignee TEXT DEFAULT '',
+  due_date TEXT,
+  notes TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
