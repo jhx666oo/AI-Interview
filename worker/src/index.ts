@@ -2547,6 +2547,36 @@ app.get('/api/resumes/:id/file', async (c) => {
     const payload = await verifyJwt(c.env.SECRET_KEY, token);
     if (!payload) return c.json({ detail: 'Invalid token' }, 401);
 
+    // 调试模式：返回附件原始数据
+    if (c.req.query('debug') === '1') {
+      const tableId = getBitableTableId(c.env, 'talent');
+      const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
+      if (!record) return c.json({ detail: 'Not found' }, 404);
+      const f = record.fields || {};
+      let debugFileToken = '', debugDownloadUrl = '', debugFieldName = '', debugFieldValue: any = null;
+      for (const [fieldName, fieldValue] of Object.entries(f)) {
+        if (Array.isArray(fieldValue) && fieldValue.length > 0) {
+          const item = fieldValue[0];
+          if (item && typeof item === 'object' && (item.file_token || item.download_url || item.tmp_url)) {
+            debugFieldName = fieldName;
+            debugFieldValue = item;
+            debugFileToken = item.file_token || '';
+            debugDownloadUrl = item.download_url || item.tmp_url || '';
+            break;
+          }
+        }
+      }
+      return c.json({
+        record_id: c.req.param('id'),
+        field_count: Object.keys(f).length,
+        field_name: debugFieldName,
+        field_value_keys: debugFieldValue ? Object.keys(debugFieldValue) : [],
+        field_value: debugFieldValue,
+        file_token: debugFileToken,
+        download_url: debugDownloadUrl,
+      });
+    }
+
     const tableId = getBitableTableId(c.env, 'talent');
     const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
     if (!record) return c.json({ detail: 'Not found' }, 404);
