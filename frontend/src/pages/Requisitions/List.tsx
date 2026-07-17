@@ -175,7 +175,7 @@ const RequisitionsList: React.FC = () => {
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-'
     },
     {
-      title: '操作', key: 'action', width: 200, fixed: 'right' as const,
+      title: '操作', key: 'action', width: 280, fixed: 'right' as const,
       render: (_: any, record: any) => (
         <Space size="small">
           {record.status === 'pending' && (
