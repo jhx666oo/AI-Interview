@@ -507,7 +507,7 @@ const ResumeDetail: React.FC = () => {
       </div>
       <div style={{ flex: 1, display: 'flex', gap: '24px', overflow: 'hidden' }}>
       {/* Left: File Preview */}
-      <div style={{ flex: 1, background: '#fff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: '1 1 45%', minWidth: 0, background: '#fff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '16px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#F8FAFC' }}>
           <Title level={5} style={{ margin: 0 }}>简历原件预览</Title>
           <Button type="primary" icon={<DownloadOutlined />} href={downloadUrl} target="_blank">
@@ -530,13 +530,13 @@ const ResumeDetail: React.FC = () => {
       </div>
 
       {/* Right: AI Analysis & Details */}
-      <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
+      <div style={{ flex: '1 1 55%', minWidth: 0, overflowY: 'auto', paddingRight: '4px' }}>
         <Card
           bordered={false}
           style={{ borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', border: '1px solid #E2E8F0' }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-            <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: 16 }}>
+            <div style={{ minWidth: 0, flex: '1 0 auto' }}>
               {isEditing ? (
                   <Form form={form} layout="inline">
                       <Form.Item name="candidate_name" style={{ marginBottom: 0 }}>
