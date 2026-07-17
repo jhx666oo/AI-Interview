@@ -535,8 +535,9 @@ const ResumeDetail: React.FC = () => {
           bordered={false}
           style={{ borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', border: '1px solid #E2E8F0' }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, gap: 16 }}>
-            <div style={{ minWidth: 0, flex: '1 0 auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, gap: 20, flexWrap: 'wrap' }}>
+            {/* 姓名 + 邮箱 */}
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 120 }}>
               {isEditing ? (
                   <Form form={form} layout="inline">
                       <Form.Item name="candidate_name" style={{ marginBottom: 0 }}>
@@ -572,10 +573,11 @@ const ResumeDetail: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {/* 匹配度 + 状态 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <div style={{ textAlign: 'center' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>匹配度</Text>
-                <div style={{ marginTop: 4 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>匹配度</Text>
+                <div style={{ marginTop: 2 }}>
                   <Progress
                     type="circle"
                     percent={resume.match_score}
@@ -588,10 +590,11 @@ const ResumeDetail: React.FC = () => {
               <Tag color={statusInfo.color} style={{ fontSize: 13, padding: '4px 10px', margin: 0 }}>
                 {statusInfo.text}
               </Tag>
+            </div>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {renderActionButtons()}
-              </div>
+            {/* 操作按钮 */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {renderActionButtons()}
             </div>
           </div>
 
