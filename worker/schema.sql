@@ -415,6 +415,18 @@ CREATE TABLE IF NOT EXISTS workflows (
   published_at TEXT
 );
 
+-- Position Mappings (岗位名映射)
+CREATE TABLE IF NOT EXISTS position_mappings (
+  id TEXT PRIMARY KEY,
+  raw_names TEXT,
+  raw_name TEXT,
+  mapped_name TEXT,
+  responsible_person TEXT,
+  interviewers TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Workflow Nodes
 CREATE TABLE IF NOT EXISTS workflow_nodes (
   id TEXT PRIMARY KEY,
