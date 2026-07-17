@@ -708,7 +708,7 @@ const PositionsList: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 120,
+      width: 150,
       fixed: 'right' as const,
       render: (_: any, record: Position) => (
         <Space size="small">
