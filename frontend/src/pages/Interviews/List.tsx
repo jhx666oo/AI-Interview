@@ -433,7 +433,7 @@ const InterviewsList: React.FC = () => {
               onChange={e => setSearch(e.target.value)}
               onSearch={v => setSearch(v)}
             />
-            <Select placeholder="筛选" allowClear style={{ width: 130 }}
+            <Select placeholder="筛选" allowClear style={{ width: 200 }}
               value={filterStatus} onChange={v => setFilterStatus(v)}>
               <Select.Option value="approved">已入库</Select.Option>
               <Select.Option value="pending_interview">待安排面试</Select.Option>

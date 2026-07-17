@@ -1016,7 +1016,7 @@ const ResumesList: React.FC = () => {
                 placeholder="请选择状态"
                 value={searchStatus}
                 onChange={val => setSearchStatus(val)}
-                style={{ width: 130 }}
+                style={{ width: 200 }}
                 allowClear
               >
                 <Select.Option value="pending_screening">待初筛</Select.Option>
@@ -1029,7 +1029,7 @@ const ResumesList: React.FC = () => {
                 placeholder="全部负责人"
                 value={searchPerson}
                 onChange={val => { setSearchPerson(val); }}
-                style={{ width: 130 }}
+                style={{ width: 200 }}
                 allowClear
                 showSearch
                 optionFilterProp="children"

@@ -766,7 +766,7 @@ const PositionsList: React.FC = () => {
           <Input 
               placeholder="搜索岗位名称" 
               prefix={<EyeOutlined style={{ color: '#94A3B8' }} />} 
-              style={{ width: 300 }} 
+              style={{ width: 200 }} 
               allowClear
               onChange={(e) => setSearchTitle(e.target.value)}
           />
