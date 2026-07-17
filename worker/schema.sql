@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT DEFAULT 'hr',
   is_active INTEGER DEFAULT 1,
   feishu_token TEXT DEFAULT '',
+  feishu_open_id TEXT DEFAULT '',
+  feishu_name TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
