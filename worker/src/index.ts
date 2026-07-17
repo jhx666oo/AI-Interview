@@ -2580,43 +2580,39 @@ app.get('/api/resumes/:id/file', async (c) => {
       if (parsed.resume_file?.download_url) feishuDownloadUrl = parsed.resume_file.download_url;
     }
 
-    // 如果有 download_url，直接 302 重定向到飞书下载链接
-    if (feishuDownloadUrl) {
-      return c.redirect(feishuDownloadUrl);
-    }
-
-    // D1 缓存兜底
+    // 1. D1 缓存优先
     if (recordId) {
       try {
         const fileRow: any = await c.env.DB.prepare('SELECT content, file_name FROM resume_files WHERE id = ?').bind(recordId).first();
         if (fileRow && fileRow.content) {
           const pdfBytes = b64ToBuf(fileRow.content);
           const disposition = isDownload ? 'attachment' : 'inline';
-          return new Response(pdfBytes, {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/pdf',
-              'Content-Disposition': `${disposition}; filename="${fileRow.file_name || attachmentFileName}"`,
-              'Access-Control-Allow-Origin': '*',
-            },
-          });
+          return new Response(pdfBytes, { status: 200, headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `${disposition}; filename="${fileRow.file_name || attachmentFileName}"`,
+            'Access-Control-Allow-Origin': '*',
+          }});
         }
       } catch {}
     }
 
-    // 最后通过 downloadFeishuAttachment 尝试
+    // 2. 通过 downloadFeishuAttachment 下载并缓存
     if (fileToken) {
       const dlResp = await downloadFeishuAttachment(c.env, fileToken, feishuDownloadUrl);
       if (dlResp) {
+        try {
+          const arrBuf = await dlResp.clone().arrayBuffer();
+          const b64 = bufToB64(new Uint8Array(arrBuf));
+          await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS resume_files (id TEXT PRIMARY KEY, content TEXT, file_name TEXT, created_at TEXT)').run();
+          await c.env.DB.prepare('INSERT OR REPLACE INTO resume_files (id, content, file_name, created_at) VALUES (?, ?, ?, ?)')
+            .bind(recordId, b64, attachmentFileName, new Date().toISOString()).run();
+        } catch {}
         const disposition = isDownload ? 'attachment' : 'inline';
-        return new Response(dlResp.body, {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/pdf',
-            'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
-            'Access-Control-Allow-Origin': '*',
-          },
-        });
+        return new Response(dlResp.body, { status: 200, headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
+          'Access-Control-Allow-Origin': '*',
+        }});
       }
     }
 
