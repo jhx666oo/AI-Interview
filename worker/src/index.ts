@@ -1626,34 +1626,28 @@ app.post('/api/onboarding/sync-from-resumes', authMiddleware, async (c) => {
   const db = c.env.DB;
   try {
     // 获取所有状态为 approved 的简历
-    const approved = await db.prepare('SELECT id, candidate_name, position_id, status, created_at FROM resumes WHERE status = ?').bind('approved').all();
+    const approved = await db.prepare('SELECT id, candidate_name, position_applied, mapped_position, position_id, status, created_at FROM resumes WHERE status = ?').bind('approved').all();
     let created = 0;
     let skipped = 0;
     const now = new Date().toISOString();
-    const departments = ['技术部', '产品部', '运营部', '市场部', '设计部', '服务部'];
 
     for (const r of approved.results) {
-      // 检查是否已存在入职记录（按 resume_id 去重）
       const exist = await db.prepare('SELECT id FROM onboarding_records WHERE resume_id = ?').bind(r.id).first();
       if (exist) { skipped++; continue; }
 
       const id = 'ob_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-      const dept = departments[Math.floor(Math.random() * departments.length)];
       const empId = 'EMP' + String(created + 1).padStart(3, '0');
 
-      // 尝试从 positions 表获取岗位名称
-      let positionTitle = '待定';
-      if (r.position_id) {
-        const pos = await db.prepare('SELECT title FROM positions WHERE id = ?').bind(r.position_id).first() as any;
-        if (pos?.title) positionTitle = pos.title;
-      }
+      // 优先用 mapped_position，其次 position_applied
+      let positionTitle = (r.mapped_position || r.position_applied || '待定') as string;
+      if (typeof positionTitle === 'object' || positionTitle === '[object Object]') positionTitle = '待定';
 
       await db.prepare(`INSERT INTO onboarding_records
         (id, resume_id, position_id, candidate_name, employee_id, onboard_date, department, position_title,
          contract_signed, contract_type, accounts_created, equipment_assigned, orientation_completed, orientation_date, status, notes, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`      ).bind(
         id, r.id, r.position_id || '', r.candidate_name, empId,
-        new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10), dept,
+        new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10), '',
         positionTitle, 0, 'fixed_term', 0, 0, 0, null,
         'pending', '从已通过候选人自动生成', now, now
       ).run();
@@ -1705,43 +1699,34 @@ app.post('/api/interviews/sync-from-resumes', authMiddleware, async (c) => {
   const db = c.env.DB;
   try {
     // 获取已 approved 的简历（已通过 AI 初筛 + HR 复核）
-    const approved = await db.prepare("SELECT id, candidate_name, position_id FROM resumes WHERE status = 'approved'").all();
-    // 获取所有岗位作为可选面试岗位
-    const positions = await db.prepare("SELECT id, title FROM positions LIMIT 20").all();
+    const approved = await db.prepare("SELECT id, candidate_name, position_applied, mapped_position, position_id FROM resumes WHERE status = 'approved'").all();
+    const positions = await db.prepare("SELECT id, title, primary_interviewer, secondary_interviewer FROM positions LIMIT 20").all();
     const posList = positions.results as any[];
-    const rounds = [1, 2, 3]; // 一面/二面/终面
     let created = 0, skipped = 0;
     const now = new Date().toISOString();
 
     for (const r of approved.results) {
-      // 检查是否已存在面试记录
       const exist = await db.prepare('SELECT id FROM interviews WHERE resume_id = ?').bind(r.id).first();
       if (exist) { skipped++; continue; }
 
-      // 匹配岗位：优先使用简历关联的 position_id，否则随机分配
-      let posId = r.position_id;
-      let posTitle = '';
-      if (!posId && posList.length > 0) {
-        const randPos = posList[Math.floor(Math.random() * posList.length)];
-        posId = randPos.id;
-        posTitle = randPos.title;
-      } else if (posId) {
-        const p = posList.find(x => x.id === posId);
-        posTitle = p?.title || '';
+      // 匹配岗位：优先用 mapped_position 模糊匹配 positions 表
+      let posId = r.position_id || '' as string;
+      let posTitle = (r.mapped_position || r.position_applied || '') as string;
+      let interviewer = '';
+
+      if (!posId && posList.length > 0 && posTitle) {
+        const matched = posList.find((p: any) => p.title && posTitle.includes(p.title)) || posList[0];
+        posId = matched.id;
+        posTitle = matched.title;
+        interviewer = matched.primary_interviewer || '';
       }
 
-      // 为每个 approved 简历创建一面记录
-      const round = rounds[Math.floor(Math.random() * rounds.length)];
-      const interviewDays = Math.floor(Math.random() * 14) + 1;
-      const interviewDate = new Date(Date.now() + interviewDays * 86400000).toISOString().replace('T', ' ').slice(0, 19);
-      const types = ['onsite', 'video', 'phone'];
-      const locations = ['公司会议室A', '公司会议室B', '线上视频面试', '电话面试'];
-
       const id = 'iv_fs_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      const interviewDate = new Date(Date.now() + 7 * 86400000).toISOString().replace('T', ' ').slice(0, 19);
 
       await db.prepare(`INSERT INTO interviews (id, resume_id, position_id, interviewer, round, interview_time, interview_type, interview_location, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)`)
-        .bind(id, r.id, posId, '', round, interviewDate, types[round - 1], locations[round - 1], now, now).run();
+        VALUES (?, ?, ?, ?, 1, ?, 'onsite', '待定', 'scheduled', ?, ?)`)
+        .bind(id, r.id, posId, interviewer, interviewDate, now, now).run();
       created++;
     }
     return c.json({ ok: true, message: `面试记录同步完成：新增 ${created} 条，跳过 ${skipped} 条`, created, skipped, source: 'approved 简历' });
