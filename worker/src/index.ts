@@ -2479,14 +2479,17 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
       const status = item.status || 'pending_screening';
 
       const positionName = posMap.get(item.position_applied) || item.mapped_position || item.position_applied || '';
+      const mappedPos = item.mapped_position || item.position_applied || '';
       const id = item.id; // = 飞书 record_id，保证幂等
       const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ? LIMIT 1').bind(id).first();
 
       if (existing) {
         await c.env.DB.prepare(
-          `UPDATE resumes SET candidate_name=?, email=?, match_score=?, screening_result=?, ai_review=?, hr_review=?, status=?, stage=?, parsed_data=?, parse_status='completed' WHERE id=?`
+          `UPDATE resumes SET candidate_name=?, email=?, position_applied=?, mapped_position=?, match_score=?, screening_result=?, ai_review=?, hr_review=?, status=?, stage=?, parsed_data=?, parse_status='completed' WHERE id=?`
         ).bind(
-          item.candidate_name || '', item.email || '', item.match_score ?? null,
+          item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos,
+          item.match_score ?? null,
+          screening, item.ai_evaluation || '', hr, status, stage,
           screening, item.ai_evaluation || '', hr, status, stage,
           JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age }),
           id
@@ -2494,9 +2497,9 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
         updated++;
       } else {
         await c.env.DB.prepare(
-          `INSERT INTO resumes (id, candidate_name, email, match_score, screening_result, ai_review, hr_review, status, stage, parsed_data, parse_status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?, 'completed', ?)`
+          `INSERT INTO resumes (id, candidate_name, email, position_applied, mapped_position, match_score, screening_result, ai_review, hr_review, status, stage, parsed_data, parse_status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'completed', ?)`
         ).bind(
-          id, item.candidate_name || '', item.email || '', item.match_score ?? null,
+          id, item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos, item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
           JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age }),
           now()

@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS resumes (
   contact TEXT,
   email TEXT,
   position_id TEXT,
+  position_applied TEXT DEFAULT '',
+  mapped_position TEXT DEFAULT '',
   file_path TEXT,
   raw_text TEXT,
   resume_markdown TEXT,
