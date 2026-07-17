@@ -706,7 +706,7 @@ const PositionsList: React.FC = () => {
       render: (date: string) => <span style={{ color: '#64748B', fontSize: 13 }}>{new Date(date).toLocaleDateString()}</span>
     },
     {
-      title: '操作',
+      title: '操作', align: 'center' as const,
       key: 'action',
       width: 150,
       fixed: 'right' as const,
