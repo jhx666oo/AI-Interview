@@ -240,28 +240,36 @@ const Dashboard: React.FC = () => {
             style={{ borderRadius: 8, height: '100%' }}
           >
             {overview?.funnel?.stages?.length ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
                 {overview.funnel.stages.map((stage, idx) => {
+                  const total = overview.funnel.stages.length;
+                  const widthPct = 100 - idx * (60 / Math.max(total - 1, 1)); // 100% → 40% 逐级收窄
+                  const color = funnelColors[idx % funnelColors.length];
                   const pct = maxFunnelCount > 0 ? Math.round((stage.count / maxFunnelCount) * 100) : 0;
                   return (
-                    <div key={stage.name}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
-                        <span>{stage.name}</span>
-                        <Text strong>{stage.count}</Text>
-                      </div>
+                    <div key={stage.name} style={{
+                      width: `${widthPct}%`,
+                      minWidth: 120,
+                      position: 'relative',
+                    }}>
+                      {/* 梯形主体 */}
                       <div style={{
-                        height: 8,
-                        background: '#F1F5F9',
-                        borderRadius: 4,
-                        overflow: 'hidden',
+                        height: 44,
+                        background: `linear-gradient(135deg, ${color}, ${color}dd)`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        clipPath: 'polygon(4% 0%, 96% 0%, 100% 100%, 0% 100%)',
+                        transition: 'all 0.4s ease',
                       }}>
                         <div style={{
-                          width: `${pct}%`,
-                          height: '100%',
-                          background: funnelColors[idx % funnelColors.length],
-                          borderRadius: 4,
-                          transition: 'width 0.6s ease',
-                        }} />
+                          color: '#fff', fontWeight: 600, fontSize: 13,
+                          textAlign: 'center', lineHeight: 1.2,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                        }}>
+                          {stage.name}
+                          <br />
+                          <span style={{ fontSize: 18 }}>{stage.count}</span>
+                          <span style={{ fontSize: 11, opacity: 0.8 }}>（{pct}%）</span>
+                        </div>
                       </div>
                     </div>
                   );

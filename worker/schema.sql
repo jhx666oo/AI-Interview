@@ -578,3 +578,14 @@ CREATE TABLE IF NOT EXISTS recruitment_tasks (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+-- JD Versions (v2.0 全需求重构 - JD 管理独立模块)
+CREATE TABLE IF NOT EXISTS jd_versions (
+  id TEXT PRIMARY KEY,
+  position_id TEXT NOT NULL,
+  description TEXT NOT NULL,
+  requirements TEXT,
+  version_number INTEGER DEFAULT 1,
+  created_by TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);

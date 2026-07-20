@@ -147,6 +147,13 @@ const RequisitionsList: React.FC = () => {
   const columns = [
     { title: '岗位名称', dataIndex: 'title', key: 'title', width: 180 },
     { title: '部门', dataIndex: 'department', key: 'department', width: 120 },
+    {
+      title: '城市', dataIndex: 'city', key: 'city', width: 160,
+      render: (v: any) => {
+        const cities = Array.isArray(v) ? v : (typeof v === 'string' ? v.split(',').filter(Boolean) : []);
+        return cities.length ? cities.map((c: string) => <Tag key={c} color="blue">{c}</Tag>) : '-';
+      }
+    },
     { title: '招聘人数', dataIndex: 'headcount', key: 'headcount', width: 80 },
     {
       title: '紧急程度', dataIndex: 'urgency', key: 'urgency', width: 100,
@@ -255,6 +262,40 @@ const RequisitionsList: React.FC = () => {
             </Col>
           </Row>
           <Row gutter={16}>
+            <Col span={24}>
+              <Form.Item name="city" label="招聘城市（多选）">
+                <Select mode="multiple" placeholder="选择城市" allowClear>
+                  <Option value="北京">北京</Option><Option value="上海">上海</Option>
+                  <Option value="广州">广州</Option><Option value="深圳">深圳</Option>
+                  <Option value="成都">成都</Option><Option value="长沙">长沙</Option>
+                  <Option value="杭州">杭州</Option><Option value="武汉">武汉</Option>
+                  <Option value="南京">南京</Option><Option value="西安">西安</Option>
+                  <Option value="重庆">重庆</Option><Option value="天津">天津</Option>
+                  <Option value="苏州">苏州</Option><Option value="郑州">郑州</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="employment_type" label="用工类型">
+                <Select>
+                  <Option value="full_time">全职</Option>
+                  <Option value="part_time">兼职</Option>
+                  <Option value="intern">实习</Option>
+                  <Option value="contract">外包</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="urgency" label="紧急程度">
+                <Select>
+                  {Object.entries(urgencyConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
             <Col span={8}>
               <Form.Item name="salary_range" label="薪资范围">
                 <Input placeholder="如：15-25K" />
@@ -274,11 +315,34 @@ const RequisitionsList: React.FC = () => {
           <Form.Item name="reporting_to" label="汇报对象">
             <Input placeholder="如：技术总监" />
           </Form.Item>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="hr_interviewer" label="HR面试官">
+                <Input placeholder="HR面试官" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="biz_interviewer" label="业务面试官">
+                <Input placeholder="业务面试官" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="final_interviewer" label="终面面试官">
+                <Input placeholder="终面面试官" />
+              </Form.Item>
+            </Col>
+          </Row>
           <Form.Item name="description" label="岗位描述">
             <TextArea rows={3} placeholder="岗位职责描述" />
           </Form.Item>
           <Form.Item name="requirements" label="任职要求">
             <TextArea rows={3} placeholder="学历、经验、技能等要求" />
+          </Form.Item>
+          <Form.Item name="hard_requirements" label="硬性要求（一票否决，不对外公开）">
+            <TextArea rows={2} placeholder="如：年龄45岁以上不考虑、学历必须大专以上" />
+          </Form.Item>
+          <Form.Item name="personalized_requirements" label="个性化需求（按城市，不写在BOSS JD里）">
+            <TextArea rows={3} placeholder="如：成都需男性、长沙需地推经验、上海需外企经验" />
           </Form.Item>
           <Form.Item name="channel_plan" label="渠道规划">
             <TextArea rows={2} placeholder="招聘渠道计划" />

@@ -1766,6 +1766,40 @@ app.get('/api/requisitions', authMiddleware, async (c) => {
     const records = await bitableListRecords(c.env, tableId);
     const items = records.map(parseRequisitionRecord);
 
+    // v2.0: 从 D1 增强数据（多城市、硬性要求、个性化需求）
+    try {
+      const d1Reqs = await c.env.DB.prepare(
+        'SELECT id, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person FROM job_requisitions'
+      ).all();
+      const d1Map = new Map();
+      for (const row of (d1Reqs.results || [])) {
+        d1Map.set(row.feishu_record_id || row.id, row);
+      }
+      for (const item of items) {
+        const d1 = d1Map.get(item.id) || d1Map.get(item.feishu_record_id);
+        if (d1) {
+          try { item.city = JSON.parse(d1.city || '[]'); } catch { item.city = item.city ? [item.city] : []; }
+          try { item.hard_requirements = JSON.parse(d1.hard_requirements || '[]'); } catch { item.hard_requirements = []; }
+          try { item.personalized_requirements = JSON.parse(d1.personalized_requirements || '{}'); } catch { item.personalized_requirements = {}; }
+          if (!item.responsible_person && d1.responsible_person) item.responsible_person = d1.responsible_person;
+          if (!item.hr_interviewer && d1.hr_interviewer) item.hr_interviewer = d1.hr_interviewer;
+          if (!item.biz_interviewer && d1.biz_interviewer) item.biz_interviewer = d1.biz_interviewer;
+          if (!item.final_interviewer && d1.final_interviewer) item.final_interviewer = d1.final_interviewer;
+        } else {
+          item.city = item.city ? [item.city] : [];
+          item.hard_requirements = [];
+          item.personalized_requirements = {};
+        }
+      }
+    } catch {
+      // D1 增强失败不影响主流程
+      for (const item of items) {
+        item.city = item.city ? [item.city] : [];
+        item.hard_requirements = [];
+        item.personalized_requirements = {};
+      }
+    }
+
     // 支持 status / department 筛选
     const statusFilter = c.req.query('status');
     const deptFilter = c.req.query('department');
@@ -1795,7 +1829,33 @@ app.get('/api/requisitions/:id', authMiddleware, async (c) => {
     const tableId = getBitableTableId(c.env, 'requisition');
     const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
     if (!record) return c.json({ detail: 'Not found' }, 404);
-    return c.json(parseRequisitionRecord(record));
+    const item = parseRequisitionRecord(record);
+
+    // v2.0: D1 增强
+    try {
+      const d1 = await c.env.DB.prepare(
+        'SELECT city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person FROM job_requisitions WHERE id = ? OR feishu_record_id = ?'
+      ).bind(c.req.param('id'), c.req.param('id')).first() as any;
+      if (d1) {
+        try { item.city = JSON.parse(d1.city || '[]'); } catch { item.city = item.city ? [item.city] : []; }
+        try { item.hard_requirements = JSON.parse(d1.hard_requirements || '[]'); } catch { item.hard_requirements = []; }
+        try { item.personalized_requirements = JSON.parse(d1.personalized_requirements || '{}'); } catch { item.personalized_requirements = {}; }
+        if (!item.responsible_person && d1.responsible_person) item.responsible_person = d1.responsible_person;
+        if (!item.hr_interviewer && d1.hr_interviewer) item.hr_interviewer = d1.hr_interviewer;
+        if (!item.biz_interviewer && d1.biz_interviewer) item.biz_interviewer = d1.biz_interviewer;
+        if (!item.final_interviewer && d1.final_interviewer) item.final_interviewer = d1.final_interviewer;
+      } else {
+        item.city = item.city ? [item.city] : [];
+        item.hard_requirements = [];
+        item.personalized_requirements = {};
+      }
+    } catch {
+      item.city = item.city ? [item.city] : [];
+      item.hard_requirements = [];
+      item.personalized_requirements = {};
+    }
+
+    return c.json(item);
   } catch (e: any) {
     return c.json({ detail: e.message }, 500);
   }
@@ -1808,8 +1868,29 @@ app.post('/api/requisitions', authMiddleware, async (c) => {
     const fields = feishuFieldsToRecord(FEISHU_REQUISITION_FIELDS, body);
     const recordId = await bitableCreateRecord(c.env, tableId, fields);
     if (!recordId) return c.json({ detail: 'Create failed' }, 500);
+
+    // v2.0: 同步写 D1（城市、硬性要求、个性化需求、面试官）
+    const d1Id = uuid();
+    await c.env.DB.prepare(
+      `INSERT INTO job_requisitions (id, title, department, status, description, requirements, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, feishu_record_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      d1Id, body.title || '', body.department || '', 'draft',
+      body.description || '', body.requirements || '',
+      JSON.stringify(body.city || []), JSON.stringify(body.hard_requirements || []), JSON.stringify(body.personalized_requirements || {}),
+      body.hr_interviewer || '', body.biz_interviewer || '', body.final_interviewer || '',
+      body.responsible_person || '', recordId, now()
+    ).run();
+
     const record = await bitableGetRecord(c.env, tableId, recordId);
-    return c.json(parseRequisitionRecord(record));
+    const item = parseRequisitionRecord(record);
+    item.city = body.city || [];
+    item.hard_requirements = body.hard_requirements || [];
+    item.personalized_requirements = body.personalized_requirements || {};
+    item.hr_interviewer = body.hr_interviewer || '';
+    item.biz_interviewer = body.biz_interviewer || '';
+    item.final_interviewer = body.final_interviewer || '';
+    return c.json(item);
   } catch (e: any) {
     return c.json({ detail: '创建需求失败: ' + e.message }, 500);
   }
@@ -1818,11 +1899,40 @@ app.post('/api/requisitions', authMiddleware, async (c) => {
 app.put('/api/requisitions/:id', authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
+    const id = c.req.param('id');
     const tableId = getBitableTableId(c.env, 'requisition');
     const fields = feishuFieldsToRecord(FEISHU_REQUISITION_FIELDS, body);
-    await bitableUpdateRecord(c.env, tableId, c.req.param('id'), fields);
-    const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
-    return c.json(parseRequisitionRecord(record));
+    await bitableUpdateRecord(c.env, tableId, id, fields);
+
+    // v2.0: 同步更新 D1
+    const sets: string[] = [];
+    const vals: any[] = [];
+    if (body.city !== undefined) { sets.push('city = ?'); vals.push(JSON.stringify(body.city)); }
+    if (body.hard_requirements !== undefined) { sets.push('hard_requirements = ?'); vals.push(JSON.stringify(body.hard_requirements)); }
+    if (body.personalized_requirements !== undefined) { sets.push('personalized_requirements = ?'); vals.push(JSON.stringify(body.personalized_requirements)); }
+    if (body.hr_interviewer !== undefined) { sets.push('hr_interviewer = ?'); vals.push(body.hr_interviewer); }
+    if (body.biz_interviewer !== undefined) { sets.push('biz_interviewer = ?'); vals.push(body.biz_interviewer); }
+    if (body.final_interviewer !== undefined) { sets.push('final_interviewer = ?'); vals.push(body.final_interviewer); }
+    if (body.responsible_person !== undefined) { sets.push('responsible_person = ?'); vals.push(body.responsible_person); }
+    if (body.title !== undefined) { sets.push('title = ?'); vals.push(body.title); }
+    if (body.department !== undefined) { sets.push('department = ?'); vals.push(body.department); }
+    if (body.status !== undefined) { sets.push('status = ?'); vals.push(body.status); }
+    if (body.description !== undefined) { sets.push('description = ?'); vals.push(body.description); }
+    if (body.requirements !== undefined) { sets.push('requirements = ?'); vals.push(body.requirements); }
+
+    if (sets.length > 0) {
+      vals.push(id); vals.push(id);
+      await c.env.DB.prepare(
+        `UPDATE job_requisitions SET ${sets.join(', ')}, updated_at = ? WHERE id = ? OR feishu_record_id = ?`
+      ).bind(...vals, now(), id, id).run();
+    }
+
+    const record = await bitableGetRecord(c.env, tableId, id);
+    const item = parseRequisitionRecord(record);
+    if (body.city !== undefined) item.city = body.city;
+    if (body.hard_requirements !== undefined) item.hard_requirements = body.hard_requirements;
+    if (body.personalized_requirements !== undefined) item.personalized_requirements = body.personalized_requirements;
+    return c.json(item);
   } catch (e: any) {
     return c.json({ detail: '更新失败: ' + e.message }, 500);
   }
@@ -3958,10 +4068,40 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE positions ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE interviews ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE interviews ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
+    // v2.0 全需求重构 - 需求管理增强
+    "ALTER TABLE job_requisitions ADD COLUMN city TEXT DEFAULT '[]'",
+    "ALTER TABLE job_requisitions ADD COLUMN hard_requirements TEXT DEFAULT '[]'",
+    "ALTER TABLE job_requisitions ADD COLUMN hr_interviewer TEXT DEFAULT ''",
+    "ALTER TABLE job_requisitions ADD COLUMN biz_interviewer TEXT DEFAULT ''",
+    "ALTER TABLE job_requisitions ADD COLUMN final_interviewer TEXT DEFAULT ''",
+    "ALTER TABLE job_requisitions ADD COLUMN responsible_person TEXT DEFAULT ''",
+    "ALTER TABLE job_requisitions ADD COLUMN capability_requirements TEXT DEFAULT ''",
+    // v2.0 - 简历管理增强
+    "ALTER TABLE resumes ADD COLUMN hard_requirement_result TEXT DEFAULT ''",
+    "ALTER TABLE resumes ADD COLUMN capability_scores TEXT DEFAULT '{}'",
+    "ALTER TABLE resumes ADD COLUMN three_layer_match TEXT DEFAULT '{}'",
+    "ALTER TABLE resumes ADD COLUMN feishu_file_token TEXT DEFAULT ''",
+    "ALTER TABLE resumes ADD COLUMN uploaded_at TEXT DEFAULT ''",
+    // v2.0 - 入职管理增强
+    "ALTER TABLE onboarding_records ADD COLUMN status_transitions TEXT DEFAULT '[]'",
+    "ALTER TABLE onboarding_records ADD COLUMN probation_record_id TEXT DEFAULT ''",
   ];
   for (const sql of migrations) {
     try { await c.env.DB.prepare(sql).run(); } catch { /* column may already exist */ }
   }
+
+  // v2.0: create jd_versions table
+  try {
+    await c.env.DB.prepare(`CREATE TABLE IF NOT EXISTS jd_versions (
+      id TEXT PRIMARY KEY,
+      position_id TEXT NOT NULL,
+      description TEXT NOT NULL,
+      requirements TEXT,
+      version_number INTEGER DEFAULT 1,
+      created_by TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )`).run();
+  } catch { /* table may already exist */ }
 
   const counts: Record<string, number> = {};
   const tables = ['positions', 'resumes', 'interviews', 'users', 'job_requisitions'];
