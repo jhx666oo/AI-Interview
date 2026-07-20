@@ -17,15 +17,15 @@ const { TextArea } = Input;
 const { Option } = Select;
 
 const statusConfig: Record<string, { color: string; text: string }> = {
-  draft: { color: 'default', text: '草稿' },
+  draft: { color: 'warning', text: '草稿' },
   pending: { color: 'processing', text: '待审批' },
   approved: { color: 'success', text: '已批准' },
   rejected: { color: 'error', text: '已驳回' },
-  closed: { color: 'default', text: '已关闭' },
+  closed: { color: '#8c8c8c', text: '已关闭' },
 };
 
 const urgencyConfig: Record<string, { color: string; text: string }> = {
-  low: { color: 'default', text: '低' },
+  low: { color: 'green', text: '低' },
   medium: { color: 'blue', text: '中' },
   high: { color: 'orange', text: '高' },
   urgent: { color: 'red', text: '紧急' },
