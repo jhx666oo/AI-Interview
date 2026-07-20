@@ -9,7 +9,7 @@ AI_BASE_URL = "https://api.deepseek.com"
 [[d1_databases]]
 binding = "DB"
 database_name = "ai-interview-db"
-database_id = "0eb6cbc3-93c7-4c9d-b933-57ff01a191cb"
+database_id = "3f82993e-210d-4b0b-9d83-4ed4be69724f"
 
 [ai]
 binding = "AI"
