@@ -183,7 +183,7 @@ const InterviewsList: React.FC = () => {
         feishu_record_id: scheduleRecord.feishu_record_id || scheduleRecord.resume_id,
         interview_time: interviewTime,
         interview_location: values.interview_location || '',
-        interviewer_name: values.interviewer_name || record.interviewer || '',
+        interviewer_name: values.interviewer_name || '杜雁玲',
       });
       message.success(`已安排面试：${name}`);
       setScheduleModalVisible(false);
@@ -402,7 +402,7 @@ const InterviewsList: React.FC = () => {
                 )}
                 {!r.primary_interviewer && !r.secondary_interviewer && (
                   <Button size="small" icon={<BellOutlined />}
-                    onClick={() => handleSendReminder(r)}>
+                    onClick={() => handleSendReminder(r, '杜雁玲')}>
                     提醒面试官
                   </Button>
                 )}

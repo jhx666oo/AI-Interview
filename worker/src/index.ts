@@ -5746,9 +5746,13 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       }
     } catch {}
 
-    // 面试官未绑定飞书 → 直接返回提示（硬编码 open_id 都来自旧小七应用，跨应用不可用）
+    // 面试官未绑定飞书，用系统 token + 查 interviewer_mappings / 硬编码
     if (!token || !openId) {
-      return c.json({ detail: `通知失败: 面试官「${interviewerName}」尚未在系统中绑定飞书账号，请让其前往「个人中心 - 绑定飞书」完成绑定后重试` }, 400);
+      token = await getFeishuToken(c.env);
+      openId = await getInterviewerOpenId(c.env, interviewerName);
+      if (!openId) {
+        return c.json({ detail: `通知失败: 未找到面试官「${interviewerName}」的飞书信息` }, 400);
+      }
     }
 
     const interviewTime = body.interview_time || '';
