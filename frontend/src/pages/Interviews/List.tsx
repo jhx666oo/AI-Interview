@@ -269,7 +269,7 @@ const InterviewsList: React.FC = () => {
   // == 表格列 ==
   const columns = [
     {
-      title: '候选人', key: 'candidate', width: 110, fixed: 'left' as const,
+      title: '候选人', key: 'candidate', width: 110,
       render: (_: any, r: MergedRow) => (
         <Space>
           <UserOutlined style={{ color: '#1677ff' }} />
@@ -342,7 +342,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 340, fixed: 'right' as const,
+      title: '操作', align: 'center' as const, key: 'action', width: 340,
       render: (_: any, r: MergedRow) => {
         // 已入库但未安排面试 → 安排面试
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
