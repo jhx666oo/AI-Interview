@@ -2440,13 +2440,14 @@ app.get('/api/resumes', authMiddleware, async (c) => {
           if (m.raw_name) ownerPositions.add(m.raw_name);
           if (m.mapped_name) ownerPositions.add(m.mapped_name);
         }
-        if (ownerPositions.size > 0) {
+        if (          ownerPositions.size > 0) {
           filtered = filtered.filter((i: any) => {
             const pos = i.mapped_position || i.position_applied || '';
             return Array.from(ownerPositions).some(p => pos.includes(p));
           });
         }
-      } catch {}
+      } catch (e) {}
+    }
 
     return c.json(filtered);
   } catch (e: any) {
