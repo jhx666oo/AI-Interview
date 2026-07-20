@@ -1,6 +1,6 @@
 import React from 'react';
 import { Form, Input, Button, Card, Typography, message } from 'antd';
-import { UserOutlined, LockOutlined } from '@ant-design/icons';
+import { UserOutlined, LockOutlined, UsergroupAddOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -52,14 +52,14 @@ const Login: React.FC = () => {
       justifyContent: 'center',
       alignItems: 'center',
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 30%, #A5D6A7 60%, #4CAF50 100%)',
+      background: 'linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 30%, #BFDBFE 60%, #60A5FA 100%)',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     }}>
       <Card
         style={{
           width: 420,
           borderRadius: 20,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.12)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.1)',
           border: 'none',
           overflow: 'hidden',
         }}
@@ -67,31 +67,17 @@ const Login: React.FC = () => {
       >
         {/* 顶部品牌区 */}
         <div style={{
-          background: 'linear-gradient(135deg, #2E7D32 0%, #43A047 100%)',
+          background: 'linear-gradient(135deg, #1D4ED8 0%, #3B82F6 100%)',
           padding: '48px 40px 40px',
           textAlign: 'center',
         }}>
-          {/* 天鹅图标 */}
           <div style={{
-            width: 72,
-            height: 72,
-            borderRadius: 18,
-            background: 'rgba(255,255,255,0.2)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '0 auto 20px',
-            backdropFilter: 'blur(4px)',
+            width: 72, height: 72, borderRadius: 18,
+            background: 'rgba(255,255,255,0.15)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 20px', backdropFilter: 'blur(4px)',
           }}>
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-              <path d="M8 28 C8 20, 2 14, 10 8 C18 4, 22 10, 20 18 C18 26, 12 30, 8 28Z" 
-                fill="white" opacity="0.9"/>
-              <path d="M20 18 C22 10, 26 4, 34 8 C42 14, 36 20, 28 28 C24 30, 18 26, 20 18Z" 
-                fill="white" opacity="0.7"/>
-              <circle cx="14" cy="16" r="1.5" fill="#2E7D32"/>
-              <path d="M8 28 C12 30, 24 30, 28 28" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.5"/>
-              <path d="M20 30 C20 34, 18 37, 20 39 C22 37, 20 34, 20 30Z" fill="white" opacity="0.4"/>
-            </svg>
+            <UsergroupAddOutlined style={{ color: '#fff', fontSize: 32 }} />
           </div>
           <Title level={3} style={{ color: '#fff', marginBottom: 4, fontWeight: 700, fontSize: 24 }}>
             天鹅到家
@@ -137,14 +123,10 @@ const Login: React.FC = () => {
                 htmlType="submit"
                 loading={loading}
                 style={{
-                  width: '100%',
-                  height: 48,
-                  borderRadius: 10,
-                  fontSize: 16,
-                  fontWeight: 600,
-                  background: 'linear-gradient(135deg, #43A047 0%, #2E7D32 100%)',
-                  border: 'none',
-                  boxShadow: '0 4px 14px rgba(46,125,50,0.3)',
+                  width: '100%', height: 48, borderRadius: 10,
+                  fontSize: 16, fontWeight: 600,
+                  background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)',
+                  border: 'none', boxShadow: '0 4px 14px rgba(59,130,246,0.35)',
                 }}
               >
                 登录
