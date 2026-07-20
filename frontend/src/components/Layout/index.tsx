@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Layout, Menu, Button, Avatar, Space, Dropdown, theme, Badge } from 'antd';
 import {
   DashboardOutlined,
@@ -34,6 +34,7 @@ const AppLayout: React.FC = () => {
     token: { colorBgContainer, borderRadiusLG },
   } = theme.useToken();
   const role = (user as any)?.role?.value ?? (user as any)?.role;
+  const [collapsed, setCollapsed] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -155,7 +156,9 @@ const AppLayout: React.FC = () => {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider 
-        collapsible 
+        collapsible
+        collapsed={collapsed}
+        onCollapse={setCollapsed}
         width={240}
         theme="light"
         style={{
@@ -192,7 +195,7 @@ const AppLayout: React.FC = () => {
           style={{ padding: '16px 8px', borderRight: 0, overflowY: 'auto', maxHeight: 'calc(100vh - 64px)' }}
         />
       </Sider>
-      <Layout style={{ marginLeft: 240 }}>
+      <Layout style={{ marginLeft: collapsed ? 80 : 240, transition: 'margin-left 0.2s' }}>
         <Header style={{ 
           padding: '0 32px', 
           display: 'flex', 
