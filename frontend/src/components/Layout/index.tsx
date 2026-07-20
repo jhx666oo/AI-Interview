@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Button, Avatar, Space, Dropdown, theme, Badge, Select } from 'antd';
+import React from 'react';
+import { Layout, Menu, Button, Avatar, Space, Dropdown, theme, Badge } from 'antd';
 import {
   DashboardOutlined,
   UserOutlined,
@@ -22,7 +22,6 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { useOwner } from '../../contexts/OwnerContext';
 import request from '../../utils/request';
 
 const { Header, Sider, Content } = Layout;
@@ -31,24 +30,10 @@ const AppLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { logout, user } = useAuth();
-  const { selectedOwner, setSelectedOwner } = useOwner();
-  const [ownerList, setOwnerList] = useState<string[]>([]);
   const {
     token: { colorBgContainer, borderRadiusLG },
   } = theme.useToken();
   const role = (user as any)?.role?.value ?? (user as any)?.role;
-
-  // 加载负责人列表
-  useEffect(() => {
-    request.get('/positions').then((res: any) => {
-      const list = Array.isArray(res) ? res : (res?.data || res?.items || res?.list || []);
-      const owners = [...new Set(
-        list.map((p: any) => p.responsible_person).filter(Boolean)
-      )] as string[];
-      setOwnerList(owners.sort());
-    }).catch(() => {});
-  }, []);
-
 
   const handleLogout = () => {
     logout();
@@ -220,14 +205,6 @@ const AppLayout: React.FC = () => {
             {pageTitle}
           </h2>
           <Space size="large">
-            <Select
-              allowClear
-              placeholder="全部负责人"
-              style={{ width: 160 }}
-              value={selectedOwner}
-              onChange={(v) => setSelectedOwner(v)}
-              options={ownerList.map(o => ({ label: o, value: o }))}
-            />
             <Button type="text" icon={<BellOutlined style={{ fontSize: '18px', color: '#64748B' }} />} />
             <Dropdown menu={userMenu}>
               <Space style={{ cursor: 'pointer' }}>
