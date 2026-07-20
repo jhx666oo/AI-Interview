@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Table, Button, Space, message, Modal, Form, Input, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
 import ReactMarkdown from 'react-markdown';
@@ -72,6 +73,7 @@ const PositionsList: React.FC = () => {
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [viewingRecord, setViewingRecord] = useState<Position | null>(null);
+  const { user } = useAuth();
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
