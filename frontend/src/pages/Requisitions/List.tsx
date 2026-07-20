@@ -22,6 +22,15 @@ const statusConfig: Record<string, { color: string; text: string }> = {
   approved: { color: 'success', text: '已批准' },
   rejected: { color: 'error', text: '已驳回' },
   closed: { color: '#8c8c8c', text: '已关闭' },
+  // 飞书 Bitable 返回的中文状态
+  '招聘中': { color: 'processing', text: '招聘中' },
+  '暂停': { color: 'warning', text: '暂停' },
+  '已完成': { color: '#8c8c8c', text: '已完成' },
+  '已关闭': { color: '#8c8c8c', text: '已关闭' },
+  '已终止': { color: 'error', text: '已终止' },
+  open: { color: 'processing', text: '招聘中' },
+  paused: { color: 'warning', text: '暂停' },
+  cancelled: { color: 'error', text: '已终止' },
 };
 
 const urgencyConfig: Record<string, { color: string; text: string }> = {
@@ -29,6 +38,12 @@ const urgencyConfig: Record<string, { color: string; text: string }> = {
   medium: { color: 'blue', text: '中' },
   high: { color: 'orange', text: '高' },
   urgent: { color: 'red', text: '紧急' },
+  // 飞书 Bitable 返回的中文紧急度
+  '低': { color: 'green', text: '低' },
+  '中': { color: 'blue', text: '中' },
+  '高': { color: 'orange', text: '高' },
+  '紧急': { color: 'red', text: '紧急' },
+  '普通': { color: 'green', text: '普通' },
 };
 
 const RequisitionsList: React.FC = () => {
