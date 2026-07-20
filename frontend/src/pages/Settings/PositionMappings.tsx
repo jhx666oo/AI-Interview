@@ -4,7 +4,7 @@ import {
   Typography, Select, Popconfirm, Tooltip, Divider
 } from 'antd';
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, SyncOutlined, UserOutlined
+  PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, SyncOutlined, UserOutlined, SearchOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 
@@ -217,11 +217,12 @@ const PositionMappings: React.FC = () => {
       title="岗位映射管理"
       extra={
         <Space>
-          <Input.Search
+          <Input
             placeholder="搜索标准岗位名"
+            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onSearch={fetchData}
+            onPressEnter={fetchData}
             style={{ width: 200 }}
             allowClear
           />
