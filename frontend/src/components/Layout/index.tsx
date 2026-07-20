@@ -184,7 +184,11 @@ const AppLayout: React.FC = () => {
           whiteSpace: 'nowrap',
           padding: '0 12px'
         }}>
-          <span style={{ color: '#3B82F6' }}>AI</span>&nbsp;Interview
+          {collapsed ? (
+            <DashboardOutlined style={{ color: '#3B82F6', fontSize: 24 }} />
+          ) : (
+            <><span style={{ color: '#3B82F6' }}>AI</span>&nbsp;Interview</>
+          )}
         </div>
         <Menu
           theme="light"
