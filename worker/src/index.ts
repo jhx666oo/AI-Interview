@@ -558,9 +558,17 @@ app.put('/api/auth/me/feishu', authMiddleware, async (c) => {
   return c.json(serializeUser(updated));
 });
 
-app.get('/api/auth/users', authMiddleware, requireRole(['admin']), async (c) => {
+app.get('/api/auth/users', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
   const result = await c.env.DB.prepare('SELECT * FROM users ORDER BY created_at DESC').all();
-  return c.json(result.results.map(serializeUser));
+  const users = result.results.map(serializeUser);
+  const currentUser = c.get('user');
+  // HR 用户只看基本信息，不暴露密码
+  if (currentUser?.role !== 'admin') {
+    return c.json(users.map((u: any) => ({
+      id: u.id, email: u.email, full_name: u.full_name, role: u.role, is_active: u.is_active
+    })));
+  }
+  return c.json(users);
 });
 
 app.post('/api/auth/users', authMiddleware, requireRole(['admin']), async (c) => {
