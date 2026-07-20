@@ -184,7 +184,7 @@ const AppLayout: React.FC = () => {
           whiteSpace: 'nowrap',
           padding: '0 12px'
         }}>
-          <DashboardOutlined style={{ color: '#3B82F6', fontSize: 22, flexShrink: 0 }} />
+          <UsergroupAddOutlined style={{ color: '#3B82F6', fontSize: 22, flexShrink: 0 }} />
           {!collapsed && <>&nbsp;<span style={{ color: '#3B82F6' }}>AI</span>&nbsp;Interview</>}
         </div>
         <Menu
