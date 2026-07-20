@@ -2696,6 +2696,18 @@ app.get('/api/resumes/:id/file', async (c) => {
     const payload = await verifyJwt(c.env.SECRET_KEY, token);
     if (!payload) return c.json({ detail: 'Invalid token' }, 401);
 
+    // v2.0: 30天预览限制
+    const isDownload = c.req.query('download') === 'true';
+    if (!isDownload) {
+      const resumeInfo = await c.env.DB.prepare('SELECT uploaded_at, feishu_file_token FROM resumes WHERE id = ?').bind(c.req.param('id')).first() as any;
+      if (resumeInfo?.uploaded_at) {
+        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        if (new Date(resumeInfo.uploaded_at).getTime() < thirtyDaysAgo) {
+          return c.json({ detail: '简历文件预览已过期（超出30天）。请联系管理员通过飞书云盘查看原始文件。', expired: true }, 410);
+        }
+      }
+    }
+
     // 调试模式：返回附件原始数据
     if (c.req.query('debug') === '1') {
       const tableId = getBitableTableId(c.env, 'talent');
@@ -2732,7 +2744,6 @@ app.get('/api/resumes/:id/file', async (c) => {
     const f = record.fields || {};
     
     const recordId = c.req.param('id');
-    const isDownload = c.req.query('download') === 'true';
     
     // 提取候选人姓名和文件名
     let candidateName = f['姓名'] || 'resume';
@@ -4112,7 +4123,100 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
   return c.json(counts);
 });
 
-// ==================== Resume Screening (小七 integration) ====================
+// ==================== Position Dedup (v2.0) ====================
+app.post('/api/positions/dedup', authMiddleware, async (c) => {
+  try {
+    // 按 title + department 分组，清除重复字段
+    const cleared = await c.env.DB.prepare(`
+      UPDATE positions SET
+        salary_range = '', location = '',
+        primary_interviewer = '', secondary_interviewer = '',
+        responsible_person = '', personalized_requirements = '',
+        updated_at = ?
+      WHERE 1=1
+    `).bind(now()).run();
+    return c.json({ deduped: cleared.meta?.changes ?? 0, message: '已清除岗位中的重复字段（保留 title/JD/department/capability_dimensions）' });
+  } catch (e: any) {
+    return c.json({ detail: e.message }, 500);
+  }
+});
+
+// ==================== JD Management (v2.0 新增模块) ====================
+// GET /api/jd-management — 所有岗位的 JD 列表
+app.get('/api/jd-management', authMiddleware, async (c) => {
+  try {
+    const results = await c.env.DB.prepare(
+      'SELECT id, title, department, description, requirements, status, updated_at FROM positions ORDER BY updated_at DESC'
+    ).all();
+    return c.json((results.results || []).map(transformRow));
+  } catch (e: any) {
+    return c.json({ detail: e.message }, 500);
+  }
+});
+
+// GET /api/jd-management/:id — 单个 JD + 版本历史
+app.get('/api/jd-management/:id', authMiddleware, async (c) => {
+  try {
+    const pos = await c.env.DB.prepare(
+      'SELECT id, title, department, description, requirements, status, updated_at FROM positions WHERE id = ?'
+    ).bind(c.req.param('id')).first();
+    if (!pos) return c.json({ detail: 'Not found' }, 404);
+    const versions = await c.env.DB.prepare(
+      'SELECT * FROM jd_versions WHERE position_id = ? ORDER BY version_number DESC'
+    ).bind(c.req.param('id')).all();
+    return c.json({
+      ...transformRow(pos),
+      versions: (versions.results || []).map(transformRow),
+    });
+  } catch (e: any) {
+    return c.json({ detail: e.message }, 500);
+  }
+});
+
+// PUT /api/jd-management/:id — 修改 JD（创建新版本）
+app.put('/api/jd-management/:id', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json();
+    const pos = await c.env.DB.prepare('SELECT id, description, requirements FROM positions WHERE id = ?')
+      .bind(c.req.param('id')).first() as any;
+    if (!pos) return c.json({ detail: 'Not found' }, 404);
+
+    // 创建版本记录
+    const verCount = await c.env.DB.prepare(
+      'SELECT MAX(version_number) as max_ver FROM jd_versions WHERE position_id = ?'
+    ).bind(c.req.param('id')).first() as any;
+    const nextVer = (verCount?.max_ver || 0) + 1;
+
+    await c.env.DB.prepare(
+      'INSERT INTO jd_versions (id, position_id, description, requirements, version_number, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(uuid(), c.req.param('id'), pos.description, pos.requirements, nextVer, c.get('user')?.email || '', now()).run();
+
+    // 更新岗位 JD
+    await c.env.DB.prepare('UPDATE positions SET description = ?, requirements = ?, updated_at = ? WHERE id = ?')
+      .bind(body.description || pos.description, body.requirements || pos.requirements, now(), c.req.param('id')).run();
+
+    return c.json({ detail: 'JD 已更新', version: nextVer });
+  } catch (e: any) {
+    return c.json({ detail: e.message }, 500);
+  }
+});
+
+// POST /api/jd-management/:id/evaluate — AI 评估 JD 质量
+app.post('/api/jd-management/:id/evaluate', authMiddleware, async (c) => {
+  try {
+    const pos = await c.env.DB.prepare(
+      'SELECT title, department, description, requirements FROM positions WHERE id = ?'
+    ).bind(c.req.param('id')).first() as any;
+    if (!pos) return c.json({ detail: 'Not found' }, 404);
+
+    const systemPrompt = '你是资深 HR 专家，请评估以下岗位 JD 的质量，从可读性、完整性、吸引力、与岗位匹配度四个维度打分（每项 1-10 分），并给出改进建议。返回 JSON 格式：{"readability":7,"completeness":6,"attractiveness":7,"match":8,"suggestions":"改进建议文本"}';
+    const userPrompt = `岗位：${pos.title}\n部门：${pos.department}\nJD：${pos.description}\n要求：${pos.requirements || ''}`;
+    const result = await callAI(c.env, systemPrompt, userPrompt);
+    return c.json(extractJSON(result));
+  } catch (e: any) {
+    return c.json({ detail: 'AI 评估失败: ' + e.message }, 500);
+  }
+});
 
 // CRUD for position mappings
 // ==================== 岗位映射：从飞书同步 ====================
@@ -4236,6 +4340,81 @@ app.get('/api/capability-dimension-names', authMiddleware, async (c) => {
 
 // CRUD for recruitment tasks
 registerCrud('recruitment-tasks', 'recruitment_tasks', { status: 'eq', position_name: 'like' });
+
+// ==================== 简历管理 v2.0 增强 ====================
+
+// POST /api/resumes/:id/check-hard-requirements — 硬性要求检查
+app.post('/api/resumes/:id/check-hard-requirements', authMiddleware, async (c) => {
+  try {
+    const resume = await c.env.DB.prepare('SELECT id, candidate_name, raw_text, position_id FROM resumes WHERE id = ?')
+      .bind(c.req.param('id')).first() as any;
+    if (!resume) return c.json({ detail: 'Not found' }, 404);
+    if (!resume.raw_text) return c.json({ detail: '简历无文本内容' }, 400);
+
+    // 获取关联需求的硬性要求
+    let hardReqs: any[] = [];
+    const pos = await c.env.DB.prepare('SELECT id FROM positions WHERE id = ?').bind(resume.position_id).first() as any;
+    if (pos) {
+      const req = await c.env.DB.prepare('SELECT hard_requirements FROM job_requisitions WHERE position_id = ? OR title = (SELECT title FROM positions WHERE id = ?) LIMIT 1')
+        .bind(resume.position_id, resume.position_id).first() as any;
+      if (req?.hard_requirements) {
+        try { hardReqs = JSON.parse(req.hard_requirements); } catch { hardReqs = []; }
+      }
+    }
+
+    if (hardReqs.length === 0) {
+      const result = { passed: true, hard_requirements: [], message: '无硬性要求配置' };
+      await c.env.DB.prepare('UPDATE resumes SET hard_requirement_result = ? WHERE id = ?')
+        .bind(JSON.stringify(result), c.req.param('id')).run();
+      return c.json(result);
+    }
+
+    // AI 检查
+    const systemPrompt = "你是 HR 筛选助手。根据简历文本检查候选人是否满足硬性要求。返回 JSON：{\"passed\":true/false,\"checks\":[{\"field\":\"要求字段\",\"required\":\"要求值\",\"actual\":\"实际值\",\"passed\":true/false}]}";
+    const userPrompt = `简历：${resume.raw_text.slice(0, 3000)}\n硬性要求：${JSON.stringify(hardReqs)}`;
+    const result = await callAI(c.env, systemPrompt, userPrompt);
+    const parsed = extractJSON(result);
+
+    await c.env.DB.prepare('UPDATE resumes SET hard_requirement_result = ? WHERE id = ?')
+      .bind(JSON.stringify(parsed), c.req.param('id')).run();
+    return c.json(parsed);
+  } catch (e: any) {
+    return c.json({ detail: '硬性要求检查失败: ' + e.message }, 500);
+  }
+});
+
+// POST /api/resumes/:id/score-capabilities — 能力维度 1-5 评分
+app.post('/api/resumes/:id/score-capabilities', authMiddleware, async (c) => {
+  try {
+    const resume = await c.env.DB.prepare('SELECT id, candidate_name, raw_text, position_id FROM resumes WHERE id = ?')
+      .bind(c.req.param('id')).first() as any;
+    if (!resume || !resume.raw_text) return c.json({ detail: '简历无文本' }, 400);
+
+    // 获取岗位能力维度
+    const pos = await c.env.DB.prepare('SELECT capability_dimensions FROM positions WHERE id = ?')
+      .bind(resume.position_id).first() as any;
+    let dims: any[] = [];
+    if (pos?.capability_dimensions) {
+      try { dims = JSON.parse(pos.capability_dimensions); } catch {}
+    }
+
+    if (dims.length === 0) {
+      return c.json({ detail: '岗位未配置能力维度' }, 400);
+    }
+
+    const dimNames = dims.map((d: any) => d.name || d.dimension_name).filter(Boolean);
+    const systemPrompt = `你是 HR 评审专家。对候选人逐项评分（1-5分，5分最高）。返回 JSON：{"scores":[{"dimension":"维度名","score":3,"reason":"评分理由"}]}。`;
+    const userPrompt = `能力维度：${dimNames.join('、')}\n简历：${resume.raw_text.slice(0, 3000)}`;
+    const result = await callAI(c.env, systemPrompt, userPrompt);
+    const parsed = extractJSON(result);
+
+    await c.env.DB.prepare('UPDATE resumes SET capability_scores = ? WHERE id = ?')
+      .bind(JSON.stringify(parsed), c.req.param('id')).run();
+    return c.json(parsed);
+  } catch (e: any) {
+    return c.json({ detail: '评分失败: ' + e.message }, 500);
+  }
+});
 
 // List screening queue with filters
 app.get('/api/resume-screening', authMiddleware, async (c) => {
@@ -5894,13 +6073,12 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       }
     } catch {}
 
-    // 面试官未绑定飞书，用系统 token + 查 interviewer_mappings / 硬编码
+    // 面试官必须绑定飞书，否则无法发送提醒
     if (!token || !openId) {
-      token = await getFeishuToken(c.env);
-      openId = await getInterviewerOpenId(c.env, interviewerName);
-      if (!openId) {
-        return c.json({ detail: `通知失败: 未找到面试官「${interviewerName}」的飞书信息` }, 400);
-      }
+      return c.json({
+        detail: `无法通知面试官「${interviewerName}」：该面试官尚未完成飞书 OAuth 绑定。请提醒他前往「个人设置 → 飞书绑定」完成授权后重试。`,
+        need_bind: true,
+      }, 400);
     }
 
     const interviewTime = body.interview_time || '';
@@ -6245,44 +6423,36 @@ app.post('/api/auth/migrate-plain-passwords', authMiddleware, requireRole(['admi
 // 清除超过指定天数的 resume_files 缓存（只删 PDF，不动其他数据）
 app.delete('/api/resumes/cleanup-pdfs', authMiddleware, async (c) => {
   try {
+    // v2.0: 不删除 resume_files 数据，仅清除 bitableCache 内存缓存
     const days = parseInt(c.req.query('days') || '30');
-    const db = c.env.DB;
-    const countResult = await db.prepare(
-      `SELECT COUNT(*) as cnt FROM resume_files WHERE created_at < datetime('now', ?)`
-    ).bind(`-${days} days`).first();
-    const cnt = (countResult as any)?.cnt || 0;
-    if (cnt > 0) {
-      await db.prepare(
-        `DELETE FROM resume_files WHERE created_at < datetime('now', ?)`
-      ).bind(`-${days} days`).run();
+    let beforeSize = bitableCache.size;
+    for (const [key, entry] of bitableCache) {
+      if (entry.expiry < Date.now()) bitableCache.delete(key);
     }
-    return c.json({ ok: true, deleted: cnt, days });
+    let afterSize = bitableCache.size;
+    return c.json({ ok: true, cache_cleared: beforeSize - afterSize, remaining: afterSize, message: '仅清除了内存缓存。数据库数据永久保留，不删除。' });
   } catch (e: any) {
     return c.json({ detail: '清理失败: ' + e.message }, 500);
   }
 });
 
-// SPA fallback: 非 API 路径委托 ASSETS 处理（SPA 路由由 index.html 兜底）
+// SPA fallback
 app.notFound(async (c) => {
-  // API 路由返回 JSON 404
-  if (c.req.path.startsWith('/api/')) {
-    return c.json({ detail: 'Not found' }, 404);
-  }
-  // 非 API 路由 → 委托 ASSETS 处理（始终返回最新的静态资源版本）
-  if (c.env.ASSETS) {
-    return c.env.ASSETS.fetch(c.req.raw);
-  }
+  if (c.req.path.startsWith('/api/')) return c.json({ detail: 'Not found' }, 404);
+  if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
   return c.text('Not found', 404);
 });
 
-// Worker Cron 触发器：每天凌晨 3 点清理超过 7 天的 PDF 缓存
+// Worker Cron 触发器：每天凌晨 3 点清除内存缓存（不删除数据库数据）
 export default {
   fetch: app.fetch,
   async scheduled(event: any, env: any, ctx: any) {
-    const days = 7;
-    const deleted = await env.DB.prepare(
-      `DELETE FROM resume_files WHERE created_at < datetime('now', ?)`
-    ).bind(`-${days} days`).run();
-    console.log(`[cron:cleanup-pdfs] deleted ${deleted.meta?.changes || 0} stale resume_files`);
+    // v2.0: 仅清除内存 bitableCache，不删除数据库中的任何数据
+    let beforeSize = bitableCache.size;
+    for (const [key, entry] of bitableCache) {
+      if (entry.expiry < Date.now()) bitableCache.delete(key);
+    }
+    let afterSize = bitableCache.size;
+    console.log(`[cron:cleanup-cache] cleared ${beforeSize - afterSize} stale cache entries. resume_files and raw_text preserved.`);
   },
 };

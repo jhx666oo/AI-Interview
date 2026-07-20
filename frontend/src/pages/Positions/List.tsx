@@ -124,12 +124,14 @@ const PositionsList: React.FC = () => {
       });
       await Modal.confirm({
         title: `确认去重`,
-        content: `将删除 ${toDelete.length} 条重复岗位记录，保留最早的 ${toKeep.length} 条。`,
+        content: `将清除岗位中的冗余字段（责任人/面试官/城市等已移至需求管理），并删除 ${toDelete.length} 条重复岗位记录。`,
         okText: '确认去重',
         cancelText: '取消',
         okType: 'danger',
       });
-      // 逐个删除重复项
+      // 1. 后端清除冗余字段
+      await request.post('/positions/dedup');
+      // 2. 逐个删除重复项
       let deleted = 0;
       for (const id of toDelete) {
         try {

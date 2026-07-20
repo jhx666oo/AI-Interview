@@ -28,6 +28,8 @@ const RequisitionsList = lazy(() => import('../pages/Requisitions/List'));
 const OnboardingList = lazy(() => import('../pages/Onboarding/List'));
 const ProbationList = lazy(() => import('../pages/Probation/List'));
 const DailyReportsList = lazy(() => import('../pages/DailyReports/List'));
+const JDManagementList = lazy(() => import('../pages/JDManagement/List'));
+const JDManagementEditor = lazy(() => import('../pages/JDManagement/Editor'));
 const PositionMappings = lazy(() => import('../pages/Settings/PositionMappings'));
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -171,6 +173,14 @@ const router = createBrowserRouter([
       {
         path: 'probation',
         element: <LazyPage><ProbationList /></LazyPage>,
+      },
+      {
+        path: 'jd-management',
+        element: <LazyPage><JDManagementList /></LazyPage>,
+      },
+      {
+        path: 'jd-management/:id',
+        element: <LazyPage><JDManagementEditor /></LazyPage>,
       },
       {
         path: 'daily-reports',
