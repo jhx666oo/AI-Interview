@@ -22,17 +22,12 @@ const Login: React.FC = () => {
   const onFinish = async (values: any) => {
     setLoading(true);
     try {
-      // Use URLSearchParams to send form data as application/x-www-form-urlencoded
       const formData = new URLSearchParams();
       formData.append('username', values.email);
       formData.append('password', values.password);
-
       const res = await request.post('/auth/token', formData, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
-      
       await login((res as any).access_token);
       message.success('登录成功');
       navigate('/dashboard', { replace: true });
@@ -52,49 +47,111 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div style={{ 
-      display: 'flex', 
-      justifyContent: 'center', 
-      alignItems: 'center', 
+    <div style={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
       minHeight: '100vh',
-      background: '#f0f2f5' 
+      background: 'linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 30%, #A5D6A7 60%, #4CAF50 100%)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     }}>
-      <Card style={{ width: 400, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Title level={3}>AI 智能面试系统</Title>
-          <Text type="secondary">请登录您的账号</Text>
-        </div>
-        
-        <Form
-          name="login"
-          initialValues={{ remember: true }}
-          onFinish={onFinish}
-          size="large"
-        >
-          <Form.Item
-            name="email"
-            rules={[{ required: true, message: '请输入邮箱!' }]}
-          >
-            <Input prefix={<UserOutlined />} placeholder="邮箱 (admin@example.com)" />
-          </Form.Item>
-
-          <Form.Item
-            name="password"
-            rules={[{ required: true, message: '请输入密码!' }]}
-          >
-            <Input.Password prefix={<LockOutlined />} placeholder="密码 (admin123)" />
-          </Form.Item>
-
-          <Form.Item>
-            <Button type="primary" htmlType="submit" style={{ width: '100%' }} loading={loading}>
-              登录
-            </Button>
-          </Form.Item>
-          
-          <div style={{ textAlign: 'center' }}>
-             <Text type="secondary" style={{ fontSize: 12 }}>默认账号: admin@example.com / admin123</Text>
+      <Card
+        style={{
+          width: 420,
+          borderRadius: 20,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.12)',
+          border: 'none',
+          overflow: 'hidden',
+        }}
+        bodyStyle={{ padding: 0 }}
+      >
+        {/* 顶部品牌区 */}
+        <div style={{
+          background: 'linear-gradient(135deg, #2E7D32 0%, #43A047 100%)',
+          padding: '48px 40px 40px',
+          textAlign: 'center',
+        }}>
+          {/* 天鹅图标 */}
+          <div style={{
+            width: 72,
+            height: 72,
+            borderRadius: 18,
+            background: 'rgba(255,255,255,0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 20px',
+            backdropFilter: 'blur(4px)',
+          }}>
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+              <path d="M8 28 C8 20, 2 14, 10 8 C18 4, 22 10, 20 18 C18 26, 12 30, 8 28Z" 
+                fill="white" opacity="0.9"/>
+              <path d="M20 18 C22 10, 26 4, 34 8 C42 14, 36 20, 28 28 C24 30, 18 26, 20 18Z" 
+                fill="white" opacity="0.7"/>
+              <circle cx="14" cy="16" r="1.5" fill="#2E7D32"/>
+              <path d="M8 28 C12 30, 24 30, 28 28" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.5"/>
+              <path d="M20 30 C20 34, 18 37, 20 39 C22 37, 20 34, 20 30Z" fill="white" opacity="0.4"/>
+            </svg>
           </div>
-        </Form>
+          <Title level={3} style={{ color: '#fff', marginBottom: 4, fontWeight: 700, fontSize: 24 }}>
+            天鹅到家
+          </Title>
+          <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14 }}>
+            AI 智能招聘系统
+          </Text>
+        </div>
+
+        {/* 登录表单区 */}
+        <div style={{ padding: '40px 40px 32px' }}>
+          <Form
+            name="login"
+            initialValues={{ remember: true }}
+            onFinish={onFinish}
+            size="large"
+          >
+            <Form.Item
+              name="email"
+              rules={[{ required: true, message: '请输入邮箱' }]}
+            >
+              <Input
+                prefix={<UserOutlined style={{ color: '#9E9E9E' }} />}
+                placeholder="邮箱地址"
+                style={{ borderRadius: 10, height: 48 }}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="password"
+              rules={[{ required: true, message: '请输入密码' }]}
+            >
+              <Input.Password
+                prefix={<LockOutlined style={{ color: '#9E9E9E' }} />}
+                placeholder="密码"
+                style={{ borderRadius: 10, height: 48 }}
+              />
+            </Form.Item>
+
+            <Form.Item style={{ marginBottom: 12, marginTop: 28 }}>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={loading}
+                style={{
+                  width: '100%',
+                  height: 48,
+                  borderRadius: 10,
+                  fontSize: 16,
+                  fontWeight: 600,
+                  background: 'linear-gradient(135deg, #43A047 0%, #2E7D32 100%)',
+                  border: 'none',
+                  boxShadow: '0 4px 14px rgba(46,125,50,0.3)',
+                }}
+              >
+                登录
+              </Button>
+            </Form.Item>
+          </Form>
+        </div>
       </Card>
     </div>
   );
