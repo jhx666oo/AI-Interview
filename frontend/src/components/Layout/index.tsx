@@ -185,7 +185,7 @@ const AppLayout: React.FC = () => {
           padding: '0 12px'
         }}>
           {collapsed ? (
-            <DashboardOutlined style={{ color: '#3B82F6', fontSize: 24 }} />
+            <Avatar style={{ backgroundColor: '#3B82F6' }} icon={<UserOutlined />} />
           ) : (
             <><span style={{ color: '#3B82F6' }}>AI</span>&nbsp;Interview</>
           )}
