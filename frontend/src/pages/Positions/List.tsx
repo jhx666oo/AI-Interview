@@ -547,7 +547,6 @@ const PositionsList: React.FC = () => {
       dataIndex: 'title', 
       key: 'title',
       width: 180,
-      fixed: 'left' as const,
       render: (text: string) => <span style={{ fontWeight: 500, color: '#0F172A' }}>{text}</span>
     },
     { title: '部门', dataIndex: 'department', key: 'department', width: 100, render: (v: string) => v || '-' },
@@ -709,7 +708,6 @@ const PositionsList: React.FC = () => {
       title: '操作', align: 'center' as const,
       key: 'action',
       width: 150,
-      fixed: 'right' as const,
       render: (_: any, record: Position) => (
         <Space size="small">
           <Tooltip title="编辑">
