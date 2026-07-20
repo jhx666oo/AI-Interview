@@ -1085,7 +1085,7 @@ const ResumesList: React.FC = () => {
         <Empty description="暂无简历数据" style={{ padding: 60 }} />
       ) : (
         <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <Row gutter={[12, 12]}>
             {pagedData.map((record: any) => {
               const ageText = cleanAge(record.age);
               const genderText = cleanGender(record.gender);
@@ -1094,7 +1094,8 @@ const ResumesList: React.FC = () => {
               const matchCount = scoreDetails?.filter(d => d.score >= 3).length || 0;
               const totalDims = scoreDetails?.length || 0;
 
-              return (
+                return (
+                <Col xs={24} sm={12} key={record.id}>
                 <Card
                   key={record.id}
                   size="small"
@@ -1166,9 +1167,10 @@ const ResumesList: React.FC = () => {
                     </div>
                   )}
                 </Card>
+                </Col>
               );
             })}
-          </div>
+          </Row>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
             <Pagination
               current={cardPage}
