@@ -77,7 +77,7 @@ const Login: React.FC = () => {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             margin: '0 auto 20px',
           }}>
-            <img src="/logo.svg" alt="logo" style={{ width: 52, height: 52 }} />
+            <img src="/swan.svg" alt="天鹅到家" style={{ height: 54, width: 'auto' }} />
           </div>
           <Title level={3} style={{ color: '#0F172A', marginBottom: 4, fontWeight: 700, fontSize: 24 }}>
             天鹅到家
