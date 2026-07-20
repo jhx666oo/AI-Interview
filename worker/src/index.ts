@@ -2428,9 +2428,25 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     if (nameFilter) filtered = filtered.filter(i => i.candidate_name?.includes(nameFilter));
     if (statusFilter) filtered = filtered.filter(i => i.status === statusFilter);
 
-    // 支持按责任人筛选（全局筛选器，前端已有 searchPerson）
+    // 支持按责任人筛选（通过岗位映射关联）
     const ownerFilter = c.req.query('responsible_person');
-    if (ownerFilter) filtered = filtered.filter(i => i.responsible_person === ownerFilter);
+    if (ownerFilter) {
+      try {
+        const mappings = await c.env.DB.prepare(
+          "SELECT raw_name, mapped_name FROM position_mappings WHERE responsible_person = ?"
+        ).bind(ownerFilter).all();
+        const ownerPositions = new Set<string>();
+        for (const m of mappings.results || []) {
+          if (m.raw_name) ownerPositions.add(m.raw_name);
+          if (m.mapped_name) ownerPositions.add(m.mapped_name);
+        }
+        if (ownerPositions.size > 0) {
+          filtered = filtered.filter((i: any) => {
+            const pos = i.mapped_position || i.position_applied || '';
+            return Array.from(ownerPositions).some(p => pos.includes(p));
+          });
+        }
+      } catch {}
 
     return c.json(filtered);
   } catch (e: any) {
