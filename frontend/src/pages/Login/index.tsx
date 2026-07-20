@@ -52,37 +52,37 @@ const Login: React.FC = () => {
       justifyContent: 'center',
       alignItems: 'center',
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 30%, #BFDBFE 60%, #60A5FA 100%)',
+      background: '#F8FAFC',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     }}>
       <Card
         style={{
           width: 420,
           borderRadius: 20,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.1)',
-          border: 'none',
+          boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+          border: '1px solid #E2E8F0',
           overflow: 'hidden',
         }}
         bodyStyle={{ padding: 0 }}
       >
         {/* 顶部品牌区 */}
         <div style={{
-          background: 'linear-gradient(135deg, #1D4ED8 0%, #3B82F6 100%)',
-          padding: '48px 40px 40px',
+          background: '#fff',
+          padding: '48px 40px 24px',
           textAlign: 'center',
         }}>
           <div style={{
             width: 80, height: 80, borderRadius: 18,
-            background: 'rgba(255,255,255,0.15)',
+            background: '#EFF6FF',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 20px', backdropFilter: 'blur(4px)',
+            margin: '0 auto 20px',
           }}>
             <img src="/logo.svg" alt="logo" style={{ width: 52, height: 52 }} />
           </div>
-          <Title level={3} style={{ color: '#fff', marginBottom: 4, fontWeight: 700, fontSize: 24 }}>
+          <Title level={3} style={{ color: '#0F172A', marginBottom: 4, fontWeight: 700, fontSize: 24 }}>
             天鹅到家
           </Title>
-          <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14 }}>
+          <Text style={{ color: '#64748B', fontSize: 14 }}>
             AI 智能招聘系统
           </Text>
         </div>
@@ -125,8 +125,6 @@ const Login: React.FC = () => {
                 style={{
                   width: '100%', height: 48, borderRadius: 10,
                   fontSize: 16, fontWeight: 600,
-                  background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)',
-                  border: 'none', boxShadow: '0 4px 14px rgba(59,130,246,0.35)',
                 }}
               >
                 登录
