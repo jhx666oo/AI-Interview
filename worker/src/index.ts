@@ -377,6 +377,14 @@ function requireRole(roles: string[]) {
   };
 }
 
+// HR 权限隔离：非 admin 用户自动过滤为自己的数据
+function getOwnerName(c: any): string | null {
+  const user = c.get('user');
+  if (!user || user.role === 'admin') return null;
+  // HR 用户：用 full_name 作为 responsible_person 过滤条件
+  return user.full_name || null;
+}
+
 // ==================== Auth Routes ====================
 
 app.post('/api/auth/token', async (c) => {
@@ -2428,8 +2436,8 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     if (nameFilter) filtered = filtered.filter(i => i.candidate_name?.includes(nameFilter));
     if (statusFilter) filtered = filtered.filter(i => i.status === statusFilter);
 
-    // 支持按责任人筛选（通过岗位映射关联）
-    const ownerFilter = c.req.query('responsible_person');
+    // 权限隔离：HR 自动只看自己负责的岗位
+    let ownerFilter = c.req.query('responsible_person') || getOwnerName(c);
     if (ownerFilter) {
       try {
         const mappings = await c.env.DB.prepare(
