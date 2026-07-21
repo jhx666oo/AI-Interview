@@ -1635,6 +1635,59 @@ registerCrud('positions', 'positions', { title: 'like', status: 'eq', department
 // interviews → 保留 D1（面试记录暂不迁移）
 registerCrud('interviews', 'interviews', { position_id: 'eq', status: 'eq' });
 registerCrud('background-checks', 'background_checks', { status: 'eq' });
+// 入职状态变更 → 自动同步试用期
+app.put('/api/onboarding/:id', authMiddleware, async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const db = c.env.DB;
+  const now = new Date().toISOString();
+
+  try {
+    // 1. 更新入职记录
+    const existing = await db.prepare('SELECT * FROM onboarding_records WHERE id = ?').bind(id).first() as any;
+    if (!existing) return c.json({ detail: 'Not found' }, 404);
+
+    const cols: string[] = [];
+    const vals: any[] = [];
+    for (const [k, v] of Object.entries(body)) {
+      if (['id', 'created_at'].includes(k)) continue;
+      cols.push(k); vals.push(v);
+    }
+    cols.push('updated_at'); vals.push(now);
+    const setClause = cols.map(c => `${c} = ?`).join(', ');
+    await db.prepare(`UPDATE onboarding_records SET ${setClause} WHERE id = ?`).bind(...vals, id).run();
+
+    // 2. 状态变为"入职中" → 自动创建试用期记录
+    const newStatus = body.status || existing.status;
+    if (newStatus === 'in_progress') {
+      const existPb = await db.prepare('SELECT id FROM probation_records WHERE onboarding_id = ?').bind(id).first();
+      if (!existPb) {
+        const pbId = 'pb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        const start = new Date().toISOString().slice(0, 10);
+        const endDate = new Date(Date.now() + 90 * 86400000);
+        const end = endDate.toISOString().slice(0, 10);
+        const empName = body.candidate_name || existing.candidate_name || '';
+
+        await db.prepare(`INSERT INTO probation_records
+          (id, onboarding_id, resume_id, position_id, employee_name, employee_id,
+           probation_start, probation_end, probation_months, monthly_reviews, final_assessment, result, notes, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+          pbId, id, existing.resume_id, existing.position_id || '', empName, existing.employee_id,
+          start, end, 3, '[]', null, 'pending',
+          `由入职状态变更为"入职中"自动生成`, now, now
+        ).run();
+        console.log(`[Onboarding→Probation] 自动创建试用期记录: ${pbId} (${empName})`);
+      }
+    }
+
+    // 3. 返回更新后的记录
+    const updated = await db.prepare('SELECT * FROM onboarding_records WHERE id = ?').bind(id).first();
+    return c.json(updated);
+  } catch (e: any) {
+    return c.json({ detail: e.message }, 500);
+  }
+});
+
 registerCrud('onboarding', 'onboarding_records', { status: 'eq' });
 registerCrud('probation', 'probation_records', { status: 'eq', result: 'eq' });
 
