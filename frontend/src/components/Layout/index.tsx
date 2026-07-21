@@ -164,7 +164,7 @@ const AppLayout: React.FC = () => {
         collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
-        width={240}
+        width={200}
         theme="light"
         style={{
           borderRight: '1px solid #f0f0f0',
@@ -201,7 +201,7 @@ const AppLayout: React.FC = () => {
           style={{ padding: '16px 8px', borderRight: 0, overflowY: 'auto', maxHeight: 'calc(100vh - 64px)' }}
         />
       </Sider>
-      <Layout style={{ marginLeft: collapsed ? 80 : 240, transition: 'margin-left 0.2s' }}>
+      <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.2s' }}>
         <Header style={{ 
           padding: '0 32px', 
           display: 'flex', 

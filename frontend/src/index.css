@@ -236,3 +236,9 @@ code {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* 侧边栏折叠按钮右对齐 */
+.ant-layout-sider-trigger {
+  text-align: right !important;
+  padding-right: 16px !important;
+}
