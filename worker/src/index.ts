@@ -2432,6 +2432,11 @@ app.post('/api/resumes', authMiddleware, async (c) => {
           await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, uploaded_at = ? WHERE id = ?')
             .bind(extractedText.substring(0, 50000), now(), recordId).run();
         } catch {}
+        // fallback: 列可能不存在
+        try {
+          await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?')
+            .bind(extractedText.substring(0, 50000), now(), recordId).run();
+        } catch {}
       }
 
       // 第二阶段：用提取的文本做深度解析（优先读取数据库中的自定义 prompt）
@@ -2707,6 +2712,7 @@ app.get('/api/resumes/:id/file', async (c) => {
     // v2.0: 30天预览限制
     const isDownload = c.req.query('download') === 'true';
     if (!isDownload) {
+      try {
       const resumeInfo = await c.env.DB.prepare('SELECT uploaded_at, feishu_file_token FROM resumes WHERE id = ?').bind(c.req.param('id')).first() as any;
       if (resumeInfo?.uploaded_at) {
         const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
@@ -2714,6 +2720,7 @@ app.get('/api/resumes/:id/file', async (c) => {
           return c.json({ detail: '简历文件预览已过期（超出30天）。请联系管理员通过飞书云盘查看原始文件。', expired: true }, 410);
         }
       }
+      } catch { /* uploaded_at 列可能不存在 */ }
     }
 
     // 调试模式：返回附件原始数据
