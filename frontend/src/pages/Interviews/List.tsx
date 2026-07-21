@@ -6,7 +6,7 @@ import {
 import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
-  BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined
+  BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -156,6 +156,17 @@ const InterviewsList: React.FC = () => {
   }, [search, filterStatus, selectedOwner]);
 
   useEffect(() => { fetchMergedData(); }, []) // eslint-disable-line;
+
+  // == 飞书导入 ==
+  const handleFeishuSync = async () => {
+    const key = 'interviewSync';
+    message.loading({ content: '正在从飞书导入面试数据...', key });
+    try {
+      const res = await request.post('/interviews/sync-from-feishu') as any;
+      message.success({ content: `已同步 ${res.created || 0} 条新增，${res.updated || 0} 条更新`, key });
+      fetchMergedData();
+    } catch { message.error({ content: '同步失败', key }); }
+  };
 
   // == 安排面试 ==
   const handleOpenSchedule = (record: MergedRow) => {
@@ -427,7 +438,7 @@ const InterviewsList: React.FC = () => {
           </Space>
         }
         extra={
-          <Space>
+          <Space wrap>
             <Input
               size="middle"
               placeholder="搜索候选人姓名"
@@ -445,6 +456,7 @@ const InterviewsList: React.FC = () => {
               <Select.Option value="completed">已完成</Select.Option>
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchMergedData}>刷新</Button>
+            <Button icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
           </Space>
         }
         style={{ borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}

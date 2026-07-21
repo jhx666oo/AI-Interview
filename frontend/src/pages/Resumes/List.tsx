@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress } from 'antd';
-import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, ThunderboltOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import * as pdfjsLib from 'pdfjs-dist';
 import request from '../../utils/request';
 import { useOwner } from '../../contexts/OwnerContext';
@@ -745,6 +745,16 @@ const ResumesList: React.FC = () => {
     setIsModalVisible(true);
   };
 
+  const handleFeishuSync = async () => {
+    const key = 'feishuSync';
+    message.loading({ content: '正在从飞书导入...', key });
+    try {
+      const res = await request.post('/resumes/sync-from-feishu') as any;
+      message.success({ content: `已同步 ${res.created || 0} 条，已有 ${res.skipped || 0} 条`, key });
+      fetchResumes();
+    } catch { message.error({ content: '同步失败', key }); }
+  };
+
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
@@ -1019,6 +1029,7 @@ const ResumesList: React.FC = () => {
         <Space size="small" wrap>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
           <Button icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
+          <Button icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
           <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
             {pollingEnabled ? '解析中...' : '刷新数据'}
           </Button>
