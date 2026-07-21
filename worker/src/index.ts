@@ -6200,10 +6200,40 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       }
     } catch {}
 
-    // 面试官必须绑定飞书，否则无法发送提醒
+    // 面试官未绑定飞书 → 改用应用 bot 发送（号主账号）
+    if (!token || !openId) {
+      try {
+        const tenantToken = await getFeishuTenantAccessToken(c.env);
+        // 尝试用被通知人的姓名查 open_id
+        const userRow = await c.env.DB.prepare(
+          "SELECT feishu_open_id FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != '' LIMIT 1"
+        ).bind(interviewerName).first() as any;
+        if (userRow?.feishu_open_id) {
+          token = tenantToken;
+          openId = userRow.feishu_open_id;
+          console.log(`[NotifyInterviewer] 使用应用 bot 发送提醒 (tenant token) → ${interviewerName}`);
+        } else {
+          // 通过飞书 API 按姓名搜索 open_id
+          const searchResp = await fetch(
+            `https://open.feishu.cn/open-apis/search/v1/user?page_size=5&query=${encodeURIComponent(interviewerName)}`,
+            { headers: { 'Authorization': `Bearer ${tenantToken}` } }
+          ).then(r => r.json());
+          const users = searchResp?.data?.items || [];
+          const match = users.find((u: any) => u.name === interviewerName);
+          if (match?.id) {
+            token = tenantToken;
+            openId = match.id;
+            console.log(`[NotifyInterviewer] 通过飞书搜索找到 open_id → ${interviewerName}`);
+          }
+        }
+      } catch (e) {
+        console.warn(`[NotifyInterviewer] 应用 bot 兜底失败: ${e}`);
+      }
+    }
+
     if (!token || !openId) {
       return c.json({
-        detail: `无法通知面试官「${interviewerName}」：该面试官尚未完成飞书 OAuth 绑定。请提醒他前往「个人设置 → 飞书绑定」完成授权后重试。`,
+        detail: `无法通知面试官「${interviewerName}」：未找到该面试官的飞书账号。请联系管理员确认。`,
         need_bind: true,
       }, 400);
     }
