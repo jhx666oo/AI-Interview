@@ -42,7 +42,7 @@ const OnboardingList: React.FC = () => {
     catch (e) { }
   }, []);
 
-  useEffect(() => { fetchData(); fetchResumes(); }, [fetchData, fetchResumes]);
+  useEffect(() => { fetchData(); fetchResumes() }, []) // eslint-disable-line;
 
   const handleCreate = () => {
     setEditing(null); form.resetFields();

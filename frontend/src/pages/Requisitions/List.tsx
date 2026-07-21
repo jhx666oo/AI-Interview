@@ -96,7 +96,7 @@ const RequisitionsList: React.FC = () => {
     }
   }, [searchDept, filterStatus, selectedOwner]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = () => {
     setEditing(null);

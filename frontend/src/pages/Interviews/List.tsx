@@ -152,7 +152,7 @@ const InterviewsList: React.FC = () => {
     }
   }, [search, filterStatus, selectedOwner]);
 
-  useEffect(() => { fetchMergedData(); }, [fetchMergedData]);
+  useEffect(() => { fetchMergedData(); }, []) // eslint-disable-line;
 
   // == 安排面试 ==
   const handleOpenSchedule = (record: MergedRow) => {

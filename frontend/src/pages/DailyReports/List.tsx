@@ -50,7 +50,7 @@ const DailyReportsList: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, []) // eslint-disable-line;
 
   const handleGenerate = async () => {
     setGenerating(true);

@@ -62,7 +62,7 @@ const ProbationList: React.FC = () => {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, []); // eslint-disable-line
 
   const handleCreate = () => {
     setEditing(null); form.resetFields();

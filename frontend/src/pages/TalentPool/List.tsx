@@ -40,7 +40,7 @@ const TalentPoolList: React.FC = () => {
     }
   }, [search, filterStatus]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, []) // eslint-disable-line;
 
   const handleNotifyInterviewer = async (record: any) => {
     const name = record.candidate_name || '该候选人';
