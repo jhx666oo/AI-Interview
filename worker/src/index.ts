@@ -4084,26 +4084,29 @@ app.get('/api/settings/interviewers', authMiddleware, async (c) => {
   }
 });
 
-// 从飞书搜索用户 open_id
+// 从飞书通讯录搜索用户 open_id（使用 Contact API 获取全量用户后过滤）
 app.get('/api/settings/interviewers/search', authMiddleware, async (c) => {
   const query = c.req.query('q') || '';
   if (!query || query.length < 1) return c.json([]);
   try {
     const token = await getFeishuToken(c.env);
     const resp = await fetch(
-      `https://open.feishu.cn/open-apis/search/v1/user?page_size=10&query=${encodeURIComponent(query)}`,
+      'https://open.feishu.cn/open-apis/contact/v3/users?page_size=50&user_id_type=open_id',
       { headers: { 'Authorization': `Bearer ${token}` } }
     ).then(r => r.json()) as any;
-    console.log(`[SearchUser] query="${query}", raw_code=${resp?.code}, data_len=${resp?.data?.items?.length || 0}`);
-    const rawItems = resp?.data?.items || [];
-    // 飞书可能返回不同的字段名，兼容处理
-    const users = rawItems.map((u: any) => ({
-      name: u.name || u.user_name || u.full_name || '',
-      open_id: u.id || u.open_id || u.user_id || '',
-      department: u.department_ids || u.departments || [],
-    })).filter((u: any) => u.open_id);
-    // 临时调试：也返回原始响应用于排查
-    return c.json({ users, raw: { code: resp?.code, msg: resp?.msg, items: rawItems.slice(0, 2) } });
+    const items = resp?.data?.items || [];
+    const q = query.toLowerCase();
+    const users = items
+      .filter((u: any) => {
+        const name = (u.name || '').toLowerCase();
+        const email = (u.email || '').toLowerCase();
+        return name.includes(q) || email.includes(q);
+      })
+      .map((u: any) => ({
+        name: u.name || '',
+        open_id: u.open_id || '',
+      }));
+    return c.json(users);
   } catch (e: any) {
     return c.json({ detail: '搜索失败: ' + e.message }, 500);
   }
