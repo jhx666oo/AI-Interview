@@ -269,7 +269,7 @@ const InterviewsList: React.FC = () => {
   // == 表格列 ==
   const columns = [
     {
-      title: '候选人', key: 'candidate', width: 110,
+      title: '候选人', key: 'candidate', width: 130,
       render: (_: any, r: MergedRow) => (
         <Space>
           <UserOutlined style={{ color: '#1677ff' }} />
@@ -313,7 +313,7 @@ const InterviewsList: React.FC = () => {
       render: (_: any, r: MergedRow) => r.interview_time || '-',
     },
     {
-      title: '面试官', key: 'interviewer', width: 220,
+      title: '面试官', key: 'interviewer', width: 180,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id) return '-';
         return (
