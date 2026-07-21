@@ -308,11 +308,20 @@ const ResumesList: React.FC = () => {
     }
   };
 
-  // 轮询检查解析状态
+  // 轮询检查解析状态（不触动数据缓存，避免翻页被重置）
   useEffect(() => {
     if (pollingEnabled) {
-      pollingRef.current = setInterval(() => {
-        fetchResumes(true);
+      pollingRef.current = setInterval(async () => {
+        try {
+          const res = await request.get('/resumes', { params: {} });
+          if (Array.isArray(res)) {
+            const hasProcessing = res.some((r: any) => r.parse_status === 'processing');
+            if (!hasProcessing) {
+              setPollingEnabled(false);
+              fetchResumes(); // 解析完成，刷新数据
+            }
+          }
+        } catch {}
       }, 3000);
     } else {
       if (pollingRef.current) {
