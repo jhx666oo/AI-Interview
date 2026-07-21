@@ -4006,6 +4006,64 @@ app.put('/api/settings/prompts/:key', authMiddleware, async (c) => {
   }
 });
 
+// 初始化默认提示词模版
+app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
+  const now = new Date().toISOString();
+  const defaults: Record<string, { system: string; user: string }> = {
+    generate_jd: {
+      system: '你是一位资深的招聘专家和岗位分析师。请根据提供的岗位信息，生成一份专业、详细的职位描述(JD)。',
+      user: '请根据以下岗位信息生成JD：\n\n岗位名称：{candidate_name}\n部门：{department}\n\n请包括：岗位职责、任职要求、加分项。'
+    },
+    analyze_resume: {
+      system: '你是一位专业的简历分析师和HR专家。请仔细分析候选人简历，提取关键信息并进行专业评估。',
+      user: '请分析以下简历，提取候选人的关键信息：\n\n{resume_text}\n\n请输出姓名、性别、年龄、学历、城市、手机、邮箱、技能列表、工作年限、优势分析、风险点、综合评估。'
+    },
+    parse_resume_pdf: {
+      system: '你是一个PDF简历文本提取助手。请将PDF base64数据转换为结构化Markdown文本，保留所有可读信息。',
+      user: '以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n{resume_text}'
+    },
+    generate_resume_markdown: {
+      system: '你是一位专业的简历格式化专家。请将简历信息整理为清晰美观的Markdown格式。',
+      user: '请将以下候选人信息整理为Markdown格式的简历：\n\n姓名：{candidate_name}\n{resume_text}'
+    },
+    generate_interview_questions: {
+      system: '你是一位资深的面试官和技术专家。请根据岗位要求和候选人背景，生成专业、有针对性的面试题目。',
+      user: '请根据以下信息生成面试题目：\n\n岗位：{candidate_name}\n候选人背景：{resume_text}\n\n请生成技术题、行为题、情景题各若干道。'
+    },
+    generate_interview_evaluation: {
+      system: '你是一位资深的面试评估专家。请根据面试录音转写内容，生成客观、全面的面试评价。',
+      user: '请根据以下面试记录生成评价：\n\n{resume_text}\n\n请从技术能力、沟通表达、综合素质三个维度评分并给出评语。'
+    },
+    generate_interview_evaluation_from_transcript: {
+      system: '你是一位资深的面试评估专家。请根据面试转写文本，生成客观、全面的面试评价报告。',
+      user: '请根据以下面试转写内容生成评价：\n\n{resume_text}\n\n请输出综合评价和各维度评分。'
+    },
+    generate_coding_test_evaluation: {
+      system: '你是一位资深的技术面试官和代码评审专家。请根据候选人的笔试代码，给出专业的代码评价。',
+      user: '请评价以下代码：\n\n{resume_text}\n\n请从代码质量、算法思路、时间复杂度、改进建议等方面评价。'
+    },
+  };
+
+  try {
+    const row = await c.env.DB.prepare('SELECT id, prompt_configs FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+    let configs: any = {};
+    if (row?.prompt_configs) {
+      try { configs = JSON.parse(row.prompt_configs); } catch { configs = {}; }
+      configs.prompts = { ...defaults, ...(configs.prompts || {}) };
+      await c.env.DB.prepare('UPDATE system_configs SET prompt_configs = ?, updated_at = ? WHERE id = ?')
+        .bind(JSON.stringify(configs), now, row.id).run();
+    } else {
+      configs = { prompts: defaults };
+      const id = 'default_' + Date.now();
+      await c.env.DB.prepare('INSERT INTO system_configs (id, prompt_configs, updated_at) VALUES (?, ?, ?)')
+        .bind(id, JSON.stringify(configs), now).run();
+    }
+    return c.json({ ok: true, seeded: Object.keys(defaults).length });
+  } catch (e: any) {
+    return c.json({ detail: '初始化失败: ' + e.message }, 500);
+  }
+});
+
 app.post('/api/settings/mail/test', authMiddleware, async (c) => {
   return c.json({ detail: 'Mail sending not available in serverless mode' });
 });
