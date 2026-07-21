@@ -8,9 +8,9 @@
 
 /* 左侧：品牌图 */
 .login-left {
-  flex: 1.1;
+  flex: 1.5;
   position: relative;
-  background: #0F172A;
+  background: #EDF2FA;
   overflow: hidden;
   display: none;
 }
@@ -18,7 +18,7 @@
 .login-left-img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
   display: block;
 }
