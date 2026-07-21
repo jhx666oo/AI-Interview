@@ -327,17 +327,20 @@ const InterviewsList: React.FC = () => {
       render: (_: any, r: MergedRow) => r.interview_time || '-',
     },
     {
-      title: '面试官', key: 'interviewer', width: 120,
-      render: (_: any, r: MergedRow) => {
-        if (!r.interview_id) return '-';
-        return (
-          <Space size={4} wrap>
-            {r.primary_interviewer && <Tag color="blue">一面：{r.primary_interviewer}</Tag>}
-            {r.secondary_interviewer && <Tag color="orange">二面：{r.secondary_interviewer}</Tag>}
-            {!r.primary_interviewer && !r.secondary_interviewer && <Tag color="purple">{r.interviewer || '待分配'}</Tag>}
-          </Space>
-        );
-      }
+      title: '一面面试官', dataIndex: 'primary_interviewer', key: 'primary_interviewer', width: 100, ellipsis: { showTitle: false },
+      render: (v: string) => (
+        <Tooltip title={v || ''}>
+          <span>{v || '-'}</span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '二面面试官', dataIndex: 'secondary_interviewer', key: 'secondary_interviewer', width: 100, ellipsis: { showTitle: false },
+      render: (v: string) => (
+        <Tooltip title={v || ''}>
+          <span>{v || '-'}</span>
+        </Tooltip>
+      ),
     },
     {
       title: '一面结果', key: 'result1', width: 90,
