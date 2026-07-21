@@ -260,7 +260,7 @@ const Dashboard: React.FC = () => {
                         height: 44,
                         background: `linear-gradient(135deg, ${color}, ${color}dd)`,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        clipPath: 'polygon(4% 0%, 96% 0%, 100% 100%, 0% 100%)',
+                        clipPath: 'polygon(0% 0%, 100% 0%, 96% 100%, 4% 100%)',
                         transition: 'all 0.4s ease',
                       }}>
                         <div style={{
