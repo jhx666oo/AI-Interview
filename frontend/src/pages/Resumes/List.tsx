@@ -1007,6 +1007,9 @@ const ResumesList: React.FC = () => {
   // 卡片分页
   const pageSize = 20;
   const [cardPage, setCardPage] = useState(1);
+  // antd Pagination 在 total 变化时会重置，用 ref 保持稳定
+  const totalCount = useRef(0);
+  totalCount.current = data.length || totalCount.current;
   const pagedData = data.slice((cardPage - 1) * pageSize, cardPage * pageSize);
 
   return (
@@ -1252,9 +1255,9 @@ const ResumesList: React.FC = () => {
             <Pagination
               current={cardPage}
               pageSize={pageSize}
-              total={data.length}
+              total={totalCount.current}
               showSizeChanger={false}
-              showTotal={(t) => `共 ${t} 条`}
+              showTotal={(t) => `共 ${data.length} 条`}
               onChange={(p) => setCardPage(p)}
             />
           </div>
