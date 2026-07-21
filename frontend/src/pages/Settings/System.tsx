@@ -152,8 +152,7 @@ const SystemSettingsPage: React.FC = () => {
     try {
       const values = await promptForm.validateFields();
       setPromptSaving(true);
-      await request.put('/settings/prompts', {
-        key: activePromptKey,
+      await request.put('/settings/prompts/' + activePromptKey, {
         system: values.system,
         user: values.user,
       });
