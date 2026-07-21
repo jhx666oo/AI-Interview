@@ -4080,6 +4080,27 @@ app.get('/api/settings/interviewers', authMiddleware, async (c) => {
   }
 });
 
+// 从飞书搜索用户 open_id
+app.get('/api/settings/interviewers/search', authMiddleware, async (c) => {
+  const query = c.req.query('q') || '';
+  if (!query || query.length < 1) return c.json([]);
+  try {
+    const token = await getFeishuToken(c.env);
+    const resp = await fetch(
+      `https://open.feishu.cn/open-apis/search/v1/user?page_size=10&query=${encodeURIComponent(query)}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    ).then(r => r.json()) as any;
+    const users = (resp?.data?.items || []).map((u: any) => ({
+      name: u.name || '',
+      open_id: u.id || '',
+      department: u.department_ids || [],
+    }));
+    return c.json(users);
+  } catch (e: any) {
+    return c.json({ detail: '搜索失败: ' + e.message }, 500);
+  }
+});
+
 app.put('/api/settings/interviewers', authMiddleware, async (c) => {
   const body = await c.req.json();
   const items: Array<{ name: string; open_id: string }> = body.items || body || [];

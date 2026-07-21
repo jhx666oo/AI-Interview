@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Input, message, Popconfirm, Space, Card, Typography } from 'antd';
-import { PlusOutlined, DeleteOutlined, SaveOutlined, BellOutlined } from '@ant-design/icons';
+import { Table, Button, Input, message, Popconfirm, Space, Card, Typography, AutoComplete } from 'antd';
+import { PlusOutlined, DeleteOutlined, SaveOutlined, BellOutlined, SearchOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 
 const { Title } = Typography;
@@ -13,6 +13,9 @@ interface InterviewerMapping {
 const InterviewerMappings: React.FC = () => {
   const [data, setData] = useState<InterviewerMapping[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchName, setSearchName] = useState('');
+  const [searchResults, setSearchResults] = useState<InterviewerMapping[]>([]);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => { fetchMappings(); }, []);
 
@@ -23,6 +26,32 @@ const InterviewerMappings: React.FC = () => {
       setData(res || []);
     } catch { message.error('加载失败'); }
     finally { setLoading(false); }
+  };
+
+  // 从飞书搜索用户 open_id
+  const handleSearch = async () => {
+    if (!searchName.trim()) return;
+    setSearching(true);
+    try {
+      const res = await request.get('/settings/interviewers/search', { params: { q: searchName } }) as any[];
+      if (Array.isArray(res) && res.length > 0) {
+        setSearchResults(res);
+      } else {
+        setSearchResults([]);
+        message.info('未找到匹配用户');
+      }
+    } catch { message.error('搜索失败'); }
+    finally { setSearching(false); }
+  };
+
+  const handleAddFromSearch = (item: InterviewerMapping) => {
+    if (data.some(d => d.name === item.name)) {
+      message.warning(`${item.name} 已存在`);
+      return;
+    }
+    setData([...data, item]);
+    setSearchResults([]);
+    setSearchName('');
   };
 
   const handleAdd = () => {
@@ -109,6 +138,34 @@ const InterviewerMappings: React.FC = () => {
             <Button icon={<PlusOutlined />} type="dashed" onClick={handleAdd}>添加</Button>
             <Button icon={<SaveOutlined />} type="primary" onClick={handleSave}>保存</Button>
           </Space>
+        </div>
+        {/* 飞书搜索 */}
+        <div style={{ marginBottom: 12, padding: '12px 16px', background: '#F8FAFC', borderRadius: 8 }}>
+          <Space>
+            <Input.Search
+              placeholder="输入姓名，从飞书搜索 open_id"
+              value={searchName}
+              onChange={e => setSearchName(e.target.value)}
+              onSearch={handleSearch}
+              enterButton={<Space><SearchOutlined /> 搜索</Space>}
+              loading={searching}
+              style={{ width: 360 }}
+            />
+          </Space>
+          {searchResults.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {searchResults.map((item, idx) => (
+                <Button
+                  key={idx}
+                  size="small"
+                  style={{ marginRight: 8, marginBottom: 4 }}
+                  onClick={() => handleAddFromSearch(item)}
+                >
+                  + {item.name} <span style={{ color: '#999', fontSize: 11 }}>{item.open_id}</span>
+                </Button>
+              ))}
+            </div>
+          )}
         </div>
         <Table
           dataSource={data}
