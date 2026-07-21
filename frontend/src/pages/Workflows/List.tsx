@@ -3,6 +3,7 @@ import {
   Card, Button, Space, Typography, message, Modal, Form, Input, Select,
   Table, Tag, Popconfirm, Tooltip
 } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import {
   PlusOutlined, PlayCircleOutlined, DeleteOutlined, EditOutlined,
   CopyOutlined, CheckCircleOutlined, SettingOutlined
@@ -35,6 +36,8 @@ const WorkflowsList: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [form] = Form.useForm();
@@ -257,11 +260,12 @@ const WorkflowsList: React.FC = () => {
       >
         <Table
           columns={columns}
-          dataSource={workflows}
+          dataSource={workflows.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 10, simple: true }}
+          pagination={false}
         />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={workflows.length} onChange={setTablePage} />
       </Card>
 
       <Modal

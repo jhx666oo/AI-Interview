@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Space, Tag, message, Typography, Modal } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import { EditOutlined, ThunderboltOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
@@ -16,6 +17,8 @@ const JDManagementList: React.FC = () => {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [evaluating, setEvaluating] = useState<string | null>(null);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
   const navigate = useNavigate();
 
   const fetchData = async () => {
@@ -82,7 +85,8 @@ const JDManagementList: React.FC = () => {
 
   return (
     <Card title="JD 管理" extra={<Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>}>
-      <Table dataSource={data} columns={columns} rowKey="id" loading={loading} pagination={{ pageSize: 10, simple: true }} />
+      <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading} pagination={false} />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
     </Card>
   );
 };

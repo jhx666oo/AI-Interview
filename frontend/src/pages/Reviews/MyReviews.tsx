@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Tag, Space, message, Typography, Empty, Spin } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import { EyeOutlined, ClockCircleOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -22,6 +23,8 @@ const MyReviews: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [pendingReviews, setPendingReviews] = useState<PendingReview[]>([]);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   useEffect(() => {
     fetchPendingReviews();
@@ -109,12 +112,15 @@ const MyReviews: React.FC = () => {
             description="暂无待评审的简历"
           />
         ) : (
+          <>
           <Table
             columns={columns}
-            dataSource={pendingReviews}
+            dataSource={pendingReviews.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
             rowKey="review_id"
-            pagination={{ pageSize: 10, simple: true }}
+            pagination={false}
           />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={pendingReviews.length} onChange={setTablePage} />
+          </>
         )}
       </Card>
     </div>

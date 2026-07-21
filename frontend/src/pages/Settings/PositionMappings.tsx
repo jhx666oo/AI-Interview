@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Modal, Form, Input, Tag, message,
   Typography, Select, Popconfirm, Tooltip, Divider
 } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, SyncOutlined, UserOutlined, SearchOutlined
 } from '@ant-design/icons';
@@ -26,6 +27,8 @@ const PositionMappings: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<PositionGroup | null>(null);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
   const [form] = Form.useForm();
   const [search, setSearch] = useState('');
 
@@ -240,12 +243,13 @@ const PositionMappings: React.FC = () => {
     >
       <Table
         columns={columns}
-        dataSource={data}
+        dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
         rowKey="key"
         loading={loading}
         scroll={{ x: 930 }}
-        pagination={{ pageSize: 20, simple: true }}
+        pagination={false}
       />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       <Modal
         title={editing ? '编辑映射' : '新增映射'}
         open={modalVisible}
