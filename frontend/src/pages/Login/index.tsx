@@ -65,9 +65,14 @@ const Login: React.FC = () => {
       {/* 右侧：登录表单 */}
       <div className="login-right">
         <div className="login-right-inner">
-          <div className="login-stagger-item" style={{ marginBottom: 24 }}>
-            <div className="login-logo-box">
-              <img src="/swan.svg" alt="天鹅到家" />
+          {/* 品牌标识 */}
+          <div className="login-stagger-item" style={{ marginBottom: 32 }}>
+            <div className="login-brand">
+              <div className="login-logo-box">
+                <img src="/swan.svg" alt="天鹅到家" />
+              </div>
+              <span className="login-brand-name">天鹅到家<span className="login-brand-ai"> AI Interview</span></span>
+              <span className="login-brand-sub">智能招聘管理系统</span>
             </div>
           </div>
 
