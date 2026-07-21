@@ -452,7 +452,7 @@ const InterviewsList: React.FC = () => {
           rowKey="id"
           loading={loading}
           scroll={{ x: 'max-content' }}
-          pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 名候选人` }}
+          pagination={{ pageSize: 20, simple: true, showTotal: (t) => `共 ${t} 名候选人` }}
         />
       </Card>
 

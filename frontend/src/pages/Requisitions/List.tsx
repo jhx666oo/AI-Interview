@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Card, Table, Button, Space, Tag, Modal, Form, Input, InputNumber, DatePicker,
-  Select, message, Popconfirm, Row, Col, Statistic, Typography, Tooltip
+  Select, message, Popconfirm, Row, Col, Statistic, Typography, Tooltip, Pagination
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined,
@@ -62,6 +62,8 @@ const RequisitionsList: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
   const [aiLoading, setAiLoading] = useState<string | null>(null);
   const { selectedOwner } = useOwner();
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   const handleAIJD = async (id: string) => {
     setAiLoading(id);
@@ -231,10 +233,18 @@ const RequisitionsList: React.FC = () => {
           </Space>
         }
       >
-        <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
+        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1400 }}
-          pagination={{ pageSize: 10, showSizeChanger: true }}
+          pagination={false}
         />
+        <div style={{ marginTop: 12, textAlign: 'right' }}>
+          <Space>
+            <Button size="small" disabled={tablePage <= 1} onClick={() => setTablePage(p => p - 1)}>上一页</Button>
+            <span style={{ color: '#666' }}>{tablePage} / {Math.max(1, Math.ceil(data.length / pageSize))}</span>
+            <Button size="small" disabled={tablePage >= Math.ceil(data.length / pageSize)} onClick={() => setTablePage(p => p + 1)}>下一页</Button>
+            <span style={{ color: '#999', marginLeft: 8 }}>共 {data.length} 条</span>
+          </Space>
+        </div>
       </Card>
 
       <Modal title={editing ? '编辑需求' : '提报人力需求'} open={modalVisible} onCancel={() => setModalVisible(false)}

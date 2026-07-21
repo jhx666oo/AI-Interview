@@ -130,7 +130,7 @@ const OnboardingList: React.FC = () => {
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增入职</Button>
         </Space>}>
         <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
+          scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, simple: true }} />
       </Card>
       <Modal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>

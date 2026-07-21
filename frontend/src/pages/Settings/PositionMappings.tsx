@@ -244,7 +244,7 @@ const PositionMappings: React.FC = () => {
         rowKey="key"
         loading={loading}
         scroll={{ x: 930 }}
-        pagination={{ pageSize: 20 }}
+        pagination={{ pageSize: 20, simple: true }}
       />
       <Modal
         title={editing ? '编辑映射' : '新增映射'}

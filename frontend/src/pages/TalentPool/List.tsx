@@ -185,7 +185,7 @@ const TalentPoolList: React.FC = () => {
       >
         <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 'max-content' }}
-          pagination={{ pageSize: 10, showSizeChanger: true }}
+          pagination={{ pageSize: 10, showSizeChanger: true, simple: true }}
         />
       </Card>
     </div>

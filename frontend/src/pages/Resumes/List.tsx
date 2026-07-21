@@ -1250,18 +1250,9 @@ const ResumesList: React.FC = () => {
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, alignItems: 'center', gap: 8 }}>
             <Button size="small" disabled={cardPage <= 1} onClick={() => setCardPage(p => p - 1)}>上一页</Button>
-            {Array.from({ length: Math.ceil(data.length / pageSize) }, (_, i) => i + 1).slice(
-              Math.max(0, cardPage - 3), Math.min(Math.ceil(data.length / pageSize), cardPage + 2)
-            ).map(p => (
-              <Button
-                key={p}
-                size="small"
-                type={p === cardPage ? 'primary' : 'default'}
-                onClick={() => setCardPage(p)}
-              >{p}</Button>
-            ))}
+            <span style={{ color: '#666', fontSize: 13 }}>{cardPage} / {Math.max(1, Math.ceil(data.length / pageSize))}</span>
             <Button size="small" disabled={cardPage >= Math.ceil(data.length / pageSize)} onClick={() => setCardPage(p => p + 1)}>下一页</Button>
-            <span style={{ marginLeft: 8, color: '#999', fontSize: 13 }}>共 {data.length} 条</span>
+            <span style={{ color: '#999', fontSize: 13, marginLeft: 4 }}>共 {data.length} 条</span>
           </div>
         </>
       )}

@@ -799,7 +799,7 @@ const PositionsList: React.FC = () => {
         loading={loading} 
         rowKey="id" 
         scroll={{ x: 1950 }}
-        pagination={{ pageSize: 10, showSizeChanger: true }}
+        pagination={{ pageSize: 10, showSizeChanger: true, simple: true }}
         rowSelection={{
           selectedRowKeys,
           onChange: setSelectedRowKeys,

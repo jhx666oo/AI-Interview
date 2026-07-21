@@ -173,7 +173,7 @@ const ProbationList: React.FC = () => {
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增试用</Button>
         </Space>}>
         <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1500 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
+          scroll={{ x: 1500 }} pagination={{ pageSize: 10, showSizeChanger: true, simple: true }} />
       </Card>
       <Modal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={560} destroyOnHidden>

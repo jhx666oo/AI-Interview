@@ -113,7 +113,7 @@ const MyReviews: React.FC = () => {
             columns={columns}
             dataSource={pendingReviews}
             rowKey="review_id"
-            pagination={{ pageSize: 10 }}
+            pagination={{ pageSize: 10, simple: true }}
           />
         )}
       </Card>

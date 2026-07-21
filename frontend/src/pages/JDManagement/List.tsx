@@ -82,7 +82,7 @@ const JDManagementList: React.FC = () => {
 
   return (
     <Card title="JD 管理" extra={<Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>}>
-      <Table dataSource={data} columns={columns} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
+      <Table dataSource={data} columns={columns} rowKey="id" loading={loading} pagination={{ pageSize: 10, simple: true }} />
     </Card>
   );
 };

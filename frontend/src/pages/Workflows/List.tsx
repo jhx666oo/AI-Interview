@@ -260,7 +260,7 @@ const WorkflowsList: React.FC = () => {
           dataSource={workflows}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 10 }}
+          pagination={{ pageSize: 10, simple: true }}
         />
       </Card>
 

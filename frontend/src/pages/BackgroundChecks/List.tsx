@@ -124,7 +124,7 @@ const BackgroundChecksList: React.FC = () => {
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>发起背调</Button>
         </Space>}>
         <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 900 }} pagination={{ pageSize: 10, showSizeChanger: true }} />
+          scroll={{ x: 900 }} pagination={{ pageSize: 10, showSizeChanger: true, simple: true }} />
       </Card>
       <Modal title={editing ? '编辑背调' : '发起背调'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>

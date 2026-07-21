@@ -340,7 +340,7 @@ const UsersList: React.FC = () => {
         loading={loading}
         rowKey="id"
         scroll={{ x: 1550 }}
-        pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条` }}
+        pagination={{ pageSize: 20, simple: true, showTotal: (total) => `共 ${total} 条` }}
         rowSelection={{
           selectedRowKeys,
           onChange: (keys) => setSelectedRowKeys(keys),
