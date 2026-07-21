@@ -10,14 +10,15 @@ const { Title, Text } = Typography;
 const Login: React.FC = () => {
   const { login, isAuthenticated, loading: authLoading } = useAuth();
   const navigate = useNavigate();
-  useLocation();
+  const location = useLocation();
+  const from = (location.state as any)?.from || '/dashboard';
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
     if (!authLoading && isAuthenticated) {
-      navigate('/dashboard', { replace: true });
+      navigate(from, { replace: true });
     }
-  }, [authLoading, isAuthenticated, navigate]);
+  }, [authLoading, isAuthenticated, navigate, from]);
 
   const onFinish = async (values: any) => {
     setLoading(true);
@@ -30,7 +31,7 @@ const Login: React.FC = () => {
       });
       await login((res as any).access_token);
       message.success('登录成功');
-      navigate('/dashboard', { replace: true });
+      navigate(from, { replace: true });
     } catch (error: any) {
       const status = error?.response?.status;
       const detail = error?.response?.data?.detail;

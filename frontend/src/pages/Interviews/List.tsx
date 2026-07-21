@@ -450,7 +450,7 @@ const InterviewsList: React.FC = () => {
         style={{ borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
       >
         <Table
-          dataSource={data}
+          dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
           columns={columns}
           rowKey="id"
           loading={loading}

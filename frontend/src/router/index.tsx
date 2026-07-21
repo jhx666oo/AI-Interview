@@ -31,6 +31,7 @@ const DailyReportsList = lazy(() => import('../pages/DailyReports/List'));
 const JDManagementList = lazy(() => import('../pages/JDManagement/List'));
 const JDManagementEditor = lazy(() => import('../pages/JDManagement/Editor'));
 const PositionMappings = lazy(() => import('../pages/Settings/PositionMappings'));
+const NotFound = lazy(() => import('../pages/NotFound'));
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, loading } = useAuth();
   const location = useLocation();
@@ -188,6 +189,7 @@ const router = createBrowserRouter([
       },
     ],
   },
+  { path: '*', element: <LazyPage><NotFound /></LazyPage> },
 ]);
 
 export default router;

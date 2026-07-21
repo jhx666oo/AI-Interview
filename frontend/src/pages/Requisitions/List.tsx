@@ -191,7 +191,7 @@ const RequisitionsList: React.FC = () => {
     },
     {
       title: '预算', dataIndex: 'budget', key: 'budget', width: 100,
-      render: (v: number) => v ? `\${v}` : '-'
+      render: (v: number) => v ? `${v}万` : '-'
     },
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 100,
@@ -297,25 +297,6 @@ const RequisitionsList: React.FC = () => {
                   <Option value="南京">南京</Option><Option value="西安">西安</Option>
                   <Option value="重庆">重庆</Option><Option value="天津">天津</Option>
                   <Option value="苏州">苏州</Option><Option value="郑州">郑州</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="employment_type" label="用工类型">
-                <Select>
-                  <Option value="full_time">全职</Option>
-                  <Option value="part_time">兼职</Option>
-                  <Option value="intern">实习</Option>
-                  <Option value="contract">外包</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="urgency" label="紧急程度">
-                <Select>
-                  {Object.entries(urgencyConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
                 </Select>
               </Form.Item>
             </Col>
