@@ -2305,10 +2305,11 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
     const interviewId = crypto.randomUUID();
     const interviewerStr = interviewerNames.length > 0 ? interviewerNames.join(', ') : '待分配';
 
-    // 🔑 从 positions 表同步面试官信息（一面/二面）
+    // 从 positions 表同步面试官信息（一面/二面）
+    // 只在用户没有手动指定面试官时补充
     let primaryInterviewer = '';
     let secondaryInterviewer = '';
-    if (position_applied) {
+    if (!interviewer_name && position_applied) {
       try {
         const posRow = await c.env.DB.prepare(
           "SELECT primary_interviewer, secondary_interviewer FROM positions WHERE title = ? LIMIT 1"
@@ -2318,6 +2319,9 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
           secondaryInterviewer = posRow.secondary_interviewer || '';
         }
       } catch {}
+    }
+    if (interviewer_name && interviewerNames.length === 1) {
+      primaryInterviewer = interviewerNames[0];
     }
 
     await c.env.DB.prepare(
