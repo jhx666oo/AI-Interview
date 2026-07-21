@@ -2520,7 +2520,8 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     // 5. 获取最终记录并返回
     const record = await bitableGetRecord(c.env, tableId, recordId);
     if (!record) {
-      return c.json({ detail: '记录已创建但获取详情失败' }, 500);
+      // 记录已创建成功，飞书可能未即时同步，不报错
+      return c.json({ id: recordId, candidate_name: parsedName, status: 'uploaded', detail: '简历已上传，AI 解析中...' });
     }
     return c.json(parseTalentRecord(record));
 
