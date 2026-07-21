@@ -1301,7 +1301,7 @@ function parseRequisitionRecord(record: any): any {
     hr_interviewer: getUserName(f['HR二面']),
     biz_interviewer: getUserName(f['业务一面']),
     final_interviewer: getUserName(f['终面']),
-    primary_interviewer: getUserName(f['业务一面']) || '杜雁玲',
+    primary_interviewer: getUserName(f['业务一面']) || '',
     secondary_interviewer: getUserName(f['HR二面']) || '何雨菱',
     start_date: f['开始招聘'] || null,
     end_date: f['结束招聘'] || null,
@@ -6196,60 +6196,17 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
   candidateName = candidateName || '该候选人';
 
   try {
-    let token = '';
-    let openId = '';
-
-    // 🔑 查面试官 OAuth 绑定信息：token + open_id 必须来自同一应用
-    try {
-      const userRow = await c.env.DB.prepare(
-        "SELECT feishu_token, feishu_open_id FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != '' LIMIT 1"
-      ).bind(interviewerName).first() as any;
-
-      if (userRow?.feishu_token && userRow?.feishu_open_id) {
-        token = userRow.feishu_token;
-        openId = userRow.feishu_open_id;
-        console.log(`[NotifyInterviewer] 使用 ${interviewerName} 自己的 feishu_token + feishu_open_id`);
-      }
-    } catch {}
-
-    // 面试官未绑定飞书 → 改用应用 bot 发送（号主账号）
-    if (!token || !openId) {
-      try {
-        const tenantToken = await getFeishuTenantAccessToken(c.env);
-        // 尝试用被通知人的姓名查 open_id
-        const userRow = await c.env.DB.prepare(
-          "SELECT feishu_open_id FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != '' LIMIT 1"
-        ).bind(interviewerName).first() as any;
-        if (userRow?.feishu_open_id) {
-          token = tenantToken;
-          openId = userRow.feishu_open_id;
-          console.log(`[NotifyInterviewer] 使用应用 bot 发送提醒 (tenant token) → ${interviewerName}`);
-        } else {
-          // 通过飞书 API 按姓名搜索 open_id
-          const searchResp = await fetch(
-            `https://open.feishu.cn/open-apis/search/v1/user?page_size=5&query=${encodeURIComponent(interviewerName)}`,
-            { headers: { 'Authorization': `Bearer ${tenantToken}` } }
-          ).then(r => r.json());
-          const users = searchResp?.data?.items || [];
-          const match = users.find((u: any) => u.name === interviewerName);
-          if (match?.id) {
-            token = tenantToken;
-            openId = match.id;
-            console.log(`[NotifyInterviewer] 通过飞书搜索找到 open_id → ${interviewerName}`);
-          }
-        }
-      } catch (e) {
-        console.warn(`[NotifyInterviewer] 应用 bot 兜底失败: ${e}`);
-      }
-    }
-
-    if (!token || !openId) {
+    // 1. 从面试官映射表或 users 表获取 open_id
+    const openId = await getInterviewerOpenId(c.env, interviewerName);
+    if (!openId) {
       return c.json({
-        detail: `无法通知面试官「${interviewerName}」：未找到该面试官的飞书账号。请联系管理员确认。`,
+        detail: `无法通知「${interviewerName}」：未在面试官映射表或用户表中找到该面试官的飞书 open_id。请在系统设置 → 面试官管理中配置映射。`,
         need_bind: true,
       }, 400);
     }
 
+    // 2. 用应用 bot（号主飞书账号）发送卡片消息
+    const token = await getFeishuToken(c.env);
     const interviewTime = body.interview_time || '';
     const cardContent = buildInterviewerCard(
       candidateName,
@@ -6260,12 +6217,11 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       interviewTime
     );
     await sendFeishuMessageToUser(token, openId, cardContent);
+
+    console.log(`[NotifyInterviewer] ✅ 通过应用 bot 通知面试官: ${interviewerName} (open_id: ${openId})`);
     return c.json({ ok: true, message: `已通知面试官 ${interviewerName}: ${candidateName}` });
   } catch (err: any) {
-    const detail = err.message?.includes('user_id')
-      ? `通知失败: 面试官未在个人设置中绑定飞书账号，请让其前往「个人中心 - 绑定飞书」完成绑定`
-      : `通知失败: ${err.message}`;
-    return c.json({ detail }, 500);
+    return c.json({ detail: `通知失败: ${err.message}` }, 500);
   }
 });
 
