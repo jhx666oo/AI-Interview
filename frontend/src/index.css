@@ -237,8 +237,7 @@ code {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* 侧边栏折叠按钮右对齐 */
+/* 侧边栏折叠按钮居中对齐图标 */
 .ant-layout-sider-trigger {
-  text-align: right !important;
-  padding-right: 16px !important;
+  text-align: center !important;
 }
