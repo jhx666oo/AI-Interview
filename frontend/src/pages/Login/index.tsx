@@ -125,13 +125,6 @@ const Login: React.FC = () => {
 
       {/* 右侧：品牌展示 */}
       <div className="login-right">
-        <div className="login-right-abstract">
-          <div className="login-abstract-shape shape-1" />
-          <div className="login-abstract-shape shape-2" />
-          <div className="login-abstract-shape shape-3" />
-          <div className="login-abstract-shape shape-circle" />
-          <div className="login-abstract-shape shape-dots" />
-        </div>
         <div className="login-right-content">
           <div className="login-stagger-item">
             <img src="/swan.svg" alt="天鹅到家" className="login-right-logo" />

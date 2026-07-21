@@ -76,8 +76,9 @@
 .login-right {
   flex: 1;
   position: relative;
-  background: linear-gradient(160deg, #0F172A 0%, #1E3A5F 30%, #3B82F6 70%, #6366F1 100%);
-  overflow: hidden;
+  background: 
+    linear-gradient(160deg, rgba(15,23,42,0.85) 0%, rgba(30,58,95,0.7) 40%, rgba(59,130,246,0.5) 100%),
+    url('/login-illustration.svg') center/cover no-repeat;
   display: none;
   align-items: center;
   justify-content: center;
@@ -96,61 +97,6 @@
   width: auto;
   margin-bottom: 24px;
   filter: drop-shadow(0 2px 8px rgba(0,0,0,0.2));
-}
-
-/* 抽象图形装饰 */
-.login-right-abstract {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
-
-.login-abstract-shape {
-  position: absolute;
-}
-
-.shape-1 {
-  width: 320px;
-  height: 320px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(59,130,246,0.1));
-  top: -80px;
-  right: -60px;
-}
-
-.shape-2 {
-  width: 200px;
-  height: 200px;
-  border-radius: 30px;
-  background: linear-gradient(135deg, rgba(129,140,248,0.2), rgba(96,165,250,0.1));
-  bottom: 80px;
-  left: 10%;
-  transform: rotate(15deg);
-}
-
-.shape-3 {
-  width: 260px;
-  height: 260px;
-  border-radius: 20px;
-  border: 1px solid rgba(255,255,255,0.08);
-  top: 35%;
-  right: 15%;
-  transform: rotate(-10deg);
-}
-
-.shape-circle {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  border: 1px solid rgba(255,255,255,0.1);
-  top: 30%;
-  left: 50%;
-}
-
-.shape-dots {
-  top: 0; left: 0; right: 0; bottom: 0;
-  background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
-  background-size: 40px 40px;
 }
 
 /* 错落入场动画 */
