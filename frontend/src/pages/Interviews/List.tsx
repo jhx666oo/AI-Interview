@@ -294,7 +294,7 @@ const InterviewsList: React.FC = () => {
       render: (v: string) => v || '-' },
     { title: '城市', dataIndex: 'city', key: 'city', width: 80 },
     {
-      title: '候选人状态', key: 'talent_status', width: 110,
+      title: '候选人状态', key: 'talent_status', width: 130,
       render: (_: any, r: MergedRow) => {
         const cfg = talentStatusConfig[r.talent_status] || { color: 'default', text: r.talent_status || '待初筛' };
         return <Tag color={cfg.color}>{cfg.text}</Tag>;
@@ -313,7 +313,7 @@ const InterviewsList: React.FC = () => {
       render: (_: any, r: MergedRow) => r.interview_time || '-',
     },
     {
-      title: '面试官', key: 'interviewer', width: 130,
+      title: '面试官', key: 'interviewer', width: 120,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id) return '-';
         return (
