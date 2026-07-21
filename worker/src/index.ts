@@ -5051,7 +5051,7 @@ async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
 
   // 4. ❌ 硬编码的 FEISHU_CONFIG 中的 open_id 属于多维表格应用，不能跨应用发消息
   //    直接返回空，让调用方知道面试官未绑定飞书
-  console.warn(`[getInterviewerOpenId] ⚠ ${name} 未绑定飞书，无法发送提醒（硬编码 open_id 属于其他应用不可用）`);
+  console.warn(`[getInterviewerOpenId] ⚠ "${name}" 未找到任何绑定，返回空字符串`);
   return '';
 }
 
