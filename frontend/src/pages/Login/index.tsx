@@ -56,67 +56,75 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="login-page">
-      <div className="login-inner">
-        <div className="login-stagger-item" style={{ marginBottom: 24 }}>
-          <div className="login-logo-box">
-            <img src="/swan.svg" alt="天鹅到家" />
-          </div>
-        </div>
+    <div className="login-split">
+      {/* 左侧：品牌图 */}
+      <div className="login-left">
+        <img src="/login-bg.jpg" alt="智能招聘系统" className="login-left-img" />
+      </div>
 
-        <div className="login-stagger-item">
-          <Title level={2} style={{ marginBottom: 4, fontWeight: 700, color: '#0F172A' }}>
-            欢迎回来
-          </Title>
-          <Text style={{ color: '#64748B', fontSize: 14 }}>
-            请输入账号信息登录系统
-          </Text>
-        </div>
-
-        <form onSubmit={handleLogin} className="login-form">
-          <div className="login-stagger-item">
-            <label className="login-label">邮箱地址</label>
-            <Input
-              prefix={<MailOutlined style={{ color: '#94A3B8' }} />}
-              placeholder="email@example.com"
-              size="large"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              disabled={loading}
-              className="login-input"
-            />
+      {/* 右侧：登录表单 */}
+      <div className="login-right">
+        <div className="login-right-inner">
+          <div className="login-stagger-item" style={{ marginBottom: 24 }}>
+            <div className="login-logo-box">
+              <img src="/swan.svg" alt="天鹅到家" />
+            </div>
           </div>
 
           <div className="login-stagger-item">
-            <label className="login-label">密码</label>
-            <Input.Password
-              prefix={<LockOutlined style={{ color: '#94A3B8' }} />}
-              placeholder="••••••••••••"
-              size="large"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              disabled={loading}
-              className="login-input"
-            />
+            <Title level={2} style={{ marginBottom: 4, fontWeight: 700, color: '#0F172A' }}>
+              欢迎回来
+            </Title>
+            <Text style={{ color: '#64748B', fontSize: 14 }}>
+              请输入账号信息登录系统
+            </Text>
           </div>
+
+          <form onSubmit={handleLogin} className="login-form">
+            <div className="login-stagger-item">
+              <label className="login-label">邮箱地址</label>
+              <Input
+                prefix={<MailOutlined style={{ color: '#94A3B8' }} />}
+                placeholder="email@example.com"
+                size="large"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                disabled={loading}
+                className="login-input"
+              />
+            </div>
+
+            <div className="login-stagger-item">
+              <label className="login-label">密码</label>
+              <Input.Password
+                prefix={<LockOutlined style={{ color: '#94A3B8' }} />}
+                placeholder="••••••••••••"
+                size="large"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                disabled={loading}
+                className="login-input"
+              />
+            </div>
+
+            <div className="login-stagger-item">
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={loading}
+                className="login-btn"
+                size="large"
+              >
+                {loading ? '登录中...' : '登录'}
+              </Button>
+            </div>
+          </form>
 
           <div className="login-stagger-item">
-            <Button
-              type="primary"
-              htmlType="submit"
-              loading={loading}
-              className="login-btn"
-              size="large"
-            >
-              {loading ? '登录中...' : '登录'}
-            </Button>
+            <Text style={{ color: '#94A3B8', fontSize: 13 }}>
+              © 2026 天鹅到家 · AI 智能招聘系统
+            </Text>
           </div>
-        </form>
-
-        <div className="login-stagger-item">
-          <Text style={{ color: '#94A3B8', fontSize: 13 }}>
-            © 2026 天鹅到家 · AI 智能招聘系统
-          </Text>
         </div>
       </div>
     </div>

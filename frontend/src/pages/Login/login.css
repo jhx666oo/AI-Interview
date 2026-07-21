@@ -1,14 +1,39 @@
-/* 登录页 - 居中布局 */
-.login-page {
+/* 登录页 - 分屏布局（图左表右） */
+.login-split {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  background: #FAFBFC;
+}
+
+/* 左侧：品牌图 */
+.login-left {
+  flex: 1.1;
+  position: relative;
+  background: #0F172A;
+  overflow: hidden;
+  display: none;
+}
+
+.login-left-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+/* 右侧：表单 */
+.login-right {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
-  background: #FAFBFC;
   padding: 32px;
+  background: #FAFBFC;
 }
 
-.login-inner {
+.login-right-inner {
   width: 100%;
   max-width: 400px;
 }
@@ -79,5 +104,12 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* 平板及以上显示左侧图 */
+@media (min-width: 768px) {
+  .login-left {
+    display: block;
   }
 }
