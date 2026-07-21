@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress } from 'antd';
-import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import * as pdfjsLib from 'pdfjs-dist';
 import request from '../../utils/request';
 import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
@@ -708,6 +709,27 @@ const ResumesList: React.FC = () => {
     }
   };
 
+  // pdf.js worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+
+  // 从 PDF 文件提取纯文本（零 Token）
+  const extractPdfText = async (file: File): Promise<string> => {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map((item: any) => item.str).join(' ');
+        fullText += pageText + '\n';
+      }
+      return fullText.trim() || '';
+    } catch {
+      return ''; // 扫描版 PDF 无法提取，回落 AI
+    }
+  };
+
   const handleUploadClick = () => {
     form.resetFields();
     setFileList([]);
@@ -724,11 +746,22 @@ const ResumesList: React.FC = () => {
 
       setSubmitting(true);
       
+      // v2.0: 前端提取 PDF 文本（零 Token）
+      let rawText = '';
+      const firstFile = fileList[0];
+      if (firstFile.type === 'application/pdf' || firstFile.name?.endsWith('.pdf')) {
+        try {
+          rawText = await extractPdfText(firstFile);
+          if (rawText) console.log(`[PDF] 提取文本 ${rawText.length} 字符`);
+        } catch { /* 回落 AI */ }
+      }
+      
       // Determine if single or batch upload
       if (fileList.length === 1) {
         const formData = new FormData();
         formData.append('position_id', values.position_id);
         formData.append('file', fileList[0]);
+        if (rawText) formData.append('raw_text', rawText);
         await request.post('/resumes', formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
@@ -804,10 +837,37 @@ const ResumesList: React.FC = () => {
     const isPending = record.status === 'pending_screening';
     const isApproved = record.status === 'approved';
     const isRejected = record.status === 'rejected';
+    const hardResult = record.hard_requirement_result ? (typeof record.hard_requirement_result === 'string' ? JSON.parse(record.hard_requirement_result) : record.hard_requirement_result) : null;
+    const capScores = record.capability_scores ? (typeof record.capability_scores === 'string' ? JSON.parse(record.capability_scores) : record.capability_scores) : null;
+
+    const handleCheckHard = async () => {
+      try {
+        message.loading({ content: '硬性要求检查中...', key: 'hard' });
+        const res = await request.post(`/resumes/${record.id}/check-hard-requirements`) as any;
+        message.success({ content: '硬性检查完成', key: 'hard' });
+        fetchResumes();
+      } catch (e: any) {
+        message.error({ content: e.response?.data?.detail || '检查失败', key: 'hard' });
+      }
+    };
+
+    const handleScoreCap = async () => {
+      try {
+        message.loading({ content: '能力评分中...', key: 'score' });
+        const res = await request.post(`/resumes/${record.id}/score-capabilities`) as any;
+        message.success({ content: '能力评分完成', key: 'score' });
+        fetchResumes();
+      } catch (e: any) {
+        message.error({ content: e.response?.data?.detail || '评分失败', key: 'score' });
+      }
+    };
+
     return (
       <Space size="small" wrap>
         <Tooltip title="预览"><Button type="text" size="small" icon={<FileTextOutlined style={{ color: '#6366F1' }} />} onClick={() => handlePreview(record)} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
+        <Tooltip title="硬性要求检查"><Button type="text" size="small" icon={<ThunderboltOutlined style={{ color: '#F59E0B' }} />} onClick={handleCheckHard} /></Tooltip>
+        <Tooltip title="能力维度评分"><Button type="text" size="small" icon={<StarOutlined style={{ color: '#8B5CF6' }} />} onClick={handleScoreCap} /></Tooltip>
         {isPending && (
           <>
             <Button type="primary" size="small" icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => handleApproveToTalentPool(record)}>入库</Button>
@@ -816,6 +876,16 @@ const ResumesList: React.FC = () => {
         )}
         {isApproved && <Tag color="success">已入库</Tag>}
         {isRejected && <Tag color="error">已淘汰</Tag>}
+        {hardResult && (
+          <Tag color={hardResult.passed ? 'success' : 'error'}>
+            {hardResult.passed ? '✅ 硬性通过' : '❌ 硬性不通过'}
+          </Tag>
+        )}
+        {capScores?.scores?.length > 0 && (
+          <Tooltip title={capScores.scores.map((s: any) => `${s.dimension}: ${'⭐'.repeat(s.score)}`).join('\n')}>
+            <Tag color="purple">能力已评分</Tag>
+          </Tooltip>
+        )}
         <Tooltip title="删除"><Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} /></Tooltip>
       </Space>
     );

@@ -2402,6 +2402,9 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     }
 
     // 3. AI 解析简历（两阶段：先转文本 → 再提取结构化信息）
+    // v2.0: 如果前端已提取 raw_text，跳过第一阶段（省 Token）
+    const frontendRawText = (formData.get('raw_text') as string) || '';
+    let extractedText = frontendRawText || '';
     let parsedName = fileNameWithoutExt;
     let parsedGender = '';
     let parsedAge: number | null = null;
@@ -2416,15 +2419,17 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     let parsedWorkYears: number | null = null;
     let parsedExperience: string = '';
     try {
+      if (!extractedText) {
       // 第一阶段：把 base64 PDF 转为结构化文本（markdown）
       const extractionPrompt = `你是一个PDF简历文本提取助手。下面是一份PDF简历的base64编码数据。请仔细阅读内容，将其转换为结构化的Markdown文本。保留所有可读的信息：姓名、联系方式、工作经历、教育背景、技能、项目经历等。如果内容中包含乱码或无法识别的字符，尽最大努力推断正确内容。直接输出Markdown文本，不要添加任何额外说明。`;
-      const extractedText = await callAI(c.env, extractionPrompt,
+      extractedText = await callAI(c.env, extractionPrompt,
         `以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n${fileBase64.substring(0, 32000)}${fileBase64.length > 32000 ? '\n\n[内容截断]' : ''}`, 'deepseek-chat');
+      }
 
       // 将提取的文本存入 `raw_text`
       if (extractedText && extractedText.length > 20) {
         try {
-          await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?')
+          await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, uploaded_at = ? WHERE id = ?')
             .bind(extractedText.substring(0, 50000), now(), recordId).run();
         } catch {}
       }
