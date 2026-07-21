@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Tag, Select, message,
   Input, Typography, Tooltip
 } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, SearchOutlined, BellOutlined, LoadingOutlined, DownloadOutlined
 } from '@ant-design/icons';
@@ -24,6 +25,8 @@ const TalentPoolList: React.FC = () => {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
   const [notifyLoading, setNotifyLoading] = useState<string | null>(null);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -183,10 +186,11 @@ const TalentPoolList: React.FC = () => {
           </Space>
         }
       >
-        <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
+        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 'max-content' }}
-          pagination={{ pageSize: 10, showSizeChanger: true, simple: true }}
+          pagination={false}
         />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
     </div>
   );

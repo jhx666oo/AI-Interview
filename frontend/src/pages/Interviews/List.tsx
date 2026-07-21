@@ -3,6 +3,7 @@ import {
   Table, Button, Space, message, Tag, Modal, Select, Input, Form,
   Radio, Typography, Card, Tooltip, DatePicker
 } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
   BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined
@@ -81,6 +82,8 @@ const InterviewsList: React.FC = () => {
   // 查看评价弹窗
   const [viewEvalVisible, setViewEvalVisible] = useState(false);
   const [viewEvalRecord, setViewEvalRecord] = useState<MergedRow | null>(null);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   const fetchMergedData = useCallback(async () => {
     setLoading(true);
@@ -452,8 +455,9 @@ const InterviewsList: React.FC = () => {
           rowKey="id"
           loading={loading}
           scroll={{ x: 'max-content' }}
-          pagination={{ pageSize: 20, simple: true, showTotal: (t) => `共 ${t} 名候选人` }}
+          pagination={false}
         />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
 
       {/* 安排面试弹窗 */}

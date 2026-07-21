@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Card, Row, Col, Typography, Spin, message, Table, Tag, Space, Button, Input, Select } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import { SyncOutlined, ReloadOutlined, SearchOutlined, ClearOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 
@@ -70,6 +71,8 @@ const Dashboard: React.FC = () => {
   const [filterDivision, setFilterDivision] = useState<string | undefined>(undefined);
   const [filterStatus, setFilterStatus] = useState<string | undefined>(undefined);
   const [searchPosition, setSearchPosition] = useState('');
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   const fetchData = async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -413,10 +416,11 @@ const Dashboard: React.FC = () => {
           columns={positionColumns}
           rowKey="position"
           size="small"
-          pagination={{ pageSize: 10, simple: true, showTotal: (t) => `共 ${t} 条` }}
+          pagination={false}
           scroll={{ x: 1400 }}
           locale={{ emptyText: '暂无岗位数据' }}
         />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={positions.length} onChange={setTablePage} />
       </Card>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Space, message, Tag, Modal, Form, Input, Select, Card, Typography, Popconfirm, Tooltip } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, KeyOutlined, CopyOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -31,6 +32,8 @@ const UsersList: React.FC = () => {
   const [createdPassword, setCreatedPassword] = useState<string>('');
   const [feishuUrl, setFeishuUrl] = useState<string>('');
   const [feishuUrlLoading, setFeishuUrlLoading] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -340,13 +343,14 @@ const UsersList: React.FC = () => {
         loading={loading}
         rowKey="id"
         scroll={{ x: 1550 }}
-        pagination={{ pageSize: 20, simple: true, showTotal: (total) => `共 ${total} 条` }}
+        pagination={false}
         rowSelection={{
           selectedRowKeys,
           onChange: (keys) => setSelectedRowKeys(keys),
           columnWidth: 48,
         }}
       />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
 
       <Modal
         title={isEditModal ? '编辑用户' : '新增用户'}

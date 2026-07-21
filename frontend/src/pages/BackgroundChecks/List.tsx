@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Tag, Modal, Form, Input, Select,
   message, Popconfirm, Drawer, Descriptions, Typography, Row, Col
 } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined,
   EyeOutlined, SafetyOutlined
@@ -35,6 +36,8 @@ const BackgroundChecksList: React.FC = () => {
   const [detailVisible, setDetailVisible] = useState(false);
   const [current, setCurrent] = useState<any>(null);
   const [resumes, setResumes] = useState<any[]>([]);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -123,8 +126,9 @@ const BackgroundChecksList: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>发起背调</Button>
         </Space>}>
-        <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 900 }} pagination={{ pageSize: 10, showSizeChanger: true, simple: true }} />
+        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+          scroll={{ x: 900 }} pagination={false} />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑背调' : '发起背调'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>

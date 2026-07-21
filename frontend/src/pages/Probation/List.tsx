@@ -4,6 +4,7 @@ import {
   Select, message, Popconfirm, Drawer, Descriptions, Timeline, Row, Col, Statistic,
   Typography
 } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined,
   EyeOutlined, CheckCircleOutlined, FileTextOutlined,
@@ -36,6 +37,8 @@ const ProbationList: React.FC = () => {
   const [aiLoading, setAiLoading] = useState<string | null>(null);
   const [aiAssessVisible, setAiAssessVisible] = useState(false);
   const [aiAssessResult, setAiAssessResult] = useState('');
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   const handleAIAssessment = async (id: string) => {
     setAiLoading(id);
@@ -172,8 +175,9 @@ const ProbationList: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增试用</Button>
         </Space>}>
-        <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1500 }} pagination={{ pageSize: 10, showSizeChanger: true, simple: true }} />
+        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+          scroll={{ x: 1500 }} pagination={false} />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={560} destroyOnHidden>

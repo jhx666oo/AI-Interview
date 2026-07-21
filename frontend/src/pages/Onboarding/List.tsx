@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Tag, Modal, Form, Input, DatePicker,
   Select, Switch, message, Popconfirm, Drawer, Descriptions, Row, Col, Statistic
 } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined,
   EyeOutlined, HomeOutlined
@@ -29,6 +30,8 @@ const OnboardingList: React.FC = () => {
   const [detailVisible, setDetailVisible] = useState(false);
   const [current, setCurrent] = useState<any>(null);
   const [resumes, setResumes] = useState<any[]>([]);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -129,8 +132,9 @@ const OnboardingList: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增入职</Button>
         </Space>}>
-        <Table dataSource={data} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, simple: true }} />
+        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+          scroll={{ x: 1400 }} pagination={false} />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Table, Button, Space, message, Modal, Form, Input, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert } from 'antd';
+import SimplePagination from '../../components/SimplePagination';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -96,6 +97,8 @@ const PositionsList: React.FC = () => {
   const [searchStatus, setSearchStatus] = useState<string | undefined>(undefined);
   const [syncLoading, setSyncLoading] = useState(false);
   const [deduping, setDeduping] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
+  const pageSize = 10;
   const { selectedOwner } = useOwner();
 
   // 检测重复岗位
@@ -795,17 +798,18 @@ const PositionsList: React.FC = () => {
       
       <Table 
         columns={columns} 
-        dataSource={data} 
+        dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} 
         loading={loading} 
         rowKey="id" 
         scroll={{ x: 1950 }}
-        pagination={{ pageSize: 10, showSizeChanger: true, simple: true }}
+        pagination={false}
         rowSelection={{
           selectedRowKeys,
           onChange: setSelectedRowKeys,
           columnWidth: 40,
         }}
       />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
 
       <Modal
         title={editingId ? '编辑岗位' : '新增岗位'}
