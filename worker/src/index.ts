@@ -4090,12 +4090,16 @@ app.get('/api/settings/interviewers/search', authMiddleware, async (c) => {
       `https://open.feishu.cn/open-apis/search/v1/user?page_size=10&query=${encodeURIComponent(query)}`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     ).then(r => r.json()) as any;
-    const users = (resp?.data?.items || []).map((u: any) => ({
-      name: u.name || '',
-      open_id: u.id || '',
-      department: u.department_ids || [],
-    }));
-    return c.json(users);
+    console.log(`[SearchUser] query="${query}", raw_code=${resp?.code}, data_len=${resp?.data?.items?.length || 0}`);
+    const rawItems = resp?.data?.items || [];
+    // 飞书可能返回不同的字段名，兼容处理
+    const users = rawItems.map((u: any) => ({
+      name: u.name || u.user_name || u.full_name || '',
+      open_id: u.id || u.open_id || u.user_id || '',
+      department: u.department_ids || u.departments || [],
+    })).filter((u: any) => u.open_id);
+    // 临时调试：也返回原始响应用于排查
+    return c.json({ users, raw: { code: resp?.code, msg: resp?.msg, items: rawItems.slice(0, 2) } });
   } catch (e: any) {
     return c.json({ detail: '搜索失败: ' + e.message }, 500);
   }
