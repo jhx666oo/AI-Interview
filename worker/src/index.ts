@@ -6180,8 +6180,20 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
   const body = await c.req.json().catch(() => ({}));
   const currentUser = c.get('user');
 
-  const interviewerName = body.interviewer_name || '杜雁玲'; // 默认用杜雁玲
-  const candidateName = body.candidate_name || '该候选人';
+  // 从面试记录读取面试官信息
+  let interviewerName = body.interviewer_name || '';
+  let candidateName = body.candidate_name || '';
+  if (!interviewerName || !candidateName) {
+    const interview = await c.env.DB.prepare(
+      'SELECT interviewer, candidate_name, interview_time FROM interviews WHERE id = ?'
+    ).bind(id).first() as any;
+    if (interview) {
+      if (!interviewerName) interviewerName = interview.interviewer || '';
+      if (!candidateName) candidateName = interview.candidate_name || '';
+    }
+  }
+  interviewerName = interviewerName || '面试官';
+  candidateName = candidateName || '该候选人';
 
   try {
     let token = '';
