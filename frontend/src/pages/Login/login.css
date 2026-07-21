@@ -1,87 +1,33 @@
-/* 登录页 - 分屏布局（图左表右） */
-.login-split {
-  display: flex;
-  min-height: 100vh;
-  width: 100%;
-  background: #FAFBFC;
-}
-
-/* 左侧：品牌图 */
-.login-left {
-  flex: 1.8;
-  position: relative;
-  background: #0F172A;
-  overflow: hidden;
-  display: none;
-}
-
-.login-left-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  display: block;
-}
-
-/* 右侧：表单 */
-.login-right {
-  flex: 1;
+/* 登录页 - 居中布局 */
+.login-page {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
+  min-height: 100vh;
   background: #FAFBFC;
+  padding: 32px;
 }
 
-.login-right-inner {
+.login-inner {
   width: 100%;
   max-width: 400px;
 }
 
-/* Logo */
 .login-logo-box {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: #EEF2FF;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 .login-logo-box img {
-  height: 24px;
+  height: 36px;
   width: auto;
 }
 
-/* 品牌文字 */
-.login-brand {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.login-brand-name {
-  font-size: 20px;
-  font-weight: 700;
-  color: #0F172A;
-  letter-spacing: -0.5px;
-}
-
-.login-brand-ai {
-  color: #3B82F6;
-  font-weight: 600;
-  font-size: 15px;
-}
-
-.login-brand-sub {
-  font-size: 12px;
-  color: #94A3B8;
-  font-weight: 400;
-  letter-spacing: 1px;
-}
-
-/* 表单样式 */
 .login-form {
   margin-top: 32px;
   display: flex;
@@ -117,13 +63,11 @@
   background: #2563EB !important;
 }
 
-/* 错落入场动画 */
 .login-stagger-item {
   opacity: 0;
   transform: translateY(16px);
   animation: loginFadeIn 0.5s ease forwards;
 }
-
 .login-stagger-item:nth-child(1) { animation-delay: 0.1s; }
 .login-stagger-item:nth-child(2) { animation-delay: 0.2s; }
 .login-stagger-item:nth-child(3) { animation-delay: 0.3s; }
@@ -135,12 +79,5 @@
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-/* 平板及以上显示左侧图 */
-@media (min-width: 768px) {
-  .login-left {
-    display: block;
   }
 }
