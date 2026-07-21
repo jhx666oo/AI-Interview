@@ -5010,7 +5010,9 @@ async function getInterviewerOpenIds(env: Env): Promise<Record<string, string>> 
     // 表可能还不存在，忽略
     console.warn(`[Interviewer] DB read failed, using hardcoded: ${e.message}`);
   }
-  return (env.FEISHU_CONFIG as any)?.interviewerOpenIds || FEISHU_CONFIG.interviewerOpenIds || {};
+  // 硬编码的 FEISHU_CONFIG 中的 open_id 属于多维表格应用，不能跨应用发消息
+  // 只使用 interviewer_mappings 表和 users 表的数据
+  return {} as Record<string, string>;
 }
 
 async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
