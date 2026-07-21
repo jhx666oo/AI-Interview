@@ -4,7 +4,7 @@ import {
   Select, message, Popconfirm, Row, Col, Statistic, Typography, Tooltip
 } from 'antd';
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined,
+  PlusOutlined, EditOutlined, DeleteOutlined,
   ReloadOutlined, SearchOutlined,
   ThunderboltOutlined, LoadingOutlined
 } from '@ant-design/icons';
@@ -32,7 +32,7 @@ const statusConfig: Record<string, { color: string; text: string }> = {
   '已关闭': { color: '#8c8c8c', text: '已关闭' },
   '已终止': { color: 'error', text: '已终止' },
   open: { color: 'processing', text: '招聘中' },
-  pending: { color: 'blue', text: '待招聘' },
+  recruiting: { color: 'blue', text: '待招聘' },
   hired: { color: 'success', text: '已入职' },
   onboarding: { color: 'processing', text: '入职中' },
   paused: { color: 'warning', text: '暂停' },
@@ -203,15 +203,9 @@ const RequisitionsList: React.FC = () => {
       render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD') : '-'
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 280,
+      title: '操作', align: 'center' as const, key: 'action', width: 220,
       render: (_: any, record: any) => (
         <Space size="small">
-          {record.status === 'pending' && (
-            <>
-              <Button type="link" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(record.id)}>批准</Button>
-              <Button type="link" size="small" danger icon={<CloseOutlined />} onClick={() => handleReject(record.id)}>驳回</Button>
-            </>
-          )}
           <Button type="link" size="small" icon={aiLoading === record.id ? <LoadingOutlined /> : <ThunderboltOutlined />} onClick={() => handleAIJD(record.id)}>AI生成JD</Button>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>

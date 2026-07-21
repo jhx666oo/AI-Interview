@@ -1364,7 +1364,7 @@ function mapStatus(v: any): string {
   const s = typeof v === 'object' && v ? (v.text || v.name || '') : String(v || '');
   const map: Record<string, string> = {
     '招聘中': 'open',
-    '待招聘': 'pending',
+    '待招聘': 'recruiting',
     '已入职': 'hired',
     '暂停': 'paused',
     '已完成': 'closed',
