@@ -31,6 +31,7 @@ const DailyReportsList = lazy(() => import('../pages/DailyReports/List'));
 const JDManagementList = lazy(() => import('../pages/JDManagement/List'));
 const JDManagementEditor = lazy(() => import('../pages/JDManagement/Editor'));
 const PositionMappings = lazy(() => import('../pages/Settings/PositionMappings'));
+const InterviewerMappings = lazy(() => import('../pages/Settings/InterviewerMappings'));
 const NotFound = lazy(() => import('../pages/NotFound'));
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -158,6 +159,10 @@ const router = createBrowserRouter([
       {
         path: 'settings/position-mappings',
         element: <RoleRoute roles={['admin']}><LazyPage><PositionMappings /></LazyPage></RoleRoute>,
+      },
+      {
+        path: 'settings/interviewer-mappings',
+        element: <RoleRoute roles={['admin']}><LazyPage><InterviewerMappings /></LazyPage></RoleRoute>,
       },
       {
         path: 'settings/mail',

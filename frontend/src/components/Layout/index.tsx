@@ -94,6 +94,12 @@ const AppLayout: React.FC = () => {
       roles: ['admin'],
     },
     {
+      key: '/settings/interviewer-mappings',
+      icon: <TeamOutlined />,
+      label: '面试官管理',
+      roles: ['admin'],
+    },
+    {
       key: '/users',
       icon: <SettingOutlined />,
       label: '用户管理',
