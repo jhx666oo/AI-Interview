@@ -1,9 +1,10 @@
 import React from 'react';
-import { Form, Input, Button, Card, Typography, message } from 'antd';
-import { UserOutlined, LockOutlined } from '@ant-design/icons';
+import { Button, Input, Typography, message } from 'antd';
+import { MailOutlined, LockOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
+import './login.css';
 
 const { Title, Text } = Typography;
 
@@ -13,6 +14,8 @@ const Login: React.FC = () => {
   const location = useLocation();
   const from = (location.state as any)?.from || '/dashboard';
   const [loading, setLoading] = React.useState(false);
+  const [email, setEmail] = React.useState('');
+  const [password, setPassword] = React.useState('');
 
   React.useEffect(() => {
     if (!authLoading && isAuthenticated) {
@@ -20,12 +23,17 @@ const Login: React.FC = () => {
     }
   }, [authLoading, isAuthenticated, navigate, from]);
 
-  const onFinish = async (values: any) => {
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) {
+      message.error('请输入邮箱和密码');
+      return;
+    }
     setLoading(true);
     try {
       const formData = new URLSearchParams();
-      formData.append('username', values.email);
-      formData.append('password', values.password);
+      formData.append('username', email);
+      formData.append('password', password);
       const res = await request.post('/auth/token', formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
@@ -48,92 +56,85 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      minHeight: '100vh',
-      background: '#F8FAFC',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    }}>
-      <Card
-        style={{
-          width: 420,
-          borderRadius: 20,
-          boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
-          border: '1px solid #E2E8F0',
-          overflow: 'hidden',
-        }}
-        bodyStyle={{ padding: 0 }}
-      >
-        {/* 顶部品牌区 */}
-        <div style={{
-          background: '#fff',
-          padding: '48px 40px 24px',
-          textAlign: 'center',
-        }}>
-          <div style={{
-            width: 80, height: 80, borderRadius: 18,
-            background: '#EFF6FF',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 20px',
-          }}>
-            <img src="/swan.svg" alt="天鹅到家" style={{ height: 54, width: 'auto' }} />
+    <div className="login-split">
+      {/* 左侧：表单 */}
+      <div className="login-left">
+        <div className="login-left-inner">
+          <div className="login-stagger-item" style={{ marginBottom: 24 }}>
+            <div className="login-logo-box">
+              <img src="/swan.svg" alt="天鹅到家" />
+            </div>
           </div>
-          <Title level={3} style={{ color: '#0F172A', marginBottom: 4, fontWeight: 700, fontSize: 24 }}>
-            天鹅到家
-          </Title>
-          <Text style={{ color: '#64748B', fontSize: 14 }}>
-            AI 智能招聘系统
-          </Text>
-        </div>
 
-        {/* 登录表单区 */}
-        <div style={{ padding: '40px 40px 32px' }}>
-          <Form
-            name="login"
-            initialValues={{ remember: true }}
-            onFinish={onFinish}
-            size="large"
-          >
-            <Form.Item
-              name="email"
-              rules={[{ required: true, message: '请输入邮箱' }]}
-            >
+          <div className="login-stagger-item">
+            <Title level={2} style={{ marginBottom: 4, fontWeight: 700, color: '#0F172A' }}>
+              欢迎回来
+            </Title>
+            <Text style={{ color: '#64748B', fontSize: 14 }}>
+              请输入账号信息登录系统
+            </Text>
+          </div>
+
+          <form onSubmit={handleLogin} className="login-form">
+            <div className="login-stagger-item">
+              <label className="login-label">邮箱地址</label>
               <Input
-                prefix={<UserOutlined style={{ color: '#9E9E9E' }} />}
-                placeholder="邮箱地址"
-                style={{ borderRadius: 10, height: 48 }}
+                prefix={<MailOutlined style={{ color: '#94A3B8' }} />}
+                placeholder="email@example.com"
+                size="large"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                disabled={loading}
+                className="login-input"
               />
-            </Form.Item>
+            </div>
 
-            <Form.Item
-              name="password"
-              rules={[{ required: true, message: '请输入密码' }]}
-            >
+            <div className="login-stagger-item">
+              <label className="login-label">密码</label>
               <Input.Password
-                prefix={<LockOutlined style={{ color: '#9E9E9E' }} />}
-                placeholder="密码"
-                style={{ borderRadius: 10, height: 48 }}
+                prefix={<LockOutlined style={{ color: '#94A3B8' }} />}
+                placeholder="••••••••••••"
+                size="large"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                disabled={loading}
+                className="login-input"
               />
-            </Form.Item>
+            </div>
 
-            <Form.Item style={{ marginBottom: 12, marginTop: 28 }}>
+            <div className="login-stagger-item">
               <Button
                 type="primary"
                 htmlType="submit"
                 loading={loading}
-                style={{
-                  width: '100%', height: 48, borderRadius: 10,
-                  fontSize: 16, fontWeight: 600,
-                }}
+                className="login-btn"
+                size="large"
               >
-                登录
+                {loading ? '登录中...' : '登录'}
               </Button>
-            </Form.Item>
-          </Form>
+            </div>
+          </form>
+
+          <div className="login-stagger-item">
+            <Text style={{ color: '#94A3B8', fontSize: 13 }}>
+              © 2026 天鹅到家 · AI 智能招聘系统
+            </Text>
+          </div>
         </div>
-      </Card>
+      </div>
+
+      {/* 右侧：图片 */}
+      <div className="login-right">
+        <div className="login-right-overlay" />
+        <div className="login-right-content">
+          <Title level={1} style={{ color: '#fff', fontWeight: 700, fontSize: 36, marginBottom: 12, textShadow: '0 2px 12px rgba(0,0,0,0.3)' }}>
+            天鹅到家
+          </Title>
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, textShadow: '0 1px 6px rgba(0,0,0,0.2)' }}>
+            AI 驱动，让招聘更高效
+          </Text>
+        </div>
+      </div>
     </div>
   );
 };
