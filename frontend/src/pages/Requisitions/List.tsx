@@ -24,11 +24,17 @@ const statusConfig: Record<string, { color: string; text: string }> = {
   closed: { color: '#8c8c8c', text: '已关闭' },
   // 飞书 Bitable 返回的中文状态
   '招聘中': { color: 'processing', text: '招聘中' },
+  '待招聘': { color: 'blue', text: '待招聘' },
+  '已入职': { color: 'success', text: '已入职' },
+  '入职中': { color: 'processing', text: '入职中' },
   '暂停': { color: 'warning', text: '暂停' },
   '已完成': { color: '#8c8c8c', text: '已完成' },
   '已关闭': { color: '#8c8c8c', text: '已关闭' },
   '已终止': { color: 'error', text: '已终止' },
   open: { color: 'processing', text: '招聘中' },
+  pending: { color: 'blue', text: '待招聘' },
+  hired: { color: 'success', text: '已入职' },
+  onboarding: { color: 'processing', text: '入职中' },
   paused: { color: 'warning', text: '暂停' },
   cancelled: { color: 'error', text: '已终止' },
 };

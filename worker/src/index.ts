@@ -1364,10 +1364,13 @@ function mapStatus(v: any): string {
   const s = typeof v === 'object' && v ? (v.text || v.name || '') : String(v || '');
   const map: Record<string, string> = {
     '招聘中': 'open',
+    '待招聘': 'pending',
+    '已入职': 'hired',
     '暂停': 'paused',
     '已完成': 'closed',
     '已关闭': 'closed',
     '已终止': 'cancelled',
+    '入职中': 'onboarding',
   };
   return map[s] || s;
 }
