@@ -70,11 +70,6 @@ const AppLayout: React.FC = () => {
       label: '面试管理',
     },
     {
-      key: '/jd-management',
-      icon: <FileTextOutlined />,
-      label: 'JD 管理',
-    },
-    {
       key: '/onboarding',
       icon: <HomeOutlined />,
       label: '入职管理',
