@@ -18,10 +18,9 @@
 .login-left-img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   object-position: center;
   display: block;
-  padding: 40px;
 }
 
 /* 右侧：表单 */
