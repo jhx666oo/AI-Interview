@@ -254,14 +254,16 @@ const Dashboard: React.FC = () => {
                       width: `${widthPct}%`,
                       minWidth: 120,
                       position: 'relative',
+                      marginBottom: 2,
                     }}>
                       {/* 梯形主体 */}
                       <div style={{
-                        height: 44,
-                        background: `linear-gradient(135deg, ${color}, ${color}dd)`,
+                        height: 48,
+                        background: `linear-gradient(135deg, ${color}, ${color}cc)`,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        clipPath: 'polygon(0% 0%, 100% 0%, 96% 100%, 4% 100%)',
-                        transition: 'all 0.4s ease',
+                        clipPath: 'polygon(2% 0%, 98% 0%, 94% 100%, 6% 100%)',
+                        boxShadow: `0 2px 8px ${color}33`,
+                        transition: 'all 0.3s ease',
                       }}>
                         <div style={{
                           color: '#fff', fontWeight: 600, fontSize: 13,
