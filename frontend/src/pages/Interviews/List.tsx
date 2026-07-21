@@ -186,7 +186,7 @@ const InterviewsList: React.FC = () => {
         feishu_record_id: scheduleRecord.feishu_record_id || scheduleRecord.resume_id,
         interview_time: interviewTime,
         interview_location: values.interview_location || '',
-        interviewer_name: values.interviewer_name || '杜雁玲',
+        interviewer_name: values.interviewer_name || '',
       });
       message.success(`已安排面试：${name}`);
       setScheduleModalVisible(false);
@@ -249,7 +249,7 @@ const InterviewsList: React.FC = () => {
 
   // == 发送面试提醒 ==
   const handleSendReminder = async (record: MergedRow, interviewerName?: string) => {
-    const name = interviewerName || record.interviewer || '杜雁玲';
+    const name = interviewerName || record.interviewer;
     try {
       await request.post(`/interviews/${record.interview_id}/notify-interviewer`, {
         candidate_name: record.candidate_name,
@@ -405,7 +405,7 @@ const InterviewsList: React.FC = () => {
                 )}
                 {!r.primary_interviewer && !r.secondary_interviewer && (
                   <Button size="small" icon={<BellOutlined />}
-                    onClick={() => handleSendReminder(r, '杜雁玲')}>
+                    onClick={() => handleSendReminder(r)}>
                     提醒面试官
                   </Button>
                 )}
@@ -486,8 +486,8 @@ const InterviewsList: React.FC = () => {
           <Form.Item name="interview_location" label="面试地点 / 会议链接">
             <Input placeholder="例如：3楼会议室 / https://meeting.tencent.com/xxx（可选）" />
           </Form.Item>
-          <Form.Item name="interviewer_name" label="面试官" initialValue="杜雁玲">
-            <Input placeholder="输入面试官姓名（默认杜雁玲，后期可修改）" />
+          <Form.Item name="interviewer_name" label="面试官">
+            <Input placeholder="输入面试官姓名" />
           </Form.Item>
         </Form>
       </Modal>
