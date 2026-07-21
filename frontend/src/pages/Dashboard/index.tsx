@@ -412,7 +412,7 @@ const Dashboard: React.FC = () => {
           </Space>
         </div>
         <Table
-          dataSource={filteredPositions}
+          dataSource={filteredPositions.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
           columns={positionColumns}
           rowKey="position"
           size="small"
@@ -420,7 +420,7 @@ const Dashboard: React.FC = () => {
           scroll={{ x: 1400 }}
           locale={{ emptyText: '暂无岗位数据' }}
         />
-        <SimplePagination current={tablePage} pageSize={pageSize} total={positions.length} onChange={setTablePage} />
+        <SimplePagination current={tablePage} pageSize={pageSize} total={filteredPositions.length} onChange={setTablePage} />
       </Card>
     </div>
   );
