@@ -56,10 +56,8 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="login-split">
-      {/* 左侧：表单 */}
-      <div className="login-left">
-        <div className="login-left-inner">
+    <div className="login-page">
+      <div className="login-left-inner">
           <div className="login-stagger-item" style={{ marginBottom: 24 }}>
             <div className="login-logo-box">
               <img src="/swan.svg" alt="天鹅到家" />
@@ -121,24 +119,6 @@ const Login: React.FC = () => {
             </Text>
           </div>
         </div>
-      </div>
-
-      {/* 右侧：品牌展示 */}
-      <div className="login-right">
-        <div className="login-right-content">
-          <div className="login-stagger-item">
-            <img src="/swan.svg" alt="天鹅到家" className="login-right-logo" />
-          </div>
-          <div className="login-stagger-item">
-            <Title level={1} style={{ color: '#fff', fontWeight: 700, fontSize: 32, marginBottom: 8, textShadow: '0 2px 16px rgba(0,0,0,0.25)' }}>
-              天鹅到家
-            </Title>
-            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 15, textShadow: '0 1px 8px rgba(0,0,0,0.2)' }}>
-              AI 智能招聘系统
-            </Text>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
