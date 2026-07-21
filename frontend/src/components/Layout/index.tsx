@@ -113,7 +113,7 @@ const AppLayout: React.FC = () => {
     },
   ];
 
-  const filteredMenuItems = menuItems.filter(item => {
+  const filteredMenuItems = (menuItems || []).filter(item => {
     if (!item.roles) return true;
     return item.roles.some(r => r.toLowerCase() === role?.toLowerCase());
   });
