@@ -6301,8 +6301,7 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       }, 400);
     }
 
-    // 2. 用应用 bot（号主飞书账号）发送卡片消息
-    const token = await getFeishuToken(c.env);
+    // 2. 构建卡片消息
     const interviewTime = body.interview_time || '';
     const cardContent = buildInterviewerCard(
       candidateName,
@@ -6312,9 +6311,30 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       currentUser?.full_name,
       interviewTime
     );
-    await sendFeishuMessageToUser(token, openId, cardContent);
 
-    console.log(`[NotifyInterviewer] ✅ 通过应用 bot 通知面试官: ${interviewerName} (open_id: ${openId})`);
+    // 3. 优先用用户 token，失败回退 bot token
+    let usedUserToken = false;
+    try {
+      // 先尝试用登录用户的 user_access_token（以用户身份）发送
+      const userRow = await c.env.DB.prepare(
+        "SELECT feishu_token FROM users WHERE id = ? AND feishu_token IS NOT NULL AND feishu_token != '' LIMIT 1"
+      ).bind(currentUser?.id || '').first() as any;
+      if (userRow?.feishu_token) {
+        try {
+          await sendFeishuMessageToUser(userRow.feishu_token, openId, cardContent);
+          usedUserToken = true;
+        } catch (ue: any) {
+          console.log(`[NotifyInterviewer] 用户token失败(${ue.message}), 回退bot`);
+        }
+      }
+    } catch {}
+
+    if (!usedUserToken) {
+      const botToken = await getFeishuToken(c.env);
+      await sendFeishuMessageToUser(botToken, openId, cardContent);
+    }
+
+    console.log(`[NotifyInterviewer] ✅ 通知面试官: ${interviewerName} (open_id: ${openId})`);
     return c.json({ ok: true, message: `已通知面试官 ${interviewerName}: ${candidateName}` });
   } catch (err: any) {
     return c.json({ detail: `通知失败: ${err.message}` }, 500);
