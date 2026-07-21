@@ -1124,8 +1124,9 @@ const FEISHU_TALENT_FIELDS: Record<string, string> = {
   create_time: '创建时间',
 };
 
-function getBitableTableId(env: Env, type: 'requisition' | 'talent'): string {
+function getBitableTableId(env: Env, type: 'requisition' | 'talent' | 'interview'): string {
   if (type === 'requisition') return env.FEISHU_REQUISITION_TABLE_ID || FEISHU_CONFIG.requisitionTableId;
+  if (type === 'interview') return 'tblsKkEvvxYssrvB';
   return env.FEISHU_TALENT_TABLE_ID || FEISHU_CONFIG.talentTableId;
 }
 
@@ -6195,6 +6196,68 @@ app.post('/api/resume-screening/:id/notify-interviewers', authMiddleware, async 
     return c.json({ ok: true, message: `已通知对应面试官: ${record.candidate_name}` });
   } catch (err: any) {
     return c.json({ detail: `通知失败: ${err.message}` }, 500);
+  }
+});
+
+// ==================== 从飞书面试候选人表同步面试记录 ====================
+app.post('/api/interviews/sync-from-feishu', authMiddleware, async (c) => {
+  try {
+    const tableId = getBitableTableId(c.env, 'interview');
+    const records = await bitableListRecords(c.env, tableId);
+    let created = 0, updated = 0;
+    const now = new Date().toISOString();
+
+    // Debug: 打印第一条记录的所有字段名
+    if (records.length > 0) {
+      const firstF = records[0].fields || {};
+      console.log('[SyncInterview] 一面负责人原始值:', JSON.stringify(firstF['一面负责人']));
+      console.log('[SyncInterview] 二面负责人原始值:', JSON.stringify(firstF['二面负责人']));
+    }
+
+    for (const r of records) {
+      const f = r.fields || {};
+      const candidateName = getFirstValue(f['姓名']) || '';
+      if (!candidateName) continue;
+
+      const feishuId = r.record_id;
+      const primaryRaw = f['一面负责人'];
+      const secondaryRaw = f['二面负责人'];
+      // 飞书人员字段可能是 [{name, id}] 格式
+      const extractName = (val: any): string => {
+        if (!val) return '';
+        if (typeof val === 'string') return val;
+        if (Array.isArray(val)) return val.map((u: any) => u.name || '').filter(Boolean).join(', ');
+        return '';
+      };
+      const primaryIv = extractName(primaryRaw);
+      const secondaryIv = extractName(secondaryRaw);
+      const interviewerStr = [primaryIv, secondaryIv].filter(Boolean).join(', ') || '待分配';
+      const status = getFirstValue(f['业务复核结果']) || 'scheduled';
+
+      const existing = await c.env.DB.prepare(
+        'SELECT id FROM interviews WHERE feishu_record_id = ? LIMIT 1'
+      ).bind(feishuId).first() as any;
+
+      if (existing) {
+        await c.env.DB.prepare(
+          `UPDATE interviews SET interviewer = ?, primary_interviewer = ?, secondary_interviewer = ?,
+           status = ?, updated_at = ? WHERE feishu_record_id = ?`
+        ).bind(interviewerStr, primaryIv, secondaryIv, status, now, feishuId).run();
+        updated++;
+      } else {
+        const id = crypto.randomUUID();
+        await c.env.DB.prepare(
+          `INSERT INTO interviews (id, feishu_record_id, resume_id, interviewer, primary_interviewer,
+           secondary_interviewer, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(id, feishuId, candidateName, interviewerStr, primaryIv, secondaryIv,
+               status || 'scheduled', now).run();
+        created++;
+      }
+    }
+    return c.json({ ok: true, created, updated, total: records.length });
+  } catch (e: any) {
+    return c.json({ detail: '同步失败: ' + e.message }, 500);
   }
 });
 
