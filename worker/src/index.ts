@@ -2705,7 +2705,6 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
           item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos,
           item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
-          screening, item.ai_evaluation || '', hr, status, stage,
           JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age }),
           id
         ).run();
