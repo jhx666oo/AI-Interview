@@ -25,10 +25,11 @@
   width: 56px;
   height: 56px;
   border-radius: 14px;
-  background: #EEF2FF;
+  background: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 .login-logo-box img {
   height: 36px;
@@ -85,9 +86,6 @@
 .login-right-content {
   position: relative;
   z-index: 3;
-  width: 100%;
-  max-width: 420px;
-  padding: 48px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -100,97 +98,59 @@
   filter: drop-shadow(0 2px 8px rgba(0,0,0,0.2));
 }
 
-/* 装饰球体 */
-.login-orb {
-  position: absolute;
-  border-radius: 50%;
-  z-index: 1;
-  opacity: 0.12;
-}
-
-.login-orb-1 {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, #818CF8, transparent 70%);
-  top: -100px;
-  right: -100px;
-  animation: orbFloat 8s ease-in-out infinite;
-}
-
-.login-orb-2 {
-  width: 300px;
-  height: 300px;
-  background: radial-gradient(circle, #3B82F6, transparent 70%);
-  bottom: -80px;
-  left: -60px;
-  animation: orbFloat 10s ease-in-out infinite reverse;
-}
-
-.login-orb-3 {
-  width: 180px;
-  height: 180px;
-  background: radial-gradient(circle, #60A5FA, transparent 70%);
-  top: 40%;
-  right: 30%;
-  animation: orbFloat 6s ease-in-out infinite;
-}
-
-@keyframes orbFloat {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(20px, -20px) scale(1.05); }
-}
-
-/* 网格装饰 */
-.login-grid {
+/* 抽象图形装饰 */
+.login-right-abstract {
   position: absolute;
   inset: 0;
   z-index: 1;
-  background-image: 
-    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
-  background-size: 60px 60px;
 }
 
-/* 功能亮点 */
-.login-features {
-  width: 100%;
-  margin-top: 40px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.login-abstract-shape {
+  position: absolute;
 }
 
-.login-feat-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
-  background: rgba(255,255,255,0.08);
-  backdrop-filter: blur(12px);
-  border-radius: 12px;
+.shape-1 {
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(59,130,246,0.1));
+  top: -80px;
+  right: -60px;
+}
+
+.shape-2 {
+  width: 200px;
+  height: 200px;
+  border-radius: 30px;
+  background: linear-gradient(135deg, rgba(129,140,248,0.2), rgba(96,165,250,0.1));
+  bottom: 80px;
+  left: 10%;
+  transform: rotate(15deg);
+}
+
+.shape-3 {
+  width: 260px;
+  height: 260px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.08);
+  top: 35%;
+  right: 15%;
+  transform: rotate(-10deg);
+}
+
+.shape-circle {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
   border: 1px solid rgba(255,255,255,0.1);
-  transition: background 0.3s;
+  top: 30%;
+  left: 50%;
 }
 
-.login-feat-card:hover {
-  background: rgba(255,255,255,0.14);
-}
-
-.login-feat-icon {
-  font-size: 24px;
-  flex-shrink: 0;
-}
-
-.login-feat-title {
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 2px;
-}
-
-.login-feat-desc {
-  color: rgba(255,255,255,0.6);
-  font-size: 12px;
+.shape-dots {
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image: radial-gradient(rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
 /* 错落入场动画 */

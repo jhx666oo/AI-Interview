@@ -125,66 +125,24 @@ const Login: React.FC = () => {
 
       {/* 右侧：品牌展示 */}
       <div className="login-right">
-        {/* 装饰圆形 */}
-        <div className="login-orb login-orb-1" />
-        <div className="login-orb login-orb-2" />
-        <div className="login-orb login-orb-3" />
-
-        {/* 网格线装饰 */}
-        <div className="login-grid" />
-
+        <div className="login-right-abstract">
+          <div className="login-abstract-shape shape-1" />
+          <div className="login-abstract-shape shape-2" />
+          <div className="login-abstract-shape shape-3" />
+          <div className="login-abstract-shape shape-circle" />
+          <div className="login-abstract-shape shape-dots" />
+        </div>
         <div className="login-right-content">
           <div className="login-stagger-item">
             <img src="/swan.svg" alt="天鹅到家" className="login-right-logo" />
           </div>
-
           <div className="login-stagger-item">
             <Title level={1} style={{ color: '#fff', fontWeight: 700, fontSize: 32, marginBottom: 8, textShadow: '0 2px 16px rgba(0,0,0,0.25)' }}>
               天鹅到家
             </Title>
-            <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 15, textShadow: '0 1px 8px rgba(0,0,0,0.2)' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 15, textShadow: '0 1px 8px rgba(0,0,0,0.2)' }}>
               AI 智能招聘系统
             </Text>
-          </div>
-
-          {/* 功能亮点卡片 */}
-          <div className="login-features">
-            <div className="login-stagger-item">
-              <div className="login-feat-card">
-                <div className="login-feat-icon">📄</div>
-                <div>
-                  <div className="login-feat-title">智能简历解析</div>
-                  <div className="login-feat-desc">AI 自动提取关键信息</div>
-                </div>
-              </div>
-            </div>
-            <div className="login-stagger-item">
-              <div className="login-feat-card">
-                <div className="login-feat-icon">🎯</div>
-                <div>
-                  <div className="login-feat-title">精准人岗匹配</div>
-                  <div className="login-feat-desc">多维度能力评估模型</div>
-                </div>
-              </div>
-            </div>
-            <div className="login-stagger-item">
-              <div className="login-feat-card">
-                <div className="login-feat-icon">⚡</div>
-                <div>
-                  <div className="login-feat-title">全流程自动化</div>
-                  <div className="login-feat-desc">从筛选到入职一站式管理</div>
-                </div>
-              </div>
-            </div>
-            <div className="login-stagger-item">
-              <div className="login-feat-card">
-                <div className="login-feat-icon">📊</div>
-                <div>
-                  <div className="login-feat-title">数据驱动决策</div>
-                  <div className="login-feat-desc">实时招聘漏斗与人才看板</div>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
