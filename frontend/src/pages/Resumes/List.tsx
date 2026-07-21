@@ -1007,10 +1007,7 @@ const ResumesList: React.FC = () => {
   // 卡片分页
   const pageSize = 20;
   const [cardPage, setCardPage] = useState(1);
-  // antd Pagination 在 total 变化时会重置，用 ref 保持稳定
-  const totalCount = useRef(0);
-  totalCount.current = data.length || totalCount.current;
-  const pagedData = data.slice((cardPage - 1) * pageSize, cardPage * pageSize);
+  const pagedData = useMemo(() => data.slice((cardPage - 1) * pageSize, cardPage * pageSize), [data, cardPage, pageSize]);
 
   return (
     <div style={{ maxWidth: '100%' }}>
@@ -1251,15 +1248,20 @@ const ResumesList: React.FC = () => {
               );
             })}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-            <Pagination
-              current={cardPage}
-              pageSize={pageSize}
-              total={totalCount.current}
-              showSizeChanger={false}
-              showTotal={(t) => `共 ${data.length} 条`}
-              onChange={(p) => setCardPage(p)}
-            />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, alignItems: 'center', gap: 8 }}>
+            <Button size="small" disabled={cardPage <= 1} onClick={() => setCardPage(p => p - 1)}>上一页</Button>
+            {Array.from({ length: Math.ceil(data.length / pageSize) }, (_, i) => i + 1).slice(
+              Math.max(0, cardPage - 3), Math.min(Math.ceil(data.length / pageSize), cardPage + 2)
+            ).map(p => (
+              <Button
+                key={p}
+                size="small"
+                type={p === cardPage ? 'primary' : 'default'}
+                onClick={() => setCardPage(p)}
+              >{p}</Button>
+            ))}
+            <Button size="small" disabled={cardPage >= Math.ceil(data.length / pageSize)} onClick={() => setCardPage(p => p + 1)}>下一页</Button>
+            <span style={{ marginLeft: 8, color: '#999', fontSize: 13 }}>共 {data.length} 条</span>
           </div>
         </>
       )}
