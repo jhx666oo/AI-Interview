@@ -19,7 +19,7 @@ const InterviewerMappings: React.FC = () => {
   const fetchMappings = async () => {
     setLoading(true);
     try {
-      const res = await request.get('/interviewer-mappings') as any[];
+      const res = await request.get('/settings/interviewers') as any[];
       setData(res || []);
     } catch { message.error('加载失败'); }
     finally { setLoading(false); }
@@ -46,7 +46,7 @@ const InterviewerMappings: React.FC = () => {
       return;
     }
     try {
-      await request.post('/interviewer-mappings', { mappings: valid });
+      await request.put('/settings/interviewers', { items: valid });
       message.success('保存成功');
       fetchMappings();
     } catch { message.error('保存失败'); }
