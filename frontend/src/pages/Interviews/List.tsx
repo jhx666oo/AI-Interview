@@ -342,7 +342,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 340,
+      title: '操作', align: 'center' as const, key: 'action', width: 280,
       render: (_: any, r: MergedRow) => {
         // 已入库但未安排面试 → 安排面试
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
@@ -359,19 +359,19 @@ const InterviewsList: React.FC = () => {
         return (
           <Space size="small" wrap>
             {canSchedule && (
-              <Button type="primary" size="small" icon={<BellOutlined />}
+              <Button type="link" size="small" icon={<BellOutlined />}
                 onClick={() => handleOpenSchedule(r)}>
                 安排面试
               </Button>
             )}
             {canEval1 && (
-              <Button type="primary" size="small" icon={<EditOutlined />}
+              <Button type="link" size="small" icon={<EditOutlined />}
                 onClick={() => handleEvalRound1(r)}>
                 一面评价
               </Button>
             )}
             {canEval2 && (
-              <Button size="small" icon={<EditOutlined />}
+              <Button type="link" size="small" icon={<EditOutlined />}
                 onClick={() => handleEvalRound2(r)}>
                 二面评价
               </Button>
