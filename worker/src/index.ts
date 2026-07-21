@@ -3593,6 +3593,31 @@ app.post('/api/interviews/:id/cancel', authMiddleware, async (c) => {
   return c.json({ detail: 'Interview cancelled, talent pool record removed' });
 });
 
+// 更新面试状态（编辑面试）
+app.put('/api/interviews/:id', authMiddleware, async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  if (body.status) {
+    await c.env.DB.prepare("UPDATE interviews SET status=?, updated_at=? WHERE id=?")
+      .bind(body.status, now(), id).run();
+  }
+  const iv = await c.env.DB.prepare("SELECT * FROM interviews WHERE id=?").bind(id).first();
+  return c.json(iv ? transformRow(iv) : null);
+});
+
+// 手动新建面试
+app.post('/api/interviews', authMiddleware, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const id = crypto.randomUUID();
+  const time = body.interview_time || '';
+  await c.env.DB.prepare(
+    `INSERT INTO interviews (id, candidate_name, position_applied, interviewer, interview_time, interview_location, status, created_at)
+     VALUES (?,?,?,?,?,?,?,?)`
+  ).bind(id, body.candidate_name || '', body.position_applied || '', body.interviewer || '',
+    time, body.interview_location || '', 'scheduled', now()).run();
+  return c.json({ ok: true, id });
+});
+
 app.post('/api/interviews/:id/score', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();

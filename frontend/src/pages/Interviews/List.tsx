@@ -6,7 +6,7 @@ import {
 import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
-  BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined
+  BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined, PlusOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -32,6 +32,7 @@ const talentStatusConfig: Record<string, { color: string; text: string }> = {
   approved: { color: 'success', text: '已入库' },
   pending_screening: { color: 'warning', text: '待初筛' },
   rejected: { color: 'error', text: '已淘汰' },
+  manual: { color: 'default', text: '手动创建' },
 };
 
 interface MergedRow {
@@ -66,11 +67,54 @@ const InterviewsList: React.FC = () => {
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
 
-  // 安排面试弹窗
+  // 安排面试弹窗（从人才库安排）
   const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
   const [scheduleRecord, setScheduleRecord] = useState<MergedRow | null>(null);
   const [scheduleForm] = Form.useForm();
   const [scheduling, setScheduling] = useState(false);
+
+  // 新建面试弹窗（手动创建）
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [createForm] = Form.useForm();
+  const [creating, setCreating] = useState(false);
+
+  // 编辑面试状态
+  const handleStatusChange = async (record: MergedRow, newStatus: string) => {
+    if (!record.interview_id) return;
+    try {
+      await request.put(`/interviews/${record.interview_id}`, { status: newStatus });
+      message.success('状态已更新');
+      fetchMergedData();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '更新失败');
+    }
+  };
+
+  // 新建面试提交
+  const handleCreateSubmit = async () => {
+    try {
+      const values = await createForm.validateFields();
+      setCreating(true);
+      await request.post('/interviews', {
+        candidate_name: values.candidate_name,
+        position_applied: values.position_applied || '',
+        interviewer: values.interviewer || '',
+        interview_time: values.interview_date
+          ? `${values.interview_date.format('YYYY-MM-DD')} ${values.interview_time?.format('HH:mm') || '00:00'}`
+          : '',
+        interview_location: values.interview_location || '',
+        status: 'scheduled',
+      });
+      message.success('面试已创建');
+      setCreateModalVisible(false);
+      createForm.resetFields();
+      fetchMergedData();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '创建失败');
+    } finally {
+      setCreating(false);
+    }
+  };
 
   // 评价弹窗
   const [evalModalVisible, setEvalModalVisible] = useState(false);
@@ -103,12 +147,15 @@ const InterviewsList: React.FC = () => {
       }
 
       // 合并
+      const usedInterviewIds = new Set<string>();
       const merged: MergedRow[] = (candidates || []).map((c: any) => {
         const matchedIv = interviewMap.get(c.feishu_record_id)
           || interviewMap.get(c.id)
           || interviewMap.get(c.candidate_name)
           || (interviews || []).find((iv: any) =>
               iv.comments === c.candidate_name || iv.resume_id === c.feishu_record_id);
+
+        if (matchedIv?.id) usedInterviewIds.add(matchedIv.id);
 
         return {
           id: c.id || c.feishu_record_id,
@@ -134,6 +181,34 @@ const InterviewsList: React.FC = () => {
           secondary_interviewer: matchedIv?.secondary_interviewer || '',
         };
       });
+
+      // 追加未关联的手动创建面试
+      for (const iv of (interviews || [])) {
+        if (usedInterviewIds.has(iv.id)) continue;
+        merged.push({
+          id: iv.id,
+          candidate_name: iv.candidate_name || iv._candidate_name || '未知',
+          position: iv._position_title || '',
+          position_applied: iv.position_applied || '',
+          standard_position: '',
+          education: '',
+          city: '',
+          talent_status: 'manual',
+          interview_id: iv.id,
+          interview_status: iv.status || '',
+          interview_time: iv.interview_time || '',
+          interview_location: iv.interview_location || '',
+          result: iv.result || '',
+          result2: iv.result2 || '',
+          evaluation: iv.evaluation || '',
+          evaluation2: iv.evaluation2 || '',
+          feishu_record_id: '',
+          resume_id: iv.resume_id || '',
+          interviewer: iv.interviewer || '',
+          primary_interviewer: iv.primary_interviewer || '',
+          secondary_interviewer: iv.secondary_interviewer || '',
+        });
+      }
 
       // 过滤状态下拉
       let filtered = merged;
@@ -425,6 +500,15 @@ const InterviewsList: React.FC = () => {
                 )}
               </>
             )}
+            {r.interview_id && (
+              <Select size="small" style={{ width: 90 }} value={r.interview_status || 'scheduled'}
+                onChange={v => handleStatusChange(r, v)}
+                onClick={e => e.stopPropagation()}>
+                <Select.Option value="scheduled">待面试</Select.Option>
+                <Select.Option value="completed">已完成</Select.Option>
+                <Select.Option value="cancelled">已取消</Select.Option>
+              </Select>
+            )}
           </Space>
         );
       }
@@ -460,6 +544,7 @@ const InterviewsList: React.FC = () => {
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchMergedData}>刷新</Button>
             <Button icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.resetFields(); setCreateModalVisible(true); }}>新建面试</Button>
           </Space>
         }
         style={{ borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
@@ -586,6 +671,39 @@ const InterviewsList: React.FC = () => {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* 新建面试弹窗 */}
+      <Modal
+        title={<span>新建面试</span>}
+        open={createModalVisible}
+        onOk={handleCreateSubmit}
+        onCancel={() => setCreateModalVisible(false)}
+        confirmLoading={creating}
+        okText="创建"
+        width={520}
+        destroyOnHidden
+      >
+        <Form form={createForm} layout="vertical" preserve={false}>
+          <Form.Item name="candidate_name" label="候选人姓名" rules={[{ required: true, message: '请输入候选人姓名' }]}>
+            <Input placeholder="输入候选人姓名" />
+          </Form.Item>
+          <Form.Item name="position_applied" label="应聘岗位">
+            <Input placeholder="例如：前端工程师（可选）" />
+          </Form.Item>
+          <Form.Item name="interviewer" label="面试官">
+            <Input placeholder="输入面试官姓名（可选）" />
+          </Form.Item>
+          <Form.Item name="interview_date" label="面试日期">
+            <DatePicker style={{ width: '100%' }} placeholder="选择面试日期（可选）" />
+          </Form.Item>
+          <Form.Item name="interview_time" label="面试时间">
+            <DatePicker.TimePicker style={{ width: '100%' }} placeholder="选择面试时间（可选）" format="HH:mm" />
+          </Form.Item>
+          <Form.Item name="interview_location" label="面试地点 / 会议链接">
+            <Input placeholder="例如：3楼会议室 / 会议链接（可选）" />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );
