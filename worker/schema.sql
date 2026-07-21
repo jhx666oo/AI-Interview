@@ -128,6 +128,9 @@ CREATE TABLE IF NOT EXISTS interviews (
   status2 TEXT DEFAULT 'pending',
   suggestion TEXT,
   status TEXT DEFAULT 'scheduled',
+  feishu_record_id TEXT DEFAULT '',
+  primary_interviewer TEXT DEFAULT '',
+  secondary_interviewer TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT
 );
@@ -390,24 +393,6 @@ CREATE TABLE IF NOT EXISTS background_checks (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
-  id TEXT PRIMARY KEY,
-  resume_id TEXT NOT NULL,
-  position_id TEXT,
-  candidate_name TEXT NOT NULL,
-  status TEXT DEFAULT 'pending',
-  work_verification TEXT,
-  education_verification TEXT,
-  reference_check TEXT,
-  criminal_check TEXT,
-  overall_result TEXT,
-  conducted_by TEXT,
-  conducted_at TEXT,
-  report_path TEXT,
-  notes TEXT,
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
-);
-
 -- Onboarding Records
 CREATE TABLE IF NOT EXISTS onboarding_records (
   id TEXT PRIMARY KEY,
