@@ -81,22 +81,6 @@ const InterviewsList: React.FC = () => {
   const [creating, setCreating] = useState(false);
 
   // 编辑面试状态
-  const handleStatusChange = async (record: MergedRow, newStatus: string) => {
-    if (!record.interview_id) return;
-    try {
-      const payload: any = { status: newStatus };
-      // 若一面已过且切到已完成，自动标记二面也已完成
-      if (record.result === 'passed' && newStatus === 'completed') {
-        payload.status2 = 'completed';
-      }
-      await request.put(`/interviews/${record.interview_id}`, payload);
-      message.success('状态已更新');
-      fetchMergedData();
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || '更新失败');
-    }
-  };
-
   // 新建面试提交
   const handleCreateSubmit = async () => {
     try {
@@ -564,15 +548,6 @@ const InterviewsList: React.FC = () => {
             )}
             {/* 工具区 */}
             <Space size={6}>
-              {r.interview_id && (
-                <Select size="small" style={{ width: 86 }} value={r.interview_status || 'scheduled'}
-                  onChange={v => handleStatusChange(r, v)}
-                  onClick={e => e.stopPropagation()}>
-                  <Select.Option value="scheduled">待面试</Select.Option>
-                  <Select.Option value="completed">已完成</Select.Option>
-                  <Select.Option value="cancelled">已取消</Select.Option>
-                </Select>
-              )}
               <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
               <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
             </Space>
