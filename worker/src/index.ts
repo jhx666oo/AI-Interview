@@ -3601,6 +3601,10 @@ app.put('/api/interviews/:id', authMiddleware, async (c) => {
     await c.env.DB.prepare("UPDATE interviews SET status=?, updated_at=? WHERE id=?")
       .bind(body.status, now(), id).run();
   }
+  if (body.status2) {
+    await c.env.DB.prepare("UPDATE interviews SET status2=?, updated_at=? WHERE id=?")
+      .bind(body.status2, now(), id).run();
+  }
   const iv = await c.env.DB.prepare("SELECT * FROM interviews WHERE id=?").bind(id).first();
   return c.json(iv ? transformRow(iv) : null);
 });

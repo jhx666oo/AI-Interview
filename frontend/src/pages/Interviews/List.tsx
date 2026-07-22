@@ -91,6 +91,18 @@ const InterviewsList: React.FC = () => {
     }
   };
 
+  // 编辑二面状态
+  const handleStatus2Change = async (record: MergedRow, newStatus2: string) => {
+    if (!record.interview_id) return;
+    try {
+      await request.put(`/interviews/${record.interview_id}`, { status2: newStatus2 });
+      message.success('二面状态已更新');
+      fetchMergedData();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '更新失败');
+    }
+  };
+
   // 新建面试提交
   const handleCreateSubmit = async () => {
     try {
@@ -512,6 +524,14 @@ const InterviewsList: React.FC = () => {
                 <Select.Option value="scheduled">待面试</Select.Option>
                 <Select.Option value="completed">已完成</Select.Option>
                 <Select.Option value="cancelled">已取消</Select.Option>
+              </Select>
+            )}
+            {r.interview_id && r.result === 'passed' && r.status2 === 'scheduled' && (
+              <Select size="small" style={{ width: 100 }} value={r.status2}
+                onChange={v => handleStatus2Change(r, v)}
+                onClick={e => e.stopPropagation()}>
+                <Select.Option value="scheduled">二面进行中</Select.Option>
+                <Select.Option value="completed">二面已完成</Select.Option>
               </Select>
             )}
           </Space>
