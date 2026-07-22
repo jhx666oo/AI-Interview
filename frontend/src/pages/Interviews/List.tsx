@@ -720,8 +720,11 @@ const InterviewsList: React.FC = () => {
           <Form.Item name="position_applied" label="应聘岗位">
             <Input placeholder="例如：前端工程师（可选）" />
           </Form.Item>
-          <Form.Item name="interviewer" label="面试官">
-            <Input placeholder="输入面试官姓名（可选）" />
+          <Form.Item name="interviewer_name" label="一面面试官">
+            <Input placeholder="输入一面面试官姓名（可选）" />
+          </Form.Item>
+          <Form.Item name="secondary_interviewer" label="二面面试官（可选）">
+            <Input placeholder="输入二面面试官姓名（可选）" />
           </Form.Item>
           <Form.Item name="interview_date" label="面试日期">
             <DatePicker style={{ width: '100%' }} placeholder="选择面试日期（可选）" />
