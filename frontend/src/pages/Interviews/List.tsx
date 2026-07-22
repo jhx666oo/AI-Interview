@@ -272,6 +272,8 @@ const InterviewsList: React.FC = () => {
         filtered = merged.filter(r => r.interview_status === 'completed');
       } else if (filterStatus === 'approved') {
         filtered = merged.filter(r => r.talent_status === 'approved');
+      } else if (filterStatus === 'passed') {
+        filtered = merged.filter(r => r.result === 'passed');
       }
 
       setData(filtered);
@@ -600,6 +602,7 @@ const InterviewsList: React.FC = () => {
               <Select.Option value="approved">已入库</Select.Option>
               <Select.Option value="pending_interview">待安排面试</Select.Option>
               <Select.Option value="scheduled">待面试</Select.Option>
+              <Select.Option value="passed">通过</Select.Option>
               <Select.Option value="completed">已完成</Select.Option>
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchMergedData}>刷新</Button>
