@@ -6269,23 +6269,23 @@ app.post('/api/interviews/sync-from-feishu', authMiddleware, async (c) => {
       const status = getFirstValue(f['业务复核结果']) || 'scheduled';
 
       const existing = await c.env.DB.prepare(
-        'SELECT id FROM interviews WHERE feishu_record_id = ? LIMIT 1'
+        'SELECT id, status FROM interviews WHERE feishu_record_id = ? LIMIT 1'
       ).bind(feishuId).first() as any;
 
       if (existing) {
+        // 只更新面试官信息，不覆盖本地管理的状态/评价/结果
         await c.env.DB.prepare(
           `UPDATE interviews SET interviewer = ?, primary_interviewer = ?, secondary_interviewer = ?,
-           status = ?, updated_at = ? WHERE feishu_record_id = ?`
-        ).bind(interviewerStr, primaryIv, secondaryIv, status, now, feishuId).run();
+           updated_at = ? WHERE feishu_record_id = ?`
+        ).bind(interviewerStr, primaryIv, secondaryIv, now, feishuId).run();
         updated++;
       } else {
         const id = crypto.randomUUID();
         await c.env.DB.prepare(
           `INSERT INTO interviews (id, feishu_record_id, resume_id, interviewer, primary_interviewer,
            secondary_interviewer, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        ).bind(id, feishuId, candidateName, interviewerStr, primaryIv, secondaryIv,
-               status || 'scheduled', now).run();
+           VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?)`
+        ).bind(id, feishuId, candidateName, interviewerStr, primaryIv, secondaryIv, now).run();
         created++;
       }
     }
