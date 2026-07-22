@@ -3594,17 +3594,26 @@ app.post('/api/interviews/:id/cancel', authMiddleware, async (c) => {
   return c.json({ detail: 'Interview cancelled, talent pool record removed' });
 });
 
-// 更新面试状态（编辑面试）
+// 更新面试（编辑所有字段）
 app.put('/api/interviews/:id', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json().catch(() => ({}));
-  if (body.status) {
-    await c.env.DB.prepare("UPDATE interviews SET status=?, updated_at=? WHERE id=?")
-      .bind(body.status, now(), id).run();
+  const updates: string[] = [];
+  const binds: any[] = [];
+  const fields = ['position_applied', 'primary_interviewer', 'secondary_interviewer',
+    'interview_time', 'interview_location', 'status', 'status2',
+    'evaluation', 'evaluation2', 'result', 'result2'];
+  for (const f of fields) {
+    if (body[f] !== undefined) {
+      updates.push(`${f} = ?`);
+      binds.push(body[f]);
+    }
   }
-  if (body.status2) {
-    await c.env.DB.prepare("UPDATE interviews SET status2=?, updated_at=? WHERE id=?")
-      .bind(body.status2, now(), id).run();
+  if (updates.length > 0) {
+    updates.push('updated_at = ?');
+    binds.push(now());
+    binds.push(id);
+    await c.env.DB.prepare(`UPDATE interviews SET ${updates.join(', ')} WHERE id = ?`).bind(...binds).run();
   }
   const iv = await c.env.DB.prepare("SELECT * FROM interviews WHERE id=?").bind(id).first();
   return c.json(iv ? transformRow(iv) : null);

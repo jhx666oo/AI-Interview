@@ -123,7 +123,44 @@ const InterviewsList: React.FC = () => {
     }
   };
 
-  // 评价弹窗
+  // 编辑面试弹窗
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editRecord, setEditRecord] = useState<MergedRow | null>(null);
+  const [editForm] = Form.useForm();
+  const [editSubmitting, setEditSubmitting] = useState(false);
+
+  const handleOpenEdit = (record: MergedRow) => {
+    setEditRecord(record);
+    editForm.setFieldsValue({
+      position_applied: record.position_applied || record.position || '',
+      primary_interviewer: record.primary_interviewer || '',
+      secondary_interviewer: record.secondary_interviewer || '',
+      interview_time: record.interview_time ? record.interview_time.substring(0, 16) : '',
+      interview_location: record.interview_location || '',
+      status: record.interview_status || 'scheduled',
+      evaluation: record.evaluation || '',
+      evaluation2: record.evaluation2 || '',
+      result: record.result || 'pending',
+      result2: record.result2 || 'pending',
+    });
+    setEditModalVisible(true);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!editRecord?.interview_id) return;
+    try {
+      const values = await editForm.validateFields();
+      setEditSubmitting(true);
+      await request.put(`/interviews/${editRecord.interview_id}`, values);
+      message.success('已保存');
+      setEditModalVisible(false);
+      fetchMergedData();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '保存失败');
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
   const [evalModalVisible, setEvalModalVisible] = useState(false);
   const [evalRecord, setEvalRecord] = useState<MergedRow | null>(null);
   const [evalRound, setEvalRound] = useState<1 | 2>(1);
@@ -500,6 +537,9 @@ const InterviewsList: React.FC = () => {
                 <Select.Option value="cancelled">已取消</Select.Option>
               </Select>
             )}
+            {r.interview_id && (
+              <Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)}>编辑</Button>
+            )}
           </div>
         );
       }
@@ -694,6 +734,64 @@ const InterviewsList: React.FC = () => {
           </Form.Item>
           <Form.Item name="interview_location" label="面试地点 / 会议链接">
             <Input placeholder="例如：3楼会议室 / 会议链接（可选）" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 编辑面试弹窗 */}
+      <Modal
+        title={<span>编辑面试 - {editRecord?.candidate_name || ''}</span>}
+        open={editModalVisible}
+        onOk={handleEditSubmit}
+        onCancel={() => setEditModalVisible(false)}
+        confirmLoading={editSubmitting}
+        okText="保存"
+        width={600}
+        destroyOnHidden
+      >
+        <Form form={editForm} layout="vertical" preserve={false}>
+          <Form.Item name="position_applied" label="应聘岗位">
+            <Input placeholder="应聘岗位" />
+          </Form.Item>
+          <Form.Item name="primary_interviewer" label="一面面试官">
+            <Input placeholder="一面面试官" />
+          </Form.Item>
+          <Form.Item name="secondary_interviewer" label="二面面试官">
+            <Input placeholder="二面面试官" />
+          </Form.Item>
+          <Form.Item name="interview_time" label="面试时间">
+            <Input placeholder="如：2026-07-22 14:00" />
+          </Form.Item>
+          <Form.Item name="interview_location" label="面试地点">
+            <Input placeholder="面试地点或会议链接" />
+          </Form.Item>
+          <Form.Item name="status" label="面试状态">
+            <Select>
+              <Select.Option value="scheduled">待面试</Select.Option>
+              <Select.Option value="passed">通过</Select.Option>
+              <Select.Option value="completed">已完成</Select.Option>
+              <Select.Option value="cancelled">已取消</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name="evaluation" label="一面评价">
+            <Input.TextArea rows={3} placeholder="一面评价内容" />
+          </Form.Item>
+          <Form.Item name="result" label="一面结果">
+            <Select allowClear>
+              <Select.Option value="pending">待评价</Select.Option>
+              <Select.Option value="passed">通过</Select.Option>
+              <Select.Option value="failed">不通过</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name="evaluation2" label="二面评价">
+            <Input.TextArea rows={3} placeholder="二面评价内容" />
+          </Form.Item>
+          <Form.Item name="result2" label="二面结果">
+            <Select allowClear>
+              <Select.Option value="pending">待评价</Select.Option>
+              <Select.Option value="passed">通过</Select.Option>
+              <Select.Option value="failed">不通过</Select.Option>
+            </Select>
           </Form.Item>
         </Form>
       </Modal>
