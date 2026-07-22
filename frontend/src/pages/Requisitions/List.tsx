@@ -9,6 +9,7 @@ import {
   ThunderboltOutlined, LoadingOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import SimplePagination from '../../components/SimplePagination';
 import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 
@@ -237,14 +238,7 @@ const RequisitionsList: React.FC = () => {
           scroll={{ x: 1400 }}
           pagination={false}
         />
-        <div style={{ marginTop: 12, textAlign: 'right' }}>
-          <Space>
-            <Button size="small" disabled={tablePage <= 1} onClick={() => setTablePage(p => p - 1)}>上一页</Button>
-            <span style={{ color: '#666' }}>{tablePage} / {Math.max(1, Math.ceil(data.length / pageSize))}</span>
-            <Button size="small" disabled={tablePage >= Math.ceil(data.length / pageSize)} onClick={() => setTablePage(p => p + 1)}>下一页</Button>
-            <span style={{ color: '#999', marginLeft: 8 }}>共 {data.length} 条</span>
-          </Space>
-        </div>
+        <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
 
       <Modal title={editing ? '编辑需求' : '提报人力需求'} open={modalVisible} onCancel={() => setModalVisible(false)}

@@ -3,6 +3,7 @@ import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, S
 import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, ThunderboltOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import * as pdfjsLib from 'pdfjs-dist';
 import request from '../../utils/request';
+import SimplePagination from '../../components/SimplePagination';
 import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1259,12 +1260,7 @@ const ResumesList: React.FC = () => {
               );
             })}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16, alignItems: 'center', gap: 8 }}>
-            <Button size="small" disabled={cardPage <= 1} onClick={() => setCardPage(p => p - 1)}>上一页</Button>
-            <span style={{ color: '#666', fontSize: 13 }}>{cardPage} / {Math.max(1, Math.ceil(data.length / pageSize))}</span>
-            <Button size="small" disabled={cardPage >= Math.ceil(data.length / pageSize)} onClick={() => setCardPage(p => p + 1)}>下一页</Button>
-            <span style={{ color: '#999', fontSize: 13, marginLeft: 4 }}>共 {data.length} 条</span>
-          </div>
+          <SimplePagination current={cardPage} pageSize={pageSize} total={data.length} onChange={setCardPage} />
         </>
       )}
 

@@ -20,7 +20,6 @@ const { Text } = Typography;
 
 const interviewStatusConfig: Record<string, { color: string; text: string }> = {
   scheduled: { color: 'processing', text: '待面试' },
-  passed: { color: 'success', text: '通过' },
   completed: { color: 'success', text: '已完成' },
   cancelled: { color: 'default', text: '已取消' },
 };
@@ -558,7 +557,6 @@ const InterviewsList: React.FC = () => {
                 onChange={v => handleStatusChange(r, v)}
                 onClick={e => e.stopPropagation()}>
                 <Select.Option value="scheduled">待面试</Select.Option>
-                <Select.Option value="passed">通过</Select.Option>
                 <Select.Option value="completed">已完成</Select.Option>
                 <Select.Option value="cancelled">已取消</Select.Option>
               </Select>
@@ -600,7 +598,6 @@ const InterviewsList: React.FC = () => {
               <Select.Option value="approved">已入库</Select.Option>
               <Select.Option value="pending_interview">待安排面试</Select.Option>
               <Select.Option value="scheduled">待面试</Select.Option>
-              <Select.Option value="passed">通过</Select.Option>
               <Select.Option value="completed">已完成</Select.Option>
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchMergedData}>刷新</Button>
@@ -829,7 +826,6 @@ const InterviewsList: React.FC = () => {
           <Form.Item name="status" label="面试状态">
             <Select>
               <Select.Option value="scheduled">待面试</Select.Option>
-              <Select.Option value="passed">通过</Select.Option>
               <Select.Option value="completed">已完成</Select.Option>
               <Select.Option value="cancelled">已取消</Select.Option>
             </Select>
