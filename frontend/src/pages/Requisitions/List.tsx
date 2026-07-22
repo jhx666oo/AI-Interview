@@ -6,7 +6,7 @@ import {
 import {
   PlusOutlined, EditOutlined, DeleteOutlined,
   ReloadOutlined, SearchOutlined,
-  ThunderboltOutlined, LoadingOutlined
+  ThunderboltOutlined, LoadingOutlined, CloudUploadOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import SimplePagination from '../../components/SimplePagination';
@@ -168,6 +168,20 @@ const RequisitionsList: React.FC = () => {
     }
   };
 
+  const handleFeishuSync = async () => {
+    try {
+      const res = await request.post('/requisitions/sync-from-feishu') as any;
+      if (res && res.ok) {
+        message.success(res.message || `同步完成：新增 ${res.created} 条，更新 ${res.updated} 条`);
+        fetchData();
+      } else {
+        message.error(res?.detail || '飞书导入失败');
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '飞书导入失败');
+    }
+  };
+
   const columns = [
     { title: '岗位名称', dataIndex: 'title', key: 'title', width: 180 },
     { title: '部门', dataIndex: 'department', key: 'department', width: 120 },
@@ -230,6 +244,7 @@ const RequisitionsList: React.FC = () => {
               {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
+            <Button icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>提报需求</Button>
           </Space>
         }

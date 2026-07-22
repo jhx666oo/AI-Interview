@@ -1632,6 +1632,88 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
   }
 });
 
+app.post('/api/requisitions/sync-from-feishu', authMiddleware, async (c) => {
+  try {
+    const tableId = getBitableTableId(c.env, 'requisition');
+    const records = await bitableListRecords(c.env, tableId);
+
+    const synced = new Set<string>();
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    for (const rec of records) {
+      const parsed = parseRequisitionRecord(rec);
+      const title = parsed.title;
+      if (!title || title === '(未命名岗位)' || synced.has(title)) {
+        skipped++;
+        continue;
+      }
+      synced.add(title);
+
+      // 按 feishu_record_id 或 title 去重
+      const existing = await c.env.DB.prepare(
+        'SELECT id FROM job_requisitions WHERE feishu_record_id = ? OR title = ? LIMIT 1'
+      ).bind(parsed.feishu_record_id, title).first();
+
+      if (existing) {
+        // 更新
+        await c.env.DB.prepare(
+          `UPDATE job_requisitions SET
+            title = ?, department = ?, city = ?, headcount = ?,
+            urgency = ?, status = ?, reason = ?, notes = ?,
+            description = ?, requirements = ?,
+            hr_interviewer = ?, biz_interviewer = ?, final_interviewer = ?,
+            responsible_person = ?, feishu_record_id = ?, updated_at = ?
+           WHERE id = ?`
+        ).bind(
+          title,
+          parsed.department || '', parsed.city || '',
+          parsed.headcount || 1, parsed.urgency || 'normal', parsed.status || 'open',
+          parsed.reason || '', parsed.notes || '',
+          parsed.description || '', parsed.requirements || '',
+          parsed.hr_interviewer || '', parsed.biz_interviewer || '', parsed.final_interviewer || '',
+          parsed.responsible_person || '', parsed.feishu_record_id,
+          now(), existing.id
+        ).run();
+        updated++;
+      } else {
+        // 新建
+        const id = uuid();
+        await c.env.DB.prepare(
+          `INSERT INTO job_requisitions (id, title, department, city, headcount,
+            urgency, status, reason, notes, description, requirements,
+            hr_interviewer, biz_interviewer, final_interviewer,
+            responsible_person, feishu_record_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          id, title,
+          parsed.department || '', parsed.city || '',
+          parsed.headcount || 1, parsed.urgency || 'normal', parsed.status || 'open',
+          parsed.reason || '', parsed.notes || '',
+          parsed.description || '', parsed.requirements || '',
+          parsed.hr_interviewer || '', parsed.biz_interviewer || '', parsed.final_interviewer || '',
+          parsed.responsible_person || '', parsed.feishu_record_id,
+          now(), now()
+        ).run();
+        created++;
+      }
+    }
+
+    return c.json({
+      ok: true,
+      message: `同步完成：新增 ${created} 条，更新 ${updated} 条，跳过 ${skipped} 条`,
+      created,
+      updated,
+      skipped,
+      total: records.length,
+    });
+  } catch (e: any) {
+    console.error(`[RequisitionSync] 失败: ${e.message}`);
+    return c.json({ detail: '同步失败: ' + e.message }, 500);
+  }
+});
+
 registerCrud('positions', 'positions', { title: 'like', status: 'eq', department: 'like', responsible_person: 'eq' });
 // interviews → 保留 D1（面试记录暂不迁移）
 registerCrud('interviews', 'interviews', { position_id: 'eq', status: 'eq' });
