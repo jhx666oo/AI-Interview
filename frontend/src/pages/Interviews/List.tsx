@@ -446,19 +446,19 @@ const InterviewsList: React.FC = () => {
         return (
           <Space size={4} wrap>
             {canSchedule && (
-              <Button size="small" icon={<BellOutlined />}
+              <Button type="primary" size="small" icon={<BellOutlined />}
                 onClick={() => handleOpenSchedule(r)}>
                 安排面试
               </Button>
             )}
             {canEval1 && (
-              <Button size="small" icon={<EditOutlined />}
+              <Button type="primary" size="small" icon={<EditOutlined />}
                 onClick={() => handleEvalRound1(r)}>
                 一面评价
               </Button>
             )}
             {canEval2 && (
-              <Button size="small" icon={<EditOutlined />}
+              <Button type="primary" size="small" icon={<EditOutlined />}
                 onClick={() => handleEvalRound2(r)}>
                 二面评价
               </Button>
@@ -470,13 +470,13 @@ const InterviewsList: React.FC = () => {
               </Button>
             )}
             {canRemind && r.primary_interviewer && (
-              <Button size="small" icon={<BellOutlined />}
+              <Button type="primary" size="small" icon={<BellOutlined />}
                 onClick={() => handleSendReminder(r, r.primary_interviewer)}>
                 提醒一面
               </Button>
             )}
             {canRemind && r.secondary_interviewer && (
-              <Button size="small" icon={<BellOutlined />}
+              <Button type="primary" size="small" icon={<BellOutlined />}
                 onClick={() => handleSendReminder(r, r.secondary_interviewer)}>
                 提醒二面
               </Button>
