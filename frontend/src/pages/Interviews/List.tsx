@@ -6,7 +6,8 @@ import {
 import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
-  BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined, PlusOutlined, DeleteOutlined
+  BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined, PlusOutlined, DeleteOutlined,
+  SafetyOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -407,6 +408,23 @@ const InterviewsList: React.FC = () => {
     setViewEvalVisible(true);
   };
 
+  // == 发起背调 ==
+  const handleStartBackgroundCheck = async (record: MergedRow) => {
+    try {
+      await request.post('/background-checks', {
+        candidate_name: record.candidate_name,
+        position_title: record.position_applied || record.position || '',
+        interview_id: record.interview_id,
+        resume_id: record.resume_id || '',
+        status: 'pending',
+      });
+      message.success('已发起背调');
+      fetchMergedData();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '发起背调失败');
+    }
+  };
+
   // == 表格列 ==
   const columns = [
     {
@@ -505,6 +523,8 @@ const InterviewsList: React.FC = () => {
           && (!r.result2 || r.result2 === 'pending');
         // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
+        // 面试通过 + 已完成 → 发起背调
+        const canStartCheck = r.interview_id && r.interview_status === 'completed' && r.result === 'passed';
 
         // 统一面试官名：优先取专用字段，回退通用字段
         const iv1 = r.primary_interviewer || r.interviewer;
@@ -529,6 +549,9 @@ const InterviewsList: React.FC = () => {
             )}
             {canView && (
               <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
+            )}
+            {canStartCheck && (
+              <Button type="primary" size="small" icon={<SafetyOutlined />} onClick={() => handleStartBackgroundCheck(r)}>发起背调</Button>
             )}
             {r.interview_id && (
               <Select size="small" style={{ width: 86 }} value={r.interview_status || 'scheduled'}
