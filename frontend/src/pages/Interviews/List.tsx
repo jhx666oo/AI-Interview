@@ -450,7 +450,7 @@ const InterviewsList: React.FC = () => {
           && (!r.result || r.result === 'pending');
         // 待面试，一面已过 → 提醒二面
         const canRemind2 = r.interview_id && r.interview_status === 'scheduled'
-          && r.result === 'passed' && r.secondary_interviewer
+          && r.result === 'passed'
           && (!r.result2 || r.result2 === 'pending');
         // 已完成，一面未评 → 一面评价
         const canEval1 = r.interview_id && r.interview_status === 'completed'
@@ -475,18 +475,19 @@ const InterviewsList: React.FC = () => {
                 ) : null}
               </span>
               <span style={slotStyle}>
-                {canRemind1 && r.primary_interviewer ? (
-                  <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r, r.primary_interviewer)}>提醒一面</Button>
+                {canRemind1 ? (
+                  <Button type="primary" size="small" icon={<BellOutlined />}
+                    onClick={() => handleSendReminder(r, r.primary_interviewer || r.interviewer)}>
+                    提醒一面
+                  </Button>
                 ) : null}
               </span>
               <span style={slotStyle}>
                 {canRemind2 ? (
-                  <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r, r.secondary_interviewer)}>提醒二面</Button>
-                ) : null}
-              </span>
-              <span style={slotStyle}>
-                {canRemind1 && !r.primary_interviewer && !canRemind2 ? (
-                  <Button size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r)}>提醒面试官</Button>
+                  <Button type="primary" size="small" icon={<BellOutlined />}
+                    onClick={() => handleSendReminder(r, r.secondary_interviewer || r.interviewer)}>
+                    提醒二面
+                  </Button>
                 ) : null}
               </span>
             </div>
