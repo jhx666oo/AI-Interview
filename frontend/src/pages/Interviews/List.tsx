@@ -520,9 +520,9 @@ const InterviewsList: React.FC = () => {
           && (!r.result2 || r.result2 === 'pending');
         // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
-        // 面试通过 + 已完成（一面或二面均已完成）→ 发起背调
+        // 发起背调：一面通过即可。若两面都走则两面均需通过
         const canStartCheck = r.interview_id && r.result === 'passed'
-          && (r.interview_status === 'completed' || r.status2 === 'completed');
+          && (!r.result2 || r.result2 === 'passed');
 
         // 统一面试官名：优先取专用字段，回退通用字段
         const iv1 = r.primary_interviewer || r.interviewer;
