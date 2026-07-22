@@ -88,7 +88,7 @@ const ResumeUpload: React.FC = () => {
         >
           <Select placeholder="请选择岗位" showSearch loading={posLoading}
             filterOption={(input, option) =>
-              (option?.children as string)?.toLowerCase().includes(input.toLowerCase())
+              String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
             }>
             {positions.map(position => (
               <Select.Option key={position.id} value={position.id}>
