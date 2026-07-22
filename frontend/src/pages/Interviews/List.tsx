@@ -176,12 +176,16 @@ const InterviewsList: React.FC = () => {
         request.get('/interviews', { params: { owner_name: selectedOwner || undefined } }).catch(() => []),
       ]);
 
-      // 构建 interview 索引（按 resume_id/feishu_record_id/候选人名 关联）
+      // 构建 interview 索引（多维度关联）
       const interviewMap = new Map<string, any>();
+      const orphans: any[] = [];
       for (const iv of interviews || []) {
-        // 尝试多种关联 key
-        const keys = [iv.resume_id, iv.comments, iv.interviewer].filter(Boolean);
-        for (const k of keys) interviewMap.set(k, iv);
+        const keys = [iv.resume_id, iv.candidate_name, iv.comments, iv.interviewer].filter(Boolean);
+        if (keys.length > 0) {
+          for (const k of keys) interviewMap.set(k, iv);
+        } else {
+          orphans.push(iv);
+        }
       }
 
       // 合并
@@ -191,7 +195,11 @@ const InterviewsList: React.FC = () => {
           || interviewMap.get(c.id)
           || interviewMap.get(c.candidate_name)
           || (interviews || []).find((iv: any) =>
-              iv.comments === c.candidate_name || iv.resume_id === c.feishu_record_id);
+              iv.resume_id === c.feishu_record_id
+              || iv.resume_id === c.candidate_name
+              || iv.candidate_name === c.candidate_name
+              || iv.comments === c.candidate_name
+          );
 
         if (matchedIv?.id) usedInterviewIds.add(matchedIv.id);
 
@@ -512,8 +520,9 @@ const InterviewsList: React.FC = () => {
           && (!r.result2 || r.result2 === 'pending');
         // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
-        // 面试通过 + 已完成 → 发起背调
-        const canStartCheck = r.interview_id && r.interview_status === 'completed' && r.result === 'passed';
+        // 面试通过 + 已完成（一面或二面均已完成）→ 发起背调
+        const canStartCheck = r.interview_id && r.result === 'passed'
+          && (r.interview_status === 'completed' || r.status2 === 'completed');
 
         // 统一面试官名：优先取专用字段，回退通用字段
         const iv1 = r.primary_interviewer || r.interviewer;
