@@ -6,7 +6,7 @@ import {
 import SimplePagination from '../../components/SimplePagination';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined,
-  EyeOutlined, HomeOutlined
+  CheckCircleOutlined, HomeOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import dayjs from 'dayjs';
@@ -89,6 +89,16 @@ const OnboardingList: React.FC = () => {
     catch (e: any) { message.error(e.response?.data?.detail || '删除失败'); }
   };
 
+  const handleToProbation = async () => {
+    try {
+      const res = await request.post('/probation/sync-from-onboarding');
+      message.success(res.message || '已转入试用期');
+      fetchData();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '操作失败');
+    }
+  };
+
   const columns = [
     { title: '姓名', dataIndex: 'candidate_name', key: 'candidate_name', width: 100 },
     { title: '工号', dataIndex: 'employee_id', key: 'employee_id', width: 90, render: (v: string) => v || '-' },
@@ -106,11 +116,14 @@ const OnboardingList: React.FC = () => {
       render: (v: boolean) => <Tag color={v ? 'success' : 'default'}>{v ? '已完成' : '未完成'}</Tag> },
     { title: '状态', dataIndex: 'status', key: 'status', width: 90,
       render: (v: string) => { const c = statusConfig[v] || { color: 'default', text: v }; return <Tag color={c.color}>{c.text}</Tag>; } },
-    { title: '操作', align: 'center' as const, key: 'action', width: 180,
+    { title: '操作', align: 'center' as const, key: 'action', width: 260,
       render: (_: any, record: any) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
+          {record.status === 'completed' && (
+            <Button type="primary" size="small" icon={<CheckCircleOutlined />} onClick={handleToProbation}>转入试用期</Button>
+          )}
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
             <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>
