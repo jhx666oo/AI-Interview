@@ -130,6 +130,10 @@ const InterviewsList: React.FC = () => {
   const [editSubmitting, setEditSubmitting] = useState(false);
 
   const handleOpenEdit = (record: MergedRow) => {
+    if (!record.interview_id) {
+      message.info('请先安排面试后再编辑');
+      return;
+    }
     setEditRecord(record);
     editForm.setFieldsValue({
       position_applied: record.position_applied || record.position || '',
@@ -537,9 +541,9 @@ const InterviewsList: React.FC = () => {
                 <Select.Option value="cancelled">已取消</Select.Option>
               </Select>
             )}
-            {r.interview_id && (
-              <Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)}>编辑</Button>
-            )}
+            <Tooltip title="编辑">
+              <Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} />
+            </Tooltip>
           </div>
         );
       }
