@@ -3625,9 +3625,11 @@ app.post('/api/interviews', authMiddleware, async (c) => {
   const id = crypto.randomUUID();
   const time = body.interview_time || '';
   await c.env.DB.prepare(
-    `INSERT INTO interviews (id, candidate_name, position_applied, interviewer, interview_time, interview_location, status, created_at)
-     VALUES (?,?,?,?,?,?,?,?)`
-  ).bind(id, body.candidate_name || '', body.position_applied || '', body.interviewer || '',
+    `INSERT INTO interviews (id, candidate_name, position_applied, interviewer, primary_interviewer, secondary_interviewer, interview_time, interview_location, status, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).bind(id, body.candidate_name || '', body.position_applied || '',
+    body.interviewer || body.primary_interviewer || '', body.primary_interviewer || '',
+    body.secondary_interviewer || '',
     time, body.interview_location || '', 'scheduled', now()).run();
   return c.json({ ok: true, id });
 });

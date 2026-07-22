@@ -105,7 +105,9 @@ const InterviewsList: React.FC = () => {
       await request.post('/interviews', {
         candidate_name: values.candidate_name,
         position_applied: values.position_applied || '',
-        interviewer: values.interviewer || '',
+        interviewer: values.interviewer_name || '',
+        primary_interviewer: values.interviewer_name || '',
+        secondary_interviewer: values.secondary_interviewer || '',
         interview_time: values.interview_date
           ? `${values.interview_date.format('YYYY-MM-DD')} ${values.interview_time?.format('HH:mm') || '00:00'}`
           : '',
@@ -610,8 +612,11 @@ const InterviewsList: React.FC = () => {
           <Form.Item name="interview_location" label="面试地点 / 会议链接">
             <Input placeholder="例如：3楼会议室 / https://meeting.tencent.com/xxx（可选）" />
           </Form.Item>
-          <Form.Item name="interviewer_name" label="面试官">
-            <Input placeholder="输入面试官姓名" />
+          <Form.Item name="interviewer_name" label="一面面试官">
+            <Input placeholder="输入一面面试官姓名" />
+          </Form.Item>
+          <Form.Item name="secondary_interviewer" label="二面面试官（可选）">
+            <Input placeholder="输入二面面试官姓名（可选）" />
           </Form.Item>
         </Form>
       </Modal>
