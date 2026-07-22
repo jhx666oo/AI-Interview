@@ -22,8 +22,8 @@ const InterviewerMappings: React.FC = () => {
   const fetchMappings = async () => {
     setLoading(true);
     try {
-      const res = await request.get('/settings/interviewers') as any[];
-      setData(res || []);
+      const res = await request.get('/settings/interviewers') as any;
+      setData(Array.isArray(res) ? res : []);
     } catch { message.error('加载失败'); }
     finally { setLoading(false); }
   };
@@ -33,7 +33,7 @@ const InterviewerMappings: React.FC = () => {
     if (!searchName.trim()) return;
     setSearching(true);
     try {
-      const res = await request.get('/settings/interviewers/search', { params: { q: searchName } }) as any[];
+      const res = await request.get('/settings/interviewers/search', { params: { q: searchName } }) as any;
       if (Array.isArray(res) && res.length > 0) {
         setSearchResults(res);
       } else {
