@@ -10,17 +10,24 @@ const ResumeUpload: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [fileList, setFileList] = useState<any[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
+  const [posLoading, setPosLoading] = useState(false);
 
   useEffect(() => {
     fetchPositions();
   }, []);
 
   const fetchPositions = async () => {
+    setPosLoading(true);
     try {
       const res = await request.get('/positions');
-      setPositions(res);
+      const list = Array.isArray(res) ? res : (res?.positions || res?.data || []);
+      setPositions(list);
+      if (list.length === 0) message.warning('暂无岗位数据，请先在岗位管理中添加岗位');
     } catch (error) {
       message.error('获取岗位列表失败');
+      setPositions([]);
+    } finally {
+      setPosLoading(false);
     }
   };
 
@@ -79,7 +86,10 @@ const ResumeUpload: React.FC = () => {
           label="应聘岗位"
           rules={[{ required: true, message: '请选择应聘岗位' }]}
         >
-          <Select placeholder="请选择岗位">
+          <Select placeholder="请选择岗位" showSearch loading={posLoading}
+            filterOption={(input, option) =>
+              (option?.children as string)?.toLowerCase().includes(input.toLowerCase())
+            }>
             {positions.map(position => (
               <Select.Option key={position.id} value={position.id}>
                 {position.title}

@@ -341,16 +341,21 @@ const ResumesList: React.FC = () => {
 
   const fetchPositions = async () => {
     try {
-      // 从岗位映射表获取标准岗位名列表（去重后）
-      const res = await request.get('/position-mappings');
-      if (res && res.length > 0) {
-        const unique = [...new Set(res.map((r: any) => r.mapped_name).filter(Boolean))] as string[];
+      // 优先从岗位管理获取标准岗位名
+      const res = await request.get('/positions');
+      const list = Array.isArray(res) ? res : (res?.positions || []);
+      if (list && list.length > 0) {
+        setPositions(list.map((r: any) => ({ id: r.id, title: r.title })));
+        return;
+      }
+      // 回退：从岗位映射表获取
+      const mappings = await request.get('/position-mappings');
+      if (mappings && mappings.length > 0) {
+        const unique = [...new Set(mappings.map((r: any) => r.mapped_name).filter(Boolean))] as string[];
         setPositions(unique.sort().map((name: string) => ({ id: name, title: name })));
-      } else {
-        setPositions([]);
       }
     } catch (error) {
-      console.error('获取标准岗位列表失败');
+      console.error('获取岗位列表失败');
     }
   };
 
@@ -1287,7 +1292,10 @@ const ResumesList: React.FC = () => {
             label="应聘岗位"
             rules={[{ required: true, message: '请选择应聘岗位' }]}
           >
-            <Select placeholder="请选择应聘岗位" size="large">
+            <Select placeholder="请选择应聘岗位" size="large" showSearch
+              filterOption={(input, option) =>
+                (option?.children as string)?.toLowerCase().includes(input.toLowerCase())
+              }>
               {positions.map((pos: any) => (
                 <Select.Option key={pos.id} value={pos.id}>{pos.title}</Select.Option>
               ))}
