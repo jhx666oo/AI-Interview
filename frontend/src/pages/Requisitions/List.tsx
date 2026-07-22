@@ -38,6 +38,7 @@ const statusConfig: Record<string, { color: string; text: string }> = {
   onboarding: { color: 'processing', text: '入职中' },
   paused: { color: 'warning', text: '暂停' },
   cancelled: { color: 'error', text: '已终止' },
+  pool: { color: 'blue', text: '储备简历' },
 };
 
 const urgencyConfig: Record<string, { color: string; text: string }> = {

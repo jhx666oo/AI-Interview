@@ -1372,6 +1372,7 @@ function mapStatus(v: any): string {
     '已关闭': 'closed',
     '已终止': 'cancelled',
     '入职中': 'onboarding',
+    '储备简历': 'pool',
   };
   return map[s] || s;
 }
