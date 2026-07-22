@@ -138,24 +138,6 @@ const InterviewsList: React.FC = () => {
     setEditModalVisible(true);
   };
 
-  // 编辑弹窗打开后回填数据
-  useEffect(() => {
-    if (editModalVisible && editRecord) {
-      editForm.setFieldsValue({
-        position_applied: editRecord.position_applied || editRecord.position || '',
-        primary_interviewer: editRecord.primary_interviewer || '',
-        secondary_interviewer: editRecord.secondary_interviewer || '',
-        interview_time: editRecord.interview_time ? editRecord.interview_time.substring(0, 16) : '',
-        interview_location: editRecord.interview_location || '',
-        status: editRecord.interview_status || 'scheduled',
-        evaluation: editRecord.evaluation || '',
-        evaluation2: editRecord.evaluation2 || '',
-        result: editRecord.result || 'pending',
-        result2: editRecord.result2 || 'pending',
-      });
-    }
-  }, [editModalVisible, editRecord]);
-
   const handleEditSubmit = async () => {
     if (!editRecord?.interview_id) return;
     try {
@@ -758,6 +740,23 @@ const InterviewsList: React.FC = () => {
         okText="保存"
         width={600}
         destroyOnHidden
+        afterOpenChange={(open) => {
+          if (open && editRecord) {
+            editForm.resetFields();
+            editForm.setFieldsValue({
+              position_applied: editRecord.position_applied || editRecord.position || '',
+              primary_interviewer: editRecord.primary_interviewer || '',
+              secondary_interviewer: editRecord.secondary_interviewer || '',
+              interview_time: editRecord.interview_time ? editRecord.interview_time.substring(0, 16) : '',
+              interview_location: editRecord.interview_location || '',
+              status: editRecord.interview_status || 'scheduled',
+              evaluation: editRecord.evaluation || '',
+              evaluation2: editRecord.evaluation2 || '',
+              result: editRecord.result || 'pending',
+              result2: editRecord.result2 || 'pending',
+            });
+          }
+        }}
       >
         <Form form={editForm} layout="vertical" preserve={false}>
           <Form.Item name="position_applied" label="应聘岗位">
