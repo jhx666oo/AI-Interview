@@ -505,7 +505,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 460,
+      title: '操作', align: 'center' as const, key: 'action', width: 420,
       render: (_: any, r: MergedRow) => {
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
         // 待面试，未评过 → 提醒一面
@@ -532,33 +532,34 @@ const InterviewsList: React.FC = () => {
         const iv2 = r.secondary_interviewer || r.interviewer;
 
         return (
-          <Space direction="vertical" size={6} style={{ width: '100%', justifyContent: 'center' }}>
-            {/* 流程操作区 */}
-            <Space size={4} wrap>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+            {/* 流程操作 */}
+            <Space.Compact size="small" direction="horizontal">
               {canSchedule && (
-                <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
+                <Button type="primary" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
               )}
               {canRemind1 && (
-                <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
+                <Button type="primary" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
               )}
               {canEval1 && (
-                <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
+                <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
               )}
               {canRemind2 && (
-                <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
+                <Button type="primary" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
               )}
               {canEval2 && (
-                <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
+                <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
               )}
               {canStartCheck && (
-                <Button type="primary" size="small" icon={<SafetyOutlined />} onClick={() => handleStartBackgroundCheck(r)}>发起背调</Button>
+                <Button type="primary" icon={<SafetyOutlined />} onClick={() => handleStartBackgroundCheck(r)}>发起背调</Button>
               )}
-            </Space>
+            </Space.Compact>
+            {/* 查看评价 */}
+            {canView && (
+              <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
+            )}
             {/* 工具区 */}
-            <Space size={4}>
-              {canView && (
-                <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
-              )}
+            <Space size={6}>
               {r.interview_id && (
                 <Select size="small" style={{ width: 86 }} value={r.interview_status || 'scheduled'}
                   onChange={v => handleStatusChange(r, v)}
@@ -571,7 +572,7 @@ const InterviewsList: React.FC = () => {
               <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
               <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
             </Space>
-          </Space>
+          </div>
         );
       }
     },
