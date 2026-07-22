@@ -17,11 +17,6 @@ const InterviewerMappings: React.FC = () => {
   const [searchResults, setSearchResults] = useState<InterviewerMapping[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // 手机号/邮箱查找
-  const [lookupValue, setLookupValue] = useState('');
-  const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupResults, setLookupResults] = useState<{ open_id: string; email: string; mobile: string }[]>([]);
-
   useEffect(() => { fetchMappings(); }, []);
 
   const fetchMappings = async () => {
@@ -47,40 +42,8 @@ const InterviewerMappings: React.FC = () => {
       }
     } catch { message.error('搜索失败'); }
     finally { setSearching(false); }
-  };
-
-  // 通过手机号/邮箱查找 open_id
-  const handleLookup = async () => {
-    const val = lookupValue.trim();
-    if (!val) return;
-    setLookupLoading(true);
-    try {
-      const isPhone = /^[\d+\- ]+$/.test(val);
-      const payload = isPhone ? { mobiles: [val] } : { emails: [val] };
-      const res = await request.post('/settings/interviewers/lookup', payload) as any[];
-      if (Array.isArray(res) && res.length > 0) {
-        setLookupResults(res);
-      } else {
-        setLookupResults([]);
-        message.info('未找到匹配用户');
-      }
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || '查找失败');
-    }
-    finally { setLookupLoading(false); }
-  };
-
-  const handleAddFromLookup = (item: { open_id: string }) => {
-    if (!item.open_id) return;
-    if (data.some(d => d.open_id === item.open_id)) {
-      message.warning('该 open_id 已存在');
-      return;
-    }
-    setData([...data, { name: '', open_id: item.open_id }]);
-    setLookupResults([]);
-    setLookupValue('');
-  };
-
+  };  
+  
   const handleAddFromSearch = (item: InterviewerMapping) => {
     if (data.some(d => d.name === item.name)) {
       message.warning(`${item.name} 已存在`);
@@ -199,35 +162,6 @@ const InterviewerMappings: React.FC = () => {
                   onClick={() => handleAddFromSearch(item)}
                 >
                   + {item.name} <span style={{ color: '#999', fontSize: 11 }}>{item.open_id}</span>
-                </Button>
-              ))}
-            </div>
-          )}
-        </div>
-        {/* 手机号/邮箱查找 open_id */}
-        <div style={{ marginBottom: 12, padding: '12px 16px', background: '#FFF7ED', borderRadius: 8 }}>
-          <Space>
-            <span style={{ fontSize: 13, color: '#92400E' }}>手机/邮箱查ID：</span>
-            <Input.Search
-              placeholder="输入手机号或邮箱查找 open_id"
-              value={lookupValue}
-              onChange={e => setLookupValue(e.target.value)}
-              onSearch={handleLookup}
-              enterButton={<Space><SearchOutlined /> 查找</Space>}
-              loading={lookupLoading}
-              style={{ width: 360 }}
-            />
-          </Space>
-          {lookupResults.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              {lookupResults.map((item, idx) => (
-                <Button
-                  key={idx}
-                  size="small"
-                  style={{ marginRight: 8, marginBottom: 4 }}
-                  onClick={() => handleAddFromLookup(item)}
-                >
-                  + {item.open_id} <span style={{ color: '#999', fontSize: 11 }}>{item.email || item.mobile}</span>
                 </Button>
               ))}
             </div>

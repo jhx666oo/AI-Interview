@@ -4153,37 +4153,6 @@ app.get('/api/settings/interviewers/search', authMiddleware, async (c) => {
   }
 });
 
-// 通过手机号或邮箱查找飞书用户 open_id（需要 contact:user.id:readonly 权限）
-app.post('/api/settings/interviewers/lookup', authMiddleware, async (c) => {
-  const body = await c.req.json().catch(() => ({}));
-  const emails: string[] = body.emails || [];
-  const mobiles: string[] = body.mobiles || [];
-  if (!emails.length && !mobiles.length) return c.json({ detail: '请提供手机号或邮箱' }, 400);
-  try {
-    const token = await getFeishuToken(c.env);
-    const params = new URLSearchParams({ user_id_type: 'open_id' });
-    const resp = await fetch(
-      `https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?${params}`,
-      {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({ emails, mobiles }),
-      }
-    ).then(r => r.json()) as any;
-    if (resp.code !== 0) {
-      return c.json({ detail: resp.msg || '查询失败', code: resp.code }, 400);
-    }
-    const users = (resp.data?.user_list || []).map((u: any) => ({
-      open_id: u.user_id || '',
-      email: u.email || '',
-      mobile: u.mobile || '',
-    }));
-    return c.json(users);
-  } catch (e: any) {
-    return c.json({ detail: '查询失败: ' + e.message }, 500);
-  }
-});
-
 app.put('/api/settings/interviewers', authMiddleware, async (c) => {
   const body = await c.req.json();
   const items: Array<{ name: string; open_id: string }> = body.items || body || [];
