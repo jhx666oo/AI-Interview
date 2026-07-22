@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  Table, Button, Space, message, Tag, Modal, Select, Input, Form,
+  Table, Button, Space, message, Tag, Modal, Select, Input, Form, Popconfirm,
   Radio, Typography, Card, Tooltip, DatePicker
 } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
-  BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined, PlusOutlined
+  BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined, PlusOutlined, DeleteOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -153,6 +153,18 @@ const InterviewsList: React.FC = () => {
       message.error(e.response?.data?.detail || '保存失败');
     } finally {
       setEditSubmitting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!editRecord?.interview_id) return;
+    try {
+      await request.delete(`/interviews/${editRecord.interview_id}`);
+      message.success('已删除');
+      setEditModalVisible(false);
+      fetchMergedData();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '删除失败');
     }
   };
   const [evalModalVisible, setEvalModalVisible] = useState(false);
@@ -748,6 +760,15 @@ const InterviewsList: React.FC = () => {
         okText="保存"
         width={600}
         destroyOnHidden
+        footer={[
+          <Popconfirm key="delete" title="确定删除该面试记录？" description="此操作不可恢复"
+            onConfirm={handleDelete} okText="确认删除" cancelText="取消"
+            okButtonProps={{ danger: true }}>
+            <Button danger icon={<DeleteOutlined />} style={{ float: 'left' }}>删除</Button>
+          </Popconfirm>,
+          <Button key="cancel" onClick={() => setEditModalVisible(false)}>取消</Button>,
+          <Button key="save" type="primary" loading={editSubmitting} onClick={handleEditSubmit}>保存</Button>,
+        ]}
         afterOpenChange={(open) => {
           if (open && editRecord) {
             editForm.resetFields();

@@ -3558,10 +3558,22 @@ app.post('/api/interviews/start-from-talent-pool/:talentId', authMiddleware, asy
   return c.json({ ...transformRow(row), talent_id: talentId });
 });
 
+// 删除面试记录
+app.delete('/api/interviews/:id', authMiddleware, async (c) => {
+  const id = c.req.param('id');
+  const existing = await c.env.DB.prepare('SELECT id FROM interviews WHERE id = ?').bind(id).first();
+  if (!existing) return c.json({ detail: '记录不存在' }, 404);
+  await c.env.DB.prepare('DELETE FROM interviews WHERE id = ?').bind(id).run();
+  return c.json({ ok: true, message: '已删除' });
+});
+
 app.post('/api/interviews/:id/cancel', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const interview = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first() as any;
   if (!interview) return c.json({ detail: 'Interview not found' }, 404);
+
+  await c.env.DB.prepare("UPDATE interviews SET status = 'cancelled' WHERE id = ?").bind(id).run();
+  // ... (rest of cancel logic)
 
   await c.env.DB.prepare("UPDATE interviews SET status = 'cancelled' WHERE id = ?").bind(id).run();
 
