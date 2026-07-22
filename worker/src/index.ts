@@ -1356,9 +1356,13 @@ function extractFeishuUsers(fieldValue: any): Array<{ open_id: string; name: str
 }
 
 function mapUrgency(v: any): string {
-  if (typeof v === 'string') return v;
-  if (typeof v === 'object' && v) return v.text || v.name || String(v);
-  return '普通';
+  const map: Record<string, string> = { '紧急': 'urgent', '普通': 'normal', '不急': 'low', '1': 'urgent', '2': 'normal', '3': 'low' };
+  if (typeof v === 'string') return map[v] || v;
+  if (typeof v === 'object' && v) {
+    const s = v.text || v.name || String(v);
+    return map[s] || s;
+  }
+  return 'normal';
 }
 
 function mapStatus(v: any): string {
