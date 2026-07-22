@@ -494,6 +494,7 @@ const InterviewsList: React.FC = () => {
                 onChange={v => handleStatusChange(r, v)}
                 onClick={e => e.stopPropagation()}>
                 <Select.Option value="scheduled">待面试</Select.Option>
+                <Select.Option value="passed">通过</Select.Option>
                 <Select.Option value="completed">已完成</Select.Option>
                 <Select.Option value="cancelled">已取消</Select.Option>
               </Select>
@@ -529,6 +530,7 @@ const InterviewsList: React.FC = () => {
               <Select.Option value="approved">已入库</Select.Option>
               <Select.Option value="pending_interview">待安排面试</Select.Option>
               <Select.Option value="scheduled">待面试</Select.Option>
+              <Select.Option value="passed">通过</Select.Option>
               <Select.Option value="completed">已完成</Select.Option>
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchMergedData}>刷新</Button>
