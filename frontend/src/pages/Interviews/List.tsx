@@ -59,6 +59,7 @@ interface MergedRow {
   interviewer: string;
   primary_interviewer: string;
   secondary_interviewer: string;
+  created_at: string;
 }
 
 const InterviewsList: React.FC = () => {
@@ -226,6 +227,7 @@ const InterviewsList: React.FC = () => {
           interviewer: matchedIv?.interviewer || '',
           primary_interviewer: matchedIv?.primary_interviewer || '',
           secondary_interviewer: matchedIv?.secondary_interviewer || '',
+          created_at: matchedIv?.created_at || '',
         };
       });
 
@@ -255,8 +257,12 @@ const InterviewsList: React.FC = () => {
           interviewer: iv.interviewer || '',
           primary_interviewer: iv.primary_interviewer || '',
           secondary_interviewer: iv.secondary_interviewer || '',
+          created_at: iv.created_at || '',
         });
       }
+
+      // 按创建时间倒序：最新创建的排最前
+      merged.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
 
       // 过滤状态下拉
       let filtered = merged;
