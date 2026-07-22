@@ -6248,7 +6248,9 @@ app.post('/api/resume-screening/:id/notify-interviewers', authMiddleware, async 
 app.post('/api/interviews/sync-from-feishu', authMiddleware, async (c) => {
   try {
     const tableId = getBitableTableId(c.env, 'interview');
+    console.log('[SyncInterviews] 开始同步，tableId:', tableId);
     const records = await bitableListRecords(c.env, tableId);
+    console.log('[SyncInterviews] 获取到记录数:', records?.length || 0);
     let created = 0, updated = 0;
     const now = new Date().toISOString();
 
@@ -6302,7 +6304,8 @@ app.post('/api/interviews/sync-from-feishu', authMiddleware, async (c) => {
     }
     return c.json({ ok: true, created, updated, total: records.length });
   } catch (e: any) {
-    return c.json({ detail: '同步失败: ' + e.message }, 500);
+    console.error('[SyncInterviews] 同步失败:', e.message, e.stack);
+    return c.json({ detail: '同步失败: ' + (e.message || '未知错误'), code: e.code || 500 }, 500);
   }
 });
 
