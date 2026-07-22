@@ -884,7 +884,7 @@ const ResumesList: React.FC = () => {
 
     return (
       <Space size="small" wrap>
-        <Tooltip title="预览"><Button type="text" size="small" icon={<FileTextOutlined style={{ color: '#6366F1' }} />} onClick={() => handlePreview(record)} /></Tooltip>
+        <Tooltip title="预览"><Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handlePreview(record)} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
         <Tooltip title="硬性要求检查"><Button type="text" size="small" icon={<ThunderboltOutlined style={{ color: '#F59E0B' }} />} onClick={handleCheckHard} /></Tooltip>
         <Tooltip title="能力维度评分"><Button type="text" size="small" icon={<StarOutlined style={{ color: '#8B5CF6' }} />} onClick={handleScoreCap} /></Tooltip>
@@ -906,7 +906,7 @@ const ResumesList: React.FC = () => {
             <Tag color="purple">能力已评分</Tag>
           </Tooltip>
         )}
-        <Tooltip title="删除"><Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} /></Tooltip>
+        <Tooltip title="删除"><Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} /></Tooltip>
       </Space>
     );
   };
@@ -1028,9 +1028,9 @@ const ResumesList: React.FC = () => {
           <Text type="secondary" style={{ fontSize: 13 }}>管理候选人简历及面试流程</Text>
         </div>
         <Space size="small" wrap>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
-          <Button icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
-          <Button icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
+          <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
+          <Button type="primary" size="small" icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
           <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
             {pollingEnabled ? '解析中...' : '刷新数据'}
           </Button>

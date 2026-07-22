@@ -160,8 +160,8 @@ const BackgroundChecksList: React.FC = () => {
     <div>
       <Card title={<span><SafetyOutlined /> 背景调查管理</span>}
         extra={<Space>
-          <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>发起背调</Button>
+          <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>发起背调</Button>
         </Space>}>
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={6}>

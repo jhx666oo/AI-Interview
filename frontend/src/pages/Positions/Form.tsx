@@ -250,10 +250,10 @@ const PositionForm: React.FC = () => {
           </Form.Item>
 
           <Form.Item style={{ marginTop: 32 }}>
-            <Button type="primary" htmlType="submit" loading={loading} size="large">
+            <Button type="primary" htmlType="submit" loading={loading} size="small">
               提交
             </Button>
-            <Button style={{ marginLeft: 12 }} onClick={() => navigate('/positions')} size="large">
+            <Button style={{ marginLeft: 12 }} onClick={() => navigate('/positions')} size="small">
               取消
             </Button>
           </Form.Item>

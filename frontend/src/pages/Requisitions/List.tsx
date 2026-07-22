@@ -243,9 +243,9 @@ const RequisitionsList: React.FC = () => {
             <Select size="middle" placeholder="状态筛选" allowClear style={{ width: 200 }} value={filterStatus} onChange={v => setFilterStatus(v)}>
               {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
             </Select>
-            <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
-            <Button icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>提报需求</Button>
+            <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
+            <Button type="primary" size="small" icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
+            <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>提报需求</Button>
           </Space>
         }
       >

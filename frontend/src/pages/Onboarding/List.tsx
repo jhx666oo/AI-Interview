@@ -129,8 +129,8 @@ const OnboardingList: React.FC = () => {
       </Row>
       <Card title={<span><HomeOutlined /> 入职管理</span>}
         extra={<Space>
-          <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增入职</Button>
+          <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>新增入职</Button>
         </Space>}>
         <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1400 }} pagination={false} />

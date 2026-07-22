@@ -150,7 +150,7 @@ const ProbationList: React.FC = () => {
           {record.result === 'pending' && (<>
             <Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handleAddReview(record)}>评估</Button>
             <Popconfirm title="确认转正？" onConfirm={() => handleConfirm(record.id)}>
-              <Button type="link" size="small" icon={<CheckCircleOutlined />}>转正</Button>
+              <Button type="primary" size="small" icon={<CheckCircleOutlined />}>转正</Button>
             </Popconfirm>
           </>)}
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
@@ -172,8 +172,8 @@ const ProbationList: React.FC = () => {
       </Row>
       <Card title={<span><CheckCircleOutlined /> 试用期与转正管理</span>}
         extra={<Space>
-          <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增试用</Button>
+          <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>新增试用</Button>
         </Space>}>
         <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1500 }} pagination={false} />

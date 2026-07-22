@@ -718,19 +718,19 @@ const PositionsList: React.FC = () => {
       render: (_: any, record: Position) => (
         <Space size="small">
           <Tooltip title="编辑">
-            <Button type="text" icon={<EditOutlined style={{ color: '#64748B' }} />} onClick={() => handleEdit(record)} />
+            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
           </Tooltip>
           {record.status === 'published' ? (
              <Tooltip title="下架">
-                <Button type="text" icon={<StopOutlined style={{ color: '#EF4444' }} />} onClick={() => handlePublish(record.id, false)} />
+                <Button type="link" size="small" icon={<StopOutlined />} onClick={() => handlePublish(record.id, false)} />
              </Tooltip>
           ) : (
              <Tooltip title="发布">
-                <Button type="text" icon={<GlobalOutlined style={{ color: '#10B981' }} />} onClick={() => handlePublish(record.id, true)} />
+                <Button type="link" size="small" icon={<GlobalOutlined />} onClick={() => handlePublish(record.id, true)} />
              </Tooltip>
           )}
           <Tooltip title="删除">
-            <Button type="text" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} />
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} />
           </Tooltip>
         </Space>
       ),
@@ -745,8 +745,8 @@ const PositionsList: React.FC = () => {
           <Text type="secondary">管理企业的招聘岗位信息</Text>
         </div>
         <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd} size="large" style={{ borderRadius: '8px' }}>新增岗位</Button>
-          <Button icon={<SyncOutlined />} loading={syncLoading} onClick={handleSyncFromFeishu} size="large" style={{ borderRadius: '8px' }}>从飞书同步</Button>
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleAdd}>新增岗位</Button>
+          <Button size="small" icon={<SyncOutlined />} loading={syncLoading} onClick={handleSyncFromFeishu}>从飞书同步</Button>
         </Space>
       </div>
 
