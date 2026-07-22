@@ -19,6 +19,7 @@ const { Text } = Typography;
 
 const interviewStatusConfig: Record<string, { color: string; text: string }> = {
   scheduled: { color: 'processing', text: '待面试' },
+  passed: { color: 'success', text: '通过' },
   completed: { color: 'success', text: '已完成' },
   cancelled: { color: 'default', text: '已取消' },
 };
