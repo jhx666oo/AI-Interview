@@ -462,51 +462,33 @@ const InterviewsList: React.FC = () => {
         // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
 
-        // 固定槽位宽度，保证行间对齐
-        const slotStyle: React.CSSProperties = { minWidth: 80, display: 'inline-flex', justifyContent: 'center', verticalAlign: 'middle' };
-
         // 统一面试官名：优先取专用字段，回退通用字段
         const iv1 = r.primary_interviewer || r.interviewer;
         const iv2 = r.secondary_interviewer || r.interviewer;
 
         return (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
-            {/* 按操作流程从左到右排列 */}
-            <span style={slotStyle}>
-              {canSchedule ? (
-                <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
-              ) : null}
-            </span>
-            <span style={slotStyle}>
-              {canRemind1 ? (
-                <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
-              ) : null}
-            </span>
-            <span style={slotStyle}>
-              {canEval1 ? (
-                <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
-              ) : null}
-            </span>
-            <span style={slotStyle}>
-              {canRemind2 ? (
-                <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
-              ) : null}
-            </span>
-            <span style={slotStyle}>
-              {canEval2 ? (
-                <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
-              ) : null}
-            </span>
-            <span style={slotStyle}>
-              {canView ? (
-                <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
-              ) : null}
-            </span>
-            <span style={{ minWidth: 32, display: 'inline-flex', justifyContent: 'center' }}>
-              <Tooltip title="下载简历">
-                <Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} />
-              </Tooltip>
-            </span>
+            {canSchedule && (
+              <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
+            )}
+            {canRemind1 && (
+              <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
+            )}
+            {canEval1 && (
+              <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
+            )}
+            {canRemind2 && (
+              <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
+            )}
+            {canEval2 && (
+              <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
+            )}
+            {canView && (
+              <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
+            )}
+            <Tooltip title="下载简历">
+              <Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} />
+            </Tooltip>
             {r.interview_id && (
               <Select size="small" style={{ width: 86 }} value={r.interview_status || 'scheduled'}
                 onChange={v => handleStatusChange(r, v)}
