@@ -262,7 +262,7 @@ const ResumesList: React.FC = () => {
 
       // 不再区分 role，统一显示全部
 
-      // 没有筛选条件且有缓存时直接复用
+      // 没有筛选条件且有缓存时直接复用（缓存已排序）
       if (!searchName && !searchStatus && !searchPosition && loadedRef.current && dataCache.current.length > 0) {
         setData(dataCache.current);
         if (!silent) setLoading(false);
@@ -277,6 +277,18 @@ const ResumesList: React.FC = () => {
       }
       setData(filtered);
       dataCache.current = res;
+
+      // 按创建时间降序：最新的排最前
+      const sortData = (arr: any[]) => {
+        arr.sort((a, b) => {
+          const ta = a.create_time || a._raw_fields?.['创建时间-测试'] || a._raw_fields?.['创建时间'] || 0;
+          const tb = b.create_time || b._raw_fields?.['创建时间-测试'] || b._raw_fields?.['创建时间'] || 0;
+          return (tb || 0) - (ta || 0);
+        });
+      };
+      sortData(filtered);
+      sortData(res);
+      setData(filtered);
       loadedRef.current = true;
 
       // 后台触发 PDF 缓存（静默执行，不阻塞展示）
