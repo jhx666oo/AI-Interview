@@ -70,6 +70,12 @@ const AppLayout: React.FC = () => {
       label: '面试管理',
     },
     {
+      key: '/background-checks',
+      icon: <SafetyOutlined />,
+      label: '背调管理',
+      roles: ['admin', 'hr'],
+    },
+    {
       key: '/onboarding',
       icon: <HomeOutlined />,
       label: '入职管理',
@@ -79,12 +85,6 @@ const AppLayout: React.FC = () => {
       key: '/probation',
       icon: <CheckCircleOutlined />,
       label: '试用期管理',
-      roles: ['admin', 'hr'],
-    },
-    {
-      key: '/background-checks',
-      icon: <SafetyOutlined />,
-      label: '背调管理',
       roles: ['admin', 'hr'],
     },
     {
