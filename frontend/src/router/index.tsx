@@ -27,6 +27,7 @@ const MailSettings = lazy(() => import('../pages/Settings/Mail'));
 const RequisitionsList = lazy(() => import('../pages/Requisitions/List'));
 const OnboardingList = lazy(() => import('../pages/Onboarding/List'));
 const ProbationList = lazy(() => import('../pages/Probation/List'));
+const BackgroundChecksList = lazy(() => import('../pages/BackgroundChecks/List'));
 const DailyReportsList = lazy(() => import('../pages/DailyReports/List'));
 const WorkflowsList = lazy(() => import('../pages/Workflows/List'));
 const CapabilityDimensions = lazy(() => import('../pages/Settings/CapabilityDimensions'));
@@ -185,6 +186,10 @@ const router = createBrowserRouter([
       {
         path: 'probation',
         element: <LazyPage><ProbationList /></LazyPage>,
+      },
+      {
+        path: 'background-checks',
+        element: <LazyPage><BackgroundChecksList /></LazyPage>,
       },
       {
         path: 'jd-management',

@@ -82,6 +82,12 @@ const AppLayout: React.FC = () => {
       roles: ['admin', 'hr'],
     },
     {
+      key: '/background-checks',
+      icon: <SafetyOutlined />,
+      label: '背调管理',
+      roles: ['admin', 'hr'],
+    },
+    {
       key: '/daily-reports',
       icon: <BarChartOutlined />,
       label: '招聘日报',

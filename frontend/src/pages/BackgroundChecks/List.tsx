@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Card, Table, Button, Space, Tag, Modal, Form, Input, Select,
-  message, Popconfirm, Drawer, Descriptions, Typography, Row, Col
+  message, Popconfirm, Drawer, Descriptions, Typography, Row, Col, Statistic
 } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import {
@@ -15,16 +15,15 @@ const { TextArea } = Input;
 const { Option } = Select;
 
 const statusConfig: Record<string, { color: string; text: string }> = {
-  pending: { color: 'default', text: '待开始' },
-  in_progress: { color: 'processing', text: '进行中' },
+  pending: { color: 'default', text: '待背调' },
+  in_progress: { color: 'processing', text: '背调中' },
   completed: { color: 'success', text: '已完成' },
-  failed: { color: 'error', text: '失败' },
 };
 
 const resultConfig: Record<string, { color: string; text: string }> = {
   passed: { color: 'success', text: '通过' },
   failed: { color: 'error', text: '不通过' },
-  concerns: { color: 'warning', text: '有顾虑' },
+  pending_feedback: { color: 'warning', text: '待反馈' },
 };
 
 const BackgroundChecksList: React.FC = () => {
@@ -68,6 +67,17 @@ const BackgroundChecksList: React.FC = () => {
     setModalVisible(true);
   };
 
+  const handleResumeChange = (resumeId: string) => {
+    if (!resumeId) return;
+    const resume = resumes.find((r: any) => r.id === resumeId);
+    if (resume) {
+      form.setFieldsValue({
+        candidate_name: resume.candidate_name || '',
+        position_title: resume.position_title || '',
+      });
+    }
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -91,6 +101,7 @@ const BackgroundChecksList: React.FC = () => {
 
   const columns = [
     { title: '候选人', dataIndex: 'candidate_name', key: 'candidate_name', width: 120 },
+    { title: '应聘岗位', dataIndex: 'position_title', key: 'position_title', width: 130 },
     { title: '状态', dataIndex: 'status', key: 'status', width: 100,
       render: (v: string) => { const c = statusConfig[v] || { color: 'default', text: v }; return <Tag color={c.color}>{c.text}</Tag>; }
     },
@@ -119,6 +130,10 @@ const BackgroundChecksList: React.FC = () => {
     }
   ];
 
+  const pendingCount = data.filter((d: any) => d.status === 'pending').length;
+  const inProgressCount = data.filter((d: any) => d.status === 'in_progress').length;
+  const completedCount = data.filter((d: any) => d.status === 'completed').length;
+
   return (
     <div>
       <Card title={<span><SafetyOutlined /> 背景调查管理</span>}
@@ -126,19 +141,37 @@ const BackgroundChecksList: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>发起背调</Button>
         </Space>}>
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={6}>
+            <Card size="small"><Statistic title="背调总数" value={data.length} /></Card>
+          </Col>
+          <Col span={6}>
+            <Card size="small"><Statistic title="待背调" value={pendingCount} valueStyle={{ color: '#8c8c8c' }} /></Card>
+          </Col>
+          <Col span={6}>
+            <Card size="small"><Statistic title="背调中" value={inProgressCount} valueStyle={{ color: '#1677ff' }} /></Card>
+          </Col>
+          <Col span={6}>
+            <Card size="small"><Statistic title="已完成" value={completedCount} valueStyle={{ color: '#52c41a' }} /></Card>
+          </Col>
+        </Row>
         <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 900 }} pagination={false} />
+          scroll={{ x: 1050 }} pagination={false} />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑背调' : '发起背调'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="resume_id" label="关联简历" rules={[{ required: true, message: '请选择简历' }]}>
-            <Select showSearch placeholder="选择候选人简历" optionFilterProp="children">
+            <Select showSearch placeholder="选择候选人简历" optionFilterProp="children"
+              onChange={(val: string) => handleResumeChange(val)}>
               {resumes.map((r: any) => <Option key={r.id} value={r.id}>{r.candidate_name} - {r.position_title || '未知岗位'}</Option>)}
             </Select>
           </Form.Item>
           <Form.Item name="candidate_name" label="候选人姓名" rules={[{ required: true, message: '请输入姓名' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="position_title" label="应聘岗位">
             <Input />
           </Form.Item>
           {editing && (<>
@@ -147,6 +180,18 @@ const BackgroundChecksList: React.FC = () => {
             </Form.Item>
             <Form.Item name="overall_result" label="整体结果">
               <Select allowClear>{Object.entries(resultConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}</Select>
+            </Form.Item>
+            <Form.Item name="work_verification" label="工作履历核实">
+              <TextArea rows={2} placeholder="请输入工作履历核实信息" />
+            </Form.Item>
+            <Form.Item name="education_verification" label="学历核实">
+              <TextArea rows={2} placeholder="请输入学历核实信息" />
+            </Form.Item>
+            <Form.Item name="reference_check" label="推荐人核查">
+              <TextArea rows={2} placeholder="请输入推荐人核查信息" />
+            </Form.Item>
+            <Form.Item name="conducted_at" label="调查日期">
+              <Input placeholder="YYYY-MM-DD" />
             </Form.Item>
             <Form.Item name="criminal_check" label="犯罪记录核查">
               <Input placeholder="如：无记录 / 有记录（描述）" />
@@ -159,6 +204,7 @@ const BackgroundChecksList: React.FC = () => {
         {current && (
           <Descriptions column={1} bordered>
             <Descriptions.Item label="候选人">{current.candidate_name}</Descriptions.Item>
+            <Descriptions.Item label="应聘岗位">{current.position_title || '-'}</Descriptions.Item>
             <Descriptions.Item label="状态">{statusConfig[current.status]?.text || current.status}</Descriptions.Item>
             <Descriptions.Item label="整体结果">{current.overall_result ? (resultConfig[current.overall_result]?.text || current.overall_result) : '-'}</Descriptions.Item>
             <Descriptions.Item label="工作履历核实">{current.work_verification ? JSON.stringify(current.work_verification) : '-'}</Descriptions.Item>
