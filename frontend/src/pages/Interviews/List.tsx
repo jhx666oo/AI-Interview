@@ -132,20 +132,21 @@ const InterviewsList: React.FC = () => {
   const [editSubmitting, setEditSubmitting] = useState(false);
 
   const handleOpenEdit = (record: MergedRow) => {
-    if (!record.interview_id) {
-      message.info('请先安排面试后再编辑');
-      return;
-    }
     setEditRecord(record);
     setEditModalVisible(true);
   };
 
   const handleEditSubmit = async () => {
-    if (!editRecord?.interview_id) return;
+    if (!editRecord) return;
     try {
       const values = await editForm.validateFields();
       setEditSubmitting(true);
-      await request.put(`/interviews/${editRecord.interview_id}`, values);
+      if (editRecord.interview_id) {
+        await request.put(`/interviews/${editRecord.interview_id}`, values);
+      } else {
+        // 无面试记录时创建新的
+        await request.post('/interviews', { ...values, status: values.status || 'scheduled' });
+      }
       message.success('已保存');
       setEditModalVisible(false);
       fetchMergedData();
@@ -157,7 +158,10 @@ const InterviewsList: React.FC = () => {
   };
 
   const handleDelete = async () => {
-    if (!editRecord?.interview_id) return;
+    if (!editRecord?.interview_id) {
+      message.info('仅已安排面试的记录可删除');
+      return;
+    }
     try {
       await request.delete(`/interviews/${editRecord.interview_id}`);
       message.success('已删除');
