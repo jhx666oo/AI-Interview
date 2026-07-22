@@ -437,11 +437,20 @@ const InterviewsList: React.FC = () => {
       title: '操作', align: 'center' as const, key: 'action', width: 420,
       render: (_: any, r: MergedRow) => {
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
-        const canEval1 = r.interview_id && r.interview_status === 'scheduled';
+        // 待面试 → 提醒一面面试官
+        const canRemind = r.interview_id && r.interview_status === 'scheduled';
+        // 已完成 → 一面待评价
+        const canEval1 = r.interview_id && r.interview_status === 'completed'
+          && (!r.result || r.result === 'pending');
+        // 一面通过且有待二面 → 提醒二面面试官
+        const canRemind2 = r.interview_id && r.interview_status === 'completed'
+          && r.result === 'passed' && r.secondary_interviewer
+          && (!r.result2 || r.result2 === 'pending');
+        // 一面通过 → 二面待评价
         const canEval2 = r.interview_id && r.interview_status === 'completed'
-          && r.result && r.result !== 'pending' && (!r.result2 || r.result2 === 'pending');
+          && r.result === 'passed' && (!r.result2 || r.result2 === 'pending');
+        // 有评价内容 → 可查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
-        const canRemind = r.interview_id;
 
         return (
           <Space size={4} wrap>
@@ -475,13 +484,13 @@ const InterviewsList: React.FC = () => {
                 提醒一面
               </Button>
             )}
-            {canRemind && r.secondary_interviewer && (
+            {canRemind2 && (
               <Button type="primary" size="small" icon={<BellOutlined />}
                 onClick={() => handleSendReminder(r, r.secondary_interviewer)}>
                 提醒二面
               </Button>
             )}
-            {canRemind && !r.primary_interviewer && !r.secondary_interviewer && (
+            {canRemind && !r.primary_interviewer && !canRemind2 && (
               <Button size="small" icon={<BellOutlined />}
                 onClick={() => handleSendReminder(r)}>
                 提醒面试官
