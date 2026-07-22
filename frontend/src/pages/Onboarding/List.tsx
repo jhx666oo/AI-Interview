@@ -6,7 +6,7 @@ import {
 import SimplePagination from '../../components/SimplePagination';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined,
-  CheckCircleOutlined, HomeOutlined
+  EyeOutlined, CheckCircleOutlined, HomeOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import dayjs from 'dayjs';
