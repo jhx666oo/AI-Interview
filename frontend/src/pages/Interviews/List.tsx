@@ -434,30 +434,25 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 340,
+      title: '操作', align: 'center' as const, key: 'action', width: 420,
       render: (_: any, r: MergedRow) => {
-        // 已入库但未安排面试 → 安排面试
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
-        // 有面试且待面试 → 一面评价
         const canEval1 = r.interview_id && r.interview_status === 'scheduled';
-        // 有面试且一面已完成、二面待评价 → 二面评价
         const canEval2 = r.interview_id && r.interview_status === 'completed'
           && r.result && r.result !== 'pending' && (!r.result2 || r.result2 === 'pending');
-        // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
-        // 有面试记录 → 可发送面试提醒
         const canRemind = r.interview_id;
 
         return (
-          <Space size="small" wrap>
+          <Space size={4} wrap>
             {canSchedule && (
-              <Button type="primary" size="small" icon={<BellOutlined />}
+              <Button size="small" icon={<BellOutlined />}
                 onClick={() => handleOpenSchedule(r)}>
                 安排面试
               </Button>
             )}
             {canEval1 && (
-              <Button type="primary" size="small" icon={<EditOutlined />}
+              <Button size="small" icon={<EditOutlined />}
                 onClick={() => handleEvalRound1(r)}>
                 一面评价
               </Button>
@@ -474,34 +469,30 @@ const InterviewsList: React.FC = () => {
                 查看评价
               </Button>
             )}
+            {canRemind && r.primary_interviewer && (
+              <Button size="small" icon={<BellOutlined />}
+                onClick={() => handleSendReminder(r, r.primary_interviewer)}>
+                提醒一面
+              </Button>
+            )}
+            {canRemind && r.secondary_interviewer && (
+              <Button size="small" icon={<BellOutlined />}
+                onClick={() => handleSendReminder(r, r.secondary_interviewer)}>
+                提醒二面
+              </Button>
+            )}
+            {canRemind && !r.primary_interviewer && !r.secondary_interviewer && (
+              <Button size="small" icon={<BellOutlined />}
+                onClick={() => handleSendReminder(r)}>
+                提醒面试官
+              </Button>
+            )}
             <Tooltip title="下载简历">
               <Button size="small" icon={<DownloadOutlined />}
                 onClick={() => handleDownload(r)} />
             </Tooltip>
-            {canRemind && (
-              <>
-                {r.primary_interviewer && (
-                  <Button size="small" icon={<BellOutlined />}
-                    onClick={() => handleSendReminder(r, r.primary_interviewer)}>
-                    提醒一面
-                  </Button>
-                )}
-                {r.secondary_interviewer && (
-                  <Button size="small" icon={<BellOutlined />}
-                    onClick={() => handleSendReminder(r, r.secondary_interviewer)}>
-                    提醒二面
-                  </Button>
-                )}
-                {!r.primary_interviewer && !r.secondary_interviewer && (
-                  <Button size="small" icon={<BellOutlined />}
-                    onClick={() => handleSendReminder(r)}>
-                    提醒面试官
-                  </Button>
-                )}
-              </>
-            )}
             {r.interview_id && (
-              <Select size="small" style={{ width: 90 }} value={r.interview_status || 'scheduled'}
+              <Select size="small" style={{ width: 86 }} value={r.interview_status || 'scheduled'}
                 onChange={v => handleStatusChange(r, v)}
                 onClick={e => e.stopPropagation()}>
                 <Select.Option value="scheduled">待面试</Select.Option>
