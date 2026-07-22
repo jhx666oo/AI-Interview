@@ -528,9 +528,6 @@ const InterviewsList: React.FC = () => {
             {canView && (
               <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
             )}
-            <Tooltip title="下载简历">
-              <Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} />
-            </Tooltip>
             {r.interview_id && (
               <Select size="small" style={{ width: 86 }} value={r.interview_status || 'scheduled'}
                 onChange={v => handleStatusChange(r, v)}
@@ -541,6 +538,9 @@ const InterviewsList: React.FC = () => {
                 <Select.Option value="cancelled">已取消</Select.Option>
               </Select>
             )}
+            <Tooltip title="下载简历">
+              <Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} />
+            </Tooltip>
             <Tooltip title="编辑">
               <Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} />
             </Tooltip>
