@@ -73,7 +73,7 @@ const BackgroundChecksList: React.FC = () => {
     if (resume) {
       form.setFieldsValue({
         candidate_name: resume.candidate_name || '',
-        position_title: resume.position_title || '',
+        position_title: resume.position_applied || resume.mapped_position || resume.standard_position || '',
       });
     }
   };
