@@ -50,6 +50,7 @@ interface MergedRow {
   interview_location: string;
   result: string;
   result2: string;
+  status2: string;
   evaluation: string;
   evaluation2: string;
   feishu_record_id: string;
@@ -172,6 +173,7 @@ const InterviewsList: React.FC = () => {
           interview_location: matchedIv?.interview_location || '',
           result: matchedIv?.result || '',
           result2: matchedIv?.result2 || '',
+          status2: matchedIv?.status2 || '',
           evaluation: matchedIv?.evaluation || '',
           evaluation2: matchedIv?.evaluation2 || '',
           feishu_record_id: c.feishu_record_id || c.id || '',
@@ -200,6 +202,7 @@ const InterviewsList: React.FC = () => {
           interview_location: iv.interview_location || '',
           result: iv.result || '',
           result2: iv.result2 || '',
+          status2: iv.status2 || '',
           evaluation: iv.evaluation || '',
           evaluation2: iv.evaluation2 || '',
           feishu_record_id: '',
@@ -442,13 +445,15 @@ const InterviewsList: React.FC = () => {
         // 已完成 → 一面待评价
         const canEval1 = r.interview_id && r.interview_status === 'completed'
           && (!r.result || r.result === 'pending');
-        // 一面通过且有待二面 → 提醒二面面试官
+        // 一面通过且有待二面 → 提醒二面面试官（未提醒过）
         const canRemind2 = r.interview_id && r.interview_status === 'completed'
           && r.result === 'passed' && r.secondary_interviewer
-          && (!r.result2 || r.result2 === 'pending');
-        // 一面通过 → 二面待评价
+          && r.status2 !== 'scheduled';
+        // 二面已提醒 → 二面待评价
         const canEval2 = r.interview_id && r.interview_status === 'completed'
-          && r.result === 'passed' && (!r.result2 || r.result2 === 'pending');
+          && r.result === 'passed'
+          && r.status2 === 'scheduled'
+          && (!r.result2 || r.result2 === 'pending');
         // 有评价内容 → 可查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
 

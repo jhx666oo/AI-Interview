@@ -6360,6 +6360,14 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
     }
 
     console.log(`[NotifyInterviewer] ✅ 通知面试官: ${interviewerName} (open_id: ${openId})`);
+
+    // 如果是提醒二面面试官，标记 status2 = 'scheduled'
+    const ivRow = await c.env.DB.prepare('SELECT secondary_interviewer FROM interviews WHERE id = ?').bind(id).first() as any;
+    if (ivRow?.secondary_interviewer && interviewerName === ivRow.secondary_interviewer) {
+      await c.env.DB.prepare("UPDATE interviews SET status2 = 'scheduled', updated_at = ? WHERE id = ?")
+        .bind(now(), id).run();
+    }
+
     return c.json({ ok: true, message: `已通知面试官 ${interviewerName}: ${candidateName}` });
   } catch (err: any) {
     return c.json({ detail: `通知失败: ${err.message}` }, 500);
