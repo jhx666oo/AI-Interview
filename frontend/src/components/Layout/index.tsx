@@ -88,6 +88,12 @@ const AppLayout: React.FC = () => {
       roles: ['admin', 'hr'],
     },
     {
+      key: '/workflows',
+      icon: <ApartmentOutlined />,
+      label: '工作流',
+      roles: ['admin', 'hr'],
+    },
+    {
       key: '/settings/position-mappings',
       icon: <FolderOpenOutlined />,
       label: '岗位映射',
@@ -97,6 +103,12 @@ const AppLayout: React.FC = () => {
       key: '/settings/interviewer-mappings',
       icon: <TeamOutlined />,
       label: '面试官管理',
+      roles: ['admin'],
+    },
+    {
+      key: '/settings/capability-dimensions',
+      icon: <PartitionOutlined />,
+      label: '能力维度',
       roles: ['admin'],
     },
     {

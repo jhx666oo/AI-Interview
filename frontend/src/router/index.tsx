@@ -28,6 +28,8 @@ const RequisitionsList = lazy(() => import('../pages/Requisitions/List'));
 const OnboardingList = lazy(() => import('../pages/Onboarding/List'));
 const ProbationList = lazy(() => import('../pages/Probation/List'));
 const DailyReportsList = lazy(() => import('../pages/DailyReports/List'));
+const WorkflowsList = lazy(() => import('../pages/Workflows/List'));
+const CapabilityDimensions = lazy(() => import('../pages/Settings/CapabilityDimensions'));
 const JDManagementList = lazy(() => import('../pages/JDManagement/List'));
 const JDManagementEditor = lazy(() => import('../pages/JDManagement/Editor'));
 const PositionMappings = lazy(() => import('../pages/Settings/PositionMappings'));
@@ -165,6 +167,10 @@ const router = createBrowserRouter([
         element: <RoleRoute roles={['admin']}><LazyPage><InterviewerMappings /></LazyPage></RoleRoute>,
       },
       {
+        path: 'settings/capability-dimensions',
+        element: <RoleRoute roles={['admin']}><LazyPage><CapabilityDimensions /></LazyPage></RoleRoute>,
+      },
+      {
         path: 'settings/mail',
         element: <RoleRoute roles={['admin']}><LazyPage><MailSettings /></LazyPage></RoleRoute>,
       },
@@ -191,6 +197,10 @@ const router = createBrowserRouter([
       {
         path: 'daily-reports',
         element: <LazyPage><DailyReportsList /></LazyPage>,
+      },
+      {
+        path: 'workflows',
+        element: <LazyPage><WorkflowsList /></LazyPage>,
       },
     ],
   },
