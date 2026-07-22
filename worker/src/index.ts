@@ -2166,8 +2166,9 @@ app.post('/api/interviews/:id/evaluate', authMiddleware, async (c) => {
     const r = round === 2 ? 2 : 1;
 
     if (r === 1) {
+      const newStatus = result === 'passed' ? 'scheduled' : 'completed';  // 一面通过→待面试(进入二面)，否则→已完成
       const updates: string[] = ['status = ?'];
-      const binds: any[] = ['completed'];
+      const binds: any[] = [newStatus];
       if (evaluation) { updates.push('evaluation = ?'); binds.push(evaluation); }
       if (result) { updates.push('result = ?'); binds.push(result); }
       binds.push(id);

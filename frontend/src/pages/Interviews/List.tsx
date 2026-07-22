@@ -83,20 +83,13 @@ const InterviewsList: React.FC = () => {
   const handleStatusChange = async (record: MergedRow, newStatus: string) => {
     if (!record.interview_id) return;
     try {
-      await request.put(`/interviews/${record.interview_id}`, { status: newStatus });
+      const payload: any = { status: newStatus };
+      // 若一面已过且切到已完成，自动标记二面也已完成
+      if (record.result === 'passed' && newStatus === 'completed') {
+        payload.status2 = 'completed';
+      }
+      await request.put(`/interviews/${record.interview_id}`, payload);
       message.success('状态已更新');
-      fetchMergedData();
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || '更新失败');
-    }
-  };
-
-  // 编辑二面状态
-  const handleStatus2Change = async (record: MergedRow, newStatus2: string) => {
-    if (!record.interview_id) return;
-    try {
-      await request.put(`/interviews/${record.interview_id}`, { status2: newStatus2 });
-      message.success('二面状态已更新');
       fetchMergedData();
     } catch (e: any) {
       message.error(e.response?.data?.detail || '更新失败');
@@ -452,21 +445,21 @@ const InterviewsList: React.FC = () => {
       title: '操作', align: 'center' as const, key: 'action', width: 420,
       render: (_: any, r: MergedRow) => {
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
-        // 待面试 → 提醒一面面试官
-        const canRemind = r.interview_id && r.interview_status === 'scheduled';
-        // 已完成 → 一面待评价
+        // 待面试，未评过 → 提醒一面
+        const canRemind1 = r.interview_id && r.interview_status === 'scheduled'
+          && (!r.result || r.result === 'pending');
+        // 待面试，一面已过 → 提醒二面
+        const canRemind2 = r.interview_id && r.interview_status === 'scheduled'
+          && r.result === 'passed' && r.secondary_interviewer
+          && (!r.result2 || r.result2 === 'pending');
+        // 已完成，一面未评 → 一面评价
         const canEval1 = r.interview_id && r.interview_status === 'completed'
           && (!r.result || r.result === 'pending');
-        // 一面通过且有待二面 → 提醒二面面试官（未提醒过）
-        const canRemind2 = r.interview_id && r.interview_status === 'completed'
-          && r.result === 'passed' && r.secondary_interviewer
-          && r.status2 !== 'scheduled';
-        // 二面已提醒 → 二面待评价
+        // 二面已完成 → 二面评价
         const canEval2 = r.interview_id && r.interview_status === 'completed'
-          && r.result === 'passed'
-          && r.status2 === 'scheduled'
+          && r.result === 'passed' && r.status2 === 'completed'
           && (!r.result2 || r.result2 === 'pending');
-        // 有评价内容 → 可查看
+        // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
 
         return (
@@ -495,7 +488,7 @@ const InterviewsList: React.FC = () => {
                 查看评价
               </Button>
             )}
-            {canRemind && r.primary_interviewer && (
+            {canRemind1 && r.primary_interviewer && (
               <Button type="primary" size="small" icon={<BellOutlined />}
                 onClick={() => handleSendReminder(r, r.primary_interviewer)}>
                 提醒一面
@@ -507,7 +500,7 @@ const InterviewsList: React.FC = () => {
                 提醒二面
               </Button>
             )}
-            {canRemind && !r.primary_interviewer && !canRemind2 && (
+            {canRemind1 && !r.primary_interviewer && !canRemind2 && (
               <Button size="small" icon={<BellOutlined />}
                 onClick={() => handleSendReminder(r)}>
                 提醒面试官
@@ -524,14 +517,6 @@ const InterviewsList: React.FC = () => {
                 <Select.Option value="scheduled">待面试</Select.Option>
                 <Select.Option value="completed">已完成</Select.Option>
                 <Select.Option value="cancelled">已取消</Select.Option>
-              </Select>
-            )}
-            {r.interview_id && r.result === 'passed' && r.status2 === 'scheduled' && (
-              <Select size="small" style={{ width: 100 }} value={r.status2}
-                onChange={v => handleStatus2Change(r, v)}
-                onClick={e => e.stopPropagation()}>
-                <Select.Option value="scheduled">二面进行中</Select.Option>
-                <Select.Option value="completed">二面已完成</Select.Option>
               </Select>
             )}
           </Space>
