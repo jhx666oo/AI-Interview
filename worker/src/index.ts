@@ -485,8 +485,20 @@ app.put('/api/auth/change-password', authMiddleware, async (c) => {
   return c.json({ detail: 'Password changed' });
 });
 
-// 飞书 OAuth 回调地址（硬编码默认用生产地址，本地开发通过环境变量 FEISHU_OAUTH_REDIRECT_URI 覆盖）
+// 飞书 OAuth 回调地址（生产默认地址；本地开发自动用请求来源）
 const FEISHU_REDIRECT_URI = 'https://ai-interview-88r.pages.dev/api/auth/feishu-callback';
+
+// 根据请求来源动态生成 OAuth 回调地址
+function getFeishuRedirectUri(c: any): string {
+  if (c.env.FEISHU_OAUTH_REDIRECT_URI) return c.env.FEISHU_OAUTH_REDIRECT_URI;
+  try {
+    const origin = new URL(c.req.url).origin;
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return `${origin}/api/auth/feishu-callback`;
+    }
+  } catch {}
+  return FEISHU_REDIRECT_URI;
+}
 
 // 飞书 OAuth：获取 app_id 等配置
 app.get('/api/auth/feishu/config', async (c) => {
@@ -498,7 +510,7 @@ app.get('/api/auth/feishu/config', async (c) => {
 app.get('/api/auth/feishu-oauth-url', authMiddleware, async (c) => {
   const user = c.get('user');
   const token = await createJwt(c.env.SECRET_KEY, user.email);
-  const baseUrl = c.env.FEISHU_OAUTH_REDIRECT_URI || FEISHU_REDIRECT_URI;
+  const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
   const oauthUrl = `https://open.feishu.cn/open-apis/authen/v1/index?redirect_uri=${encodeURIComponent(baseUrl)}&app_id=${appId}&state=${token}`;
   return c.json({ url: oauthUrl });
@@ -510,7 +522,7 @@ app.post('/api/auth/feishu-oauth-url', authMiddleware, requireRole(['admin']), a
   const email = body.email;
   if (!email) return c.json({ detail: 'email required' }, 400);
   const token = await createJwt(c.env.SECRET_KEY, email);
-  const baseUrl = c.env.FEISHU_OAUTH_REDIRECT_URI || FEISHU_REDIRECT_URI;
+  const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
   const oauthUrl = `https://open.feishu.cn/open-apis/authen/v1/index?redirect_uri=${encodeURIComponent(baseUrl)}&app_id=${appId}&state=${token}`;
   return c.json({ url: oauthUrl, email });
