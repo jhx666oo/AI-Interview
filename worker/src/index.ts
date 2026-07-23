@@ -493,8 +493,10 @@ function getFeishuRedirectUri(c: any): string {
   if (c.env.FEISHU_OAUTH_REDIRECT_URI) return c.env.FEISHU_OAUTH_REDIRECT_URI;
   try {
     const origin = new URL(c.req.url).origin;
+    // 本地开发：Vite dev server 在 5173，wrangler pages dev 在 8000
+    // Vite proxy 会把 origin 改成 127.0.0.1:8000，所以统一用 localhost:5173
     if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-      return `${origin}/api/auth/feishu-callback`;
+      return 'http://localhost:5173/api/auth/feishu-callback';
     }
   } catch {}
   return FEISHU_REDIRECT_URI;
