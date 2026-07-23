@@ -92,7 +92,9 @@ const RequisitionsList: React.FC = () => {
       if (filterStatus) params.status = filterStatus;
       if (selectedOwner) params.responsible_person = selectedOwner;
       const res = await request.get('/requisitions', { params });
-      setData(res || []);
+      const list = (res || []) as any[];
+      list.sort((a: any, b: any) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      setData(list);
     } catch (e) {
       message.error('加载失败');
     } finally {
