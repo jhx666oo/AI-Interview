@@ -1918,7 +1918,7 @@ app.get('/api/requisitions', authMiddleware, async (c) => {
     // v2.0: 从 D1 增强数据（多城市、硬性要求、个性化需求）
     try {
       const d1Reqs = await c.env.DB.prepare(
-        'SELECT id, feishu_record_id, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, created_at FROM job_requisitions'
+        'SELECT id, feishu_record_id, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, created_at, description, requirements FROM job_requisitions'
       ).all();
       const d1Map = new Map();
       for (const row of (d1Reqs.results || [])) {
@@ -1935,6 +1935,8 @@ app.get('/api/requisitions', authMiddleware, async (c) => {
           if (!item.biz_interviewer && d1.biz_interviewer) item.biz_interviewer = d1.biz_interviewer;
           if (!item.final_interviewer && d1.final_interviewer) item.final_interviewer = d1.final_interviewer;
           item.created_at = d1.created_at || item.created_at || '';
+          if (d1.description) item.description = d1.description;
+          if (d1.requirements) item.requirements = d1.requirements;
         } else {
           item.city = item.city ? [item.city] : [];
           item.hard_requirements = [];
@@ -1984,7 +1986,7 @@ app.get('/api/requisitions/:id', authMiddleware, async (c) => {
     // v2.0: D1 增强
     try {
       const d1 = await c.env.DB.prepare(
-        'SELECT city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person FROM job_requisitions WHERE id = ? OR feishu_record_id = ?'
+        'SELECT city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, description, requirements FROM job_requisitions WHERE id = ? OR feishu_record_id = ?'
       ).bind(c.req.param('id'), c.req.param('id')).first() as any;
       if (d1) {
         try { item.city = JSON.parse(d1.city || '[]'); } catch { item.city = item.city ? [item.city] : []; }
@@ -1994,6 +1996,8 @@ app.get('/api/requisitions/:id', authMiddleware, async (c) => {
         if (!item.hr_interviewer && d1.hr_interviewer) item.hr_interviewer = d1.hr_interviewer;
         if (!item.biz_interviewer && d1.biz_interviewer) item.biz_interviewer = d1.biz_interviewer;
         if (!item.final_interviewer && d1.final_interviewer) item.final_interviewer = d1.final_interviewer;
+        if (d1.description) item.description = d1.description;
+        if (d1.requirements) item.requirements = d1.requirements;
       } else {
         item.city = item.city ? [item.city] : [];
         item.hard_requirements = [];
@@ -2061,8 +2065,18 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
     const body = await c.req.json();
     const id = c.req.param('id');
     const tableId = getBitableTableId(c.env, 'requisition');
-    const fields = feishuFieldsToRecord(FEISHU_REQUISITION_FIELDS, body);
-    await bitableUpdateRecord(c.env, tableId, id, fields);
+    // 标准化：同 POST 逻辑
+    if (Array.isArray(body.city)) body.city = body.city.join(', ');
+    const fields: Record<string, any> = {};
+    for (const [engKey, cnKey] of Object.entries(FEISHU_REQUISITION_FIELDS)) {
+      const v = body[engKey];
+      if (v === undefined || v === null) continue;
+      if (engKey === 'urgency' && typeof v === 'string' && isNaN(Number(v))) continue;
+      if (engKey === 'requirements') continue; // Bitable不支持此字段，只存D1
+      fields[cnKey] = v;
+    }
+    const ok = await bitableUpdateRecord(c.env, tableId, id, fields);
+    if (!ok) return c.json({ detail: 'Bitable更新失败' }, 500);
 
     // v2.0: 同步更新 D1
     const sets: string[] = [];
@@ -2091,6 +2105,8 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
     if (body.city !== undefined) item.city = body.city;
     if (body.hard_requirements !== undefined) item.hard_requirements = body.hard_requirements;
     if (body.personalized_requirements !== undefined) item.personalized_requirements = body.personalized_requirements;
+    if (body.description !== undefined) item.description = body.description;
+    if (body.requirements !== undefined) item.requirements = body.requirements;
     return c.json(item);
   } catch (e: any) {
     return c.json({ detail: '更新失败: ' + e.message }, 500);
