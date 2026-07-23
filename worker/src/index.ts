@@ -21,7 +21,7 @@ interface Env {
 
 // 飞书配置（内置 fallback，页面部署时不用再设环境变量）
 const FEISHU_CONFIG = {
-  appId: 'cli_aace77019aba9cdb',
+  appId: 'cli_aad2cb7fab385cb6',
   appSecret: 'ii2lYil9d5PXViTTjYlzaddB6YKuL25T',
   appToken: 'NVh9bDiNRaF0ZysxjeLc5ID2n9c',
   // 招聘任务表：含招聘岗位、部门、城市、人数、紧急度、JD等具体需求数据
@@ -441,8 +441,8 @@ app.put('/api/auth/change-password', authMiddleware, async (c) => {
   return c.json({ detail: 'Password changed' });
 });
 
-// 飞书 OAuth 回调地址（硬编码，确保与飞书开放平台配置完全一致）
-const FEISHU_REDIRECT_URI = 'https://ai-interview-22u.pages.dev/api/auth/feishu-callback';
+// 飞书 OAuth 回调地址（硬编码默认用生产地址，本地开发通过环境变量 FEISHU_OAUTH_REDIRECT_URI 覆盖）
+const FEISHU_REDIRECT_URI = 'https://ai-interview-88r.pages.dev/api/auth/feishu-callback';
 
 // 飞书 OAuth：获取 app_id 等配置
 app.get('/api/auth/feishu/config', async (c) => {
