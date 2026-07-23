@@ -34,6 +34,7 @@ const DailyReportsList: React.FC = () => {
   const [sendTargetType, setSendTargetType] = useState<'chat' | 'user'>('chat');
   const [sendTargetId, setSendTargetId] = useState('');
   const [sending, setSending] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   // 联系人列表
   const [contacts, setContacts] = useState<{ groups: ContactItem[]; users: ContactItem[] }>({ groups: [], users: [] });
   const [contactsLoading, setContactsLoading] = useState(false);
@@ -73,12 +74,15 @@ const DailyReportsList: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    setDeletingId(id);
     try {
       await request.delete(`/daily-reports/${id}`);
       message.success('已删除');
       fetchData();
-    } catch {
-      message.error('删除失败');
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '删除失败');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -358,6 +362,7 @@ const DailyReportsList: React.FC = () => {
                         size="small"
                         danger
                         icon={<DeleteOutlined />}
+                        loading={deletingId === record.id}
                         onClick={(e) => { e.stopPropagation(); handleDelete(record.id); }}
                       />
                     </Tooltip>

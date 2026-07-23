@@ -65,6 +65,10 @@ const RequisitionsList: React.FC = () => {
   const [searchDept, setSearchDept] = useState('');
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
   const [aiLoading, setAiLoading] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
   const { selectedOwner } = useOwner();
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [tablePage, setTablePage] = useState(1);
@@ -136,7 +140,7 @@ const RequisitionsList: React.FC = () => {
           message.success(`成功删除 ${selectedRowKeys.length} 个需求`);
           setSelectedRowKeys([]);
           fetchData();
-        } catch { message.error('批量删除失败'); }
+        } catch (e: any) { message.error(e?.response?.data?.detail || '批量删除失败'); }
       },
     });
   };
@@ -153,7 +157,7 @@ const RequisitionsList: React.FC = () => {
           message.success(`成功更新 ${selectedRowKeys.length} 个需求`);
           setSelectedRowKeys([]);
           fetchData();
-        } catch { message.error('批量操作失败'); }
+        } catch (e: any) { message.error(e?.response?.data?.detail || '批量操作失败'); }
       },
     });
   };
@@ -172,6 +176,7 @@ const RequisitionsList: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    setSubmitting(true);
     try {
       const values = await form.validateFields();
       const payload = {
@@ -188,41 +193,55 @@ const RequisitionsList: React.FC = () => {
       setModalVisible(false);
       fetchData();
     } catch (e: any) {
+      if (e?.errorFields) return; // Validation error
       if (e.response) message.error(e.response.data?.detail || '操作失败');
+      else message.error('操作失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleApprove = async (id: string) => {
+    setActionLoading(id);
     try {
       await request.post(`/requisitions/${id}/approve`);
       message.success('已批准');
       fetchData();
     } catch (e: any) {
       message.error(e.response?.data?.detail || '操作失败');
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const handleReject = async (id: string) => {
+    setActionLoading(id);
     try {
       await request.post(`/requisitions/${id}/reject`);
       message.success('已驳回');
       fetchData();
     } catch (e: any) {
       message.error(e.response?.data?.detail || '操作失败');
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const handleDelete = async (id: string) => {
+    setDeletingId(id);
     try {
       await request.delete(`/requisitions/${id}`);
       message.success('已删除');
       fetchData();
     } catch (e: any) {
       message.error(e.response?.data?.detail || '删除失败');
+    } finally {
+      setDeletingId(null);
     }
   };
 
   const handleFeishuSync = async () => {
+    setSyncLoading(true);
     try {
       const res = await request.post('/requisitions/sync-from-feishu') as any;
       if (res && res.ok) {
@@ -233,6 +252,8 @@ const RequisitionsList: React.FC = () => {
       }
     } catch (e: any) {
       message.error(e.response?.data?.detail || '飞书导入失败');
+    } finally {
+      setSyncLoading(false);
     }
   };
 
@@ -280,7 +301,7 @@ const RequisitionsList: React.FC = () => {
           <Button type="link" size="small" icon={aiLoading === record.id ? <LoadingOutlined /> : <ThunderboltOutlined />} onClick={() => handleAIJD(record.id)}>AI生成JD</Button>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id}>删除</Button>
           </Popconfirm>
         </Space>
       )
@@ -298,7 +319,7 @@ const RequisitionsList: React.FC = () => {
               {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
             </Select>
             <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
-            <Button type="primary" size="small" icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
+            <Button type="primary" size="small" icon={<CloudUploadOutlined />} loading={syncLoading} onClick={handleFeishuSync}>飞书导入</Button>
             <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>提报需求</Button>
           </Space>
         }
@@ -328,7 +349,7 @@ const RequisitionsList: React.FC = () => {
       </Card>
 
       <Modal title={editing ? '编辑需求' : '提报人力需求'} open={modalVisible} onCancel={() => setModalVisible(false)}
-        onOk={handleSubmit} width={640}>
+        onOk={handleSubmit} width={640} confirmLoading={submitting}>
         <Form form={form} layout="vertical">
           <Row gutter={16}>
             <Col span={12}>

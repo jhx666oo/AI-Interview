@@ -148,12 +148,15 @@ const InterviewsList: React.FC = () => {
       return;
     }
     try {
+      setDeletingId(editRecord.interview_id);
       await request.delete(`/interviews/${editRecord.interview_id}`);
       message.success('已删除');
       setEditModalVisible(false);
       fetchMergedData();
     } catch (e: any) {
       message.error(e.response?.data?.detail || '删除失败');
+    } finally {
+      setDeletingId(null);
     }
   };
   const [evalModalVisible, setEvalModalVisible] = useState(false);
@@ -161,6 +164,12 @@ const InterviewsList: React.FC = () => {
   const [evalRound, setEvalRound] = useState<1 | 2>(1);
   const [evalForm] = Form.useForm();
   const [evalSubmitting, setEvalSubmitting] = useState(false);
+
+  // 按钮加载态
+  const [reminderLoading, setReminderLoading] = useState<string | null>(null);
+  const [bgCheckLoading, setBgCheckLoading] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
 
   // 查看评价弹窗
   const [viewEvalVisible, setViewEvalVisible] = useState(false);
@@ -291,12 +300,14 @@ const InterviewsList: React.FC = () => {
   // == 飞书导入 ==
   const handleFeishuSync = async () => {
     const key = 'interviewSync';
+    setSyncLoading(true);
     message.loading({ content: '正在从飞书导入面试数据...', key });
     try {
       const res = await request.post('/interviews/sync-from-feishu') as any;
       message.success({ content: `已同步 ${res.created || 0} 条新增，${res.updated || 0} 条更新`, key });
       fetchMergedData();
     } catch { message.error({ content: '同步失败', key }); }
+    finally { setSyncLoading(false); }
   };
 
   // == 安排面试 ==
@@ -393,6 +404,7 @@ const InterviewsList: React.FC = () => {
   const handleSendReminder = async (record: MergedRow, interviewerName?: string) => {
     const name = interviewerName || record.interviewer;
     try {
+      setReminderLoading(record.id);
       await request.post(`/interviews/${record.interview_id}/notify-interviewer`, {
         candidate_name: record.candidate_name,
         position_applied: record.position_applied || record.position || '',
@@ -403,6 +415,8 @@ const InterviewsList: React.FC = () => {
       message.success(`已提醒面试官：${name}`);
     } catch (e: any) {
       message.error(e.response?.data?.detail || '发送提醒失败');
+    } finally {
+      setReminderLoading(null);
     }
   };
 
@@ -414,6 +428,7 @@ const InterviewsList: React.FC = () => {
   // == 发起背调 ==
   const handleStartBackgroundCheck = async (record: MergedRow) => {
     try {
+      setBgCheckLoading(record.id);
       await request.post('/background-checks', {
         candidate_name: record.candidate_name,
         position_title: record.position_applied || record.position || '',
@@ -425,6 +440,8 @@ const InterviewsList: React.FC = () => {
       fetchMergedData();
     } catch (e: any) {
       message.error(e.response?.data?.detail || '发起背调失败');
+    } finally {
+      setBgCheckLoading(null);
     }
   };
 
@@ -542,19 +559,19 @@ const InterviewsList: React.FC = () => {
                 <Button type="primary" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
               )}
               {canRemind1 && (
-                <Button type="primary" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
+                <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
               )}
               {canEval1 && (
                 <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
               )}
               {canRemind2 && (
-                <Button type="primary" icon={<BellOutlined />} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
+                <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
               )}
               {canEval2 && (
                 <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
               )}
               {canStartCheck && (
-                <Button type="primary" icon={<SafetyOutlined />} onClick={() => handleStartBackgroundCheck(r)}>发起背调</Button>
+                <Button type="primary" icon={<SafetyOutlined />} loading={bgCheckLoading === r.id} onClick={() => handleStartBackgroundCheck(r)}>发起背调</Button>
               )}
             </Space.Compact>
             {/* 查看评价 */}
@@ -601,7 +618,7 @@ const InterviewsList: React.FC = () => {
               <Select.Option value="completed">已完成</Select.Option>
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchMergedData}>刷新</Button>
-            <Button icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
+            <Button icon={<CloudUploadOutlined />} loading={syncLoading} onClick={handleFeishuSync}>飞书导入</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.resetFields(); setCreateModalVisible(true); }}>新建面试</Button>
           </Space>
         }
@@ -784,7 +801,7 @@ const InterviewsList: React.FC = () => {
           <Popconfirm key="delete" title="确定删除该面试记录？" description="此操作不可恢复"
             onConfirm={handleDelete} okText="确认删除" cancelText="取消"
             okButtonProps={{ danger: true }}>
-            <Button danger icon={<DeleteOutlined />} style={{ float: 'left' }}>删除</Button>
+            <Button danger icon={<DeleteOutlined />} loading={deletingId === editRecord?.interview_id} style={{ float: 'left' }}>删除</Button>
           </Popconfirm>,
           <Button key="cancel" onClick={() => setEditModalVisible(false)}>取消</Button>,
           <Button key="save" type="primary" loading={editSubmitting} onClick={handleEditSubmit}>保存</Button>,

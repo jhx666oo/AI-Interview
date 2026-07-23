@@ -37,6 +37,9 @@ const BackgroundChecksList: React.FC = () => {
   const [resumes, setResumes] = useState<any[]>([]);
   const [tablePage, setTablePage] = useState(1);
   const pageSize = 10;
+  const [onboardingLoading, setOnboardingLoading] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -79,6 +82,7 @@ const BackgroundChecksList: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    setSubmitting(true);
     try {
       const values = await form.validateFields();
       if (editing) {
@@ -91,16 +95,21 @@ const BackgroundChecksList: React.FC = () => {
       setModalVisible(false); fetchData();
     } catch (e: any) {
       if (e.response) message.error(e.response.data?.detail || '操作失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
+    setDeletingId(id);
     try { await request.delete(`/background-checks/${id}`); message.success('已删除'); fetchData(); }
     catch (e: any) { message.error(e.response?.data?.detail || '删除失败'); }
+    finally { setDeletingId(null); }
   };
 
   // == 发起入职 ==
   const handleStartOnboarding = async (record: any) => {
+    setOnboardingLoading(record.id);
     try {
       await request.post('/onboarding', {
         candidate_name: record.candidate_name,
@@ -112,6 +121,8 @@ const BackgroundChecksList: React.FC = () => {
       message.success('已发起入职');
     } catch (e: any) {
       message.error(e.response?.data?.detail || '发起入职失败');
+    } finally {
+      setOnboardingLoading(null);
     }
   };
 
@@ -140,11 +151,11 @@ const BackgroundChecksList: React.FC = () => {
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>
           {canStartOnboarding && (
-            <Button type="primary" size="small" icon={<HomeOutlined />} onClick={() => handleStartOnboarding(record)}>发起入职</Button>
+            <Button type="primary" size="small" icon={<HomeOutlined />} loading={onboardingLoading === record.id} disabled={!!onboardingLoading} onClick={() => handleStartOnboarding(record)}>发起入职</Button>
           )}
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id}>删除</Button>
           </Popconfirm>
         </Space>
         )
@@ -182,7 +193,7 @@ const BackgroundChecksList: React.FC = () => {
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑背调' : '发起背调'} open={modalVisible}
-        onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>
+        onCancel={() => setModalVisible(false)} onOk={handleSubmit} confirmLoading={submitting} width={640} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="resume_id" label="关联简历" rules={[{ required: true, message: '请选择简历' }]}>
             <Select showSearch placeholder="选择候选人简历" optionFilterProp="children"

@@ -21,6 +21,8 @@ interface Dimension {
 const CapabilityDimensions: React.FC = () => {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form] = Form.useForm();
@@ -87,6 +89,7 @@ const CapabilityDimensions: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    setSubmitting(true);
     try {
       const values = await form.validateFields();
       const dims: Dimension[] = (values.dimensions || []).filter((d: Dimension) => d.name);
@@ -111,16 +114,21 @@ const CapabilityDimensions: React.FC = () => {
     } catch (e: any) {
       if (e.errorFields) return;
       message.error(e.response?.data?.detail || '操作失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
+    setDeletingId(id);
     try {
       await request.delete(`/capability-dimensions/${id}`);
       message.success('删除成功');
       fetchData();
-    } catch {
-      message.error('删除失败');
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '删除失败');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -214,7 +222,7 @@ const CapabilityDimensions: React.FC = () => {
           </Tooltip>
           <Popconfirm title="确认删除?" onConfirm={() => handleDelete(record.id)}>
             <Tooltip title="删除">
-              <Button size="small" danger icon={<DeleteOutlined />} />
+              <Button size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id} />
             </Tooltip>
           </Popconfirm>
         </Space>
@@ -277,6 +285,7 @@ const CapabilityDimensions: React.FC = () => {
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={handleSubmit}
+        confirmLoading={submitting}
         width={800}
         destroyOnHidden
       >

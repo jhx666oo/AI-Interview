@@ -41,6 +41,11 @@ const WorkflowsList: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [form] = Form.useForm();
+  const [executingId, setExecutingId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 
   const role = (user as any)?.role?.value ?? (user as any)?.role;
   const isAdmin = role === 'admin';
@@ -68,6 +73,7 @@ const WorkflowsList: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    setSubmitting(true);
     try {
       const values = await form.validateFields();
       const res = await request.post('/workflows', {
@@ -80,30 +86,39 @@ const WorkflowsList: React.FC = () => {
     } catch (e: any) {
       if (e?.errorFields) return;
       message.error(e?.response?.data?.detail || '创建失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
+    setDeletingId(id);
     try {
       await request.delete(`/workflows/${id}`);
       message.success('删除成功');
       fetchWorkflows();
     } catch (e) {
       message.error('删除失败');
+    } finally {
+      setDeletingId(null);
     }
   };
 
   const handlePublish = async (id: string) => {
+    setPublishingId(id);
     try {
       await request.post(`/workflows/${id}/publish`);
       message.success('发布成功');
       fetchWorkflows();
     } catch (e) {
       message.error('发布失败');
+    } finally {
+      setPublishingId(null);
     }
   };
 
   const handleExecute = async (id: string) => {
+    setExecutingId(id);
     try {
       const res = await request.post(`/workflows/${id}/execute`);
       message.success('执行成功');
@@ -120,10 +135,13 @@ const WorkflowsList: React.FC = () => {
       }
     } catch (e: any) {
       message.error(e?.response?.data?.detail || '执行失败');
+    } finally {
+      setExecutingId(null);
     }
   };
 
   const handleDuplicate = async (workflow: Workflow) => {
+    setDuplicatingId(workflow.id);
     try {
       const res = await request.post('/workflows', {
         name: `${workflow.name} (副本)`,
@@ -134,6 +152,8 @@ const WorkflowsList: React.FC = () => {
       navigate(`/workflows/${res.id}`);
     } catch (e) {
       message.error('复制失败');
+    } finally {
+      setDuplicatingId(null);
     }
   };
 
@@ -201,6 +221,7 @@ const WorkflowsList: React.FC = () => {
               <Button
                 type="text"
                 icon={<PlayCircleOutlined style={{ color: '#52c41a' }} />}
+                loading={executingId === record.id}
                 onClick={() => handleExecute(record.id)}
               />
             </Tooltip>
@@ -210,6 +231,7 @@ const WorkflowsList: React.FC = () => {
               <Button
                 type="text"
                 icon={<CheckCircleOutlined style={{ color: '#1890ff' }} />}
+                loading={publishingId === record.id}
                 onClick={() => handlePublish(record.id)}
               />
             </Tooltip>
@@ -220,6 +242,7 @@ const WorkflowsList: React.FC = () => {
                 <Button
                   type="text"
                   icon={<CopyOutlined />}
+                  loading={duplicatingId === record.id}
                   onClick={() => handleDuplicate(record)}
                 />
               </Tooltip>
@@ -232,6 +255,7 @@ const WorkflowsList: React.FC = () => {
                     type="text"
                     danger
                     icon={<DeleteOutlined />}
+                    loading={deletingId === record.id}
                   />
                 </Tooltip>
               </Popconfirm>
@@ -272,6 +296,7 @@ const WorkflowsList: React.FC = () => {
         title="创建工作流"
         open={modalVisible}
         onOk={handleSubmit}
+        confirmLoading={submitting}
         onCancel={() => setModalVisible(false)}
         destroyOnHidden
       >

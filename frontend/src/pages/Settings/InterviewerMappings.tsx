@@ -16,6 +16,8 @@ const InterviewerMappings: React.FC = () => {
   const [searchName, setSearchName] = useState('');
   const [searchResults, setSearchResults] = useState<InterviewerMapping[]>([]);
   const [searching, setSearching] = useState(false);
+  const [notifyLoading, setNotifyLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => { fetchMappings(); }, []);
 
@@ -74,15 +76,18 @@ const InterviewerMappings: React.FC = () => {
       message.warning('请至少填写一个面试官姓名');
       return;
     }
+    setSaving(true);
     try {
       await request.put('/settings/interviewers', { items: valid });
       message.success('保存成功');
       fetchMappings();
     } catch { message.error('保存失败'); }
+    finally { setSaving(false); }
   };
 
   const handleNotifyAll = async () => {
     if (data.length === 0) { message.warning('没有配置面试官'); return; }
+    setNotifyLoading(true);
     try {
       await request.post('/settings/interviewers/notify-all', {
         title: '📢 系统通知',
@@ -90,6 +95,7 @@ const InterviewerMappings: React.FC = () => {
       });
       message.success('已发送通知');
     } catch { message.error('通知发送失败'); }
+    finally { setNotifyLoading(false); }
   };
 
   const columns = [
@@ -134,9 +140,9 @@ const InterviewerMappings: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <Title level={4} style={{ margin: 0 }}>面试官映射管理</Title>
           <Space>
-            <Button icon={<BellOutlined />} onClick={handleNotifyAll}>通知全部面试官</Button>
+            <Button icon={<BellOutlined />} loading={notifyLoading} disabled={notifyLoading} onClick={handleNotifyAll}>通知全部面试官</Button>
             <Button icon={<PlusOutlined />} type="dashed" onClick={handleAdd}>添加</Button>
-            <Button icon={<SaveOutlined />} type="primary" onClick={handleSave}>保存</Button>
+            <Button icon={<SaveOutlined />} type="primary" loading={saving} onClick={handleSave}>保存</Button>
           </Space>
         </div>
         {/* 飞书搜索 */}

@@ -18,6 +18,8 @@ const InterviewResultPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isEditingResult, setIsEditingResult] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [confirmingResult, setConfirmingResult] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -66,6 +68,7 @@ const InterviewResultPage: React.FC = () => {
   };
 
   const handleConfirmResult = async (result: string) => {
+      setConfirmingResult(true);
       try {
           await request.post(`/interviews/${id}/confirm`, { result });
           message.success('已更新面试结果');
@@ -73,6 +76,8 @@ const InterviewResultPage: React.FC = () => {
           fetchInterview(id!);
       } catch (error) {
           message.error('操作失败');
+      } finally {
+          setConfirmingResult(false);
       }
   };
 
@@ -81,8 +86,9 @@ const InterviewResultPage: React.FC = () => {
     if (typeof format !== 'string') format = 'markdown';
     
     if (format === 'pdf') {
+        setExporting(true);
         const element = document.getElementById('interview-result-content');
-        if (!element) return;
+        if (!element) { setExporting(false); return; }
         
         const opt = {
             margin:       [15, 15, 15, 15],
@@ -99,11 +105,17 @@ const InterviewResultPage: React.FC = () => {
         
         html2pdf().from(element).set(opt).save().then(() => {
              if (extraButtons) extraButtons.style.display = 'block';
+             setExporting(false);
              message.success('导出 PDF 成功');
+        }).catch(() => {
+             if (extraButtons) extraButtons.style.display = 'block';
+             setExporting(false);
+             message.error('导出 PDF 失败');
         });
         return;
     }
     
+    setExporting(true);
     try {
       const response = await request.get(`/interviews/${id}/export`, {
         params: { format },
@@ -125,6 +137,8 @@ const InterviewResultPage: React.FC = () => {
       message.success('导出成功');
     } catch (error) {
       message.error('导出失败');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -197,16 +211,16 @@ const InterviewResultPage: React.FC = () => {
              请根据 AI 的评估意见和您的判断，确认最终的面试录用结果。
           </Paragraph>
           <Space size="large">
-              <Button type="primary" size="large" onClick={() => handleConfirmResult('hired')} style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}>
+              <Button type="primary" size="large" disabled={confirmingResult} onClick={() => handleConfirmResult('hired')} style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}>
                   录用
               </Button>
-              <Button type="primary" size="large" onClick={() => handleConfirmResult('next_round')} style={{ backgroundColor: '#1890ff', borderColor: '#1890ff' }}>
+              <Button type="primary" size="large" disabled={confirmingResult} onClick={() => handleConfirmResult('next_round')} style={{ backgroundColor: '#1890ff', borderColor: '#1890ff' }}>
                   进入下一轮
               </Button>
-              <Button size="large" onClick={() => handleConfirmResult('waitlist')}>
+              <Button size="large" disabled={confirmingResult} onClick={() => handleConfirmResult('waitlist')}>
                   待定
               </Button>
-              <Button type="primary" size="large" danger onClick={() => handleConfirmResult('rejected')}>
+              <Button type="primary" size="large" danger disabled={confirmingResult} onClick={() => handleConfirmResult('rejected')}>
                   淘汰
               </Button>
           </Space>
@@ -219,16 +233,16 @@ const InterviewResultPage: React.FC = () => {
              重新设置面试录用结果：
           </Paragraph>
           <Space>
-              <Button type={interview.result === 'hired' ? 'primary' : 'default'} onClick={() => handleConfirmResult('hired')} style={interview.result === 'hired' ? { backgroundColor: '#52c41a', borderColor: '#52c41a' } : {}}>
+              <Button type={interview.result === 'hired' ? 'primary' : 'default'} disabled={confirmingResult} onClick={() => handleConfirmResult('hired')} style={interview.result === 'hired' ? { backgroundColor: '#52c41a', borderColor: '#52c41a' } : {}}>
                   录用
               </Button>
-              <Button type={interview.result === 'next_round' ? 'primary' : 'default'} onClick={() => handleConfirmResult('next_round')} style={interview.result === 'next_round' ? { backgroundColor: '#1890ff', borderColor: '#1890ff' } : {}}>
+              <Button type={interview.result === 'next_round' ? 'primary' : 'default'} disabled={confirmingResult} onClick={() => handleConfirmResult('next_round')} style={interview.result === 'next_round' ? { backgroundColor: '#1890ff', borderColor: '#1890ff' } : {}}>
                   进入下一轮
               </Button>
-              <Button type={interview.result === 'waitlist' ? 'primary' : 'default'} onClick={() => handleConfirmResult('waitlist')}>
+              <Button type={interview.result === 'waitlist' ? 'primary' : 'default'} disabled={confirmingResult} onClick={() => handleConfirmResult('waitlist')}>
                   待定
               </Button>
-              <Button type={interview.result === 'rejected' ? 'primary' : 'default'} danger={interview.result === 'rejected'} onClick={() => handleConfirmResult('rejected')}>
+              <Button type={interview.result === 'rejected' ? 'primary' : 'default'} danger={interview.result === 'rejected'} disabled={confirmingResult} onClick={() => handleConfirmResult('rejected')}>
                   淘汰
               </Button>
               <Button type="text" onClick={() => setIsEditingResult(false)}>取消</Button>
@@ -252,8 +266,8 @@ const InterviewResultPage: React.FC = () => {
                         <Button type="primary" key="console" onClick={() => navigate('/interviews')} style={{ marginRight: 8 }}>
                         返回列表
                         </Button>
-                        <Dropdown key="export" menu={{ items: exportItems }}>
-                        <Button icon={<DownloadOutlined />} style={{ marginRight: 8 }}>
+                        <Dropdown key="export" menu={{ items: exportItems }} disabled={exporting}>
+                        <Button icon={<DownloadOutlined />} style={{ marginRight: 8 }} loading={exporting}>
                             导出结果 <DownOutlined />
                         </Button>
                         </Dropdown>
@@ -276,8 +290,8 @@ const InterviewResultPage: React.FC = () => {
                     <Button type="primary" key="console" onClick={() => navigate('/interviews')} style={{ marginRight: 8 }}>
                     返回列表
                     </Button>
-                    <Dropdown key="export" menu={{ items: exportItems }}>
-                    <Button icon={<DownloadOutlined />} style={{ marginRight: 8 }}>
+                    <Dropdown key="export" menu={{ items: exportItems }} disabled={exporting}>
+                    <Button icon={<DownloadOutlined />} style={{ marginRight: 8 }} loading={exporting}>
                         导出结果 <DownOutlined />
                     </Button>
                     </Dropdown>

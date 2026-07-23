@@ -124,6 +124,8 @@ const WorkflowEditor: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [workflow, setWorkflow] = useState<any>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -265,6 +267,7 @@ const WorkflowEditor: React.FC = () => {
   };
 
   const handleSaveSettings = async () => {
+    setSettingsSaving(true);
     try {
       const values = await settingsForm.validateFields();
       const graph = buildGraph();
@@ -277,19 +280,24 @@ const WorkflowEditor: React.FC = () => {
       fetchWorkflow();
     } catch (e: any) {
       if (!e?.errorFields) {
-        message.error('保存失败');
+        message.error(e?.response?.data?.detail || '保存失败');
       }
+    } finally {
+      setSettingsSaving(false);
     }
   };
 
   const handlePublish = async () => {
+    setPublishing(true);
     try {
       await handleSave();
       await request.post(`/workflows/${id}/publish`);
       message.success('发布成功');
       fetchWorkflow();
-    } catch (e) {
-      message.error('发布失败');
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '发布失败');
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -764,7 +772,7 @@ const WorkflowEditor: React.FC = () => {
               保存
             </Button>
             {workflow?.status !== 'published' && (
-              <Button type="primary" onClick={handlePublish}>
+              <Button type="primary" onClick={handlePublish} loading={publishing}>
                 发布
               </Button>
             )}
@@ -850,7 +858,7 @@ const WorkflowEditor: React.FC = () => {
         open={settingsDrawerVisible}
         onClose={() => setSettingsDrawerVisible(false)}
         extra={
-          <Button type="primary" onClick={handleSaveSettings}>
+          <Button type="primary" onClick={handleSaveSettings} loading={settingsSaving}>
             保存设置
           </Button>
         }

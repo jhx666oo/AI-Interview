@@ -89,6 +89,7 @@ const PositionsList: React.FC = () => {
   const [dimPositionId, setDimPositionId] = useState<string | null>(null);
   const [dimPositionName, setDimPositionName] = useState('');
   const [dimLoading, setDimLoading] = useState(false);
+  const [dimSaving, setDimSaving] = useState(false);
   const [dimForm] = Form.useForm();
   const [dimensionsMap, setDimensionsMap] = useState<Record<string, any>>({}); // position_name → record
   const [allDimNames, setAllDimNames] = useState<string[]>([]);
@@ -97,6 +98,7 @@ const PositionsList: React.FC = () => {
   const [searchStatus, setSearchStatus] = useState<string | undefined>(undefined);
   const [syncLoading, setSyncLoading] = useState(false);
   const [deduping, setDeduping] = useState(false);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
   const [tablePage, setTablePage] = useState(1);
   const pageSize = 10;
   const { selectedOwner } = useOwner();
@@ -136,13 +138,18 @@ const PositionsList: React.FC = () => {
       await request.post('/positions/dedup');
       // 2. 逐个删除重复项
       let deleted = 0;
+      const failedIds: string[] = [];
       for (const id of toDelete) {
         try {
           await request.delete(`/positions/${id}`);
           deleted++;
-        } catch { /* 跳过删除失败的 */ }
+        } catch { failedIds.push(id); }
       }
-      message.success(`去重完成：删除了 ${deleted} 条重复记录`);
+      if (failedIds.length > 0) {
+        message.warning(`去重完成：删除了 ${deleted} 条，${failedIds.length} 条失败 (${failedIds.join(', ')})`);
+      } else {
+        message.success(`去重完成：删除了 ${deleted} 条重复记录`);
+      }
       fetchPositions();
     } catch (e: any) {
       if (e?.errorFields) return; // Modal 取消
@@ -321,8 +328,8 @@ const PositionsList: React.FC = () => {
           message.success(`成功删除 ${selectedRowKeys.length} 个岗位`);
           setSelectedRowKeys([]);
           fetchPositions();
-        } catch (error) {
-          message.error('批量删除失败');
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail || '批量删除失败');
         }
       },
     });
@@ -344,20 +351,23 @@ const PositionsList: React.FC = () => {
           message.success(`成功${publish ? '发布' : '下架'} ${selectedRowKeys.length} 个岗位`);
           setSelectedRowKeys([]);
           fetchPositions();
-        } catch (error) {
-          message.error('操作失败');
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail || '操作失败');
         }
       },
     });
   };
 
   const handlePublish = async (id: string, publish: boolean) => {
+    setPublishingId(id);
     try {
       await request.put(`/positions/${id}`, { status: publish ? 'published' : 'closed' });
       message.success(publish ? '岗位已发布' : '岗位已下架');
       fetchPositions();
-    } catch (error) {
-      message.error('操作失败');
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '操作失败');
+    } finally {
+      setPublishingId(null);
     }
   };
 
@@ -439,6 +449,7 @@ const PositionsList: React.FC = () => {
 
   /** 保存维度 */
   const handleSaveDimensions = async () => {
+    setDimSaving(true);
     try {
       const values = await dimForm.validateFields();
       const dims = (values.dimensions || []).filter((d: any) => d.name);
@@ -464,6 +475,8 @@ const PositionsList: React.FC = () => {
     } catch (e: any) {
       if (e.errorFields) return;
       message.error(e.response?.data?.detail || '操作失败');
+    } finally {
+      setDimSaving(false);
     }
   };
 
@@ -511,8 +524,9 @@ const PositionsList: React.FC = () => {
       }
       setIsModalVisible(false);
       fetchPositions();
-    } catch (error) {
-      // Validation error
+    } catch (e: any) {
+      if (e?.errorFields) return; // Validation error from form
+      message.error(e?.response?.data?.detail || '保存失败');
     } finally {
       setSubmitting(false);
     }
@@ -722,11 +736,11 @@ const PositionsList: React.FC = () => {
           </Tooltip>
           {record.status === 'published' ? (
              <Tooltip title="下架">
-                <Button type="link" size="small" icon={<StopOutlined />} onClick={() => handlePublish(record.id, false)} />
+                <Button type="link" size="small" icon={<StopOutlined />} loading={publishingId === record.id} onClick={() => handlePublish(record.id, false)} />
              </Tooltip>
           ) : (
              <Tooltip title="发布">
-                <Button type="link" size="small" icon={<GlobalOutlined />} onClick={() => handlePublish(record.id, true)} />
+                <Button type="link" size="small" icon={<GlobalOutlined />} loading={publishingId === record.id} onClick={() => handlePublish(record.id, true)} />
              </Tooltip>
           )}
           <Tooltip title="删除">
@@ -1007,7 +1021,7 @@ const PositionsList: React.FC = () => {
         destroyOnHidden
         okText="保存"
         cancelText="取消"
-        confirmLoading={dimLoading}
+        confirmLoading={dimSaving}
       >
         <Form form={dimForm} layout="vertical" preserve={false}>
           <div style={{ marginBottom: 8 }}>

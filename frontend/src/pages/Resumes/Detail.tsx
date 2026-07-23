@@ -58,6 +58,8 @@ const ResumeDetail: React.FC = () => {
   const [myReview, setMyReview] = useState<any>(null);
   const [submitReviewForm] = Form.useForm();
   const [aiScreening, setAiScreening] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -120,6 +122,7 @@ const ResumeDetail: React.FC = () => {
   };
 
   const handleUpdate = async () => {
+      setUpdating(true);
       try {
           const values = await form.validateFields();
           await request.put(`/resumes/${id}`, {
@@ -131,7 +134,9 @@ const ResumeDetail: React.FC = () => {
           setIsEditing(false);
           fetchResume(id!);
       } catch (error) {
-          message.error('更新失败');
+          message.error((error as any)?.response?.data?.detail || '更新失败');
+      } finally {
+          setUpdating(false);
       }
   };
 
@@ -164,7 +169,7 @@ const ResumeDetail: React.FC = () => {
       message.success('AI初筛完成');
       fetchResume(id!);
     } catch (error) {
-      message.error('AI初筛失败，请检查AI服务配置');
+      message.error((error as any)?.response?.data?.detail || 'AI初筛失败，请检查AI服务配置');
     } finally {
       setAiScreening(false);
     }
@@ -182,7 +187,7 @@ const ResumeDetail: React.FC = () => {
           message.success('已开始重新解析');
           fetchResume(id!);
         } catch (error) {
-          message.error('重新解析失败');
+          message.error((error as any)?.response?.data?.detail || '重新解析失败');
         }
       },
     });
@@ -190,6 +195,7 @@ const ResumeDetail: React.FC = () => {
 
   // 确认淘汰低分简历
   const handleConfirmRejection = async () => {
+    setSubmitting(true);
     try {
       const values = await rejectForm.validateFields();
       const formData = new FormData();
@@ -207,12 +213,15 @@ const ResumeDetail: React.FC = () => {
       rejectForm.resetFields();
       fetchResume(id!);
     } catch (error) {
-      message.error('操作失败');
+      message.error((error as any)?.response?.data?.detail || '操作失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   // 覆盖AI淘汰建议
   const handleOverrideRejection = async () => {
+    setSubmitting(true);
     Modal.confirm({
       title: '恢复简历',
       content: '确定要将此简历恢复到评审流程吗？',
@@ -228,7 +237,9 @@ const ResumeDetail: React.FC = () => {
           message.success('已恢复到评审流程');
           fetchResume(id!);
         } catch (error) {
-          message.error('操作失败');
+          message.error((error as any)?.response?.data?.detail || '操作失败');
+        } finally {
+          setSubmitting(false);
         }
       }
     });
@@ -236,6 +247,7 @@ const ResumeDetail: React.FC = () => {
 
   // 指派评审人
   const handleAssignReviewer = async () => {
+    setSubmitting(true);
     try {
       const values = await deptReviewForm.validateFields();
       const reviewerIds = values.reviewer_ids; // 多选
@@ -255,17 +267,21 @@ const ResumeDetail: React.FC = () => {
       fetchResume(id!);
       fetchDeptReviewSummary(id!);
     } catch (error) {
-      message.error('指派失败');
+      message.error((error as any)?.response?.data?.detail || '指派失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   // HR决策
   const handleHRDecision = async () => {
+    setSubmitting(true);
     try {
       const values = await hrDecisionForm.validateFields();
 
       if (values.decision === 'rejected' && !values.reject_reason_category) {
         message.error('淘汰时必须选择淘汰原因');
+        setSubmitting(false);
         return;
       }
 
@@ -287,12 +303,15 @@ const ResumeDetail: React.FC = () => {
       hrDecisionForm.resetFields();
       fetchResume(id!);
     } catch (error) {
-      message.error('操作失败');
+      message.error((error as any)?.response?.data?.detail || '操作失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   // 提交部门评审
   const handleSubmitReview = async () => {
+    setSubmitting(true);
     try {
       const values = await submitReviewForm.validateFields();
       const formData = new FormData();
@@ -315,7 +334,9 @@ const ResumeDetail: React.FC = () => {
       fetchResume(id!);
       fetchDeptReviewSummary(id!);
     } catch (error) {
-      message.error('提交失败');
+      message.error((error as any)?.response?.data?.detail || '提交失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -336,7 +357,7 @@ const ResumeDetail: React.FC = () => {
           message.success('转岗成功，正在重新解析简历');
           fetchResume(id!);
         } catch (error) {
-          message.error('转岗失败');
+          message.error((error as any)?.response?.data?.detail || '转岗失败');
         }
       }
     });
@@ -378,7 +399,7 @@ const ResumeDetail: React.FC = () => {
       );
     } else {
       buttons.push(
-        <Button key="save" icon={<SaveOutlined />} type="primary" onClick={handleUpdate}>保存</Button>,
+        <Button key="save" icon={<SaveOutlined />} type="primary" loading={updating} onClick={handleUpdate}>保存</Button>,
         <Button key="cancel" onClick={() => setIsEditing(false)}>取消</Button>
       );
       return buttons;
@@ -541,7 +562,7 @@ const ResumeDetail: React.FC = () => {
               {isEditing ? (
                   <Form form={form} layout="inline">
                       <Form.Item name="candidate_name" style={{ marginBottom: 0 }}>
-                          <Input placeholder="姓名" style={{ fontSize: 24, fontWeight: 600, width: 150 }} />
+                          <Input placeholder="姓名" disabled={updating} style={{ fontSize: 24, fontWeight: 600, width: 150 }} />
                       </Form.Item>
                   </Form>
               ) : (
@@ -552,10 +573,10 @@ const ResumeDetail: React.FC = () => {
                 {isEditing ? (
                     <Form form={form} layout="inline" style={{ marginTop: 8 }}>
                          <Form.Item name="email" style={{ marginBottom: 0 }}>
-                             <Input placeholder="邮箱" style={{ width: 200 }} />
+                             <Input placeholder="邮箱" disabled={updating} style={{ width: 200 }} />
                          </Form.Item>
                          <Form.Item name="contact" style={{ marginBottom: 0 }}>
-                             <Input placeholder="电话" style={{ width: 150 }} />
+                             <Input placeholder="电话" disabled={updating} style={{ width: 150 }} />
                          </Form.Item>
                     </Form>
                 ) : (
@@ -797,6 +818,7 @@ const ResumeDetail: React.FC = () => {
         okText="确认淘汰"
         cancelText="取消"
         okType="danger"
+        confirmLoading={submitting}
       >
         <Form form={rejectForm} layout="vertical" style={{ marginTop: 24 }}>
           <RejectReasonSelector />
@@ -811,6 +833,7 @@ const ResumeDetail: React.FC = () => {
         onCancel={() => { setIsAssignReviewerModalVisible(false); deptReviewForm.resetFields(); }}
         okText="确认指派"
         cancelText="取消"
+        confirmLoading={submitting}
       >
         <Form form={deptReviewForm} layout="vertical" style={{ marginTop: 24 }}>
           <Form.Item
@@ -843,6 +866,7 @@ const ResumeDetail: React.FC = () => {
         okText="提交决策"
         cancelText="取消"
         width={500}
+        confirmLoading={submitting}
       >
         <Form form={hrDecisionForm} layout="vertical" style={{ marginTop: 24 }}>
           <Form.Item
@@ -886,6 +910,7 @@ const ResumeDetail: React.FC = () => {
         okText="提交评审"
         cancelText="取消"
         width={500}
+        confirmLoading={submitting}
       >
         <Form form={submitReviewForm} layout="vertical" style={{ marginTop: 24 }}>
           <Row gutter={16}>

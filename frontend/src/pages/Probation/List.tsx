@@ -38,6 +38,10 @@ const ProbationList: React.FC = () => {
   const [aiAssessVisible, setAiAssessVisible] = useState(false);
   const [aiAssessResult, setAiAssessResult] = useState('');
   const [tablePage, setTablePage] = useState(1);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const pageSize = 10;
 
   const handleAIAssessment = async (id: string) => {
@@ -89,6 +93,7 @@ const ProbationList: React.FC = () => {
         ...values,
         probation_start: values.probation_start ? values.probation_start.toISOString() : null,
       };
+      setSubmitting(true);
       if (editing) {
         await request.put(`/probation/${editing.id}`, payload);
         message.success('更新成功');
@@ -99,12 +104,15 @@ const ProbationList: React.FC = () => {
       setModalVisible(false); fetchData();
     } catch (e: any) {
       if (e.response) message.error(e.response.data?.detail || '操作失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleConfirm = async (id: string) => {
-    try { await request.post(`/probation/${id}/confirm`); message.success('已确认转正'); fetchData(); }
+    try { setConfirmingId(id); await request.post(`/probation/${id}/confirm`); message.success('已确认转正'); fetchData(); }
     catch (e: any) { message.error(e.response?.data?.detail || '操作失败'); }
+    finally { setConfirmingId(null); }
   };
 
   const handleAddReview = (record: any) => {
@@ -114,17 +122,21 @@ const ProbationList: React.FC = () => {
   const handleReviewSubmit = async () => {
     try {
       const values = await reviewForm.validateFields();
+      setReviewSubmitting(true);
       await request.post(`/probation/${reviewTarget.id}/review`, values);
       message.success('月度评估已添加');
       setReviewVisible(false); fetchData();
     } catch (e: any) {
       if (e.response) message.error(e.response.data?.detail || '操作失败');
+    } finally {
+      setReviewSubmitting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    try { await request.delete(`/probation/${id}`); message.success('已删除'); fetchData(); }
+    try { setDeletingId(id); await request.delete(`/probation/${id}`); message.success('已删除'); fetchData(); }
     catch (e: any) { message.error(e.response?.data?.detail || '删除失败'); }
+    finally { setDeletingId(null); }
   };
 
   const columns = [
@@ -150,12 +162,12 @@ const ProbationList: React.FC = () => {
           {record.result === 'pending' && (<>
             <Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handleAddReview(record)}>评估</Button>
             <Popconfirm title="确认转正？" onConfirm={() => handleConfirm(record.id)}>
-              <Button type="primary" size="small" icon={<CheckCircleOutlined />}>转正</Button>
+              <Button type="primary" size="small" icon={<CheckCircleOutlined />} loading={confirmingId === record.id}>转正</Button>
             </Popconfirm>
           </>)}
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id}>删除</Button>
           </Popconfirm>
         </Space>
       )
@@ -180,7 +192,7 @@ const ProbationList: React.FC = () => {
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
-        onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={560} destroyOnHidden>
+        onCancel={() => setModalVisible(false)} onOk={handleSubmit} confirmLoading={submitting} width={560} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="employee_name" label="员工姓名" rules={[{ required: true, message: '请输入姓名' }]}>
             <Input />
@@ -204,7 +216,7 @@ const ProbationList: React.FC = () => {
         </Form>
       </Modal>
       <Modal title="添加月度评估" open={reviewVisible} onCancel={() => setReviewVisible(false)}
-        onOk={handleReviewSubmit} width={520} destroyOnHidden>
+        onOk={handleReviewSubmit} confirmLoading={reviewSubmitting} width={520} destroyOnHidden>
         <Form form={reviewForm} layout="vertical">
           <Form.Item name="month" label="评估月份" rules={[{ required: true, message: '请输入月份' }]}>
             <Input placeholder="如：第1个月" />

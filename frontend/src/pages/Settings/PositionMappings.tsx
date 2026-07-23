@@ -25,6 +25,8 @@ const PositionMappings: React.FC = () => {
   const [data, setData] = useState<PositionGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<PositionGroup | null>(null);
   const [tablePage, setTablePage] = useState(1);
@@ -94,11 +96,13 @@ const PositionMappings: React.FC = () => {
   };
 
   const handleSubmit = async () => {
+    setSubmitting(true);
     try {
       const values = await form.validateFields();
       const { mapped_name, raw_names, responsible_person, interviewers } = values;
       if (!raw_names || raw_names.length === 0) {
         message.warning('请至少输入一个 BOSS 岗位名称');
+        setSubmitting(false);
         return;
       }
       // 解析面试官字符串为数组
@@ -119,18 +123,23 @@ const PositionMappings: React.FC = () => {
     } catch (e: any) {
       if (e.errorFields) return;
       message.error(e.response?.data?.detail || '操作失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleDelete = async (record: PositionGroup) => {
+    setDeletingId(record.key);
     try {
       for (const id of record._ids) {
         await request.delete(`/position-mappings/${id}`);
       }
       message.success('删除成功');
       fetchData();
-    } catch {
-      message.error('删除失败');
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '删除失败');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -208,7 +217,7 @@ const PositionMappings: React.FC = () => {
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
           <Popconfirm title={`删除「${record.mapped_name}」?`} onConfirm={() => handleDelete(record)}>
-            <Button size="small" danger icon={<DeleteOutlined />} />
+            <Button size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.key} />
           </Popconfirm>
         </Space>
       ),
@@ -255,6 +264,7 @@ const PositionMappings: React.FC = () => {
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => setModalVisible(false)}
+        confirmLoading={submitting}
         width={560}
       >
         <Form form={form} layout="vertical">

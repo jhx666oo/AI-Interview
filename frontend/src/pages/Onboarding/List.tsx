@@ -31,6 +31,9 @@ const OnboardingList: React.FC = () => {
   const [current, setCurrent] = useState<any>(null);
   const [resumes, setResumes] = useState<any[]>([]);
   const [tablePage, setTablePage] = useState(1);
+  const [probationLoading, setProbationLoading] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const pageSize = 10;
 
   const fetchData = useCallback(async () => {
@@ -71,6 +74,7 @@ const OnboardingList: React.FC = () => {
         onboard_date: values.onboard_date ? values.onboard_date.toISOString() : null,
         orientation_date: values.orientation_date ? values.orientation_date.toISOString() : null,
       };
+      setSubmitting(true);
       if (editing) {
         await request.put(`/onboarding/${editing.id}`, payload);
         message.success('更新成功');
@@ -81,21 +85,27 @@ const OnboardingList: React.FC = () => {
       setModalVisible(false); fetchData();
     } catch (e: any) {
       if (e.response) message.error(e.response.data?.detail || '操作失败');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    try { await request.delete(`/onboarding/${id}`); message.success('已删除'); fetchData(); }
+    try { setDeletingId(id); await request.delete(`/onboarding/${id}`); message.success('已删除'); fetchData(); }
     catch (e: any) { message.error(e.response?.data?.detail || '删除失败'); }
+    finally { setDeletingId(null); }
   };
 
-  const handleToProbation = async () => {
+  const handleToProbation = async (id: string) => {
     try {
+      setProbationLoading(id);
       const res = await request.post('/probation/sync-from-onboarding');
       message.success(res.message || '已转入试用期');
       fetchData();
     } catch (e: any) {
       message.error(e.response?.data?.detail || '操作失败');
+    } finally {
+      setProbationLoading(null);
     }
   };
 
@@ -122,10 +132,12 @@ const OnboardingList: React.FC = () => {
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
           {record.status === 'completed' && (
-            <Button type="primary" size="small" icon={<CheckCircleOutlined />} onClick={handleToProbation}>转入试用期</Button>
+            <Button type="primary" size="small" icon={<CheckCircleOutlined />}
+              loading={probationLoading === record.id} disabled={!!probationLoading}
+              onClick={() => handleToProbation(record.id)}>转入试用期</Button>
           )}
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id}>删除</Button>
           </Popconfirm>
         </Space>
       )
@@ -150,7 +162,7 @@ const OnboardingList: React.FC = () => {
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
-        onCancel={() => setModalVisible(false)} onOk={handleSubmit} width={640} destroyOnHidden>
+        onCancel={() => setModalVisible(false)} onOk={handleSubmit} confirmLoading={submitting} width={640} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="resume_id" label="关联简历" rules={[{ required: true, message: '请选择简历' }]}>
             <Select showSearch placeholder="选择候选人简历" optionFilterProp="children">

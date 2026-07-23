@@ -64,6 +64,11 @@ const InterviewScore: React.FC = () => {
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
+  // Add Question / Save Question / Delete Question loading states
+  const [addQuestionLoading, setAddQuestionLoading] = useState(false);
+  const [saveQuestionLoading, setSaveQuestionLoading] = useState(false);
+  const [deleteQuestionLoading, setDeleteQuestionLoading] = useState(false);
+
   // 判断是否可以取消面试（仅 HR/Admin 可见）
   const canCancelInterview = user?.role === 'admin' || user?.role === 'hr';
 
@@ -260,6 +265,7 @@ const InterviewScore: React.FC = () => {
   };
 
   const handleAddModalOk = async () => {
+    setAddQuestionLoading(true);
     try {
       const values = await addForm.validateFields();
       const newQuestion = {
@@ -282,8 +288,11 @@ const InterviewScore: React.FC = () => {
         // Switch to the new question
         setCurrentQuestionIndex(updatedQuestions.length - 1);
       }, 100);
-    } catch (error) {
-      message.error('添加失败');
+    } catch (error: any) {
+      if (error?.errorFields) return;
+      message.error(error?.response?.data?.detail || '添加失败');
+    } finally {
+      setAddQuestionLoading(false);
     }
   };
 
@@ -297,6 +306,7 @@ const InterviewScore: React.FC = () => {
   };
 
   const handleSaveQuestion = async () => {
+    setSaveQuestionLoading(true);
     try {
       const values = await editForm.validateFields();
       const newQuestions = [...questions];
@@ -312,8 +322,11 @@ const InterviewScore: React.FC = () => {
       setQuestions(newQuestions);
       setEditingIndex(-1);
       message.success('保存成功');
-    } catch (error) {
-      message.error('保存失败');
+    } catch (error: any) {
+      if (error?.errorFields) return;
+      message.error(error?.response?.data?.detail || '保存失败');
+    } finally {
+      setSaveQuestionLoading(false);
     }
   };
 
@@ -322,6 +335,7 @@ const InterviewScore: React.FC = () => {
   };
 
   const handleDelete = async (index: number) => {
+    setDeleteQuestionLoading(true);
     try {
       const newQuestions = [...questions];
       newQuestions.splice(index, 1);
@@ -368,8 +382,10 @@ const InterviewScore: React.FC = () => {
       if (currentQuestionIndex >= newQuestions.length && newQuestions.length > 0) {
         setCurrentQuestionIndex(newQuestions.length - 1);
       }
-    } catch (error) {
-      message.error('删除失败');
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '删除失败');
+    } finally {
+      setDeleteQuestionLoading(false);
     }
   };
 
@@ -1202,7 +1218,7 @@ const InterviewScore: React.FC = () => {
                     <Space>
                       <Button type="text" icon={<EditOutlined />} onClick={() => handleEdit(currentQuestionIndex)} />
                       <Popconfirm title="确定删除此题吗？" onConfirm={() => handleDelete(currentQuestionIndex)}>
-                        <Button type="text" danger icon={<DeleteOutlined />} />
+                        <Button type="text" danger icon={<DeleteOutlined />} loading={deleteQuestionLoading} />
                       </Popconfirm>
                     </Space>
                   )}
@@ -1215,7 +1231,7 @@ const InterviewScore: React.FC = () => {
                     {questionFormContent}
                     <Space style={{ justifyContent: 'flex-end', width: '100%', marginTop: 16, marginBottom: 16 }}>
                       <Button onClick={handleCancelEdit}>取消</Button>
-                      <Button type="primary" onClick={handleSaveQuestion}>保存</Button>
+                      <Button type="primary" onClick={handleSaveQuestion} loading={saveQuestionLoading}>保存</Button>
                     </Space>
                   </Form>
                 </div>
@@ -1335,6 +1351,7 @@ const InterviewScore: React.FC = () => {
         open={isAddModalVisible}
         onOk={handleAddModalOk}
         onCancel={() => setIsAddModalVisible(false)}
+        confirmLoading={addQuestionLoading}
         width={600}
         okText="添加"
         cancelText="取消"
