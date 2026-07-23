@@ -76,8 +76,27 @@ const FEISHU_CONFIG = {
 const BITABLE_CACHE_TTL = 30_000;
 const bitableCache = new Map<string, { data: any[]; expiry: number }>();
 
+// CORS 白名单：仅允许已知前端域名
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',   // Vite dev server
+  'http://localhost:4173',   // Vite preview
+  'http://localhost:8000',   // wrangler pages dev
+  'https://ai-interview-88r.pages.dev', // 生产
+];
+
+function getAllowedOrigin(origin: string | undefined | null): string | null {
+  if (origin && ALLOWED_ORIGINS.includes(origin)) return origin;
+  return null;
+}
+
 const app = new Hono<{ Bindings: Env }>();
-app.use('*', cors());
+app.use('*', cors({
+  origin: (origin) => getAllowedOrigin(origin) ?? '',
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  maxAge: 86400,
+}));
 
 // ==================== Crypto Utilities ====================
 
@@ -143,7 +162,17 @@ async function hashPassword(secretKey: string, password: string): Promise<string
 
 async function verifyPassword(secretKey: string, password: string, hash: string): Promise<boolean> {
   const computed = await hashPassword(secretKey, password);
-  return computed === hash;
+  // timing-safe 比较：将两个 base64 字符串转为等长 Uint8Array 后常量时间比较，防止时序侧信道
+  try {
+    const a = new TextEncoder().encode(computed);
+    const b = new TextEncoder().encode(hash);
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+    return diff === 0;
+  } catch {
+    return false;
+  }
 }
 
 
@@ -374,8 +403,8 @@ const authMiddleware = async (c: any, next: any) => {
 };
 
 function serializeUser(user: any) {
-  const { hashed_password, ...rest } = user;
-  return { ...rest, has_password: !!hashed_password, plain_password: rest.plain_password || (hashed_password ? '123456' : '') };
+  const { hashed_password, plain_password, ...rest } = user;
+  return { ...rest, has_password: !!hashed_password };
 }
 
 function requireRole(roles: string[]) {
@@ -592,11 +621,11 @@ app.post('/api/auth/users', authMiddleware, requireRole(['admin']), async (c) =>
   const password = body.password || '123456';
   const hash = await hashPassword(c.env.SECRET_KEY, password);
   await c.env.DB.prepare(
-    'INSERT INTO users (id, email, hashed_password, plain_password, full_name, role, is_active, feishu_open_id, feishu_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, \'\', \'\', ?, ?)'
-  ).bind(id, body.email, hash, password, body.full_name || '', (body.role || 'hr').toLowerCase(), now(), now()).run();
+    'INSERT INTO users (id, email, hashed_password, full_name, role, is_active, feishu_open_id, feishu_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, \'\', \'\', ?, ?)'
+  ).bind(id, body.email, hash, body.full_name || '', (body.role || 'hr').toLowerCase(), now(), now()).run();
   const user = await getUser(c.env.DB, body.email);
   const serialized = serializeUser(user);
-  return c.json({ ...serialized, _plain_password: password }); // 返回明文密码，只创建时有效
+  return c.json({ ...serialized, _plain_password: password }); // 仅创建时一次性返回明文，不持久化
 });
 
 app.put('/api/auth/users/:id', authMiddleware, requireRole(['admin']), async (c) => {
@@ -637,9 +666,9 @@ app.put('/api/auth/users/:id/password', authMiddleware, requireRole(['admin']), 
   const body = await c.req.json();
   const newPassword = body.password || '123456';
   const hash = await hashPassword(c.env.SECRET_KEY, newPassword);
-  await c.env.DB.prepare('UPDATE users SET hashed_password = ?, plain_password = ?, updated_at = ? WHERE id = ?')
-    .bind(hash, newPassword, now(), id).run();
-  return c.json({ _plain_password: newPassword });
+  await c.env.DB.prepare('UPDATE users SET hashed_password = ?, updated_at = ? WHERE id = ?')
+    .bind(hash, now(), id).run();
+  return c.json({ _plain_password: newPassword }); // 仅重置时一次性返回，不持久化
 });
 
 app.delete('/api/auth/users/:id', authMiddleware, requireRole(['admin']), async (c) => {
@@ -2987,7 +3016,7 @@ app.get('/api/resumes/:id/file', async (c) => {
           return new Response(pdfBytes, { status: 200, headers: {
             'Content-Type': 'application/pdf',
             'Content-Disposition': `${disposition}; filename="${fileRow.file_name || attachmentFileName}"`,
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
           }});
         }
       } catch {}
@@ -3014,7 +3043,7 @@ app.get('/api/resumes/:id/file', async (c) => {
           return new Response(dlResp.body, { status: 200, headers: {
             'Content-Type': ct,
             'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
           }});
         }
       } catch (e) { console.log(`[ResumeFile] 下载失败: ${e}`); }
@@ -3047,7 +3076,7 @@ app.get('/api/resumes/:id/file', async (c) => {
       status: 200,
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
       },
     });
   } catch (e: any) {
@@ -5309,7 +5338,7 @@ async function downloadFeishuAttachment(env: Env, fileToken: string, feishuDownl
           const headers = new Headers({
             'Content-Type': ct || 'application/pdf',
             'Content-Disposition': 'inline; filename="resume.pdf"',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
             'Cache-Control': 'public, max-age=3600',
           });
           return new Response(tmpResp.body, { status: 200, headers });
@@ -5332,7 +5361,7 @@ async function downloadFeishuAttachment(env: Env, fileToken: string, feishuDownl
         const headers = new Headers({
           'Content-Type': ct,
           'Content-Disposition': 'inline; filename="resume.pdf"',
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
           'Cache-Control': 'public, max-age=3600',
         });
         return new Response(postResp.body, { status: 200, headers });
@@ -5361,7 +5390,7 @@ async function downloadFeishuAttachment(env: Env, fileToken: string, feishuDownl
           const headers = new Headers({
             'Content-Type': fct,
             'Content-Disposition': 'inline; filename="resume.pdf"',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
             'Cache-Control': 'public, max-age=3600',
           });
           return new Response(fileResp.body, { status: 200, headers });
@@ -5387,7 +5416,7 @@ async function downloadFeishuAttachment(env: Env, fileToken: string, feishuDownl
           const headers = new Headers({
             'Content-Type': ct || 'application/pdf',
             'Content-Disposition': 'inline; filename="resume.pdf"',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
             'Cache-Control': 'public, max-age=3600',
           });
           return new Response(internalResp.body, { status: 200, headers });
@@ -5421,7 +5450,7 @@ async function downloadFeishuAttachment(env: Env, fileToken: string, feishuDownl
             const headers = new Headers({
               'Content-Type': ct || 'application/pdf',
               'Content-Disposition': 'inline; filename="resume.pdf"',
-              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
               'Cache-Control': 'public, max-age=3600',
             });
             return new Response(altResp.body, { status: 200, headers });
@@ -5448,7 +5477,7 @@ async function downloadFeishuAttachment(env: Env, fileToken: string, feishuDownl
           const headers = new Headers({
             'Content-Type': ct || 'application/pdf',
             'Content-Disposition': 'inline; filename="resume.pdf"',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
             'Cache-Control': 'public, max-age=3600',
           });
           return new Response(rawResp.body, { status: 200, headers });
@@ -6872,20 +6901,6 @@ app.post('/api/resumes/fix-missing-fields', authMiddleware, requireRole(['admin'
   } catch (e: any) {
     return c.json({ detail: '处理失败: ' + e.message }, 500);
   }
-});
-
-// 迁移：给已有用户补上 plain_password 字段
-app.post('/api/auth/migrate-plain-passwords', authMiddleware, requireRole(['admin']), async (c) => {
-  try {
-    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN plain_password TEXT DEFAULT ''").run();
-  } catch {}
-  const rows = await c.env.DB.prepare("SELECT id, hashed_password FROM users WHERE plain_password IS NULL OR plain_password = ''").all();
-  let fixed = 0;
-  for (const row of rows.results) {
-    await c.env.DB.prepare("UPDATE users SET plain_password = '123456' WHERE id = ?").bind(row.id).run();
-    fixed++;
-  }
-  return c.json({ ok: true, fixed, total: rows.results.length });
 });
 
 // ========== PDF 缓存清理 ==========

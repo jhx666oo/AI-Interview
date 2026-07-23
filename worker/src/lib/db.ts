@@ -148,8 +148,8 @@ export function authMiddlewareFn(secretKey: string): any {
 }
 
 export function serializeUser(user: any) {
-  const { hashed_password, ...rest } = user;
-  return { ...rest, has_password: !!hashed_password, plain_password: rest.plain_password || (hashed_password ? '123456' : '') };
+  const { hashed_password, plain_password, ...rest } = user;
+  return { ...rest, has_password: !!hashed_password };
 }
 
 export function requireRole(roles: string[]) {

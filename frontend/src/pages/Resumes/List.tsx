@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress } from 'antd';
 import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, ThunderboltOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import * as pdfjsLib from 'pdfjs-dist';
+import DOMPurify from 'dompurify';
 import request from '../../utils/request';
 import SimplePagination from '../../components/SimplePagination';
 import { useOwner } from '../../contexts/OwnerContext';
@@ -1564,7 +1565,7 @@ const ResumesList: React.FC = () => {
                 overflow: 'auto',
                 background: '#fff'
               }}
-              dangerouslySetInnerHTML={{ __html: emailForm.getFieldValue('content') || '' }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(emailForm.getFieldValue('content') || '') }}
             />
           </Form.Item>
 

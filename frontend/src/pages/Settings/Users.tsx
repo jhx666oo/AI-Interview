@@ -228,8 +228,8 @@ const UsersList: React.FC = () => {
       width: 200,
       render: (_: any, record: User) => (
         <Space>
-          <Text copyable={{ text: (record as any).plain_password || '' }} style={{ fontFamily: 'monospace' }}>
-            {(record as any).plain_password || (record.has_password ? '******' : '—')}
+          <Text style={{ fontFamily: 'monospace' }}>
+            {(record as any)._plain_password || (record.has_password ? '******' : '—')}
           </Text>
         </Space>
       ),
