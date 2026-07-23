@@ -3917,7 +3917,7 @@ app.post('/api/probation/:id/ai-assessment', authMiddleware, async (c) => {
 // AI generate/refine job description from a requisition
 app.post('/api/requisitions/:id/ai-jd', authMiddleware, async (c) => {
   const id = c.req.param('id');
-  const req = await c.env.DB.prepare('SELECT * FROM job_requisitions WHERE id = ?').bind(id).first() as any;
+  const req = await c.env.DB.prepare('SELECT * FROM job_requisitions WHERE id = ? OR feishu_record_id = ?').bind(id, id).first() as any;
   if (!req) return c.json({ detail: 'Requisition not found' }, 404);
   const systemPrompt = `你是一名资深招聘专家。根据招聘需求信息生成专业的职位描述和任职要求。只用中文回答。返回严格的 JSON: {"description": "详细职责描述", "requirements": "任职要求,多条用换行分隔"}。不要包含 markdown 代码块标记或额外说明。`;
   const userPrompt = `职位名称: ${req.title}\n部门: ${req.department}\n招聘人数: ${req.headcount || 1}\n用工类型: ${req.employment_type || 'full_time'}\n薪资范围: ${req.salary_range || '面议'}\n紧急程度: ${req.urgency || 'medium'}\n现有描述: ${req.description || '无'}\n现有要求: ${req.requirements || '无'}\n\n请生成或完善该职位的描述和任职要求。`;
@@ -3925,9 +3925,9 @@ app.post('/api/requisitions/:id/ai-jd', authMiddleware, async (c) => {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     let parsed: any;
     try { parsed = extractJSON(result); } catch { parsed = { description: result, requirements: '' }; }
-    await c.env.DB.prepare('UPDATE job_requisitions SET description = ?, requirements = ?, updated_at = ? WHERE id = ?')
-      .bind(parsed.description || '', parsed.requirements || '', now(), id).run();
-    const row = await c.env.DB.prepare('SELECT * FROM job_requisitions WHERE id = ?').bind(id).first();
+    await c.env.DB.prepare('UPDATE job_requisitions SET description = ?, requirements = ?, updated_at = ? WHERE id = ? OR feishu_record_id = ?')
+      .bind(parsed.description || '', parsed.requirements || '', now(), id, id).run();
+    const row = await c.env.DB.prepare('SELECT * FROM job_requisitions WHERE id = ? OR feishu_record_id = ?').bind(id, id).first();
     return c.json(transformRow(row));
   } catch (err: any) {
     return c.json({ detail: 'AI generate failed', error: err.message }, 500);
