@@ -116,6 +116,11 @@ const RequisitionsList: React.FC = () => {
 
   const handleEdit = (record: any) => {
     setEditing(record);
+    form.setFieldsValue({
+      ...record,
+      expected_date: record.expected_date ? dayjs(record.expected_date) : null,
+      city: Array.isArray(record.city) ? record.city : (record.city ? [record.city] : []),
+    });
     setModalVisible(true);
   };
 
@@ -323,15 +328,7 @@ const RequisitionsList: React.FC = () => {
       </Card>
 
       <Modal title={editing ? '编辑需求' : '提报人力需求'} open={modalVisible} onCancel={() => setModalVisible(false)}
-        onOk={handleSubmit} width={640} afterOpenChange={(open) => {
-          if (open && editing) {
-            form.setFieldsValue({
-              ...editing,
-              expected_date: editing.expected_date ? dayjs(editing.expected_date) : null,
-              city: Array.isArray(editing.city) ? editing.city : (editing.city ? [editing.city] : []),
-            });
-          }
-        }} destroyOnHidden>
+        onOk={handleSubmit} width={640}>
         <Form form={form} layout="vertical">
           <Row gutter={16}>
             <Col span={12}>
