@@ -22,7 +22,7 @@ interface Env {
 // 飞书配置（内置 fallback，页面部署时不用再设环境变量）
 const FEISHU_CONFIG = {
   appId: 'cli_aad2cb7fab385cb6',
-  appSecret: 'ii2lYil9d5PXViTTjYlzaddB6YKuL25T',
+  appSecret: 'wLS4zlbWqEx5PLhDB5r80dn8KbuLCOlE',
   appToken: 'NVh9bDiNRaF0ZysxjeLc5ID2n9c',
   // 招聘任务表：含招聘岗位、部门、城市、人数、紧急度、JD等具体需求数据
   requisitionTableId: 'tblEiMBFXcvSspQd',
