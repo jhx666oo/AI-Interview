@@ -574,3 +574,82 @@ CREATE TABLE IF NOT EXISTS jd_versions (
   created_by TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- ==================== 索引优化 ====================
+-- interviews 高频查询字段
+CREATE INDEX IF NOT EXISTS idx_interviews_position ON interviews(position_id);
+CREATE INDEX IF NOT EXISTS idx_interviews_interviewer ON interviews(interviewer_id);
+CREATE INDEX IF NOT EXISTS idx_interviews_status ON interviews(status);
+CREATE INDEX IF NOT EXISTS idx_interviews_resume ON interviews(resume_id);
+CREATE INDEX IF NOT EXISTS idx_interviews_created ON interviews(created_at DESC);
+
+-- offers 高频查询字段
+CREATE INDEX IF NOT EXISTS idx_offers_position ON offers(position_id);
+CREATE INDEX IF NOT EXISTS idx_offers_status ON offers(status);
+CREATE INDEX IF NOT EXISTS idx_offers_resume ON offers(resume_id);
+CREATE INDEX IF NOT EXISTS idx_offers_created ON offers(created_at DESC);
+
+-- onboarding_records 高频查询字段
+CREATE INDEX IF NOT EXISTS idx_onboarding_position ON onboarding_records(position_id);
+CREATE INDEX IF NOT EXISTS idx_onboarding_status ON onboarding_records(status);
+CREATE INDEX IF NOT EXISTS idx_onboarding_resume ON onboarding_records(resume_id);
+
+-- probation_records
+CREATE INDEX IF NOT EXISTS idx_probation_status ON probation_records(result);
+CREATE INDEX IF NOT EXISTS idx_probation_onboarding ON probation_records(onboarding_id);
+
+-- resumes 补充索引
+CREATE INDEX IF NOT EXISTS idx_resumes_status ON resumes(status);
+CREATE INDEX IF NOT EXISTS idx_resumes_stage ON resumes(stage);
+CREATE INDEX IF NOT EXISTS idx_resumes_created ON resumes(created_at DESC);
+
+-- positions
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
+CREATE INDEX IF NOT EXISTS idx_positions_department ON positions(department);
+
+-- job_requisitions
+CREATE INDEX IF NOT EXISTS idx_requisitions_status ON job_requisitions(status);
+CREATE INDEX IF NOT EXISTS idx_requisitions_created ON job_requisitions(created_at DESC);
+
+-- department_reviews
+CREATE INDEX IF NOT EXISTS idx_dept_reviews_resume ON department_reviews(resume_id);
+
+-- background_checks
+CREATE INDEX IF NOT EXISTS idx_bg_checks_resume ON background_checks(resume_id);
+CREATE INDEX IF NOT EXISTS idx_bg_checks_status ON background_checks(status);
+
+-- coding_tests
+CREATE INDEX IF NOT EXISTS idx_coding_tests_resume ON coding_tests(resume_id);
+CREATE INDEX IF NOT EXISTS idx_coding_tests_position ON coding_tests(position_id);
+
+-- coding_submissions
+CREATE INDEX IF NOT EXISTS idx_coding_submissions_test ON coding_submissions(coding_test_id);
+
+-- interview_panels
+CREATE INDEX IF NOT EXISTS idx_panels_interview ON interview_panels(interview_id);
+
+-- talent_pool
+CREATE INDEX IF NOT EXISTS idx_talent_status ON talent_pool(status);
+CREATE INDEX IF NOT EXISTS idx_talent_email ON talent_pool(email);
+
+-- recruitment_channels
+CREATE INDEX IF NOT EXISTS idx_channels_position ON recruitment_channels(position_id);
+
+-- position_mappings
+CREATE INDEX IF NOT EXISTS idx_position_mappings_raw ON position_mappings(raw_name);
+
+-- capability_dimensions
+CREATE INDEX IF NOT EXISTS idx_capability_dims_position ON capability_dimensions(position_name);
+
+-- recruitment_tasks
+CREATE INDEX IF NOT EXISTS idx_recruit_tasks_status ON recruitment_tasks(status);
+
+-- jd_versions
+CREATE INDEX IF NOT EXISTS idx_jd_versions_position ON jd_versions(position_id);
+
+-- workflow_executions
+CREATE INDEX IF NOT EXISTS idx_workflow_exec_workflow ON workflow_executions(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_exec_status ON workflow_executions(status);
+
+-- workflow_node_executions
+CREATE INDEX IF NOT EXISTS idx_workflow_node_exec_execution ON workflow_node_executions(execution_id);

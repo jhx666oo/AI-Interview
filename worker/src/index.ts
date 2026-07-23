@@ -224,21 +224,32 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
     const baseUrl = (env.AI_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
     // 模型：优先用 env.AI_MODEL，其次调用方指定，最后默认 deepseek-v4-flash
     const deepseekModel = env.AI_MODEL || model || 'deepseek-v4-flash';
-    const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.AI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: deepseekModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        max_tokens: 4096,
-      }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    let resp: Response;
+    try {
+      resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.AI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: deepseekModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          max_tokens: 4096,
+        }),
+        signal: controller.signal,
+      });
+    } catch (e: any) {
+      if (e.name === 'AbortError') throw new Error('AI API 调用超时（30s），请稍后重试');
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if (!resp.ok) {
       const errText = await resp.text();
       console.error(`[AI] DeepSeek API error ${resp.status}: ${errText}`);
@@ -384,6 +395,10 @@ function getOwnerName(c: any): string | null {
   // HR 用户：用 full_name 作为 responsible_person 过滤条件
   return user.full_name || null;
 }
+
+// ==================== Health Check ====================
+
+app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 // ==================== Auth Routes ====================
 
@@ -5230,17 +5245,48 @@ async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
 }
 
 async function getFeishuToken(env: Env): Promise<string> {
+  // 先查 D1 缓存（飞书 token 有效期 2h，缓存 110min 留 10min buffer）
+  try {
+    const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('feishu_token').first();
+    if (row && row.value) {
+      const cached = JSON.parse(row.value as string);
+      if (cached.token && cached.expiry && Date.now() < cached.expiry) {
+        return cached.token;
+      }
+    }
+  } catch { /* 缓存查询失败，继续走正常获取流程 */ }
+
   const appId = env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
   const appSecret = env.FEISHU_APP_SECRET || FEISHU_CONFIG.appSecret;
-  const resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  let resp: Response;
+  try {
+    resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+      signal: controller.signal,
+    });
+  } catch (e: any) {
+    if (e.name === 'AbortError') throw new Error('飞书 token 获取超时（10s）');
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const data: any = await resp.json();
   if (!data.tenant_access_token) {
     throw new Error(`Feishu auth failed: ${JSON.stringify(data)}`);
   }
+
+  // 写入 D1 缓存（110 分钟后过期）
+  const expiry = Date.now() + 110 * 60 * 1000;
+  try {
+    await env.DB.prepare(
+      'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?'
+    ).bind('feishu_token', JSON.stringify({ token: data.tenant_access_token, expiry }), new Date().toISOString(), JSON.stringify({ token: data.tenant_access_token, expiry }), new Date().toISOString()).run();
+  } catch { /* 缓存写入失败不影响主流程 */ }
+
   return data.tenant_access_token;
 }
 
