@@ -345,7 +345,9 @@ const RequisitionsList: React.FC = () => {
             <Col span={8}>
               <Form.Item name="urgency" label="紧急程度">
                 <Select>
-                  {Object.entries(urgencyConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
+                  {Object.entries(urgencyConfig)
+                    .filter(([k]) => ['low', 'medium', 'high', 'urgent'].includes(k))
+                    .map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
                 </Select>
               </Form.Item>
             </Col>
