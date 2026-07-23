@@ -13,43 +13,48 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 
 ---
 
-## 当前开发状态 (2026-07-21)
+## 当前开发状态 (2026-07-23)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| 仪表盘 | ✅ 运行中 | 三大事业部看板、招聘漏斗、KPI |
-| 简历管理 | ✅ 运行中 | 飞书导入、AI 解析、BOSS 导入、上传 |
+| 仪表盘 | ✅ 运行中 | 三大事业部看板、招聘漏斗、KPI、N+1 查询已优化 |
+| 简历管理 | ✅ 运行中 | 飞书导入、AI 解析、BOSS 导入、上传、DOMPurify XSS 防护 |
 | 岗位管理 | ✅ 运行中 | 飞书同步、一面/二面负责人 |
-| **面试管理** | ✅ **新版上线** | 飞书同步、一面/二面面试官、提醒、评价流转 |
+| 面试管理 | ✅ 运行中 | 飞书同步、一面/二面面试官、提醒、评价流转 |
 | 面试官管理 | ✅ 运行中 | 手动添加 open_id，飞书搜索（待权限审批） |
 | 入职管理 | ✅ 运行中 | 飞书同步 |
 | 试用期管理 | ✅ 运行中 | |
 | 招聘日报 | ✅ 运行中 | |
 | 需求管理 | ✅ 运行中 | |
-| 飞书集成 | ✅ 已接入 | 多维表格数据同步 + 机器人卡片消息 |
-| 飞书 OAuth 绑定 | ✅ 运行中 | 登录用户绑定飞书身份 |
-| 飞书搜索 open_id | ⚠️ 等待审批 | `contact:contact:readonly` 权限需管理员在后台审批 |
+| 飞书集成 | ✅ 已接入 | 多维表格数据同步 + 机器人卡片消息、token D1 缓存 |
+| 飞书 OAuth 绑定 | ✅ 运行中 | 登录用户绑定飞书身份，本地自动判断回调地址 |
+| 安全加固 | ✅ 已完成 | 明文密码移除、timing-safe 比较、CORS 白名单、DOMPurify |
+| 性能优化 | ✅ 已完成 | N+1 修复、静态资源缓存、图片压缩、chunk 拆分、D1 索引 |
 
-### 最近更新 (2026-07-21)
+### 最近更新 (2026-07-23)
 
-**面试管理重构：**
-- 接入飞书面试候选人表 `tblsKkEvvxYssrvB`，同步一面/二面负责人
-- 面试官列拆分为「一面面试官」「二面面试官」两列
-- 简历管理 + 面试管理新增「飞书导入」按钮
-- 提醒面试官全链路打通：点击提醒 → 飞书卡片消息 → 面试官收到
-- 支持一面/二面独立提醒、独立评价、状态流转
-- 通知优先用登录用户身份发送，失败自动回退 bot
+**安全修复（第二批）：**
+- 移除明文密码存储（DB 不再保留 plain_password）
+- verifyPassword 改为常量时间比较（防时序侧信道攻击）
+- CORS 从 `*` 改为白名单模式（localhost:5173/4173/8000 + 生产域名）
+- 前端引入 DOMPurify，邮件预览 HTML 内容经净化
+- CONTRIBUTING.md / SECURITY.md 重写为 Workers/D1/Vite 实际技术栈
 
-**关键修复：**
-- 移除跨应用硬编码 open_id（不同飞书应用 id 不能互通）
-- 修复 schema.sql 语法错误（`background_checks` 表定义残缺）
-- 修复简历同步 SQL 参数绑定错误（500）
-- 补全 interviews 表 `feishu_record_id`、`primary_interviewer`、`secondary_interviewer` 列
+**性能优化（第三批）：**
+- Dashboard 3 处 N+1 查询修复（funnel/positions/interviewers 改为聚合查询）
+- 静态资源缓存（assets 1年 immutable）+ SPA 路由回退
+- D1 新增 38 个索引覆盖高频查询表
+- login-bg.jpg 755K → 194K（74% 减少）
+- Vite manualChunks 拆分（react-core 99KB / antd 1.4MB / xlsx 429KB 独立缓存）
+- 面试列表新增可选服务端分页
 
-**权限配置：**
-- 本地环境应用：`cli_aad2cb7fab385cb6`（`.dev.vars` 配置）
-- 硬编码备用应用：`cli_aace77019aba9cdb`
-- 需要在飞书管理后台 `admin.feishu.cn` 将应用可用范围改为「全员」
+**其他修复：**
+- 飞书 OAuth redirect_uri 本地开发自动用 localhost:5173
+- 飞书 appId/appSecret 更新为新应用 cli_aad2cb7fab385cb6
+- 飞书 token 缓存到 D1 settings 表（110min TTL）
+- AI API 调用加 30s AbortController 超时
+- 新增 GET /health 健康检查端点
+- 前端按钮防重复提交全面修复（15 个文件，8 个高风险项消除）
 
 ---
 
