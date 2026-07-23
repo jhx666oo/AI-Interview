@@ -714,24 +714,28 @@ app.get('/api/dashboard/stats', authMiddleware, async (c) => {
 
 app.get('/api/dashboard/funnel', authMiddleware, async (c) => {
   const db = c.env.DB;
-  const total = await db.prepare("SELECT COUNT(*) as cnt FROM resumes").first();
-  const totalResumes = total?.cnt || 0;
+  // 单条聚合查询替代 5 次循环 COUNT（修复 N+1）
+  const row = await db.prepare(
+    `SELECT COUNT(*) as total,
+       SUM(CASE WHEN stage = 'new' THEN 1 ELSE 0 END) as new_cnt,
+       SUM(CASE WHEN stage = 'screening' THEN 1 ELSE 0 END) as screening_cnt,
+       SUM(CASE WHEN stage = 'interview' THEN 1 ELSE 0 END) as interview_cnt,
+       SUM(CASE WHEN stage = 'offer' THEN 1 ELSE 0 END) as offer_cnt,
+       SUM(CASE WHEN stage = 'hired' THEN 1 ELSE 0 END) as hired_cnt
+     FROM resumes`
+  ).first() as any;
+  const totalResumes = row?.total || 0;
   const stages = [
-    { stage: 'new', stage_name: '新简历', field: "stage = 'new'" },
-    { stage: 'screening', stage_name: '筛选中', field: "stage = 'screening'" },
-    { stage: 'interview', stage_name: '面试中', field: "stage = 'interview'" },
-    { stage: 'offer', stage_name: 'Offer', field: "stage = 'offer'" },
-    { stage: 'hired', stage_name: '已入职', field: "stage = 'hired'" },
+    { stage: 'new', stage_name: '新简历', count: row?.new_cnt || 0 },
+    { stage: 'screening', stage_name: '筛选中', count: row?.screening_cnt || 0 },
+    { stage: 'interview', stage_name: '面试中', count: row?.interview_cnt || 0 },
+    { stage: 'offer', stage_name: 'Offer', count: row?.offer_cnt || 0 },
+    { stage: 'hired', stage_name: '已入职', count: row?.hired_cnt || 0 },
   ];
-  const result = [];
-  for (const s of stages) {
-    const r = await db.prepare(`SELECT COUNT(*) as cnt FROM resumes WHERE ${s.field}`).first();
-    const count = r?.cnt || 0;
-    result.push({
-      stage: s.stage, stage_name: s.stage_name, count,
-      percentage: totalResumes > 0 ? Math.round(count / totalResumes * 100) : 0
-    });
-  }
+  const result = stages.map(s => ({
+    ...s,
+    percentage: totalResumes > 0 ? Math.round(s.count / totalResumes * 100) : 0
+  }));
   return c.json({ stages: result, total_resumes: totalResumes, conversion_rate: totalResumes > 0 ? Math.round((result[4].count / totalResumes) * 100) : 0 });
 });
 
@@ -742,31 +746,39 @@ async function dashboardPositionsHandler(c: any) {
   const db = c.env.DB;
   const positions = await db.prepare(`SELECT * FROM positions ORDER BY created_at DESC`).all();
 
-  const result = await Promise.all(positions.results.map(async (pos: any) => {
-    const [
-      rCnt, f1Cnt, f1Pass, f2Pass, f3Pass, oCnt, hCnt
-    ] = await Promise.all([
-      db.prepare("SELECT COUNT(*) as cnt FROM resumes WHERE position_id = ?").bind(pos.id).first(),
-      db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE position_id = ? AND round = 1 AND status = 'scheduled'").bind(pos.id).first(),
-      db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE position_id = ? AND round = 1 AND (result = 'pass' OR status2 = 'passed')").bind(pos.id).first(),
-      db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE position_id = ? AND round = 2 AND (result = 'pass' OR status2 = 'passed')").bind(pos.id).first(),
-      db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE position_id = ? AND round = 3 AND (result = 'pass' OR status2 = 'passed')").bind(pos.id).first(),
-      db.prepare("SELECT COUNT(*) as cnt FROM offers WHERE position_id = ? AND status NOT IN ('draft','cancelled')").bind(pos.id).first(),
-      db.prepare("SELECT COUNT(*) as cnt FROM onboarding_records WHERE position_id = ? AND status = 'onboarded'").bind(pos.id).first(),
-    ]);
+  // 7 次聚合查询替代 N*7 次逐条查询（修复 N+1）
+  const [
+    resumeCounts, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
+  ] = await Promise.all([
+    db.prepare("SELECT position_id, COUNT(*) as cnt FROM resumes GROUP BY position_id").all(),
+    db.prepare("SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 AND status = 'scheduled' GROUP BY position_id").all(),
+    db.prepare("SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 AND (result = 'pass' OR status2 = 'passed') GROUP BY position_id").all(),
+    db.prepare("SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 2 AND (result = 'pass' OR status2 = 'passed') GROUP BY position_id").all(),
+    db.prepare("SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 3 AND (result = 'pass' OR status2 = 'passed') GROUP BY position_id").all(),
+    db.prepare("SELECT position_id, COUNT(*) as cnt FROM offers WHERE status NOT IN ('draft','cancelled') GROUP BY position_id").all(),
+    db.prepare("SELECT position_id, COUNT(*) as cnt FROM onboarding_records WHERE status = 'onboarded' GROUP BY position_id").all(),
+  ]);
 
-    const totalResumes = rCnt?.cnt || 0;
-    const firstInterview = (f1Cnt?.cnt || 0) + (f1Pass?.cnt || 0);
-    const firstPass = f1Pass?.cnt || 0;
-    const secondPass = f2Pass?.cnt || 0;
-    const thirdPass = f3Pass?.cnt || 0;
-    const offers = oCnt?.cnt || 0;
-    const hired = hCnt?.cnt || 0;
+  // 构建 position_id → count 的查找表
+  const toMap = (rows: any[]) => new Map((rows.results || []).map((r: any) => [r.position_id, r.cnt || 0]));
+  const rMap = toMap(resumeCounts);
+  const f1SchedMap = toMap(iv1Scheduled);
+  const f1PassMap = toMap(iv1Pass);
+  const f2PassMap = toMap(iv2Pass);
+  const f3PassMap = toMap(iv3Pass);
+  const oMap = toMap(offerCounts);
+  const hMap = toMap(hiredCounts);
 
-    let passRate = '0%';
-    if (firstInterview > 0) {
-      passRate = Math.round(firstPass / firstInterview * 100) + '%';
-    }
+  const result = positions.results.map((pos: any) => {
+    const totalResumes = rMap.get(pos.id) || 0;
+    const firstInterview = (f1SchedMap.get(pos.id) || 0) + (f1PassMap.get(pos.id) || 0);
+    const firstPass = f1PassMap.get(pos.id) || 0;
+    const secondPass = f2PassMap.get(pos.id) || 0;
+    const thirdPass = f3PassMap.get(pos.id) || 0;
+    const offers = oMap.get(pos.id) || 0;
+    const hired = hMap.get(pos.id) || 0;
+
+    const passRate = firstInterview > 0 ? Math.round(firstPass / firstInterview * 100) + '%' : '0%';
 
     const statusMap: Record<string, string> = {
       'open': '招聘中', 'published': '招聘中', 'closed': '已完成',
@@ -790,7 +802,7 @@ async function dashboardPositionsHandler(c: any) {
       notes: '',
       status: displayStatus,
     };
-  }));
+  });
 
   return c.json(result);
 }
@@ -866,20 +878,26 @@ app.get('/capability-dimension-names', (c) => c.redirect('/api/capability-dimens
 app.get('/api/dashboard/interviewers', authMiddleware, async (c) => {
   const db = c.env.DB;
   const interviewers = await db.prepare("SELECT * FROM users WHERE lower(role) = 'interviewer'").all();
-  const result = [];
-  for (const u of interviewers.results) {
-    const total = await db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE interviewer_id = ?").bind(u.id).first();
-    const completed = await db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE interviewer_id = ? AND status = 'completed'").bind(u.id).first();
-    const pending = await db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE interviewer_id = ? AND status IN ('scheduled','in_progress')").bind(u.id).first();
-    const totalCnt = total?.cnt || 0;
-    const completedCnt = completed?.cnt || 0;
-    result.push({
+  // 单条聚合查询替代 N*3 次逐条查询（修复 N+1）
+  const aggRows = await db.prepare(
+    `SELECT interviewer_id,
+       COUNT(*) as total,
+       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+       SUM(CASE WHEN status IN ('scheduled','in_progress') THEN 1 ELSE 0 END) as pending
+     FROM interviews GROUP BY interviewer_id`
+  ).all();
+  const aggMap = new Map((aggRows.results || []).map((r: any) => [r.interviewer_id, r]));
+  const result = interviewers.results.map((u: any) => {
+    const agg = aggMap.get(u.id);
+    const totalCnt = agg?.total || 0;
+    const completedCnt = agg?.completed || 0;
+    return {
       id: u.id, name: u.full_name, total_interviews: totalCnt,
-      completed_interviews: completedCnt, pending_interviews: pending?.cnt || 0,
+      completed_interviews: completedCnt, pending_interviews: agg?.pending || 0,
       completion_rate: totalCnt > 0 ? Math.round(completedCnt / totalCnt * 100) : 0,
       avg_score: null, score_std: null, consistency_rating: 'N/A'
-    });
-  }
+    };
+  });
   return c.json(result);
 });
 
@@ -1589,6 +1607,29 @@ app.get('/api/interviews', authMiddleware, async (c) => {
     sql += ' WHERE ' + conditions.join(' AND ');
   }
   sql += ' ORDER BY i.created_at DESC';
+
+  // 可选服务端分页（向后兼容：不传 page/pageSize 时返回全量数组）
+  const page = parseInt(c.req.query('page') || '0', 10);
+  const pageSize = parseInt(c.req.query('pageSize') || '0', 10);
+
+  if (page > 0 && pageSize > 0) {
+    // 先查总数
+    const countSql = `SELECT COUNT(*) as total FROM (${sql})`;
+    const countRow = await c.env.DB.prepare(countSql).bind(...binds).first();
+    const total = (countRow as any)?.total || 0;
+    // 分页查询
+    const offset = (page - 1) * pageSize;
+    const pagedSql = `${sql} LIMIT ? OFFSET ?`;
+    const { results } = await c.env.DB.prepare(pagedSql).bind(...binds, pageSize, offset).all();
+    return c.json({
+      items: results.map((row: any) => ({
+        ...transformRow(row),
+        resume: { candidate_name: row._candidate_name || row.interviewer || '未知' },
+        position: { title: row._position_title || row.position_id || '未知岗位' }
+      })),
+      total, page, pageSize,
+    });
+  }
 
   const { results } = await c.env.DB.prepare(sql).bind(...binds).all();
   // 把 _candidate_name 和 _position_title 嵌入到嵌套对象，保持前端现有列定义兼容

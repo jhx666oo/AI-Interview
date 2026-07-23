@@ -18,22 +18,20 @@ export default defineConfig({
     },
   },
   build: {
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
         manualChunks: {
-          // 将 antd + react 全家桶拆为独立 vendor chunk（长期缓存）
-          vendor: [
-            'react',
-            'react-dom',
-            'react-router-dom',
-            'antd',
-            '@ant-design/icons',
-            'dayjs',
-          ],
-          // recharts 单独拆开（体积较大且变动较少）
+          // React 核心（变动极少，长期缓存）
+          'react-core': ['react', 'react-dom', 'react-router-dom', 'dayjs'],
+          // Ant Design 全家桶（体积大但变动少，独立缓存）
+          antd: ['antd', '@ant-design/icons'],
+          // recharts 图表库
           charts: ['recharts'],
           // pdf.js 独立 chunk（仅在预览简历时加载）
           pdf: ['pdfjs-dist'],
+          // xlsx 独立 chunk（仅在导出时加载）
+          xlsx: ['xlsx'],
         },
       },
     },
