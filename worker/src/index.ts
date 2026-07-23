@@ -1365,6 +1365,11 @@ function mapUrgency(v: any): string {
   return 'normal';
 }
 
+function mapUrgencyToChinese(v: string): string {
+  const map: Record<string, string> = { 'urgent': '紧急', 'normal': '普通', 'low': '不急', 'medium': '普通' };
+  return map[v] || v;
+}
+
 function mapStatus(v: any): string {
   const s = typeof v === 'object' && v ? (v.text || v.name || '') : String(v || '');
   const map: Record<string, string> = {
@@ -2010,7 +2015,17 @@ app.post('/api/requisitions', authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
     const tableId = getBitableTableId(c.env, 'requisition');
-    const fields = feishuFieldsToRecord(FEISHU_REQUISITION_FIELDS, body);
+    // 标准化：city 数组转字符串；urgency 若格式不对则跳过（Bitable 可能为数字字段）
+    const normalized = { ...body };
+    if (Array.isArray(normalized.city)) normalized.city = normalized.city.join(', ');
+    // 只保留 Bitable 可接受的字段
+    const fields: Record<string, any> = {};
+    for (const [engKey, cnKey] of Object.entries(FEISHU_REQUISITION_FIELDS)) {
+      const v = normalized[engKey];
+      if (v === undefined || v === null) continue;
+      if (engKey === 'urgency' && typeof v === 'string' && isNaN(Number(v))) continue; // 非数字跳过
+      fields[cnKey] = v;
+    }
     const recordId = await bitableCreateRecord(c.env, tableId, fields);
     if (!recordId) return c.json({ detail: 'Create failed' }, 500);
 
