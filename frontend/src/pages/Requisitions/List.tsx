@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import SimplePagination from '../../components/SimplePagination';
+import JDGeneratorModal from '../../components/JDGeneratorModal';
 import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 
@@ -59,6 +60,7 @@ const RequisitionsList: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<any>(null);
+  const [jdModalVisible, setJdModalVisible] = useState(false);
   const [form] = Form.useForm();
   const [searchDept, setSearchDept] = useState('');
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
@@ -153,6 +155,19 @@ const RequisitionsList: React.FC = () => {
         } catch { message.error('批量操作失败'); }
       },
     });
+  };
+
+  const handleOpenJDModal = async () => {
+    try {
+      const values = await form.validateFields(['title']);
+      if (!values.title) { message.error('请先填写岗位名称'); return; }
+      setJdModalVisible(true);
+    } catch { message.error('请先填写岗位名称'); }
+  };
+
+  const handleJDConfirm = (description: string, requirements: string) => {
+    form.setFieldsValue({ description, requirements });
+    setJdModalVisible(false);
   };
 
   const handleSubmit = async () => {
@@ -404,7 +419,11 @@ const RequisitionsList: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item name="description" label="岗位描述">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontWeight: 500 }}>岗位描述</span>
+            <Button type="link" icon={<ThunderboltOutlined />} onClick={handleOpenJDModal}>AI 生成 JD</Button>
+          </div>
+          <Form.Item name="description">
             <TextArea rows={3} placeholder="岗位职责描述" />
           </Form.Item>
           <Form.Item name="requirements" label="任职要求">
@@ -421,6 +440,15 @@ const RequisitionsList: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+      <JDGeneratorModal
+        visible={jdModalVisible}
+        onCancel={() => setJdModalVisible(false)}
+        onConfirm={handleJDConfirm}
+        title={form.getFieldValue('title') || ''}
+        department={form.getFieldValue('department')}
+        location={form.getFieldValue('city')}
+        salary_range={form.getFieldValue('salary_range')}
+      />
     </div>
   );
 };
