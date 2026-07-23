@@ -2081,7 +2081,6 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
     if (body.requirements !== undefined) { sets.push('requirements = ?'); vals.push(body.requirements); }
 
     if (sets.length > 0) {
-      vals.push(id); vals.push(id);
       await c.env.DB.prepare(
         `UPDATE job_requisitions SET ${sets.join(', ')}, updated_at = ? WHERE id = ? OR feishu_record_id = ?`
       ).bind(...vals, now(), id, id).run();

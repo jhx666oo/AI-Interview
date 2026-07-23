@@ -269,7 +269,7 @@ const JDGeneratorModal: React.FC<JDGeneratorModalProps> = ({
             <Card 
               title={<Text strong style={{ color: '#0f172a' }}>岗位职责</Text>} 
               style={{ marginBottom: 16 }}
-              bodyStyle={{ background: '#f8fafc' }}
+              styles={{ body: { background: '#f8fafc' } }}
             >
               <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
                 {description || <Text type="secondary">暂无内容</Text>}
@@ -279,7 +279,7 @@ const JDGeneratorModal: React.FC<JDGeneratorModalProps> = ({
             <Card 
               title={<Text strong style={{ color: '#0f172a' }}>任职要求</Text>} 
               style={{ marginBottom: 16 }}
-              bodyStyle={{ background: '#f8fafc' }}
+              styles={{ body: { background: '#f8fafc' } }}
             >
               <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
                 {requirements || <Text type="secondary">暂无内容</Text>}
