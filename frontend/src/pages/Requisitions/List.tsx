@@ -64,6 +64,7 @@ const RequisitionsList: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
   const [aiLoading, setAiLoading] = useState<string | null>(null);
   const { selectedOwner } = useOwner();
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [tablePage, setTablePage] = useState(1);
   const pageSize = 10;
 
@@ -118,6 +119,40 @@ const RequisitionsList: React.FC = () => {
       expected_date: record.expected_date ? dayjs(record.expected_date) : null,
     });
     setModalVisible(true);
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先选择要删除的需求'); return; }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 个需求吗？`,
+      okText: '确认', cancelText: '取消', okType: 'danger',
+      onOk: async () => {
+        try {
+          await Promise.all(selectedRowKeys.map(id => request.delete(`/requisitions/${id}`)));
+          message.success(`成功删除 ${selectedRowKeys.length} 个需求`);
+          setSelectedRowKeys([]);
+          fetchData();
+        } catch { message.error('批量删除失败'); }
+      },
+    });
+  };
+
+  const handleBatchStatus = (status: string) => {
+    if (selectedRowKeys.length === 0) { message.warning('请先选择要操作的需求'); return; }
+    Modal.confirm({
+      title: '确认批量修改状态',
+      content: `确定要将选中的 ${selectedRowKeys.length} 个需求状态改为"${statusConfig[status]?.text || status}"吗？`,
+      okText: '确认', cancelText: '取消',
+      onOk: async () => {
+        try {
+          await Promise.all(selectedRowKeys.map(id => request.put(`/requisitions/${id}`, { status })));
+          message.success(`成功更新 ${selectedRowKeys.length} 个需求`);
+          setSelectedRowKeys([]);
+          fetchData();
+        } catch { message.error('批量操作失败'); }
+      },
+    });
   };
 
   const handleSubmit = async () => {
@@ -252,9 +287,26 @@ const RequisitionsList: React.FC = () => {
           </Space>
         }
       >
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <Space>
+              <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
+              <Select size="small" placeholder="批量改状态" style={{ width: 140 }} onChange={v => v && handleBatchStatus(v)} value={undefined}>
+                {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
+              </Select>
+              <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
+              <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+            </Space>
+          </div>
+        )}
         <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1400 }}
           pagination={false}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+            columnWidth: 40,
+          }}
         />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
