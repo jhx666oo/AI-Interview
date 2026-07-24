@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS resumes (
   reject_reason_detail TEXT,
   rejected_at TEXT,
   rejected_by TEXT,
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_resumes_email ON resumes(email);
 CREATE INDEX IF NOT EXISTS idx_resumes_position ON resumes(position_id);
