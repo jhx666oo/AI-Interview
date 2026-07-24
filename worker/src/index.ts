@@ -2572,7 +2572,7 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
 
           cardElements.push(
             { tag: 'div', text: { tag: 'lark_md', content: `${operatorName} 为你安排了面试，请及时查看候选人简历，面试结束后在系统内填写评价。` } },
-            { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🔍 查看候选人' }, type: 'primary', url: `https://ai-interview-22u.pages.dev/talent-pool` }] },
+            { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🔍 查看候选人' }, type: 'primary', url: `https://ai-interview-88r.pages.dev/talent-pool` }] },
             { tag: 'note', elements: [{ tag: 'plain_text', content: `${operatorName} | AI 智能面试系统` }] }
           );
 
@@ -4430,8 +4430,8 @@ app.post('/api/settings/interviewers/notify-all', authMiddleware, async (c) => {
               text: { tag: 'plain_text', content: '打开系统' },
               type: 'primary',
               multi_url: {
-                url: 'https://ai-interview-22u.pages.dev',
-                pc_url: 'https://ai-interview-22u.pages.dev',
+                url: 'https://ai-interview-88r.pages.dev',
+                pc_url: 'https://ai-interview-88r.pages.dev',
                 ios_url: '',
                 android_url: '',
               },
@@ -5296,7 +5296,7 @@ async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
     return map[name];
   }
 
-  // 2. 再从 users 表查（OAuth 绑定的 feishu_open_id，和 cli_aace77019aba9cdb 同应用）
+  // 2. 再从 users 表查（OAuth 绑定的 feishu_open_id，和 cli_aad2cb7fab385cb6 同应用）
   try {
     const userRow = await env.DB.prepare(
       "SELECT feishu_open_id FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != '' LIMIT 1"
@@ -6430,7 +6430,7 @@ async function notifyInterviewersForCandidate(env: Env, token: string, record: a
         if (notifiedNames.has(name) || !name) continue;
         notifiedNames.add(name);
 
-        // 🔑 只使用 DB 中 OAuth 绑定的 feishu_open_id（和 cli_aace77019aba9cdb 同应用）
+        // 🔑 只使用 DB 中 OAuth 绑定的 feishu_open_id（和 cli_aad2cb7fab385cb6 同应用）
         // 硬编码的 interviewerOpenIds 来自多维表格人员字段，属于不同应用，会导致 open_id cross app 错误
         let openId = '';
         let userToken = token;
