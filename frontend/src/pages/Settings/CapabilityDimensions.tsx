@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined,
-  MinusCircleOutlined, AppstoreOutlined, UserOutlined
+  MinusCircleOutlined, AppstoreOutlined, UserOutlined, SearchOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 
@@ -244,6 +244,15 @@ const CapabilityDimensions: React.FC = () => {
         }
         extra={
           <Space>
+            <Input
+              placeholder="搜索岗位名称"
+              prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              onPressEnter={fetchData}
+              style={{ width: 200 }}
+              allowClear
+            />
             <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
               刷新
             </Button>
@@ -255,16 +264,7 @@ const CapabilityDimensions: React.FC = () => {
         style={{ borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
       >
         <div style={{ marginBottom: 16 }}>
-          <Input.Search
-            placeholder="搜索岗位名称…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            onSearch={() => fetchData()}
-            allowClear
-            onClear={() => { setSearch(''); fetchData(); }}
-            style={{ width: 300 }}
-          />
-          <Text type="secondary" style={{ marginLeft: 12, fontSize: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
             共 {data.length} 个岗位配置
           </Text>
         </div>
