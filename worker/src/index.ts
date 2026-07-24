@@ -200,6 +200,34 @@ async function getAIPrompt(env: Env, key: string, defaultPrompt: { system: strin
   return defaultPrompt;
 }
 
+// 纠正常见的错误 Base URL（DeepSeek 官方地址是 api.deepseek.com，不是 platform.deepseek.com）
+function normalizeBaseUrl(raw: string | undefined | null): string {
+  const u = (raw || '').trim();
+  if (!u) return '';
+  const lower = u.toLowerCase().replace(/\/+$/, '');
+  // platform.deepseek.com / platform.deepseek.com/v1 等均指向错误域名
+  if (lower.includes('platform.deepseek.com')) {
+    return 'https://api.deepseek.com';
+  }
+  return u.replace(/\/+$/, '');
+}
+
+// 获取 LLM 配置：优先读取 system_configs 表（网站「AI 模型配置」页所存），fallback 到 Worker 环境变量
+// 返回 { apiKey, baseUrl, model }，三项都尽量从系统配置取，缺失项才回退 env
+async function getLLMConfig(env: Env): Promise<{ apiKey: string; baseUrl: string; model: string }> {
+  let cfg: any = {};
+  try {
+    const row = await env.DB.prepare('SELECT llm_api_key, llm_base_url, llm_model FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+    if (row) cfg = row;
+  } catch (e) {
+    console.error('[AI] getLLMConfig read failed:', e);
+  }
+  const apiKey = (cfg.llm_api_key && String(cfg.llm_api_key).trim()) || env.AI_API_KEY || '';
+  const baseUrl = normalizeBaseUrl(cfg.llm_base_url) || env.AI_BASE_URL || 'https://api.deepseek.com';
+  const model = (cfg.llm_model && String(cfg.llm_model).trim()) || env.AI_MODEL || model || 'deepseek-v4-flash';
+  return { apiKey, baseUrl, model };
+}
+
 // ==================== AI 每日 Token 限额（防止调试耗光额度）====================
 const DEFAULT_DAILY_TOKEN_LIMIT = 1_000_000; // 默认每日 100 万 token（≈1 元）
 
@@ -247,8 +275,9 @@ async function addTokenUsage(env: Env, tokens: number): Promise<void> {
 }
 
 async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?: string): Promise<string> {
-  // 优先使用 DeepSeek（或兼容的 OpenAI API）
-  if (env.AI_API_KEY) {
+  // 优先读取网站「AI 模型配置」页存的 system_configs，fallback 到 Worker 环境变量
+  const llm = await getLLMConfig(env);
+  if (llm.apiKey) {
     // —— 每日 token 限额检查（防止调试耗光额度）——
     await ensureAiUsageTable(env);
     const limit = getDailyTokenLimit(env);
@@ -257,9 +286,9 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
       throw new Error(`AI 已达每日 token 限额（上限 ${limit}，今日已用 ${usedToday}）。为防止额度被耗光已暂停调用，请明日再试，或调高 AI_DAILY_TOKEN_LIMIT。`);
     }
 
-    const baseUrl = (env.AI_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
-    // 模型：优先用 env.AI_MODEL，其次调用方指定，最后默认 deepseek-v4-flash
-    const deepseekModel = env.AI_MODEL || model || 'deepseek-v4-flash';
+    const baseUrl = llm.baseUrl.replace(/\/+$/, '');
+    // 模型：优先用 system_configs.llm_model / env.AI_MODEL，其次调用方指定，最后默认 deepseek-v4-flash
+    const deepseekModel = llm.model || model || 'deepseek-v4-flash';
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
     let resp: Response;
@@ -268,7 +297,7 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${env.AI_API_KEY}`,
+          'Authorization': `Bearer ${llm.apiKey}`,
         },
         body: JSON.stringify({
           model: deepseekModel,
@@ -360,13 +389,38 @@ async function callAIScreening(env: Env, resumeText: string): Promise<any> {
 }
 
 function extractJSON(text: string): any {
+  if (typeof text !== 'string') return text;
   const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  const start = cleaned.search(/[\[\{]/);
-  const end = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
-  if (start >= 0 && end > start) {
-    return JSON.parse(cleaned.substring(start, end + 1));
+  // 1) 直接解析
+  try { return JSON.parse(cleaned); } catch { /* ignore */ }
+  // 2) 括号配平：找到首个 { 或 [，匹配到对应的闭合括号（支持嵌套）
+  const firstOpen = Math.min(
+    cleaned.indexOf('{') >= 0 ? cleaned.indexOf('{') : Infinity,
+    cleaned.indexOf('[') >= 0 ? cleaned.indexOf('[') : Infinity
+  );
+  if (firstOpen < Infinity) {
+    const openCh = cleaned[firstOpen];
+    const closeCh = openCh === '{' ? '}' : ']';
+    let depth = 0;
+    for (let i = firstOpen; i < cleaned.length; i++) {
+      if (cleaned[i] === openCh) depth++;
+      else if (cleaned[i] === closeCh) {
+        depth--;
+        if (depth === 0) {
+          const candidate = cleaned.slice(firstOpen, i + 1);
+          try { return JSON.parse(candidate); } catch { /* ignore */ }
+          break;
+        }
+      }
+    }
   }
-  return JSON.parse(cleaned);
+  // 3) 容错：把常见的非 JSON 前缀去掉后再试一次（处理「根据您提供的…：{...}」）
+  const m = cleaned.match(/[\[{][\s\S]*[}\]]/);
+  if (m) {
+    try { return JSON.parse(m[0]); } catch { /* ignore */ }
+  }
+  // 4) 实在解析不出，返回原始文本（避免直接抛错导致整个 AI 功能崩溃）
+  return cleaned;
 }
 
 // ==================== D1 Helpers ====================
