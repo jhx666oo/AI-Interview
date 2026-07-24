@@ -4737,6 +4737,40 @@ app.post('/api/position-mappings/sync-from-feishu', authMiddleware, async (c) =>
   }
 });
 
+// 批量保存岗位映射（创建或更新）
+app.post('/api/position-mappings/batch-save', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json();
+    const { mapped_name, raw_names, responsible_person, responsible_person_open_id, interviewers } = body;
+    if (!mapped_name || !Array.isArray(raw_names) || raw_names.length === 0) {
+      return c.json({ detail: '缺少必要字段: mapped_name 和 raw_names' }, 400);
+    }
+    const interviewerJson = JSON.stringify(interviewers || []);
+    let created = 0, updated = 0;
+    for (const raw of raw_names) {
+      if (!raw) continue;
+      // 检查是否已存在同名 raw_name
+      const existing = await c.env.DB.prepare(
+        'SELECT id FROM position_mappings WHERE raw_name = ?'
+      ).bind(raw).first();
+      if (existing) {
+        await c.env.DB.prepare(
+          'UPDATE position_mappings SET mapped_name = ?, responsible_person = ?, interviewers = ?, updated_at = ? WHERE raw_name = ?'
+        ).bind(mapped_name, responsible_person || '', interviewerJson, now(), raw).run();
+        updated++;
+      } else {
+        await c.env.DB.prepare(
+          'INSERT INTO position_mappings (id, raw_name, raw_names, mapped_name, responsible_person, interviewers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(uuid(), raw, JSON.stringify(raw_names), mapped_name, responsible_person || '', interviewerJson, now(), now()).run();
+        created++;
+      }
+    }
+    return c.json({ ok: true, created, updated, message: `已保存: 新增 ${created} 条, 更新 ${updated} 条` });
+  } catch (e: any) {
+    return c.json({ detail: '批量保存失败: ' + e.message }, 500);
+  }
+});
+
 registerCrud('position-mappings', 'position_mappings', { raw_name: 'like', mapped_name: 'like' });
 
 // CRUD for capability dimensions

@@ -548,6 +548,8 @@ CREATE TABLE IF NOT EXISTS capability_dimensions (
   id TEXT PRIMARY KEY,
   position_name TEXT NOT NULL,
   dimensions_json TEXT DEFAULT '[]',
+  personalized_requirements TEXT DEFAULT '',
+  full_text TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
