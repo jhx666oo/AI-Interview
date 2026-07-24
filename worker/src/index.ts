@@ -327,6 +327,27 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
   }
 }
 
+// AI 简历初筛分析：返回结构化评估结果
+async function callAIScreening(env: Env, resumeText: string): Promise<any> {
+  const systemPrompt = `你是资深HR和简历分析师。请分析候选人简历并以JSON格式返回：
+{
+  "overall_score": 0-100的匹配度评分,
+  "summary": "50字以内综合评价",
+  "advantage": "候选人的核心优势",
+  "risk": "潜在风险点",
+  "dimensions": [
+    {"name": "维度名", "score": 1-5, "comment": "简短评语"}
+  ]
+}`;
+  const userPrompt = `请分析以下候选人简历：\n\n${resumeText.substring(0, 8000)}`;
+  const result = await callAI(env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+  try {
+    return extractJSON(result);
+  } catch {
+    return { overall_score: 0, summary: 'AI评估解析失败', dimensions: [] };
+  }
+}
+
 function extractJSON(text: string): any {
   const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
   const start = cleaned.search(/[\[\{]/);
@@ -6842,6 +6863,32 @@ app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
     }
     return c.json({ ok: true, total: records.length, evaluated, skipped, failed, results, errors: errors.slice(0, 20) });
   } catch (e: any) { return c.json({ detail: '批量自动评估失败: ' + e.message }, 500); }
+});
+
+// 批量 AI 评估（前端按钮直接调用，复用 auto-evaluate-all 逻辑）
+app.post('/api/resumes/batch-ai-evaluate', authMiddleware, async (c) => {
+  try {
+    const tableId = getBitableTableId(c.env, 'talent');
+    const records = await bitableListRecords(c.env, tableId);
+    let evaluated = 0, skipped = 0, failed = 0;
+    const errors: string[] = [];
+    for (const rec of records) {
+      const f = rec.fields || {};
+      const candidateName = getFirstValue(f['姓名']) || 'Unknown';
+      const existingEval = f['AI简历评估'];
+      if (existingEval && String(existingEval).trim().length > 10) { skipped++; continue; }
+      try {
+        const resumeText = await getResumeText(c.env, candidateName);
+        if (resumeText.length < 10) { skipped++; continue; }
+        const evalResult = await callAIScreening(c.env, resumeText);
+        if (!evalResult) { failed++; continue; }
+        try { await c.env.DB.prepare('UPDATE resumes SET ai_evaluation = ?, updated_at = ? WHERE candidate_name = ?').bind(JSON.stringify(evalResult), now(), candidateName).run(); } catch {}
+        try { await bitableUpdateRecord(c.env, tableId, rec.record_id, { 'AI简历评估': JSON.stringify(evalResult, null, 2) }); } catch {}
+        evaluated++;
+      } catch (e: any) { failed++; errors.push(candidateName + ': ' + e.message?.substring(0, 100)); }
+    }
+    return c.json({ ok: true, total: records.length, evaluated, skipped, failed, errors: errors.slice(0, 20) });
+  } catch (e: any) { return c.json({ detail: '批量评估失败: ' + e.message }, 500); }
 });
 
 
