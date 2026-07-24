@@ -77,8 +77,11 @@ const CapabilityDimensions: React.FC = () => {
 
   const handleEdit = (record: any) => {
     setEditing(record);
-    const dims = record.dimensions_json
-      ? JSON.parse(record.dimensions_json)
+    const raw = record.dimensions_json;
+    // transformRow 可能已自动 JSON.parse 了字符串列，兼容两种格式
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const dims = Array.isArray(parsed)
+      ? parsed
       : parseFullText(record.full_text || '');
     form.setFieldsValue({
       position_name: record.position_name,
