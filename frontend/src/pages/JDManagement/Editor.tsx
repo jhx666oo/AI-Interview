@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Form, Input, Button, message, Typography, Space, Table, Tag } from 'antd';
-import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { SaveOutlined, ArrowLeftOutlined, RobotOutlined } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import request from '../../utils/request';
+import JDGeneratorModal from '../../components/JDGeneratorModal';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -14,6 +15,7 @@ const JDManagementEditor: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [record, setRecord] = useState<any>(null);
   const [form] = Form.useForm();
+  const [jdModalVisible, setJdModalVisible] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -39,6 +41,11 @@ const JDManagementEditor: React.FC = () => {
     } finally { setSaving(false); }
   };
 
+  // AI 生成 JD：采纳弹窗内容回填到表单 description / requirements
+  const handleJDConfirm = (description: string, requirements: string) => {
+    form.setFieldsValue({ description, requirements });
+  };
+
   const verColumns = [
     { title: '版本', dataIndex: 'version_number', key: 'version_number', width: 60 },
     { title: '修改人', dataIndex: 'created_by', key: 'created_by', width: 120 },
@@ -53,15 +60,35 @@ const JDManagementEditor: React.FC = () => {
   ];
 
   return (
+    <>
     <Card
       title={record ? `编辑 JD：${record.title}` : '加载中...'}
       extra={<Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/jd-management')}>返回列表</Button>}
       loading={loading}
     >
       <Form form={form} layout="vertical">
+        <Form.Item name="title" label="岗位名称" rules={[{ required: true, message: '请输入岗位名称' }]}>
+          <Input placeholder="例如：高级前端工程师" />
+        </Form.Item>
         <Form.Item label="岗位部门"><Input value={record?.department} disabled /></Form.Item>
-        <Form.Item name="description" label="岗位描述 (JD)" rules={[{ required: true }]}>
-          <TextArea rows={8} placeholder="输入岗位描述..." />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <Text strong>岗位描述 (JD)</Text>
+          <Button
+            type="link"
+            icon={<RobotOutlined />}
+            onClick={() => {
+              if (!form.getFieldValue('title')) {
+                message.error('请先填写岗位名称');
+                return;
+              }
+              setJdModalVisible(true);
+            }}
+          >
+            AI 生成 JD
+          </Button>
+        </div>
+        <Form.Item name="description" rules={[{ required: true }]}>
+          <TextArea rows={8} placeholder="输入岗位描述，或点击右上角「AI 生成 JD」智能生成" />
         </Form.Item>
         <Form.Item name="requirements" label="任职要求">
           <TextArea rows={4} placeholder="输入任职要求..." />
@@ -77,6 +104,15 @@ const JDManagementEditor: React.FC = () => {
         </Card>
       )}
     </Card>
+
+    <JDGeneratorModal
+      visible={jdModalVisible}
+      onCancel={() => setJdModalVisible(false)}
+      onConfirm={handleJDConfirm}
+      title={form.getFieldValue('title') || record?.title || ''}
+      department={record?.department}
+    />
+    </>
   );
 };
 
