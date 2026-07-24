@@ -144,11 +144,11 @@ const BackgroundChecksList: React.FC = () => {
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 120,
       render: (v: string) => dayjs(v).format('YYYY-MM-DD')
     },
-    { title: '操作', align: 'center' as const, key: 'action', width: 240, fixed: 'right' as const,
+    { title: '操作', align: 'center' as const, key: 'action', width: 280,
       render: (_: any, record: any) => {
         const canStartOnboarding = record.overall_result === 'passed' && record.status === 'completed';
         return (
-        <Space size="small">
+        <Space size="small" wrap>
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>
           {canStartOnboarding && (
             <Button type="primary" size="small" icon={<HomeOutlined />} loading={onboardingLoading === record.id} disabled={!!onboardingLoading} onClick={() => handleStartOnboarding(record)}>发起入职</Button>
