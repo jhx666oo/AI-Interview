@@ -148,7 +148,7 @@ const BackgroundChecksList: React.FC = () => {
       render: (_: any, record: any) => {
         const canStartOnboarding = record.overall_result === 'passed' && record.status === 'completed';
         return (
-        <Space size="small" wrap>
+        <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => { setCurrent(record); setDetailVisible(true); }}>详情</Button>
           {canStartOnboarding && (
             <Button type="primary" size="small" icon={<HomeOutlined />} loading={onboardingLoading === record.id} disabled={!!onboardingLoading} onClick={() => handleStartOnboarding(record)}>发起入职</Button>
@@ -189,7 +189,7 @@ const BackgroundChecksList: React.FC = () => {
           </Col>
         </Row>
         <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1050 }} pagination={false} />
+          scroll={{ x: 1100 }} pagination={false} />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑背调' : '发起背调'} open={modalVisible}
