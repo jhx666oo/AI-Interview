@@ -42,6 +42,7 @@ const ProbationList: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const pageSize = 10;
 
   const handleAIAssessment = async (id: string) => {
@@ -139,6 +140,22 @@ const ProbationList: React.FC = () => {
     finally { setDeletingId(null); }
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先选择'); return; }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 条试用记录吗？`,
+      onOk: async () => {
+        try {
+          await Promise.all(selectedRowKeys.map(id => request.delete(`/probation/${id}`)));
+          message.success(`成功删除 ${selectedRowKeys.length} 条试用记录`);
+          setSelectedRowKeys([]);
+          fetchData();
+        } catch (e: any) { message.error(e?.response?.data?.detail || '批量操作失败'); }
+      }
+    });
+  };
+
   const columns = [
     { title: '姓名', dataIndex: 'employee_name', key: 'employee_name', width: 100 },
     { title: '工号', dataIndex: 'employee_id', key: 'employee_id', width: 90, render: (v: string) => v || '-' },
@@ -187,8 +204,15 @@ const ProbationList: React.FC = () => {
           <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>新增试用</Button>
         </Space>}>
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: '#e6f7ff', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>已选 {selectedRowKeys.length} 项</span>
+            <Button size="small" danger onClick={handleBatchDelete}>批量删除</Button>
+          </div>
+        )}
         <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1500 }} pagination={false} />
+          scroll={{ x: 1500 }} pagination={false}
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }} />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}

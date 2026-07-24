@@ -46,6 +46,7 @@ const WorkflowsList: React.FC = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   const role = (user as any)?.role?.value ?? (user as any)?.role;
   const isAdmin = role === 'admin';
@@ -155,6 +156,38 @@ const WorkflowsList: React.FC = () => {
     } finally {
       setDuplicatingId(null);
     }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先选择'); return; }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 个工作流吗？`,
+      onOk: async () => {
+        try {
+          await Promise.all(selectedRowKeys.map(id => request.delete(`/workflows/${id}`)));
+          message.success(`成功删除 ${selectedRowKeys.length} 个工作流`);
+          setSelectedRowKeys([]);
+          fetchWorkflows();
+        } catch (e: any) { message.error(e?.response?.data?.detail || '批量操作失败'); }
+      }
+    });
+  };
+
+  const handleBatchPublish = async () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先选择'); return; }
+    Modal.confirm({
+      title: '确认批量发布',
+      content: `确定要发布选中的 ${selectedRowKeys.length} 个工作流吗？`,
+      onOk: async () => {
+        try {
+          await Promise.all(selectedRowKeys.map(id => request.post(`/workflows/${id}/publish`)));
+          message.success(`成功发布 ${selectedRowKeys.length} 个工作流`);
+          setSelectedRowKeys([]);
+          fetchWorkflows();
+        } catch (e: any) { message.error(e?.response?.data?.detail || '批量操作失败'); }
+      }
+    });
   };
 
   const columns = [
@@ -282,12 +315,20 @@ const WorkflowsList: React.FC = () => {
           )
         }
       >
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: '#e6f7ff', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>已选 {selectedRowKeys.length} 项</span>
+            <Button size="small" onClick={handleBatchPublish}>批量发布</Button>
+            <Button size="small" danger onClick={handleBatchDelete}>批量删除</Button>
+          </div>
+        )}
         <Table
           columns={columns}
           dataSource={workflows.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
           rowKey="id"
           loading={loading}
           pagination={false}
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
         />
         <SimplePagination current={tablePage} pageSize={pageSize} total={workflows.length} onChange={setTablePage} />
       </Card>

@@ -40,6 +40,7 @@ const BackgroundChecksList: React.FC = () => {
   const [onboardingLoading, setOnboardingLoading] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -105,6 +106,31 @@ const BackgroundChecksList: React.FC = () => {
     try { await request.delete(`/background-checks/${id}`); message.success('已删除'); fetchData(); }
     catch (e: any) { message.error(e.response?.data?.detail || '删除失败'); }
     finally { setDeletingId(null); }
+  };
+
+  // == 批量删除 ==
+  const handleBatchDelete = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要删除的背调记录');
+      return;
+    }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 条背调记录吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          await Promise.all(selectedRowKeys.map(id => request.delete(`/background-checks/${id}`)));
+          message.success(`成功删除 ${selectedRowKeys.length} 条背调记录`);
+          setSelectedRowKeys([]);
+          fetchData();
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail || '批量删除失败');
+        }
+      },
+    });
   };
 
   // == 发起入职 ==
@@ -188,8 +214,23 @@ const BackgroundChecksList: React.FC = () => {
             <Card size="small"><Statistic title="已完成" value={completedCount} valueStyle={{ color: '#52c41a' }} /></Card>
           </Col>
         </Row>
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <Space>
+              <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
+              <Button danger onClick={handleBatchDelete}>批量删除</Button>
+              <Button onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+            </Space>
+          </div>
+        )}
         <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1100 }} pagination={false} />
+          scroll={{ x: 1100 }} pagination={false}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+            columnWidth: 40,
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑背调' : '发起背调'} open={modalVisible}

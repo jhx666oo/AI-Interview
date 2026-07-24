@@ -27,6 +27,7 @@ const PositionMappings: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<PositionGroup | null>(null);
   const [tablePage, setTablePage] = useState(1);
@@ -143,6 +144,29 @@ const PositionMappings: React.FC = () => {
     }
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先选择要删除的项'); return; }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 条记录吗？`,
+      onOk: async () => {
+        try {
+          const records = data.filter(r => selectedRowKeys.includes(r.key));
+          for (const record of records) {
+            for (const id of record._ids) {
+              await request.delete(`/position-mappings/${id}`);
+            }
+          }
+          message.success(`已删除 ${selectedRowKeys.length} 条`);
+          setSelectedRowKeys([]);
+          fetchData();
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail || '批量删除失败');
+        }
+      }
+    });
+  };
+
   const handleSync = async () => {
     Modal.confirm({
       title: '从飞书同步',
@@ -250,6 +274,15 @@ const PositionMappings: React.FC = () => {
         </Space>
       }
     >
+      {selectedRowKeys.length > 0 && (
+        <div style={{ marginBottom: 16, padding: '8px 16px', background: '#e6f7ff', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>已选 <strong>{selectedRowKeys.length}</strong> 项</span>
+          <Space>
+            <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
+            <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+          </Space>
+        </div>
+      )}
       <Table
         columns={columns}
         dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
@@ -257,6 +290,7 @@ const PositionMappings: React.FC = () => {
         loading={loading}
         scroll={{ x: 930 }}
         pagination={false}
+        rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
       />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       <Modal

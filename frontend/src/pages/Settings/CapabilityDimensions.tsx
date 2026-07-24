@@ -23,6 +23,7 @@ const CapabilityDimensions: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form] = Form.useForm();
@@ -133,6 +134,24 @@ const CapabilityDimensions: React.FC = () => {
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先选择要删除的项'); return; }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 条记录吗？`,
+      onOk: async () => {
+        try {
+          await Promise.all(selectedRowKeys.map(id => request.delete(`/capability-dimensions/${id}`)));
+          message.success(`已删除 ${selectedRowKeys.length} 条`);
+          setSelectedRowKeys([]);
+          fetchData();
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail || '批量删除失败');
+        }
+      }
+    });
   };
 
   /** 获取某个记录的 dimensions 数组 */
@@ -263,6 +282,15 @@ const CapabilityDimensions: React.FC = () => {
         }
         style={{ borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
       >
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 16, padding: '8px 16px', background: '#e6f7ff', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>已选 <strong>{selectedRowKeys.length}</strong> 项</span>
+            <Space>
+              <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
+              <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+            </Space>
+          </div>
+        )}
         <div style={{ marginBottom: 16 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
             共 {data.length} 个岗位配置
@@ -275,6 +303,7 @@ const CapabilityDimensions: React.FC = () => {
           rowKey="id"
           loading={loading}
           scroll={{ x: 880 }}
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
           pagination={{
             pageSize: 20,
             showSizeChanger: false,

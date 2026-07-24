@@ -34,6 +34,7 @@ const OnboardingList: React.FC = () => {
   const [probationLoading, setProbationLoading] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const pageSize = 10;
 
   const fetchData = useCallback(async () => {
@@ -94,6 +95,31 @@ const OnboardingList: React.FC = () => {
     try { setDeletingId(id); await request.delete(`/onboarding/${id}`); message.success('已删除'); fetchData(); }
     catch (e: any) { message.error(e.response?.data?.detail || '删除失败'); }
     finally { setDeletingId(null); }
+  };
+
+  // == 批量删除 ==
+  const handleBatchDelete = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要删除的入职记录');
+      return;
+    }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 条入职记录吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          await Promise.all(selectedRowKeys.map(id => request.delete(`/onboarding/${id}`)));
+          message.success(`成功删除 ${selectedRowKeys.length} 条入职记录`);
+          setSelectedRowKeys([]);
+          fetchData();
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail || '批量删除失败');
+        }
+      },
+    });
   };
 
   const handleToProbation = async (id: string) => {
@@ -157,8 +183,23 @@ const OnboardingList: React.FC = () => {
           <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>新增入职</Button>
         </Space>}>
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <Space>
+              <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
+              <Button danger onClick={handleBatchDelete}>批量删除</Button>
+              <Button onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+            </Space>
+          </div>
+        )}
         <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1400 }} pagination={false} />
+          scroll={{ x: 1400 }} pagination={false}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+            columnWidth: 40,
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <Modal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}

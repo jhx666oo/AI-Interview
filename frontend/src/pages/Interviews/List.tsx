@@ -170,6 +170,7 @@ const InterviewsList: React.FC = () => {
   const [bgCheckLoading, setBgCheckLoading] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   // 查看评价弹窗
   const [viewEvalVisible, setViewEvalVisible] = useState(false);
@@ -400,6 +401,35 @@ const InterviewsList: React.FC = () => {
     }
   };
 
+  // == 批量删除 ==
+  const handleBatchDelete = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要删除的面试记录');
+      return;
+    }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 条面试记录吗？`,
+      okText: '确认',
+      cancelText: '取消',
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          const ids = selectedRowKeys.filter(k => data.find(r => r.id === k)?.interview_id);
+          await Promise.all(ids.map(id => {
+            const record = data.find(r => r.id === id);
+            return record?.interview_id ? request.delete(`/interviews/${record.interview_id}`) : Promise.resolve();
+          }));
+          message.success(`成功删除 ${selectedRowKeys.length} 条记录`);
+          setSelectedRowKeys([]);
+          fetchMergedData();
+        } catch (e: any) {
+          message.error(e?.response?.data?.detail || '批量删除失败');
+        }
+      },
+    });
+  };
+
   // == 发送面试提醒 ==
   const handleSendReminder = async (record: MergedRow, interviewerName?: string) => {
     const name = interviewerName || record.interviewer;
@@ -624,6 +654,15 @@ const InterviewsList: React.FC = () => {
         }
         style={{ borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
       >
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <Space>
+              <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
+              <Button danger onClick={handleBatchDelete}>批量删除</Button>
+              <Button onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+            </Space>
+          </div>
+        )}
         <Table
           dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
           columns={columns}
@@ -631,6 +670,11 @@ const InterviewsList: React.FC = () => {
           loading={loading}
           scroll={{ x: 'max-content' }}
           pagination={false}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+            columnWidth: 40,
+          }}
         />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>

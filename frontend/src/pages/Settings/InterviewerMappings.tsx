@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Input, message, Popconfirm, Space, Card, Typography } from 'antd';
+import { Table, Button, Input, message, Popconfirm, Space, Card, Typography, Modal } from 'antd';
 import { PlusOutlined, DeleteOutlined, SaveOutlined, BellOutlined, SearchOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 
@@ -18,6 +18,7 @@ const InterviewerMappings: React.FC = () => {
   const [searching, setSearching] = useState(false);
   const [notifyLoading, setNotifyLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
 
   useEffect(() => { fetchMappings(); }, []);
 
@@ -62,6 +63,20 @@ const InterviewerMappings: React.FC = () => {
 
   const handleDelete = (index: number) => {
     setData(data.filter((_, i) => i !== index));
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先选择要删除的项'); return; }
+    Modal.confirm({
+      title: '确认批量删除',
+      content: `确定要删除选中的 ${selectedRowKeys.length} 条记录吗？`,
+      onOk: () => {
+        const indices = selectedRowKeys.map(k => Number(k));
+        setData(data.filter((_, i) => !indices.includes(i)));
+        message.success(`已删除 ${selectedRowKeys.length} 条`);
+        setSelectedRowKeys([]);
+      }
+    });
   };
 
   const handleChange = (index: number, field: 'name' | 'open_id', value: string) => {
@@ -173,12 +188,22 @@ const InterviewerMappings: React.FC = () => {
             </div>
           )}
         </div>
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 16, padding: '8px 16px', background: '#e6f7ff', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>已选 <strong>{selectedRowKeys.length}</strong> 项</span>
+            <Space>
+              <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
+              <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+            </Space>
+          </div>
+        )}
         <Table
           dataSource={data}
           columns={columns}
           rowKey={(_, idx) => `${idx}`}
           loading={loading}
           pagination={false}
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
           locale={{ emptyText: '暂无映射，请点击「添加」配置面试官姓名与飞书 Open ID' }}
         />
       </Card>
