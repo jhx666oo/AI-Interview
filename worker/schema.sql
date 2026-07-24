@@ -655,3 +655,34 @@ CREATE INDEX IF NOT EXISTS idx_workflow_exec_status ON workflow_executions(statu
 
 -- workflow_node_executions
 CREATE INDEX IF NOT EXISTS idx_workflow_node_exec_execution ON workflow_node_executions(execution_id);
+-- ==================== resume_screening_queue (初筛队列，修复缺表 2026-07-24) ====================
+CREATE TABLE IF NOT EXISTS resume_screening_queue (
+  id TEXT PRIMARY KEY,
+  resume_id TEXT,
+  candidate_name TEXT DEFAULT '未知',
+  position_applied TEXT DEFAULT '',
+  mapped_position TEXT DEFAULT '',
+  city TEXT DEFAULT '',
+  ai_analysis TEXT DEFAULT '',
+  ai_result TEXT DEFAULT 'pending',
+  match_score REAL DEFAULT 0,
+  risk_points TEXT DEFAULT '',
+  match_reasons TEXT DEFAULT '',
+  interview_questions TEXT DEFAULT '',
+  strengths TEXT DEFAULT '',
+  age TEXT DEFAULT '',
+  gender TEXT DEFAULT '',
+  education TEXT DEFAULT '',
+  file_name TEXT DEFAULT '',
+  email_subject TEXT DEFAULT '',
+  status TEXT DEFAULT 'pending',
+  batch_num INTEGER DEFAULT 1,
+  reviewed_by TEXT DEFAULT '',
+  reviewed_at TEXT DEFAULT '',
+  feishu_processed_at TEXT DEFAULT '',
+  created_at TEXT,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_screening_status ON resume_screening_queue(status);
+CREATE INDEX IF NOT EXISTS idx_screening_created ON resume_screening_queue(created_at);
+CREATE INDEX IF NOT EXISTS idx_screening_resume ON resume_screening_queue(resume_id);

@@ -671,7 +671,9 @@ app.post('/api/auth/users', authMiddleware, requireRole(['admin']), async (c) =>
   ).bind(id, body.email, hash, body.full_name || '', (body.role || 'hr').toLowerCase(), now(), now()).run();
   const user = await getUser(c.env.DB, body.email);
   const serialized = serializeUser(user);
-  return c.json({ ...serialized, _plain_password: password }); // 仅创建时一次性返回明文，不持久化
+  // 安全修复 2026-07-24：不再在响应体回传明文密码，避免密码经网络/日志/缓存泄露。
+  // 初始密码由 admin 在创建时自行设定（body.password），未设定时为默认值，需引导用户首次登录改密。
+  return c.json({ ...serialized, password_set: !!body.password });
 });
 
 app.put('/api/auth/users/:id', authMiddleware, requireRole(['admin']), async (c) => {
@@ -714,7 +716,9 @@ app.put('/api/auth/users/:id/password', authMiddleware, requireRole(['admin']), 
   const hash = await hashPassword(c.env.SECRET_KEY, newPassword);
   await c.env.DB.prepare('UPDATE users SET hashed_password = ?, updated_at = ? WHERE id = ?')
     .bind(hash, now(), id).run();
-  return c.json({ _plain_password: newPassword }); // 仅重置时一次性返回，不持久化
+  // 安全修复 2026-07-24：不再回传明文密码。密码由 admin 在请求中设定（body.password），
+  // 未设定时使用默认值，需引导用户首次登录后修改。
+  return c.json({ success: true, used_default: !body.password });
 });
 
 app.delete('/api/auth/users/:id', authMiddleware, requireRole(['admin']), async (c) => {
@@ -2138,7 +2142,29 @@ app.get('/api/requisitions/:id', authMiddleware, async (c) => {
 
 app.post('/api/requisitions', authMiddleware, async (c) => {
   try {
-    const body = await c.req.json();
+    let body: any;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ detail: '请求体不是合法的 JSON' }, 400);
+    }
+    // 必填与长度校验（修复零校验产生脏数据 2026-07-24）
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return c.json({ detail: '请求体格式错误' }, 400);
+    }
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    if (!title) {
+      return c.json({ detail: '岗位名称（title）为必填项' }, 400);
+    }
+    if (title.length > 200) {
+      return c.json({ detail: '岗位名称长度不能超过 200 个字符' }, 400);
+    }
+    if (typeof body.department === 'string' && body.department.length > 200) {
+      return c.json({ detail: '部门名称长度不能超过 200 个字符' }, 400);
+    }
+    if (typeof body.description === 'string' && body.description.length > 20000) {
+      return c.json({ detail: '职位描述长度不能超过 20000 个字符' }, 400);
+    }
     const tableId = getBitableTableId(c.env, 'requisition');
     // 标准化：city 数组转字符串；urgency 若格式不对则跳过（Bitable 可能为数字字段）
     const normalized = { ...body };
@@ -2152,7 +2178,7 @@ app.post('/api/requisitions', authMiddleware, async (c) => {
       fields[cnKey] = v;
     }
     const recordId = await bitableCreateRecord(c.env, tableId, fields);
-    if (!recordId) return c.json({ detail: 'Create failed' }, 500);
+    if (!recordId) return c.json({ detail: '飞书多维表格创建记录失败（上游依赖）' }, 502);
 
     // v2.0: 同步写 D1（城市、硬性要求、个性化需求、面试官）
     const d1Id = uuid();
@@ -2885,6 +2911,19 @@ app.get('/api/resumes', authMiddleware, async (c) => {
           });
         }
       } catch (e) {}
+    }
+
+    // 分页支持（修复冷启动/大列表返回 2026-07-24）：
+    // 传 page/page_size 时返回 { items, total, page, page_size }；不传时保持全量数组（向后兼容）。
+    const pageParam = c.req.query('page');
+    const pageSizeParam = c.req.query('page_size');
+    if (pageParam || pageSizeParam) {
+      const page = Math.max(1, parseInt(pageParam || '1', 10) || 1);
+      const pageSize = Math.min(200, Math.max(1, parseInt(pageSizeParam || '20', 10) || 20));
+      const total = filtered.length;
+      const start = (page - 1) * pageSize;
+      const paged = filtered.slice(start, start + pageSize);
+      return c.json({ items: paged, total, page, page_size: pageSize });
     }
 
     return c.json(filtered);
@@ -4525,6 +4564,19 @@ app.get('/api/positions/:id', async (c) => {
 app.get('/api/public/review/:resumeId', async (c) => {
   const row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(c.req.param('resumeId')).first();
   if (!row) return c.json({ detail: 'Not found' }, 404);
+  return c.json(transformRow(row));
+});
+
+// 公开岗位详情（修复 2026-07-24）：
+// 原 GET /api/positions/:id 虽未挂中间件，但因与带鉴权的 POST /api/positions/:id/ai-match 等
+// 共享 :id 路由段，在 Hono v4 SmartRouter 下匿名访问被误拦截返回 401。
+// 候选人公开职位详情页（Public/JobDetail）需匿名访问，故改用独立公开前缀 /api/public/positions/:id，
+// 且仅返回对外招聘中的岗位（status IN ('open','published')，与系统内 open=招聘中 的口径一致），
+// 避免泄露草稿(draft)/暂停(paused)/已关闭(closed)等非公开岗位。
+const PUBLIC_POSITION_STATUSES = ['open', 'published', 'recruiting'];
+app.get('/api/public/positions/:id', async (c) => {
+  const row = await c.env.DB.prepare('SELECT * FROM positions WHERE id = ?').bind(c.req.param('id')).first() as any;
+  if (!row || !PUBLIC_POSITION_STATUSES.includes(row.status)) return c.json({ detail: 'Not found' }, 404);
   return c.json(transformRow(row));
 });
 

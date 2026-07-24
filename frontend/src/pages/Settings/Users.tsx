@@ -86,9 +86,10 @@ const UsersList: React.FC = () => {
           message.success('用户更新成功');
         }
       } else {
-        const res = await request.post('/auth/users', values);
-        const plainPwd = (res as any)._plain_password || values.password;
-        message.success(`用户创建成功！\n登录密码: ${plainPwd}\n请复制后告知用户`);
+        await request.post('/auth/users', values);
+        // 安全修复 2026-07-24：后端不再回传明文密码，改用本地输入值（未填则为默认 123456）
+        const plainPwd = values.password || '123456';
+        message.success(`用户创建成功！\n登录密码: ${plainPwd}\n请复制后告知用户，并提醒其首次登录后修改`);
         // 在弹窗里显示密码（不关闭弹窗也能看到）
         setCreatedPassword(plainPwd);
         fetchUsers();
@@ -131,40 +132,59 @@ const UsersList: React.FC = () => {
     }
   };
 
+  // 安全修复 2026-07-24：后端不再回传明文密码。改由 admin 输入新密码，前端本地已知后再展示。
   const handleResetPassword = async (record: User) => {
-    try {
-      const res = await request.put(`/auth/users/${record.id}/password`, {});
-      const newPwd = (res as any)._plain_password;
-      Modal.success({
-        title: '密码已重置',
-        content: (
-          <div>
-            <p>用户 <b>{record.full_name}</b> 的新密码：</p>
-            <div
-              style={{
-                background: '#f5f5f5',
-                border: '1px solid #d9d9d9',
-                borderRadius: 6,
-                padding: '8px 12px',
-                fontFamily: 'monospace',
-                fontSize: 16,
-                fontWeight: 'bold',
-                textAlign: 'center',
-                margin: '12px 0',
-                userSelect: 'all',
-              }}
-            >
-              {newPwd}
-            </div>
-            <p style={{ color: '#999', fontSize: 12 }}>请复制并告知用户</p>
-          </div>
-        ),
-        okText: '已复制，关闭',
-      });
-      fetchUsers();
-    } catch (error: any) {
-      message.error(error?.response?.data?.detail || '重置密码失败');
-    }
+    let inputPwd = '';
+    Modal.confirm({
+      title: `重置「${record.full_name}」的密码`,
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>请输入新密码（留空则使用默认密码 <b>123456</b>）：</p>
+          <Input.Password
+            placeholder="新密码，至少 6 位"
+            onChange={(e) => { inputPwd = e.target.value; }}
+          />
+        </div>
+      ),
+      okText: '确认重置',
+      cancelText: '取消',
+      onOk: async () => {
+        const payload = inputPwd ? { password: inputPwd } : {};
+        try {
+          await request.put(`/auth/users/${record.id}/password`, payload);
+          const shownPwd = inputPwd || '123456';
+          Modal.success({
+            title: '密码已重置',
+            content: (
+              <div>
+                <p>用户 <b>{record.full_name}</b> 的新密码：</p>
+                <div
+                  style={{
+                    background: '#f5f5f5',
+                    border: '1px solid #d9d9d9',
+                    borderRadius: 6,
+                    padding: '8px 12px',
+                    fontFamily: 'monospace',
+                    fontSize: 16,
+                    fontWeight: 'bold',
+                    textAlign: 'center',
+                    margin: '12px 0',
+                    userSelect: 'all',
+                  }}
+                >
+                  {shownPwd}
+                </div>
+                <p style={{ color: '#999', fontSize: 12 }}>请复制并告知用户，提醒其登录后自行修改</p>
+              </div>
+            ),
+            okText: '已复制，关闭',
+          });
+          fetchUsers();
+        } catch (error: any) {
+          message.error(error?.response?.data?.detail || '重置密码失败');
+        }
+      },
+    });
   };
 
   const generateFeishuUrl = async (email: string) => {
@@ -229,7 +249,7 @@ const UsersList: React.FC = () => {
       render: (_: any, record: User) => (
         <Space>
           <Text style={{ fontFamily: 'monospace' }}>
-            {(record as any)._plain_password || (record.has_password ? '******' : '—')}
+            {record.has_password ? '******' : '—'}
           </Text>
         </Space>
       ),

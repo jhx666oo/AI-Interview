@@ -25,8 +25,9 @@ const PublicJobDetail: React.FC = () => {
   const fetchPosition = async (positionId: string) => {
     setLoading(true);
     try {
-      const res = await request.get(`/positions/${positionId}`);
-      if (res.status !== 'published') {
+      // 使用独立公开端点（匿名可访问，仅返回已发布岗位）
+      const res = await request.get(`/public/positions/${positionId}`);
+      if (!res || res.status !== 'published') {
         message.error('该岗位已下架或不存在');
         setPosition(null);
       } else {
