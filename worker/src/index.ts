@@ -844,16 +844,6 @@ app.get('/api/ai-usage', authMiddleware, async (c) => {
   }
 });
 
-// 能力维度名称列表（岗位表单用）
-app.get('/api/capability-dimension-names', authMiddleware, async (c) => {
-  return c.json([
-    '沟通能力', '团队协作', '学习能力', '抗压能力', '逻辑思维',
-    '领导力', '项目管理', '技术能力', '数据分析', '产品思维',
-    '用户研究', '用户体验', '代码质量', '系统设计', '安全性',
-    '性能优化', '创新思维', '执行力', '自驱力', '适应能力',
-  ]);
-});
-
 // 评估维度设置（简历 AI 评估用）
 app.get('/api/settings/evaluation-dimensions', authMiddleware, async (c) => {
   // 从 D1 settings 表读取，如无则返回默认值
