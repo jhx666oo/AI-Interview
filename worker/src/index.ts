@@ -2276,10 +2276,8 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
       if (engKey === 'requirements') continue; // Bitable不支持此字段，只存D1
       fields[cnKey] = v;
     }
-    const ok = await bitableUpdateRecord(c.env, tableId, id, fields);
-    if (!ok) return c.json({ detail: 'Bitable更新失败' }, 500);
 
-    // v2.0: 同步更新 D1
+    // v2.0: D1 本地存储优先 —— 保证即使飞书同步失败，数据也不丢失
     const sets: string[] = [];
     const vals: any[] = [];
     if (body.city !== undefined) { sets.push('city = ?'); vals.push(JSON.stringify(body.city)); }
@@ -2301,13 +2299,31 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
       ).bind(...vals, now(), id, id).run();
     }
 
-    const record = await bitableGetRecord(c.env, tableId, id);
-    const item = parseRequisitionRecord(record);
+    // 飞书多维表格同步 —— 失败仅告警，不阻断主流程（D1 已落库）
+    let feishuSynced = false;
+    try {
+      if (Object.keys(fields).length > 0) {
+        const ok = await bitableUpdateRecord(c.env, tableId, id, fields);
+        feishuSynced = !!ok;
+        if (!ok) console.warn(`[Requisition] 飞书同步失败 id=${id}，但 D1 已保存`);
+      } else {
+        feishuSynced = true;
+      }
+    } catch (fe: any) {
+      console.warn(`[Requisition] 飞书同步异常 id=${id}: ${fe.message}`);
+    }
+
+    // 返回以 D1 数据为准
+    const row = await c.env.DB.prepare(
+      'SELECT * FROM job_requisitions WHERE id = ? OR feishu_record_id = ?'
+    ).bind(id, id).first() as any;
+    const item = transformRow(row) as any;
     if (body.city !== undefined) item.city = body.city;
     if (body.hard_requirements !== undefined) item.hard_requirements = body.hard_requirements;
     if (body.personalized_requirements !== undefined) item.personalized_requirements = body.personalized_requirements;
     if (body.description !== undefined) item.description = body.description;
     if (body.requirements !== undefined) item.requirements = body.requirements;
+    item.feishu_synced = feishuSynced;
     return c.json(item);
   } catch (e: any) {
     return c.json({ detail: '更新失败: ' + e.message }, 500);
@@ -4216,8 +4232,14 @@ app.post('/api/requisitions/:id/ai-jd', authMiddleware, async (c) => {
   const userPrompt = `职位名称: ${req.title}\n部门: ${req.department}\n招聘人数: ${req.headcount || 1}\n用工类型: ${req.employment_type || 'full_time'}\n薪资范围: ${req.salary_range || '面议'}\n紧急程度: ${req.urgency || 'medium'}\n现有描述: ${req.description || '无'}\n现有要求: ${req.requirements || '无'}\n\n请生成或完善该职位的描述和任职要求。`;
   try {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    if (!result || !result.trim()) {
+      return c.json({ detail: 'AI 未返回有效内容，请检查「AI 模型配置」中的 API Key 是否有效（DeepSeek key 失效或额度不足会导致此问题）' }, 500);
+    }
     let parsed: any;
     try { parsed = extractJSON(result); } catch { parsed = { description: result, requirements: '' }; }
+    if (!parsed.description && !parsed.requirements) {
+      return c.json({ detail: 'AI 返回内容无法解析为 JD 结构，请检查模型配置或稍后重试' }, 500);
+    }
     await c.env.DB.prepare('UPDATE job_requisitions SET description = ?, requirements = ?, updated_at = ? WHERE id = ? OR feishu_record_id = ?')
       .bind(parsed.description || '', parsed.requirements || '', now(), id, id).run();
     const row = await c.env.DB.prepare('SELECT * FROM job_requisitions WHERE id = ? OR feishu_record_id = ?').bind(id, id).first();
