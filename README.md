@@ -13,7 +13,7 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 
 ---
 
-## 当前开发状态 (2026-07-23)
+## 当前开发状态 (2026-07-24)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -56,6 +56,12 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 - 新增 GET /health 健康检查端点
 - 前端按钮防重复提交全面修复（15 个文件，8 个高风险项消除）
 
+**JD 生成修复（2026-07-24）：**
+- **JD 编辑页接入 AI 生成 JD**：`JDManagement/Editor.tsx` 此前从未接入 `JDGeneratorModal`（对比 `Positions/Form.tsx` 已正常），现已复用该组件，新增「AI 生成 JD」按钮、采纳回填闭环（回填 description/requirements 后保存为新版本）。
+- **需求/岗位管理 AI 生成 JD 静默写空修复**：根因为生产 `system_configs.llm_api_key` 是失效的 DeepSeek key，旧 `ai-jd` 代码在 `callAI` 失败时静默返回空内容（HTTP 200），前端「显示成功实际未生成」。现已增加空结果检测，明确返回 500 报错。
+- **PUT /api/requisitions/:id 崩溃修复**：旧逻辑在飞书 Bitable 同步失败时整体抛 500 且不保存 D1 本地数据，导致「显示成功实际未保存」。现已改为 **D1 优先保存、飞书同步失败仅降级告警**，并返回 `feishu_synced` 标志。
+- **AI 配置降级机制**：撤销失效 key 后 `callAI` 自动走 Cloudflare Pages 已配置的 Workers AI（`env.AI` binding）正常生成。详见下方「AI 模型配置」。
+
 ---
 
 ## 部署
@@ -66,13 +72,17 @@ cd ai-interview && node -e "const e=require('./worker/node_modules/esbuild'); \
   e.build({entryPoints:['worker/src/index.ts'],bundle:true,outfile:'frontend/dist/_worker.js',\
   format:'esm',platform:'browser',target:'es2021',minify:true,external:['__STATIC_CONTENT_MANIFEST']})"
 
-# 编译前端
-cd frontend && npm run build
+# 编译前端（先清缓存，否则 Vite hash 不变导致部署时 0 files uploaded）
+cd frontend && rm -rf dist node_modules/.vite && npm run build
 
 # 部署到 Cloudflare Pages
 cd frontend && CLOUDFLARE_ACCOUNT_ID=ed758fc82ca4400593ddb447d3db57a4 \
   wrangler pages deploy dist --project-name=ai-interview
 ```
+
+> ⚠️ **部署缓存坑**：若只改源码重新 `wrangler pages deploy` 却提示 `0 files uploaded (N already uploaded)`，是 Vite 构建缓存（`node_modules/.vite`）导致产物 hash 不变。先 `rm -rf dist node_modules/.vite` 再 `npm run build` 即可强制生成新 hash。
+>
+> ⚠️ **账号坑**：`wrangler` 可能从缓存解析到错误 Cloudflare 账号，必须显式传 `CLOUDFLARE_ACCOUNT_ID=ed758fc82ca4400593ddb447d3db57a4`（即 `ai-interview-88r` Pages 项目所属账号）。
 
 ---
 
@@ -91,7 +101,7 @@ cd frontend && CLOUDFLARE_ACCOUNT_ID=ed758fc82ca4400593ddb447d3db57a4 \
 | HTTP 客户端 | Axios |
 | 后端 | Cloudflare Workers, Hono, TypeScript, esbuild |
 | 数据库 | Cloudflare D1 (SQLite) |
-| AI 引擎 | DeepSeek V4 Flash |
+| AI 引擎 | DeepSeek V4 Flash（可降级 Workers AI） |
 | 认证 | JWT (Bearer Token) |
 | 外部集成 | 飞书 Bitable API、飞书 IM API、飞书 OAuth |
 | 部署 | Cloudflare Pages + wrangler CLI |
@@ -104,7 +114,8 @@ cd frontend && CLOUDFLARE_ACCOUNT_ID=ed758fc82ca4400593ddb447d3db57a4 \
 |------|------|------|
 | 仪表盘 | `/dashboard` | 三大事业部看板、招聘漏斗、KPI |
 | 需求管理 | `/requisitions` | 招聘需求管理 |
-| 岗位管理 | `/positions` | 岗位创建、一面/二面负责人 |
+| 岗位管理 | `/positions` | 岗位创建、一面/二面负责人、AI 生成 JD |
+| JD 管理 | `/jd-management` | JD 版本管理、AI 生成 JD（Editor 已接入 JDGeneratorModal） |
 | 简历管理 | `/resumes` | 飞书导入、上传、BOSS 导入、AI 解析 |
 | **面试管理** | `/interviews` | 面试同步、一面/二面面试官、提醒、评价流转 |
 | 入职管理 | `/onboarding` | 入职记录与状态跟踪 |
@@ -192,7 +203,7 @@ ai-interview/
 │   └── dist/                    # 构建产物 + _worker.js
 │
 ├── worker/                      # Cloudflare Workers (Hono + TypeScript + D1)
-│   ├── src/index.ts             # Worker 入口（~6500 行，所有 API 端点）
+│   ├── src/index.ts             # Worker 入口（所有 API 端点，随迭代增长）
 │   ├── schema.sql               # D1 数据库 schema
 │   ├── .dev.vars                # 本地环境变量
 │   └── wrangler.toml            # Cloudflare 配置
@@ -206,7 +217,21 @@ ai-interview/
 
 ---
 
-## 飞书集成
+## AI 模型配置
+
+AI 调用统一走 `worker/src/index.ts` 的 `getLLMConfig()` + `callAI()`，配置优先级如下：
+
+1. **系统配置（D1 `system_configs` 表）**：`llm_api_key` / `llm_base_url` / `llm_model` —— 在「系统设置 → AI 模型配置」页填写，优先级最高。
+2. **环境变量 `AI_API_KEY`**：若系统配置为空则回退到此。
+3. **Workers AI（`env.AI` binding）**：若上述均无，自动降级到 Cloudflare Pages 已配置的 Workers AI，无需额外 key 即可生成。
+
+`callAI()` 逻辑：有 `apiKey` 走 DeepSeek 兼容接口，无则降级 Workers AI；DeepSeek 返回 401 会抛出明确错误。
+
+> ⚠️ **踩坑记录**：生产 `system_configs.llm_api_key` 曾填入失效的 DeepSeek key，导致 `callAI` 失败。旧 `ai-jd` 代码在失败时**静默返回空内容（HTTP 200）**，前端「显示成功实际未生成」。现已修复为：空结果检测 → 明确返回 500 报错；同时撤销失效 key 后 `callAI` 自动走 Workers AI 正常生成。
+>
+> ✅ **建议**：若未配置有效 DeepSeek key，保持 `llm_api_key` 为空，系统自动使用 Workers AI 降级通道。
+
+---
 
 ### 数据同步
 
