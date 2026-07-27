@@ -737,16 +737,23 @@ const ResumesList: React.FC = () => {
     }
   };
 
-  // pdf.js worker
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+  // pdf.js worker — 使用本地打包的 worker，不走 CDN（避免国内网络问题）
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.js',
+    import.meta.url,
+  ).toString();
 
-  // 从 PDF 文件提取纯文本（零 Token）
+  // 从 PDF 文件提取纯文本（零 Token，带超时保护）
   const extractPdfText = async (file: File): Promise<string> => {
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      // 10 秒超时：大 PDF 或扫描件可能在本地提取太慢，直接走服务端 AI
+      const pdf = await Promise.race([
+        pdfjsLib.getDocument({ data: arrayBuffer }).promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
+      ]);
       let fullText = '';
-      for (let i = 1; i <= pdf.numPages; i++) {
+      for (let i = 1; i <= pdf.numPages && i <= 20; i++) { // 最多 20 页，避免超大 PDF 卡死
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
         const pageText = textContent.items.map((item: any) => item.str).join(' ');
@@ -754,7 +761,7 @@ const ResumesList: React.FC = () => {
       }
       return fullText.trim() || '';
     } catch {
-      return ''; // 扫描版 PDF 无法提取，回落 AI
+      return ''; // 扫描版 PDF / 超时 / 超�� → 回落服务端 AI 解析
     }
   };
 
@@ -823,7 +830,7 @@ const ResumesList: React.FC = () => {
       setIsModalVisible(false);
       fetchResumes();
     } catch (error) {
-      message.error('上传失败');
+      message.error(e?.response?.data?.detail || e?.message || '上传失败');
     } finally {
       setSubmitting(false);
     }
