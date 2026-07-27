@@ -639,7 +639,7 @@ const PositionsList: React.FC = () => {
     {
       title: '能力维度',
       key: 'dimensions',
-      width: 200,
+      width: 280,
       render: (_: any, record: Position) => {
         // 优先读岗位自身的 capability_dimensions
         let dimNames: string[] = [];
@@ -663,7 +663,7 @@ const PositionsList: React.FC = () => {
         const showCount = Math.min(dimNames.length, 4);
         const extra = dimNames.length - showCount;
         return (
-          <div style={{ lineHeight: '22px', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
             {dimNames.slice(0, showCount).map((d: any, i: number) => {
               const name = d.name || d;
               const def = d.definition || '';
@@ -678,36 +678,23 @@ const PositionsList: React.FC = () => {
               );
               return (
                 <Popover key={i} content={popContent} title={null} trigger="hover" placement="top">
-                  <Tag color="blue" style={{ margin: '1px 2px', fontSize: 11, lineHeight: '18px', cursor: 'pointer' }}>{name}</Tag>
+                  <span style={{
+                    display: 'inline-block',
+                    padding: '2px 10px',
+                    background: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: '#1e40af',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}>{name}</span>
                 </Popover>
               );
             })}
-            {extra > 0 && <Tag style={{ margin: '1px 2px', fontSize: 11, lineHeight: '18px' }}>+{extra}</Tag>}
+            {extra > 0 && <span style={{ fontSize: 11, color: '#94a3b8', lineHeight: '24px' }}>+{extra}</span>}
           </div>
         );
-      }
-    },
-    { 
-      title: '任职要求', 
-      dataIndex: 'requirements', 
-      key: 'requirements',
-      width: 280,
-      render: (v: string | null) => {
-        if (!v) return <Text type="secondary">-</Text>;
-        try {
-          const items = JSON.parse(v);
-          if (Array.isArray(items)) {
-            return (
-              <div style={{ lineHeight: '22px' }}>
-                {items.map((item: string, i: number) => (
-                  <Tag key={i} color="blue" style={{ margin: '1px 2px', fontSize: 11, lineHeight: '18px' }}>{item}</Tag>
-                ))}
-              </div>
-            );
-          }
-        } catch {}
-        // 旧数据：纯文本
-        return <Tooltip title={v}><Text ellipsis style={{ maxWidth: 260 }}>{v}</Text></Tooltip>;
       }
     },
     { 
@@ -815,7 +802,7 @@ const PositionsList: React.FC = () => {
         dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} 
         loading={loading} 
         rowKey="id" 
-        scroll={{ x: 1950 }}
+        scroll={{ x: 1700 }}
         pagination={false}
         rowSelection={{
           selectedRowKeys,
@@ -955,32 +942,6 @@ const PositionsList: React.FC = () => {
           </div>
           <Form.Item name="description" rules={[{ required: true, message: '请输入岗位职责' }]}>
             <Input.TextArea rows={4} placeholder="请输入详细的岗位职责描述" showCount maxLength={2000} style={{ padding: '8px 12px' }} />
-          </Form.Item>
-
-          <Form.Item name="requirements" label={
-            <Space>
-              <MergeCellsOutlined />
-              <span>任职要求（可多选 / 自定义输入回车添加）</span>
-            </Space>
-          }>
-            <Select
-              mode="tags"
-              size="large"
-              placeholder="选择或输入任职要求，按回车添加"
-              allowClear
-              tokenSeparators={[',', '，']}
-            >
-              <Select.Option value="本科及以上学历">本科及以上学历</Select.Option>
-              <Select.Option value="硕士及以上学历">硕士及以上学历</Select.Option>
-              <Select.Option value="3年以上相关工作经验">3年以上相关工作经验</Select.Option>
-              <Select.Option value="5年以上相关工作经验">5年以上相关工作经验</Select.Option>
-              <Select.Option value="精通前后端开发技术">精通前后端开发技术</Select.Option>
-              <Select.Option value="具备团队管理经验">具备团队管理经验</Select.Option>
-              <Select.Option value="具备良好的沟通协作能力">具备良好的沟通协作能力</Select.Option>
-              <Select.Option value="有大型项目架构经验">有大型项目架构经验</Select.Option>
-              <Select.Option value="英语流利可作为工作语言">英语流利可作为工作语言</Select.Option>
-              <Select.Option value="有相关行业经验">有相关行业经验</Select.Option>
-            </Select>
           </Form.Item>
 
           <Form.Item name="personalized_requirements" label="个性化需求">
