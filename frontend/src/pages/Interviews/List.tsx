@@ -7,7 +7,7 @@ import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
   BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined, PlusOutlined, DeleteOutlined,
-  SafetyOutlined
+  HomeOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -22,6 +22,9 @@ const interviewStatusConfig: Record<string, { color: string; text: string }> = {
   scheduled: { color: 'processing', text: '待面试' },
   completed: { color: 'success', text: '已完成' },
   cancelled: { color: 'default', text: '已取消' },
+  pending_onboarding: { color: 'warning', text: '待入职' },
+  onboarded: { color: 'success', text: '已入职' },
+  failed: { color: 'error', text: '已淘汰' },
 };
 
 const resultLabels: Record<string, { color: string; text: string }> = {
@@ -167,7 +170,8 @@ const InterviewsList: React.FC = () => {
 
   // 按钮加载态
   const [reminderLoading, setReminderLoading] = useState<string | null>(null);
-  const [bgCheckLoading, setBgCheckLoading] = useState<string | null>(null);
+  const [onboardingLoading, setOnboardingLoading] = useState<string | null>(null);
+  const [onboardedRecords, setOnboardedRecords] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
@@ -455,23 +459,22 @@ const InterviewsList: React.FC = () => {
     setViewEvalVisible(true);
   };
 
-  // == 发起背调 ==
-  const handleStartBackgroundCheck = async (record: MergedRow) => {
+  // == 送入入职 ==
+  const handleSendToOnboarding = async (record: MergedRow) => {
     try {
-      setBgCheckLoading(record.id);
-      await request.post('/background-checks', {
+      setOnboardingLoading(record.id);
+      await request.post('/onboarding', {
+        resume_id: record.resume_id || '',
         candidate_name: record.candidate_name,
         position_title: record.position_applied || record.position || '',
-        interview_id: record.interview_id,
-        resume_id: record.resume_id || '',
-        status: 'pending',
       });
-      message.success('已发起背调');
+      message.success(`已送入入职管理：${record.candidate_name}`);
+      setOnboardedRecords(prev => new Set(prev).add(record.id));
       fetchMergedData();
     } catch (e: any) {
-      message.error(e.response?.data?.detail || '发起背调失败');
+      message.error(e.response?.data?.detail || '操作失败');
     } finally {
-      setBgCheckLoading(null);
+      setOnboardingLoading(null);
     }
   };
 
@@ -513,7 +516,26 @@ const InterviewsList: React.FC = () => {
       title: '面试状态', key: 'interview_status', width: 100,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id) return <Tag>未安排</Tag>;
-        const cfg = interviewStatusConfig[r.interview_status] || { color: 'default', text: r.interview_status };
+        // 动态计算状态
+        let statusKey: string;
+        const r1Passed = r.result === 'passed';
+        const r1Failed = r.result === 'failed';
+        const r2Passed = r.result2 === 'passed';
+        const r2Failed = r.result2 === 'failed';
+        const noR2Result = !r.result2 || r.result2 === 'pending';
+
+        if (r1Failed) {
+          statusKey = 'failed';           // 一面未通过
+        } else if (r1Passed && r2Failed) {
+          statusKey = 'failed';           // 一面过、二面未通过
+        } else if (r1Passed && r2Passed) {
+          statusKey = onboardedRecords.has(r.id) ? 'onboarded' : 'pending_onboarding'; // 两面通过
+        } else if (r1Passed && noR2Result) {
+          statusKey = r.interview_status; // 一面过，二面待进行 → 延用后端状态
+        } else {
+          statusKey = r.interview_status; // 其他情况延用后端状态
+        }
+        const cfg = interviewStatusConfig[statusKey] || { color: 'default', text: statusKey };
         return <Tag color={cfg.color}>{cfg.text}</Tag>;
       }
     },
@@ -554,27 +576,23 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 420,
+      title: '操作', align: 'center' as const, key: 'action', width: 500,
       render: (_: any, r: MergedRow) => {
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
-        // 待面试，未评过 → 提醒一面
-        const canRemind1 = r.interview_id && r.interview_status === 'scheduled'
-          && (!r.result || r.result === 'pending');
-        // 待面试，一面已过 → 提醒二面
-        const canRemind2 = r.interview_id && r.interview_status === 'scheduled'
-          && r.result === 'passed'
+        // 未评过 → 提醒一面 + 一面评价 同时出现
+        const canRemind1 = r.interview_id && (!r.result || r.result === 'pending');
+        // 一面已过，二面未评 → 提醒二面 + 二面评价 同时出现
+        const canRemind2 = r.interview_id && r.result === 'passed'
           && (!r.result2 || r.result2 === 'pending');
-        // 已完成，一面未评 → 一面评价
-        const canEval1 = r.interview_id && r.interview_status === 'completed'
-          && (!r.result || r.result === 'pending');
-        // 二面已完成 → 二面评价
-        const canEval2 = r.interview_id && r.interview_status === 'completed'
-          && r.result === 'passed' && r.status2 === 'completed'
+        // 无一面结果 → 一面评价（与提醒一面同时出现）
+        const canEval1 = r.interview_id && (!r.result || r.result === 'pending');
+        // 一面已过，二面无结果 → 二面评价（与提醒二面同时出现）
+        const canEval2 = r.interview_id && r.result === 'passed'
           && (!r.result2 || r.result2 === 'pending');
         // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
-        // 发起背调：一面通过即可。若两面都走则两面均需通过
-        const canStartCheck = r.interview_id && r.result === 'passed'
+        // 送入入职：一面通过且二面通过（或一面通过且无二面）
+        const canSendToOnboarding = r.interview_id && r.result === 'passed'
           && (!r.result2 || r.result2 === 'passed');
 
         // 统一面试官名：优先取专用字段，回退通用字段
@@ -582,37 +600,30 @@ const InterviewsList: React.FC = () => {
         const iv2 = r.secondary_interviewer || r.interviewer;
 
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
-            {/* 流程操作 */}
-            <Space.Compact size="small" direction="horizontal">
-              {canSchedule && (
-                <Button type="primary" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
-              )}
-              {canRemind1 && (
-                <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
-              )}
-              {canEval1 && (
-                <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
-              )}
-              {canRemind2 && (
-                <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
-              )}
-              {canEval2 && (
-                <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
-              )}
-              {canStartCheck && (
-                <Button type="primary" icon={<SafetyOutlined />} loading={bgCheckLoading === r.id} onClick={() => handleStartBackgroundCheck(r)}>发起背调</Button>
-              )}
-            </Space.Compact>
-            {/* 查看评价 */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
+            {canSchedule && (
+              <Button type="primary" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
+            )}
+            {canRemind1 && (
+              <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
+            )}
+            {canEval1 && (
+              <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
+            )}
+            {canRemind2 && (
+              <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
+            )}
+            {canEval2 && (
+              <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
+            )}
+            {canSendToOnboarding && (
+              <Button type="primary" icon={<HomeOutlined />} loading={onboardingLoading === r.id} onClick={() => handleSendToOnboarding(r)}>发起入职</Button>
+            )}
             {canView && (
               <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
             )}
-            {/* 工具区 */}
-            <Space size={6}>
-              <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
-              <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
-            </Space>
+            <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
+            <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
           </div>
         );
       }

@@ -110,6 +110,9 @@ worker/.dev.vars.*
 # Screenshots / temp images
 users_page.png
 
+# Session TODO tracking files
+*_TODO.md
+
 # Worker temp files
 worker/_*.txt
 worker/_*.sql

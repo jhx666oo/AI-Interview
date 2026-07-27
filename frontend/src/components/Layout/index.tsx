@@ -10,7 +10,6 @@ import {
   SettingOutlined,
   FileProtectOutlined,
   UsergroupAddOutlined,
-  SafetyOutlined,
   HomeOutlined,
   CheckCircleOutlined,
   FilterOutlined,
@@ -66,12 +65,6 @@ const AppLayout: React.FC = () => {
       key: '/interviews',
       icon: <TeamOutlined />,
       label: '面试管理',
-    },
-    {
-      key: '/background-checks',
-      icon: <SafetyOutlined />,
-      label: '背调管理',
-      roles: ['admin', 'hr'],
     },
     {
       key: '/onboarding',
