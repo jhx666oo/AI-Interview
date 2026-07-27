@@ -365,8 +365,10 @@ CREATE TABLE IF NOT EXISTS system_configs (
 -- Resume Files (PDF 缓存)
 CREATE TABLE IF NOT EXISTS resume_files (
   id TEXT PRIMARY KEY,
+  kv_key TEXT,
   content TEXT,
   file_name TEXT,
+  file_size INTEGER,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
