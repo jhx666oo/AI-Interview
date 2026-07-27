@@ -1277,6 +1277,7 @@ const CapabilityDimensionEditor: React.FC<{
 }> = ({ value = [], onChange, allDimNames, setAllDimNames }) => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [customName, setCustomName] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const dims: { name: string; description: string }[] = (Array.isArray(value) ? value : []).map((d: any) => {
     if (typeof d === 'string') return { name: d, description: '' };
@@ -1302,35 +1303,19 @@ const CapabilityDimensionEditor: React.FC<{
     onChange?.(dims.map(d => d.name === name ? { ...d, description: desc } : d));
   };
 
-  // 删除维度 — 带二次确认
+  // 删除维度 — 打开确认弹窗
   const handleDeleteDim = (name: string) => {
-    Modal.confirm({
-      title: `删除维度「${name}」`,
-      content: '确定要从当前岗位中移除此维度吗？\n\n如果勾选"同时从预设列表中移除"，将不再出现在所有岗位的可选维度中。',
-      okText: '仅移除此岗位',
-      cancelText: '取消',
-      onOk: () => {
-        const newDims = dims.filter(d => d.name !== name);
-        onChange?.(newDims);
-      },
-      footer: (_, { OkBtn, CancelBtn }) => (
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-          <Button onClick={() => {
-            // 从预设列表和当前岗位中彻底移除
-            setAllDimNames(prev => prev.filter(n => n !== name));
-            const newDims = dims.filter(d => d.name !== name);
-            onChange?.(newDims);
-            Modal.destroyAll();
-          }} danger size="small">彻底移除（所有岗位）</Button>
-          <Button onClick={CancelBtn}>取消</Button>
-          <Button type="primary" onClick={() => {
-            const newDims = dims.filter(d => d.name !== name);
-            onChange?.(newDims);
-            Modal.destroyAll();
-          }}>仅移除此岗位</Button>
-        </div>
-      ),
-    });
+    setDeleteTarget(name);
+  };
+
+  const confirmDelete = (removeFromPool: boolean) => {
+    if (!deleteTarget) return;
+    if (removeFromPool) {
+      setAllDimNames(prev => prev.filter(n => n !== deleteTarget));
+    }
+    const newDims = dims.filter(d => d.name !== deleteTarget);
+    onChange?.(newDims);
+    setDeleteTarget(null);
   };
 
   const toggleExpand = (name: string) => {
@@ -1383,6 +1368,24 @@ const CapabilityDimensionEditor: React.FC<{
           style={{ flex: 1 }} />
         <Button size="small" type="primary" ghost onClick={handleAddCustom}>添加</Button>
       </Space.Compact>
+
+      {/* 删除确认弹窗 */}
+      <Modal
+        title={`移除维度「${deleteTarget || ''}」`}
+        open={!!deleteTarget}
+        onCancel={() => setDeleteTarget(null)}
+        footer={[
+          <Button key="remove-all" danger onClick={() => confirmDelete(true)}>彻底移除（所有岗位）</Button>,
+          <Button key="cancel" onClick={() => setDeleteTarget(null)}>取消</Button>,
+          <Button key="remove-this" type="primary" onClick={() => confirmDelete(false)}>仅移除此岗位</Button>,
+        ]}
+      >
+        <p>确定要移除维度「{deleteTarget}」吗？</p>
+        <p style={{ color: '#64748b', fontSize: 13 }}>
+          <strong>仅移除此岗位：</strong>其他岗位仍可选用该维度。<br />
+          <strong>彻底移除：</strong>将从所有岗位的预设维度列表中删除。
+        </p>
+      </Modal>
     </div>
   );
 };
