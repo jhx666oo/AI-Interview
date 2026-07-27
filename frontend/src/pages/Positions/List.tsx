@@ -257,12 +257,12 @@ const PositionsList: React.FC = () => {
     try {
       const res = await request.get(`/positions/${record.id}`);
       const formVals: any = { ...res };
-      // 能力维度 JSON 字符串 → 多选数组
+      // 能力维度 — transformRow 可能已自动解析了 JSON 字符串为数组
       if (res.capability_dimensions) {
-        try {
-          formVals.capability_dimensions = JSON.parse(res.capability_dimensions);
-        } catch {
-          formVals.capability_dimensions = [];
+        if (Array.isArray(res.capability_dimensions)) {
+          formVals.capability_dimensions = res.capability_dimensions;
+        } else if (typeof res.capability_dimensions === 'string') {
+          try { formVals.capability_dimensions = JSON.parse(res.capability_dimensions); } catch { formVals.capability_dimensions = []; }
         }
       } else {
         formVals.capability_dimensions = [];
@@ -641,10 +641,15 @@ const PositionsList: React.FC = () => {
       key: 'dimensions',
       width: 280,
       render: (_: any, record: Position) => {
-        // 优先读岗位自身的 capability_dimensions
+        // 优先读岗位自身的 capability_dimensions（transformRow 可能已解析为数组）
         let dimNames: string[] = [];
-        if (record.capability_dimensions) {
-          try { dimNames = JSON.parse(record.capability_dimensions); } catch {}
+        const cd = record.capability_dimensions;
+        if (cd) {
+          if (Array.isArray(cd)) {
+            dimNames = cd;
+          } else if (typeof cd === 'string') {
+            try { dimNames = JSON.parse(cd); } catch {}
+          }
         }
         // 兜底：从 dimensionsMap 取
         if (dimNames.length === 0) {
