@@ -4890,7 +4890,7 @@ app.post('/api/position-mappings/sync-from-feishu', authMiddleware, async (c) =>
       ).bind(title).first() as any;
 
       if (existing) {
-        // 更新
+        // 更新 — 同时补全 raw_name（如果为空则以 mapped_name 填充）
         let newRawNames: string[] = [];
         try {
           newRawNames = JSON.parse(existing.raw_names || '[]');
@@ -4899,22 +4899,23 @@ app.post('/api/position-mappings/sync-from-feishu', authMiddleware, async (c) =>
           newRawNames.push(title);
         }
         await c.env.DB.prepare(
-          'UPDATE position_mappings SET responsible_person = ?, raw_names = ?, interviewers = ?, updated_at = ? WHERE id = ?'
+          'UPDATE position_mappings SET responsible_person = ?, raw_names = ?, interviewers = ?, raw_name = COALESCE(raw_name, ?), updated_at = ? WHERE id = ?'
         ).bind(
           info.responsible_person,
           JSON.stringify(newRawNames),
           JSON.stringify(info.interviewers),
+          title,
           now(),
           existing.id
         ).run();
         updated++;
       } else {
-        // 新建映射
+        // 新建映射 — 同时设置 raw_name（BOSS岗位名称）
         const id = uuid();
         await c.env.DB.prepare(
-          'INSERT INTO position_mappings (id, mapped_name, raw_names, responsible_person, interviewers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          'INSERT INTO position_mappings (id, raw_name, mapped_name, raw_names, responsible_person, interviewers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         ).bind(
-          id, title,
+          id, title, title,
           JSON.stringify([title]),
           info.responsible_person,
           JSON.stringify(info.interviewers),
