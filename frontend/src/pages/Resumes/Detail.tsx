@@ -73,8 +73,8 @@ const ResumeDetail: React.FC = () => {
     try {
       const res = await request.get(`/resumes/${resumeId}`) as any;
       setResume(res);
-      // 延迟设置表单值，等待 Form 组件挂载完成
-      setTimeout(() => {
+      // 避免 useForm 未连接警告：等待 Form 挂载后填充
+      const timer = setTimeout(() => {
         form.setFieldsValue({
           candidate_name: res.candidate_name,
           email: res.email,
