@@ -2822,8 +2822,9 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       return c.json({ detail: '保存文件失败: ' + e.message }, 500);
     }
 
-    // 3. AI 解析简历（两阶段：先转文本 → 再提取结构化信息）
-    // v2.0: 如果前端已提取 raw_text，跳过第一阶段（省 Token）
+    // 3. AI 解析简历（单阶段：前端 pdfjs-dist 提取纯文本 → AI 结构化提取字段）
+    // 注意：deepseek-chat/v4-flash 是文本模型，无法直接处理 PDF base64，
+    // 所以必须由前端 pdfjs-dist 完成 PDF→文本 这一步。
     const frontendRawText = (formData.get('raw_text') as string) || '';
     let extractedText = frontendRawText || '';
     let parsedName = fileNameWithoutExt;
@@ -2839,41 +2840,36 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     let parsedSkills: string[] = [];
     let parsedWorkYears: number | null = null;
     let parsedExperience: string = '';
+    let aiParseFailed = false;
+
+    // 保存前端提取的文本到 D1（无论 AI 解析是否成功，保留原始文本供后续查看）
+    if (extractedText && extractedText.length > 20) {
+      try {
+        await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, uploaded_at = ? WHERE id = ?')
+          .bind(extractedText.substring(0, 200000), now(), recordId).run();
+      } catch {}
+      try {
+        await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?')
+          .bind(extractedText.substring(0, 200000), now(), recordId).run();
+      } catch {}
+    }
+
+    // 仅当前端提取到有效文本时才调用 AI 解析（否则跳过，标记为需手动处理）
+    if (extractedText && extractedText.length > 20) {
     try {
-      if (!extractedText) {
-      // 第一阶段：把 base64 PDF 转为结构化文本（markdown）
-      // 不再截断 base64——DeepSeek 支持 128K 上下文，完整发送确保多页 PDF 全部解析
-      const extractionPrompt = `你是一个PDF简历文本提取助手。下面是一份PDF简历的base64编码数据。请仔细阅读内容，将其转换为结构化的Markdown文本。保留所有可读的信息：姓名、联系方式、工作经历、教育背景、技能、项目经历等。如果内容中包含乱码或无法识别的字符，尽最大努力推断正确内容。直接输出Markdown文本，不要添加任何额外说明。`;
-      extractedText = await callAI(c.env, extractionPrompt,
-        `以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n${fileBase64}`, 'deepseek-chat');
-      }
-
-      // 将提取的文本存入 `raw_text`（保留足够长度避免长简历被截断）
-      if (extractedText && extractedText.length > 20) {
-        try {
-          await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, uploaded_at = ? WHERE id = ?')
-            .bind(extractedText.substring(0, 200000), now(), recordId).run();
-        } catch {}
-        // fallback: 列可能不存在
-        try {
-          await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?')
-            .bind(extractedText.substring(0, 200000), now(), recordId).run();
-        } catch {}
-      }
-
-      // 第二阶段：用提取的文本做深度解析（优先读取数据库中的自定义 prompt）
+      // 用提取的文本做深度解析（优先读取数据库中用户自定义的 prompt 模板）
       const customPrompt = await getCustomPrompt(c.env, 'parse_resume_pdf');
       let systemPrompt: string, userPrompt: string;
-      if (customPrompt) {
+      if (customPrompt?.system && customPrompt?.user) {
         let sp = customPrompt.system;
         let up = customPrompt.user;
         if (sp.includes('{candidate_name}')) sp = sp.replace(/\{candidate_name\}/g, fileNameWithoutExt);
         if (up.includes('{candidate_name}')) up = up.replace(/\{candidate_name\}/g, fileNameWithoutExt);
-        if (up.includes('{resume_text}')) up = up.replace(/\{resume_text\}/g, extractedText || '');
+        if (up.includes('{resume_text}')) up = up.replace(/\{resume_text\}/g, extractedText);
         systemPrompt = sp;
         userPrompt = up;
       } else {
-        // 增强版默认配置
+        // 默认 prompt：从简历文本提取结构化字段
         systemPrompt = `你是一个专业的简历解析助手。请从简历文本中提取以下所有信息，并用JSON格式返回（不要加markdown代码块）。尽可能提取每个字段，找不到的字段设为null或空字符串。
 
 {
@@ -2895,9 +2891,9 @@ app.post('/api/resumes', authMiddleware, async (c) => {
   "risk": "候选人潜在风险点（如跳槽频繁、技能短板等，200字以内）",
   "evaluation": "综合评估（100字以内）"
 }`;
-        userPrompt = `以下是一份简历的文本内容，请从中提取所有字段信息：\n\n${extractedText || '（AI未能提取到文本，��下为原始PDF数据）\n' + fileBase64}`;
+        userPrompt = `以下是一份简历的文本内容，请从中提取所有字段信息：\n\n${extractedText}`;
       }
-      const aiResp = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-chat');
+      const aiResp = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
       if (aiResp) {
         const parsed = JSON.parse(extractJSON(aiResp) || '{}');
         parsedName = parsed.name || fileNameWithoutExt;
@@ -2915,7 +2911,13 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         parsedExperience = parsed.work_experience_summary || '';
       }
     } catch (aiErr: any) {
+      aiParseFailed = true;
       console.error(`[Upload] AI parsing failed: ${aiErr.message}`);
+    }
+    } else {
+      // 前端 PDF 文本提取失败（扫描件、加密 PDF 等），标记为需手动处理
+      aiParseFailed = true;
+      console.log(`[Upload] 前端未提取到 PDF 文本，跳过 AI 解析`);
     }
 
     // 4. 更新 Bitable 记录（AI 解析结果）
@@ -3507,23 +3509,8 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
   const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first() as any;
   if (!resume) return c.json({ detail: 'Resume not found' }, 404);
   let rawText = resume.raw_text || resume.resume_markdown || '';
-  // 文本为空时，从 resume_files 读取原始 PDF(base64) 重新提取文本，避免空壳简历无法重新解析
-  if (!rawText) {
-    try {
-      const fileRow: any = await c.env.DB.prepare('SELECT content FROM resume_files WHERE id = ?').bind(id).first();
-      if (fileRow && fileRow.content) {
-        const extractPrompt = `你是一个PDF简历文本提取助手。下面是一份PDF简历的base64编码数据。请仔细阅读内容，将其转换为结构化的Markdown文本。保留所有可读的信息：姓名、联系方式、工作经历、教育背景、技能、项目经历等。直接输出Markdown文本，不要添加任何额外说明。`;
-        const extracted = await callAI(c.env, extractPrompt, `以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n${fileRow.content}`, 'deepseek-chat');
-        if (extracted && extracted.length > 20) {
-          rawText = extracted;
-          try { await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?').bind(extracted.substring(0, 200000), now(), id).run(); } catch {}
-        }
-      }
-    } catch (e: any) {
-      console.error(`[Reparse] 从 resume_files 提取文本失败: ${e.message}`);
-    }
-  }
-  if (!rawText) return c.json({ detail: 'No text to parse (该简历无原始文件，无法重新提取)' }, 400);
+  // 文本为空：说明 PDF 未被前端提取（扫描件/加密PDF），deepseek-chat 无法直接解析 base64
+  if (!rawText) return c.json({ detail: '该简历未提取到文本内容（可能是扫描件或加密PDF），请重新上传或手动编辑', need_manual: true }, 400);
   const candidateName = resume.candidate_name || resume.parsed_name || '';
   // 优先读取数据库中的自定义 prompt，key 为 analyze_resume
   const customPrompt = await getCustomPrompt(c.env, 'analyze_resume');
@@ -3660,22 +3647,8 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
     position = await c.env.DB.prepare('SELECT * FROM positions WHERE id = ?').bind(resume.position_id).first() as any;
   }
   let resumeText = resume.resume_markdown || resume.raw_text || '';
-  // 文本为空时，尝试从 resume_files 读取原始 PDF(base64) 重新提取文本，避免空壳简历无法 AI 生成
-  if (!resumeText) {
-    try {
-      const fileRow: any = await c.env.DB.prepare('SELECT content, file_name FROM resume_files WHERE id = ?').bind(id).first();
-      if (fileRow && fileRow.content) {
-        const extractPrompt = `你是一个PDF简历文本提取助手。下面是一份PDF简历的base64编码数据。请仔细阅读内容，将其转换为结构化的Markdown文本。保留所有可读的信息：姓名、联系方式、工作经历、教育背景、技能、项目经历等。直接输出Markdown文本，不要添加任何额外说明。`;
-        const extracted = await callAI(c.env, extractPrompt, `以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n${fileRow.content}`, 'deepseek-chat');
-        if (extracted && extracted.length > 20) {
-          resumeText = extracted;
-          try { await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?').bind(extracted.substring(0, 200000), now(), id).run(); } catch {}
-        }
-      }
-    } catch (e: any) {
-      console.error(`[AIScreen] 从 resume_files 提取文本失败: ${e.message}`);
-    }
-  }
+  // 文本为空：deepseek-chat 无法直接解析 PDF base64，直接报错
+  if (!resumeText) return c.json({ detail: '该简历未提取到文本内容，无法进行 AI 评估', need_manual: true }, 400);
   const posTitle = position?.title || resume.position_id || 'Unknown';
   const posDesc = position?.description || '';
   const posReq = position?.requirements || '';
