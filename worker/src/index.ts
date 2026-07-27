@@ -379,7 +379,7 @@ async function callAIScreening(env: Env, resumeText: string): Promise<any> {
     user: ''
   });
   const systemPrompt = prompt.system;
-  const userPrompt = `请分析以下候选人简历：\n\n${resumeText.substring(0, 8000)}`;
+  const userPrompt = `请分析以下候选人简历：\n\n${resumeText}`;
   const result = await callAI(env, systemPrompt, userPrompt, 'deepseek-v4-flash');
   try {
     return extractJSON(result);
@@ -1380,15 +1380,26 @@ function parseTalentRecord(record: any): any {
     _raw_fields: f,
     // 简历附件信息（原始 PDF）
     resume_file: extractResumeFile(f['简历附件-批量导入']),
-    // 构造 parsed_data 供前端 Descriptions 使用
-    parsed_data: {
-      highest_degree: getFirstValue(f['学历']) || '',
-      school: '',
-      major: '',
-      years_of_experience: f['年龄'] ? Math.max(0, (f['年龄'] as number) - 22) : null,
-      recent_company: '',
-      contact: '',
-    },
+    // 从 AI 评估结果中提取结构化字段（不再伪造）
+    parsed_data: buildParsedData(aiEvalStr, rawAiEval, f),
+  };
+}
+
+// 从 AI 评估 JSON 中提取可靠的结构化字段
+function buildParsedData(aiEvalStr: string, rawAiEval: any, f: any): Record<string, any> {
+  let ai: any = {};
+  try { ai = typeof rawAiEval === 'object' ? rawAiEval : JSON.parse(aiEvalStr); } catch {}
+  const dims = Array.isArray(ai.dimensions) ? ai.dimensions : [];
+  if (!Array.isArray(dims)) {
+    try { const s2 = typeof ai === 'string' ? JSON.parse(ai) : ai; if (Array.isArray(s2?.dimensions)) { Object.assign(ai, s2); } } catch {}
+  }
+  return {
+    highest_degree: ai.highest_degree || ai.education || ai['学历'] || getFirstValue(f['学历']) || '',
+    school: ai.school || ai['院校'] || ai['school'] || '',
+    major: ai.major || ai['专业'] || ai['major'] || '',
+    years_of_experience: ai.years_of_experience || ai.work_years || ai['工作年限'] || null,
+    recent_company: ai.current_company || ai.recent_company || ai['当前公司'] || '',
+    contact: ai.phone || ai.email || ai.contact || '',
   };
 }
 
@@ -2815,21 +2826,22 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     try {
       if (!extractedText) {
       // 第一阶段：把 base64 PDF 转为结构化文本（markdown）
+      // 不再截断 base64——DeepSeek 支持 128K 上下文，完整发送确保多页 PDF 全部解析
       const extractionPrompt = `你是一个PDF简历文本提取助手。下面是一份PDF简历的base64编码数据。请仔细阅读内容，将其转换为结构化的Markdown文本。保留所有可读的信息：姓名、联系方式、工作经历、教育背景、技能、项目经历等。如果内容中包含乱码或无法识别的字符，尽最大努力推断正确内容。直接输出Markdown文本，不要添加任何额外说明。`;
       extractedText = await callAI(c.env, extractionPrompt,
-        `以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n${fileBase64.substring(0, 32000)}${fileBase64.length > 32000 ? '\n\n[内容截断]' : ''}`, 'deepseek-chat');
+        `以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n${fileBase64}`, 'deepseek-chat');
       }
 
-      // 将提取的文本存入 `raw_text`
+      // 将提取的文本存入 `raw_text`（保留足够长度避免长简历被截断）
       if (extractedText && extractedText.length > 20) {
         try {
           await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, uploaded_at = ? WHERE id = ?')
-            .bind(extractedText.substring(0, 50000), now(), recordId).run();
+            .bind(extractedText.substring(0, 200000), now(), recordId).run();
         } catch {}
         // fallback: 列可能不存在
         try {
           await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?')
-            .bind(extractedText.substring(0, 50000), now(), recordId).run();
+            .bind(extractedText.substring(0, 200000), now(), recordId).run();
         } catch {}
       }
 
@@ -2867,7 +2879,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
   "risk": "候选人潜在风险点（如跳槽频繁、技能短板等，200字以内）",
   "evaluation": "综合评估（100字以内）"
 }`;
-        userPrompt = `以下是一份简历的文本内容，请从中提取所有字段信息：\n\n${extractedText || '（AI未能提取到文本，以下为原始base64数据）\n' + fileBase64.substring(0, 16000)}`;
+        userPrompt = `以下是一份简历的文本内容，请从中提取所有字段信息：\n\n${extractedText || '（AI未能提取到文本，��下为原始PDF数据）\n' + fileBase64}`;
       }
       const aiResp = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-chat');
       if (aiResp) {
@@ -3519,7 +3531,7 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
         const extracted = await callAI(c.env, extractPrompt, `以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n${fileRow.content}`, 'deepseek-chat');
         if (extracted && extracted.length > 20) {
           rawText = extracted;
-          try { await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?').bind(extracted.substring(0, 50000), now(), id).run(); } catch {}
+          try { await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?').bind(extracted.substring(0, 200000), now(), id).run(); } catch {}
         }
       }
     } catch (e: any) {
@@ -3672,7 +3684,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
         const extracted = await callAI(c.env, extractPrompt, `以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n${fileRow.content}`, 'deepseek-chat');
         if (extracted && extracted.length > 20) {
           resumeText = extracted;
-          try { await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?').bind(extracted.substring(0, 50000), now(), id).run(); } catch {}
+          try { await c.env.DB.prepare('UPDATE resumes SET raw_text = ?, updated_at = ? WHERE id = ?').bind(extracted.substring(0, 200000), now(), id).run(); } catch {}
         }
       }
     } catch (e: any) {
@@ -5229,7 +5241,7 @@ ${dimensionsText || '(无具体维度要求，请根据岗位常识评估)'}
 申请岗位：${record.position_applied || '未知'}
 
 简历内容：
-${resumeText.substring(0, 6000)}`;
+${resumeText}`;
 
   let aiAnalysis = '';
   try {
@@ -5348,7 +5360,7 @@ app.post('/api/resume-screening/batch-analyze', authMiddleware, async (c) => {
       const dimsResult = await c.env.DB.prepare('SELECT full_text FROM capability_dimensions WHERE position_name = ? LIMIT 3').bind(mappedPosition).all();
       const dimensionsText = dimsResult.results?.map((r: any) => r.full_text || '').filter(Boolean).join('\n') || '';
       const systemPrompt = `你是简历初筛专家。分析简历并输出：初筛结果（通过/不通过/待定）、匹配分数（0-5）、优势分析、风险点、能力维度匹配（每项0-5分）、面试问题建议（3个）、互动引导语。用中文输出。`;
-      const userPrompt = `岗位：${mappedPosition}\n能力维度要求：${dimensionsText || '(无)'}\n候选人：${rec.candidate_name} ${rec.age || ''}岁 ${rec.gender || ''} ${rec.education || ''}\n简历：${resumeText.substring(0, 5000)}`;
+      const userPrompt = `岗位：${mappedPosition}\n能力维度要求：${dimensionsText || '(无)'}\n候选人：${rec.candidate_name} ${rec.age || ''}岁 ${rec.gender || ''} ${rec.education || ''}\n简历：${resumeText}`;
       const aiAnalysis = await callAI(c.env, systemPrompt, userPrompt);
       const scoreMatch = aiAnalysis.match(/匹配分数[：:]\s*(\d+(\.\d+)?)/);
       const matchScore = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
@@ -6604,7 +6616,7 @@ async function getResumeText(env: Env, candidateName: string): Promise<string> {
         'SELECT content, file_name FROM resume_files WHERE id = ? LIMIT 1'
       ).bind(d1Row.id).first() as any;
       if (fileRow?.content) {
-        const base64Content = fileRow.content.substring(0, 100000);
+        const base64Content = fileRow.content; // 不截断，确保完整 PDF 被解析
         try {
           const extraction = await callAI(env,
             'You are a PDF text extractor. Extract ALL readable text from this base64 PDF content. Return ONLY the extracted text, no explanations.',
@@ -7070,8 +7082,8 @@ app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
         if (resumeText.length < 10) { results.push({ name: candidateName, status: 'skip', reason: '无法获取简历原文' }); skipped++; continue; }
         const evalResult = await callAIScreening(c.env, resumeText);
         if (!evalResult) { results.push({ name: candidateName, status: 'fail', reason: 'AI评估返回空' }); failed++; continue; }
-        try { await c.env.DB.prepare('UPDATE resumes SET ai_evaluation = ?, raw_text = ?, updated_at = ? WHERE candidate_name = ?').bind(JSON.stringify(evalResult), resumeText.substring(0, 50000), new Date().toISOString(), candidateName).run(); } catch {}
-        try { await bitableUpdateRecord(c.env, tableId, rec.record_id, { 'AI简历评估': JSON.stringify(evalResult, null, 2), '简历文本': resumeText.substring(0, 50000) }); } catch {}
+        try { await c.env.DB.prepare('UPDATE resumes SET ai_evaluation = ?, raw_text = ?, updated_at = ? WHERE candidate_name = ?').bind(JSON.stringify(evalResult), resumeText.substring(0, 200000), new Date().toISOString(), candidateName).run(); } catch {}
+        try { await bitableUpdateRecord(c.env, tableId, rec.record_id, { 'AI简历评估': JSON.stringify(evalResult, null, 2), '简历文本': resumeText.substring(0, 200000) }); } catch {}
         results.push({ name: candidateName, status: 'ok', dims: (evalResult.dimensions || []).length, score: evalResult.overall_score });
         evaluated++;
       } catch (e: any) { failed++; errors.push(candidateName + ': ' + e.message.substring(0, 100)); }
