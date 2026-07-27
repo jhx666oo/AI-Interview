@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Table, Button, Space, message, Modal, Form, Input, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert } from 'antd';
+import { Table, Button, Space, message, Modal, Form, Input, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert, Checkbox, Collapse } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
@@ -901,42 +901,21 @@ const PositionsList: React.FC = () => {
             </Form.Item>
           </div>
 
-          {/* 能力维度 — 多选 */}
+          {/* 能力维度 — 复选框列表 + 可展开描述 */}
           <Form.Item
             name="capability_dimensions"
             label={
               <Space>
                 <RadarChartOutlined />
-                <span>能力维度（可多选）</span>
+                <span>能力维度</span>
               </Space>
             }
-            extra="直接输入新维度名称并回车即可添加，支持搜索已有维度"
+            extra="勾选维度后展开描述区域，填写该维度的具体表现和评分标准"
           >
-            <Select
-              mode="tags"
-              size="large"
-              placeholder="选择或输入能力维度，支持搜索"
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              maxTagCount="responsive"
-              onChange={async (vals: string[]) => {
-                // 自动保存新增的维度名称到后端
-                const newNames = vals.filter(v => !allDimNames.includes(v));
-                for (const name of newNames) {
-                  try {
-                    await request.post('/capability-dimension-names', { name });
-                  } catch {}
-                }
-                if (newNames.length > 0) {
-                  setAllDimNames(prev => [...new Set([...prev, ...newNames])]);
-                }
-              }}
-            >
-              {allDimNames.map(name => (
-                <Select.Option key={name} value={name} label={name}>{name}</Select.Option>
-              ))}
-            </Select>
+            <CapabilityDimensionEditor 
+              allDimNames={allDimNames} 
+              setAllDimNames={setAllDimNames}
+            />
           </Form.Item>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -1240,6 +1219,89 @@ const PositionsList: React.FC = () => {
           </div>
         )}
       </Drawer>
+    </div>
+  );
+};
+
+// 能力维度编辑器 —— 复选框列表 + 可展开描述
+const CapabilityDimensionEditor: React.FC<{
+  value?: any;
+  onChange?: (value: { name: string; description: string }[]) => void;
+  allDimNames: string[];
+  setAllDimNames: React.Dispatch<React.SetStateAction<string[]>>;
+}> = ({ value = [], onChange, allDimNames, setAllDimNames }) => {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [customName, setCustomName] = useState('');
+
+  const dims: { name: string; description: string }[] = (Array.isArray(value) ? value : []).map((d: any) => {
+    if (typeof d === 'string') return { name: d, description: '' };
+    return { name: d?.name || d || '', description: d?.description || '' };
+  }).filter(d => d.name);
+
+  const checkedNames = new Set(dims.map(d => d.name));
+  const descMap: Record<string, string> = {};
+  dims.forEach(d => { descMap[d.name] = d.description || ''; });
+
+  const handleToggle = (name: string, checked: boolean) => {
+    let newDims: { name: string; description: string }[];
+    if (checked) {
+      newDims = [...dims, { name, description: '' }];
+      setExpanded(prev => new Set(prev).add(name));
+    } else {
+      newDims = dims.filter(d => d.name !== name);
+    }
+    onChange?.(newDims);
+  };
+
+  const handleDescChange = (name: string, desc: string) => {
+    onChange?.(dims.map(d => d.name === name ? { ...d, description: desc } : d));
+  };
+
+  const toggleExpand = (name: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  };
+
+  const handleAddCustom = async () => {
+    const name = customName.trim();
+    if (!name) return;
+    if (checkedNames.has(name)) { message.warning('该维度已存在'); return; }
+    try { await request.post('/capability-dimension-names', { name }); } catch {}
+    setAllDimNames(prev => [...new Set([...prev, name])]);
+    onChange?.([...dims, { name, description: '' }]);
+    setExpanded(prev => new Set(prev).add(name));
+    setCustomName('');
+  };
+
+  return (
+    <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, padding: '12px 16px', background: '#fafafa', maxHeight: 360, overflow: 'auto' }}>
+      {allDimNames.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>暂无预设维度，请在下方添加</Text>}
+      {allDimNames.map(name => (
+        <div key={name} style={{ marginBottom: 4 }}>
+          <Checkbox checked={checkedNames.has(name)} onChange={e => handleToggle(name, e.target.checked)} style={{ fontWeight: 500, marginBottom: 2 }}>{name}</Checkbox>
+          {checkedNames.has(name) && (
+            <div style={{ marginLeft: 24, marginBottom: 8 }}>
+              <a onClick={() => toggleExpand(name)} style={{ fontSize: 11, display: 'block', marginBottom: expanded.has(name) ? 6 : 2 }}>
+                {expanded.has(name) ? '收起描述 ▲' : '展开描述 ▼'}
+              </a>
+              {expanded.has(name) && (
+                <Input.TextArea rows={2} placeholder={`描述「${name}」的具体表现、考察要点或评分标准...`} value={descMap[name] || ''}
+                  onChange={e => handleDescChange(name, e.target.value)} showCount maxLength={500} style={{ fontSize: 12 }} />
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+      <Divider style={{ margin: '8px 0' }} />
+      <Space.Compact style={{ width: '100%' }}>
+        <Input size="small" placeholder="输入新维度名称" value={customName}
+          onChange={e => setCustomName(e.target.value)} onPressEnter={handleAddCustom}
+          style={{ flex: 1 }} />
+        <Button size="small" type="primary" ghost onClick={handleAddCustom}>添加</Button>
+      </Space.Compact>
     </div>
   );
 };
