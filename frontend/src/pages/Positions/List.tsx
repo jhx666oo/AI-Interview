@@ -77,6 +77,7 @@ const PositionsList: React.FC = () => {
   const { user } = useAuth();
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
+  const [syncDescriptions, setSyncDescriptions] = useState(true); // 保存时同步描述到所有岗位
   const [users, setUsers] = useState<any[]>([]);
   const [jdModalVisible, setJdModalVisible] = useState(false);
   const [aiMatchingId, setAiMatchingId] = useState<string | null>(null);
@@ -522,6 +523,39 @@ const PositionsList: React.FC = () => {
         await request.post('/positions', payload);
         message.success('创建成功');
       }
+      // 同步维度描述到所有包含相同维度的岗位
+      if (syncDescriptions && payload.capability_dimensions) {
+        try {
+          const dims = JSON.parse(payload.capability_dimensions);
+          const dimsWithDesc = (Array.isArray(dims) ? dims : []).filter((d: any) => d.description);
+          if (dimsWithDesc.length > 0) {
+            // 获取所有岗位
+            const allPositions = await request.get('/positions', { params: { page_size: 500 } });
+            const updates = (Array.isArray(allPositions) ? allPositions : []).filter((p: any) => p.id !== editingId);
+            for (const pos of updates) {
+              let posDims: any[] = [];
+              const cd = pos.capability_dimensions;
+              if (cd) {
+                if (Array.isArray(cd)) posDims = cd;
+                else if (typeof cd === 'string') { try { posDims = JSON.parse(cd); } catch {} }
+              }
+              let changed = false;
+              const newPosDims = posDims.map((d: any) => {
+                const name = typeof d === 'string' ? d : d.name;
+                const match = dimsWithDesc.find((dd: any) => dd.name === name);
+                if (match && (!d.description || d.description !== match.description)) {
+                  changed = true;
+                  return { name, description: match.description };
+                }
+                return d;
+              });
+              if (changed) {
+                await request.put(`/positions/${pos.id}`, { ...pos, capability_dimensions: JSON.stringify(newPosDims) }).catch(() => {});
+              }
+            }
+          }
+        } catch {}
+      }
       setIsModalVisible(false);
       fetchPositions();
     } catch (e: any) {
@@ -823,14 +857,22 @@ const PositionsList: React.FC = () => {
       <Modal
         title={editingId ? '编辑岗位' : '新增岗位'}
         open={isModalVisible}
-        onOk={handleOk}
         onCancel={() => setIsModalVisible(false)}
         confirmLoading={submitting}
         width={880}
         centered
         destroyOnHidden
-        okText="保存"
-        cancelText="取消"
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Checkbox checked={syncDescriptions} onChange={e => setSyncDescriptions(e.target.checked)} style={{ fontSize: 12 }}>
+              同步描述到所有岗位的相同维度
+            </Checkbox>
+            <Space>
+              <Button onClick={() => setIsModalVisible(false)}>取消</Button>
+              <Button type="primary" loading={submitting} onClick={handleOk}>保存</Button>
+            </Space>
+          </div>
+        }
       >
         <Form
           form={form}
@@ -1260,6 +1302,37 @@ const CapabilityDimensionEditor: React.FC<{
     onChange?.(dims.map(d => d.name === name ? { ...d, description: desc } : d));
   };
 
+  // 删除维度 — 带二次确认
+  const handleDeleteDim = (name: string) => {
+    Modal.confirm({
+      title: `删除维度「${name}」`,
+      content: '确定要从当前岗位中移除此维度吗？\n\n如果勾选"同时从预设列表中移除"，将不再出现在所有岗位的可选维度中。',
+      okText: '仅移除此岗位',
+      cancelText: '取消',
+      onOk: () => {
+        const newDims = dims.filter(d => d.name !== name);
+        onChange?.(newDims);
+      },
+      footer: (_, { OkBtn, CancelBtn }) => (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <Button onClick={() => {
+            // 从预设列表和当前岗位中彻底移除
+            setAllDimNames(prev => prev.filter(n => n !== name));
+            const newDims = dims.filter(d => d.name !== name);
+            onChange?.(newDims);
+            Modal.destroyAll();
+          }} danger size="small">彻底移除（所有岗位）</Button>
+          <Button onClick={CancelBtn}>取消</Button>
+          <Button type="primary" onClick={() => {
+            const newDims = dims.filter(d => d.name !== name);
+            onChange?.(newDims);
+            Modal.destroyAll();
+          }}>仅移除此岗位</Button>
+        </div>
+      ),
+    });
+  };
+
   const toggleExpand = (name: string) => {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -1285,7 +1358,12 @@ const CapabilityDimensionEditor: React.FC<{
       {allDimNames.map(name => (
         <div key={name} style={{ marginBottom: 4 }}>
           <Checkbox checked={checkedNames.has(name)} onChange={e => handleToggle(name, e.target.checked)} style={{ fontWeight: 500, marginBottom: 2 }}>{name}</Checkbox>
-          {checkedNames.has(name) && (
+          {checkedNames.has(name) && (<>
+            <DeleteOutlined 
+              onClick={() => handleDeleteDim(name)} 
+              style={{ fontSize: 11, color: '#ff4d4f', cursor: 'pointer', marginLeft: 4 }} 
+              title="移除此维度"
+            />
             <div style={{ marginLeft: 24, marginBottom: 8 }}>
               <a onClick={() => toggleExpand(name)} style={{ fontSize: 11, display: 'block', marginBottom: expanded.has(name) ? 6 : 2 }}>
                 {expanded.has(name) ? '收起描述 ▲' : '展开描述 ▼'}
@@ -1295,7 +1373,7 @@ const CapabilityDimensionEditor: React.FC<{
                   onChange={e => handleDescChange(name, e.target.value)} showCount maxLength={500} style={{ fontSize: 12 }} />
               )}
             </div>
-          )}
+          </>)}
         </div>
       ))}
       <Divider style={{ margin: '8px 0' }} />
