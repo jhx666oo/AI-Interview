@@ -224,7 +224,7 @@ async function getLLMConfig(env: Env): Promise<{ apiKey: string; baseUrl: string
   }
   const apiKey = (cfg.llm_api_key && String(cfg.llm_api_key).trim()) || env.AI_API_KEY || '';
   const baseUrl = normalizeBaseUrl(cfg.llm_base_url) || env.AI_BASE_URL || 'https://api.deepseek.com';
-  const model = (cfg.llm_model && String(cfg.llm_model).trim()) || env.AI_MODEL || model || 'deepseek-v4-flash';
+  const model = (cfg.llm_model && String(cfg.llm_model).trim()) || env.AI_MODEL || 'deepseek-v4-flash';
   return { apiKey, baseUrl, model };
 }
 
@@ -288,7 +288,7 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
 
     const baseUrl = llm.baseUrl.replace(/\/+$/, '');
     // 模型：优先用 system_configs.llm_model / env.AI_MODEL，其次调用方指定，最后默认 deepseek-v4-flash
-    const deepseekModel = llm.model || model || 'deepseek-v4-flash';
+    const aiModel = llm.model || model || 'deepseek-v4-flash';
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 90000);
     let resp: Response;
@@ -300,7 +300,7 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
           'Authorization': `Bearer ${llm.apiKey}`,
         },
         body: JSON.stringify({
-          model: deepseekModel,
+          model: aiModel,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -1381,28 +1381,41 @@ function parseTalentRecord(record: any): any {
     // 简历附件信息（原始 PDF）
     resume_file: extractResumeFile(f['简历附件-批量导入']),
     // 从 AI 评估结果中提取结构化字段（不再伪造）
-    parsed_data: buildParsedData(aiEvalStr, rawAiEval, f),
+    parsed_data: parseAIEvalForFields(rawAiEval, aiEvalStr, f),
   };
 }
 
-// 从 AI 评估 JSON 中提取可靠的结构化字段
-function buildParsedData(aiEvalStr: string, rawAiEval: any, f: any): Record<string, any> {
-  let ai: any = {};
-  try { 
-    if (rawAiEval !== null && rawAiEval !== undefined) {
-      ai = typeof rawAiEval === 'object' ? rawAiEval : JSON.parse(aiEvalStr);
+// 从 AI 评估 JSON 文本中提取字段（纯函数，避免 esbuild 变量冲突）
+function parseAIEvalForFields(rawAiEval: any, aiEvalStr: string, f: any): Record<string, any> {
+  try {
+    let obj: any = null;
+    // 先尝试直接当对象用
+    if (rawAiEval !== null && rawAiEval !== undefined && typeof rawAiEval === 'object' && !Array.isArray(rawAiEval)) {
+      obj = rawAiEval;
     }
-  } catch {}
-  // 安全访问，ai 保证不是 null
-  ai = ai || {};
-
+    // 否则尝试 JSON 解析
+    if (!obj && aiEvalStr && aiEvalStr.length > 5 && aiEvalStr !== 'null') {
+      try { obj = JSON.parse(aiEvalStr); } catch { /* ignore */ }
+    }
+    if (obj) {
+      return {
+        highest_degree: obj.highest_degree || obj.education || obj['学历'] || getFirstValue(f['学历']) || '',
+        school: obj.school || obj['院校'] || '',
+        major: obj.major || obj['专业'] || '',
+        years_of_experience: obj.years_of_experience || obj.work_years || obj['工作年限'] || null,
+        recent_company: obj.current_company || obj.recent_company || obj['当前公司'] || '',
+        contact: obj.phone || obj.email || obj.contact || '',
+      };
+    }
+  } catch { /* fall through to default */ }
+  // 兜底返回基础信息
   return {
-    highest_degree: ai.highest_degree || ai.education || ai['学历'] || getFirstValue(f['学历']) || '',
-    school: ai.school || ai['院校'] || ai['school'] || '',
-    major: ai.major || ai['专业'] || ai['major'] || '',
-    years_of_experience: ai.years_of_experience || ai.work_years || ai['工作年限'] || null,
-    recent_company: ai.current_company || ai.recent_company || ai['当前公司'] || '',
-    contact: ai.phone || ai.email || ai.contact || '',
+    highest_degree: getFirstValue(f['学历']) || '',
+    school: '',
+    major: '',
+    years_of_experience: null,
+    recent_company: '',
+    contact: '',
   };
 }
 

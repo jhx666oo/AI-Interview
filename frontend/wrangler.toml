@@ -5,6 +5,7 @@ pages_build_output_dir = "dist"
 [vars]
 SECRET_KEY = "tUzr6Mh4QU6hxl2pUQtTrnZgMN8P/X//SkqwRVTQr9IrVmxO7WDd4naPQmmWIyiD"
 AI_BASE_URL = "https://api.deepseek.com"
+AI_API_KEY = "sk-81e157e3735240d7ae1cc8a4cfa16dab"
 
 [[d1_databases]]
 binding = "DB"
