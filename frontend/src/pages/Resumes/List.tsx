@@ -33,6 +33,7 @@ const ResumesList: React.FC = () => {
   const [createdInterviewId, setCreatedInterviewId] = useState<string | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailForm] = Form.useForm();
+  const emailContent = Form.useWatch('content', emailForm);  // 用 watch 替代 getFieldValue 避免 useForm 未连接警告
   const [pendingInterviewData, setPendingInterviewData] = useState<any>(null);
 
   const [fileList, setFileList] = useState<any[]>([]);
@@ -1572,7 +1573,7 @@ const ResumesList: React.FC = () => {
                 overflow: 'auto',
                 background: '#fff'
               }}
-              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(emailForm.getFieldValue('content') || '') }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(emailContent || '') }}
             />
           </Form.Item>
 
