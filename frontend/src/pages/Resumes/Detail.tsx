@@ -73,19 +73,6 @@ const ResumeDetail: React.FC = () => {
     try {
       const res = await request.get(`/resumes/${resumeId}`) as any;
       setResume(res);
-      // 避免 useForm 未连接警告：等待 Form 挂载后填充
-      const timer = setTimeout(() => {
-        form.setFieldsValue({
-          candidate_name: res.candidate_name,
-          email: res.email,
-          contact: res.contact,
-          highest_degree: res.parsed_data?.highest_degree,
-          school: res.parsed_data?.school,
-          major: res.parsed_data?.major,
-          years_of_experience: res.parsed_data?.years_of_experience,
-          recent_company: res.parsed_data?.recent_company
-        });
-      }, 0);
 
       // 获取部门评审汇总
       if (res.status === 'pending_dept_review' || res.status === 'pending_hr_decision' || res.department_reviews) {
@@ -398,7 +385,19 @@ const ResumeDetail: React.FC = () => {
       buttons.push(
         <Button size="small" key="ai-screen" type="primary" loading={aiScreening} icon={<ThunderboltOutlined />} onClick={handleAIScreen} style={{background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)', border: 'none'}}>AI初筛</Button>,
         <Button size="small" key="reparse" icon={<ReloadOutlined />} onClick={handleReparse} disabled={resume?.parse_status === 'processing'}>重新解析</Button>,
-        <Button size="small" key="edit" icon={<EditOutlined />} onClick={() => setIsEditing(true)}>编辑</Button>
+        <Button size="small" key="edit" icon={<EditOutlined />} onClick={() => {
+          form.setFieldsValue({
+            candidate_name: resume.candidate_name,
+            email: resume.email,
+            contact: resume.contact,
+            highest_degree: resume.parsed_data?.highest_degree,
+            school: resume.parsed_data?.school,
+            major: resume.parsed_data?.major,
+            years_of_experience: resume.parsed_data?.years_of_experience,
+            recent_company: resume.parsed_data?.recent_company
+          });
+          setIsEditing(true);
+        }}>编辑</Button>
       );
     } else {
       buttons.push(
