@@ -1388,11 +1388,14 @@ function parseTalentRecord(record: any): any {
 // 从 AI 评估 JSON 中提取可靠的结构化字段
 function buildParsedData(aiEvalStr: string, rawAiEval: any, f: any): Record<string, any> {
   let ai: any = {};
-  try { ai = typeof rawAiEval === 'object' ? rawAiEval : JSON.parse(aiEvalStr); } catch {}
-  const dims = Array.isArray(ai.dimensions) ? ai.dimensions : [];
-  if (!Array.isArray(dims)) {
-    try { const s2 = typeof ai === 'string' ? JSON.parse(ai) : ai; if (Array.isArray(s2?.dimensions)) { Object.assign(ai, s2); } } catch {}
-  }
+  try { 
+    if (rawAiEval !== null && rawAiEval !== undefined) {
+      ai = typeof rawAiEval === 'object' ? rawAiEval : JSON.parse(aiEvalStr);
+    }
+  } catch {}
+  // 安全访问，ai 保证不是 null
+  ai = ai || {};
+
   return {
     highest_degree: ai.highest_degree || ai.education || ai['学历'] || getFirstValue(f['学历']) || '',
     school: ai.school || ai['院校'] || ai['school'] || '',
