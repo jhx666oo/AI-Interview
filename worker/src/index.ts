@@ -3158,42 +3158,27 @@ app.get('/api/resumes/:id/file', async (c) => {
       } catch { /* uploaded_at 列可能不存在 */ }
     }
 
-    // 调试模式：返回附件原始数据
-    if (c.req.query('debug') === '1') {
-      const tableId = getBitableTableId(c.env, 'talent');
-      const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
-      if (!record) return c.json({ detail: 'Not found' }, 404);
-      const f = record.fields || {};
-      let debugFileToken = '', debugDownloadUrl = '', debugFieldName = '', debugFieldValue: any = null;
-      for (const [fieldName, fieldValue] of Object.entries(f)) {
-        if (Array.isArray(fieldValue) && fieldValue.length > 0) {
-          const item = fieldValue[0];
-          if (item && typeof item === 'object' && (item.file_token || item.download_url || item.tmp_url)) {
-            debugFieldName = fieldName;
-            debugFieldValue = item;
-            debugFileToken = item.file_token || '';
-            debugDownloadUrl = item.download_url || item.tmp_url || '';
-            break;
-          }
-        }
-      }
-      return c.json({
-        record_id: c.req.param('id'),
-        field_count: Object.keys(f).length,
-        field_name: debugFieldName,
-        field_value_keys: debugFieldValue ? Object.keys(debugFieldValue) : [],
-        field_value: debugFieldValue,
-        file_token: debugFileToken,
-        download_url: debugDownloadUrl,
-      });
-    }
+    const recordId = c.req.param('id');
 
+    // 1. 【优先】D1 本地缓存 — 不依赖飞书 API，本地上传的 PDF 直接返回
+    try {
+      const fileRow: any = await c.env.DB.prepare('SELECT content, file_name FROM resume_files WHERE id = ?').bind(recordId).first();
+      if (fileRow && fileRow.content) {
+        const pdfBytes = b64ToBuf(fileRow.content);
+        const disposition = isDownload ? 'attachment' : 'inline';
+        return new Response(pdfBytes, { status: 200, headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `${disposition}; filename="${fileRow.file_name || 'resume.pdf'}"`,
+          'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
+        }});
+      }
+    } catch {}
+
+    // 2. 飞书 Bitable 获取附件（仅当本地缓存未命中时）
     const tableId = getBitableTableId(c.env, 'talent');
     const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
     if (!record) return c.json({ detail: 'Not found' }, 404);
     const f = record.fields || {};
-    
-    const recordId = c.req.param('id');
     
     // 提取候选人姓名和文件名
     let candidateName = f['姓名'] || 'resume';
@@ -3220,23 +3205,7 @@ app.get('/api/resumes/:id/file', async (c) => {
       if (parsed.resume_file?.download_url) feishuDownloadUrl = parsed.resume_file.download_url;
     }
 
-    // 1. D1 缓存优先
-    if (recordId) {
-      try {
-        const fileRow: any = await c.env.DB.prepare('SELECT content, file_name FROM resume_files WHERE id = ?').bind(recordId).first();
-        if (fileRow && fileRow.content) {
-          const pdfBytes = b64ToBuf(fileRow.content);
-          const disposition = isDownload ? 'attachment' : 'inline';
-          return new Response(pdfBytes, { status: 200, headers: {
-            'Content-Type': 'application/pdf',
-            'Content-Disposition': `${disposition}; filename="${fileRow.file_name || attachmentFileName}"`,
-            'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
-          }});
-        }
-      } catch {}
-    }
-
-    // 2. 用 feishuDownloadUrl 直接下载（带 bitablePerm 的 Drive URL，无需额外权限）
+    // 3. 用 feishuDownloadUrl 直接下载（带 bitablePerm 的 Drive URL，无需额外权限）
     if (feishuDownloadUrl) {
       try {
         const feishuToken = await getFeishuToken(c.env);
