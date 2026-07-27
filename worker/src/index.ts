@@ -5009,6 +5009,12 @@ app.post('/api/capability-dimension-names', authMiddleware, async (c) => {
     return c.json({ detail: e.message }, 500);
   }
 });
+// DELETE /api/capability-dimension-names/:name — 从全局池中删除维度
+app.delete('/api/capability-dimension-names/:name', authMiddleware, async (c) => {
+  const name = decodeURIComponent(c.req.param('name'));
+  await c.env.DB.prepare("DELETE FROM capability_dimensions WHERE position_name = ?").bind(name).run();
+  return c.json({ deleted: true, name });
+});
 
 // CRUD for recruitment tasks
 registerCrud('recruitment-tasks', 'recruitment_tasks', { status: 'eq', position_name: 'like' });

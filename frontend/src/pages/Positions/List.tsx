@@ -1308,8 +1308,10 @@ const CapabilityDimensionEditor: React.FC<{
     setDeleteTarget(name);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
+    // 从后端删除该维度名称
+    try { await request.delete(`/capability-dimension-names/${encodeURIComponent(deleteTarget)}`); } catch {}
     // 从全局预设池中移除
     setAllDimNames(prev => prev.filter(n => n !== deleteTarget));
     // 从当前岗位中移除勾选
