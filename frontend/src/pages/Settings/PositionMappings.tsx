@@ -27,6 +27,7 @@ const PositionMappings: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [oldRawNames, setOldRawNames] = useState<string[]>([]);  // 编辑时记录旧的 raw_names 列表
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<PositionGroup | null>(null);
@@ -87,6 +88,7 @@ const PositionMappings: React.FC = () => {
 
   const handleEdit = (record: PositionGroup) => {
     setEditing(record);
+    setOldRawNames([...record.raw_names]);  // 保存旧的 BOSS岗位名列表
     form.setFieldsValue({
       mapped_name: record.mapped_name,
       raw_names: record.raw_names,
@@ -111,9 +113,26 @@ const PositionMappings: React.FC = () => {
         ? interviewers.split(/[,，、]/).map((n: string) => n.trim()).filter(Boolean).map((name: string) => ({ name, open_id: '' }))
         : [];
       
+      const newRawNames: string[] = Array.isArray(raw_names) ? raw_names : [raw_names];
+
+      // 编辑时：删除用户在界面中移除的旧 BOSS岗位名
+      if (editing && oldRawNames.length > 0) {
+        const removedNames = oldRawNames.filter(n => !newRawNames.includes(n));
+        for (const name of removedNames) {
+          try {
+            // 查找并删除对应的 position_mappings 记录
+            const existing = (await request.get('/position-mappings', { params: { raw_name: name } })) as any[];
+            const toDelete = (existing || []).filter((r: any) => r.raw_name === name && r.mapped_name === mapped_name);
+            for (const r of toDelete) {
+              await request.delete(`/position-mappings/${r.id}`);
+            }
+          } catch {}
+        }
+      }
+
       await request.post('/position-mappings/batch-save', {
         mapped_name,
-        raw_names: Array.isArray(raw_names) ? raw_names : [raw_names],
+        raw_names: newRawNames,
         responsible_person: responsible_person || '',
         responsible_person_open_id: '',
         interviewers: interviewerArr,
