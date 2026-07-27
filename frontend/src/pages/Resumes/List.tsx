@@ -1243,6 +1243,11 @@ const ResumesList: React.FC = () => {
                       <Tag style={{ margin: 0 }}>{record.standard_position || record.position_applied}</Tag>
                     )}
                     {statusTag(record.status)}
+                    {record.create_time && (
+                      <span style={{ color: '#8c8c8c', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        入库: {new Date(Number(record.create_time)).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+                      </span>
+                    )}
                     <div style={{ marginLeft: 'auto' }} onClick={e => e.stopPropagation()}>
                       {renderActionButtons(record)}
                     </div>

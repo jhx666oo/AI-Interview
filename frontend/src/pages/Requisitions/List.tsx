@@ -47,12 +47,14 @@ const urgencyConfig: Record<string, { color: string; text: string }> = {
   medium: { color: 'blue', text: '中' },
   high: { color: 'orange', text: '高' },
   urgent: { color: 'red', text: '紧急' },
+  normal: { color: 'blue', text: '中' },  // 兼容旧数据
   // 飞书 Bitable 返回的中文紧急度
   '低': { color: 'green', text: '低' },
   '中': { color: 'blue', text: '中' },
   '高': { color: 'orange', text: '高' },
   '紧急': { color: 'red', text: '紧急' },
-  '普通': { color: 'green', text: '普通' },
+  '普通': { color: 'blue', text: '中' },
+  '不急': { color: 'green', text: '低' },
 };
 
 const RequisitionsList: React.FC = () => {
@@ -61,6 +63,7 @@ const RequisitionsList: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [jdModalVisible, setJdModalVisible] = useState(false);
+  const [jdFormData, setJdFormData] = useState<Record<string, any>>({});
   const [form] = Form.useForm();
   const [searchDept, setSearchDept] = useState('');
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
@@ -166,6 +169,12 @@ const RequisitionsList: React.FC = () => {
     try {
       const values = await form.validateFields(['title']);
       if (!values.title) { message.error('请先填写岗位名称'); return; }
+      setJdFormData({
+        title: form.getFieldValue('title') || '',
+        department: form.getFieldValue('department') || '',
+        location: form.getFieldValue('city') || '',
+        salary_range: form.getFieldValue('salary_range') || '',
+      });
       setJdModalVisible(true);
     } catch { message.error('请先填写岗位名称'); }
   };
@@ -466,10 +475,10 @@ const RequisitionsList: React.FC = () => {
         visible={jdModalVisible}
         onCancel={() => setJdModalVisible(false)}
         onConfirm={handleJDConfirm}
-        title={form.getFieldValue('title') || ''}
-        department={form.getFieldValue('department')}
-        location={form.getFieldValue('city')}
-        salary_range={form.getFieldValue('salary_range')}
+        title={jdFormData.title || ''}
+        department={jdFormData.department}
+        location={jdFormData.location}
+        salary_range={jdFormData.salary_range}
       />
     </div>
   );

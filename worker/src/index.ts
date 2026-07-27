@@ -1371,11 +1371,15 @@ function parseTalentRecord(record: any): any {
     biz_owner: getFirstValue(f['业务负责人']) || '',
     biz_review: getFirstValue(f['业务复核结果']) || '',
     hr_pass_date: f['HR初筛通过日期'] || null,
-    create_time: f['创建时间'] || null,
+    create_time: f['创建时间'] || f['创建时间-测试'] || null,
     status: mapHrReviewToStatus(getFirstValue(f['HR复核结果']) || ''),
     match_score: mapAIResultToScore(getFirstValue(f['AI简历初筛结果']) || '', aiEvalStr),
     feishu_record_id: record.record_id,
-    email: getFirstValue(f['SourceID']) || '',
+    phone: getFirstValue(f['手机']) || '',
+    email: getFirstValue(f['邮箱']) || getFirstValue(f['SourceID']) || '',
+    work_years: f['工作年限'] || null,
+    skills: getFirstValue(f['技能']) || '',
+    work_experience: getFirstValue(f['工作经历']) || '',
     // 保留原始字段以便扩展
     _raw_fields: f,
     // 简历附件信息（原始 PDF）
@@ -1416,7 +1420,67 @@ function parseAIEvalForFields(rawAiEval: any, aiEvalStr: string, f: any): Record
     years_of_experience: null,
     recent_company: '',
     contact: '',
+    phone: getFirstValue(f['手机']) || '',
+    skills: getFirstValue(f['技能']) || '',
+    work_experience: getFirstValue(f['工作经历']) || '',
   };
+}
+
+// getPositionContext: 根据岗位名查询上下文（标准岗位名、能力维度、个性化需求、薪资范围）
+async function getPositionContext(db: any, positionName: string): Promise<{
+  standardPosition: string;
+  capabilityDimensions: string;
+  personalizedRequirements: string;
+  salaryRange: string;
+}> {
+  const result = { standardPosition: positionName, capabilityDimensions: '', personalizedRequirements: '', salaryRange: '' };
+  if (!positionName) return result;
+
+  // 1. 岗位映射：查找标准岗位名
+  try {
+    const mapping = await db.prepare(
+      'SELECT mapped_name FROM position_mappings WHERE raw_name = ? LIMIT 1'
+    ).bind(positionName).first();
+    if (mapping?.mapped_name && mapping.mapped_name !== positionName) {
+      result.standardPosition = mapping.mapped_name;
+    }
+  } catch {}
+
+  const lookupName = result.standardPosition || positionName;
+
+  // 2. 能力维度：从 positions 表读取
+  try {
+    const pos = await db.prepare(
+      'SELECT capability_dimensions, salary_range FROM positions WHERE title = ? LIMIT 1'
+    ).bind(lookupName).first();
+    if (pos) {
+      if (pos.capability_dimensions) {
+        let dims = pos.capability_dimensions;
+        try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.join('、'); } catch {}
+        result.capabilityDimensions = String(dims);
+      }
+      if (pos.salary_range) result.salaryRange = pos.salary_range;
+    }
+  } catch {}
+
+  // 3. 个性化需求：从 job_requisitions 表读取
+  try {
+    const req = await db.prepare(
+      'SELECT personalized_requirements FROM job_requisitions WHERE title = ? LIMIT 1'
+    ).bind(lookupName).first();
+    if (req?.personalized_requirements) {
+      let preq = req.personalized_requirements;
+      try {
+        const obj = JSON.parse(preq);
+        if (typeof obj === 'object' && !Array.isArray(obj)) {
+          preq = Object.entries(obj).filter(([_,v]) => v).map(([k,v]) => `${k}: ${v}`).join('; ');
+        }
+      } catch {}
+      result.personalizedRequirements = String(preq);
+    }
+  } catch {}
+
+  return result;
 }
 
 // 将 AI 初筛结果 + 评估文本映射为匹配度分数
@@ -1490,7 +1554,9 @@ function parseRequisitionRecord(record: any): any {
     start_date: f['开始招聘'] || null,
     end_date: f['结束招聘'] || null,
     employment_type: 'full_time',
-    salary_range: '',
+    salary_range: getFirstValue(f['薪资范围']) || getFirstValue(f['薪酬']) || getFirstValue(f['薪资']) || getFirstValue(f['薪资预算']) || getFirstValue(f['薪酬范围']) || '',
+    budget: f['预算'] || f['招聘预算'] || f['人力预算'] || f['HC预算'] || null,
+    expected_date: f['期望到岗'] || f['到岗日期'] || f['期望到岗日期'] || f['期望入职日期'] || f['到岗时间'] || f['开始招聘'] || null,
     feishu_record_id: record.record_id,
   };
 }
@@ -1539,17 +1605,21 @@ function extractFeishuUsers(fieldValue: any): Array<{ open_id: string; name: str
 }
 
 function mapUrgency(v: any): string {
-  const map: Record<string, string> = { '紧急': 'urgent', '普通': 'normal', '不急': 'low', '1': 'urgent', '2': 'normal', '3': 'low' };
+  const map: Record<string, string> = { '紧急': 'urgent', '普通': 'medium', '不急': 'low', '1': 'urgent', '2': 'medium', '3': 'low' };
+  // 数字类型
+  if (typeof v === 'number') return map[String(v)] || String(v);
+  // 字符串
   if (typeof v === 'string') return map[v] || v;
+  // 对象（飞书选择框/用户字段等）
   if (typeof v === 'object' && v) {
-    const s = v.text || v.name || String(v);
+    const s = (typeof v.text === 'string' ? v.text : '') || (typeof v.name === 'string' ? v.name : '') || String(v);
     return map[s] || s;
   }
-  return 'normal';
+  return 'medium';
 }
 
 function mapUrgencyToChinese(v: string): string {
-  const map: Record<string, string> = { 'urgent': '紧急', 'normal': '普通', 'low': '不急', 'medium': '普通' };
+  const map: Record<string, string> = { 'urgent': '紧急', 'normal': '中', 'medium': '中', 'low': '低', 'high': '高' };
   return map[v] || v;
 }
 
@@ -1848,8 +1918,85 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
   }
 });
 
+/**
+ * 岗位模板同步 - 核心逻辑（可复用）
+ */
+async function syncPositionTemplates(env: Env, db: any): Promise<{ count: number; salaryMap: Map<string, string> }> {
+  const tableId = env.FEISHU_POSITION_TABLE_ID || FEISHU_CONFIG.positionTableId;
+  const records = await bitableListRecords(env, tableId);
+  const now = new Date().toISOString();
+  let count = 0;
+  const salaryMap = new Map<string, string>();
+
+  for (const rec of records) {
+    const f = rec.fields || {};
+    const title = getFirstValue(f['岗位名称']) || getFirstValue(f['招聘岗位']) || '';
+    if (!title) continue;
+
+    const salaryRange = getFirstValue(f['薪资范围']) || getFirstValue(f['薪酬范围']) || '';
+    if (salaryRange) salaryMap.set(title, salaryRange);
+
+    const capabilityDims = getFirstValue(f['能力维度']) || getFirstValue(f['岗位能力维度要求']) || '';
+
+    const existing = await db.prepare(
+      'SELECT id FROM positions WHERE title = ? LIMIT 1'
+    ).bind(title).first();
+
+    if (existing) {
+      await db.prepare(
+        `UPDATE positions SET salary_range = COALESCE(NULLIF(?, ''), salary_range),
+         capability_dimensions = COALESCE(NULLIF(?, ''), capability_dimensions),
+         updated_at = ? WHERE id = ?`
+      ).bind(salaryRange, capabilityDims, now, existing.id).run();
+      count++;
+    } else {
+      const id = crypto.randomUUID();
+      await db.prepare(
+        `INSERT INTO positions (id, title, salary_range, capability_dimensions, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'open', ?, ?)`
+      ).bind(id, title, salaryRange, capabilityDims, now, now).run();
+      count++;
+    }
+  }
+  return { count, salaryMap };
+}
+
+/**
+ * 岗位模板同步 - 从飞书年度招聘需求表读取岗位模板数据
+ * POST /api/positions/sync-template-from-feishu
+ */
+app.post('/api/positions/sync-template-from-feishu', authMiddleware, async (c) => {
+  try {
+    const { count } = await syncPositionTemplates(c.env, c.env.DB);
+    return c.json({ ok: true, message: `模板同步完成：${count} 个岗位已更新`, count });
+  } catch (e: any) {
+    console.error(`[PositionTemplateSync] 失败: ${e.message}`);
+    return c.json({ detail: '模板同步失败: ' + e.message }, 500);
+  }
+});
+
 app.post('/api/requisitions/sync-from-feishu', authMiddleware, async (c) => {
   try {
+    // 先同步岗位模板（直接拿到 salaryMap）
+    let templateSalaryMap = new Map<string, string>();
+    try {
+      const result = await syncPositionTemplates(c.env, c.env.DB);
+      templateSalaryMap = result.salaryMap;
+      console.log(`[RequisitionSync] 模板同步: ${result.count} 岗位, 薪资映射: ${templateSalaryMap.size} 条`);
+      // 打印所有薪资映射（诊断用）
+      const sample = Array.from(templateSalaryMap.entries()).slice(0, 5).map(([k,v]) => `${k}=${v}`).join(', ');
+      console.log(`[RequisitionSync] 薪资映射样例: ${sample}`);
+    } catch (te: any) {
+      console.warn(`[RequisitionSync] 模板同步失败（继续）: ${te.message}`);
+      // 尝试单独测试飞书连通性
+      try {
+        const testRecords = await bitableListRecords(c.env, c.env.FEISHU_POSITION_TABLE_ID || FEISHU_CONFIG.positionTableId);
+        console.log(`[RequisitionSync] 飞书连通正常，模板表记录数: ${testRecords.length}`);
+      } catch (te2: any) {
+        console.error(`[RequisitionSync] 飞书连通失败: ${te2.message}`);
+      }
+    }
+
     const tableId = getBitableTableId(c.env, 'requisition');
     const records = await bitableListRecords(c.env, tableId);
 
@@ -1857,6 +2004,18 @@ app.post('/api/requisitions/sync-from-feishu', authMiddleware, async (c) => {
     let created = 0;
     let updated = 0;
     let skipped = 0;
+
+    // D1兜底：如果直接map为空，从 positions 表补充
+    if (templateSalaryMap.size === 0) {
+      try {
+        const positions = await c.env.DB.prepare(
+          'SELECT title, salary_range FROM positions WHERE salary_range IS NOT NULL AND salary_range != \'\''
+        ).all();
+        for (const p of (positions.results || []) as any[]) {
+          if (p.title && p.salary_range) templateSalaryMap.set(p.title, p.salary_range);
+        }
+      } catch {}
+    }
 
     for (const rec of records) {
       const parsed = parseRequisitionRecord(rec);
@@ -1866,6 +2025,11 @@ app.post('/api/requisitions/sync-from-feishu', authMiddleware, async (c) => {
         continue;
       }
       synced.add(title);
+
+      // 如果飞书没有薪资范围，从模板表交叉引用
+      if (!parsed.salary_range && templateSalaryMap.has(title)) {
+        parsed.salary_range = templateSalaryMap.get(title) || '';
+      }
 
       // 按 feishu_record_id 或 title 去重
       const existing = await c.env.DB.prepare(
@@ -1880,7 +2044,8 @@ app.post('/api/requisitions/sync-from-feishu', authMiddleware, async (c) => {
             urgency = ?, status = ?, reason = ?, notes = ?,
             description = ?, requirements = ?,
             hr_interviewer = ?, biz_interviewer = ?, final_interviewer = ?,
-            responsible_person = ?, feishu_record_id = ?, updated_at = ?
+            responsible_person = ?, salary_range = ?, budget = ?, expected_date = ?,
+            feishu_record_id = ?, updated_at = ?
            WHERE id = ?`
         ).bind(
           title,
@@ -1889,7 +2054,8 @@ app.post('/api/requisitions/sync-from-feishu', authMiddleware, async (c) => {
           parsed.reason || '', parsed.notes || '',
           parsed.description || '', parsed.requirements || '',
           parsed.hr_interviewer || '', parsed.biz_interviewer || '', parsed.final_interviewer || '',
-          parsed.responsible_person || '', parsed.feishu_record_id,
+          parsed.responsible_person || '', parsed.salary_range || '', parsed.budget ?? null, parsed.expected_date || null,
+          parsed.feishu_record_id,
           now(), existing.id
         ).run();
         updated++;
@@ -1900,8 +2066,9 @@ app.post('/api/requisitions/sync-from-feishu', authMiddleware, async (c) => {
           `INSERT INTO job_requisitions (id, title, department, city, headcount,
             urgency, status, reason, notes, description, requirements,
             hr_interviewer, biz_interviewer, final_interviewer,
-            responsible_person, feishu_record_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            responsible_person, salary_range, budget, expected_date,
+            feishu_record_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           id, title,
           parsed.department || '', parsed.city || '',
@@ -1909,7 +2076,8 @@ app.post('/api/requisitions/sync-from-feishu', authMiddleware, async (c) => {
           parsed.reason || '', parsed.notes || '',
           parsed.description || '', parsed.requirements || '',
           parsed.hr_interviewer || '', parsed.biz_interviewer || '', parsed.final_interviewer || '',
-          parsed.responsible_person || '', parsed.feishu_record_id,
+          parsed.responsible_person || '', parsed.salary_range || '', parsed.budget ?? null, parsed.expected_date || null,
+          parsed.feishu_record_id,
           now(), now()
         ).run();
         created++;
@@ -2124,7 +2292,7 @@ app.get('/api/requisitions', authMiddleware, async (c) => {
     // v2.0: 从 D1 增强数据（多城市、硬性要求、个性化需求）
     try {
       const d1Reqs = await c.env.DB.prepare(
-        'SELECT id, feishu_record_id, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, created_at, description, requirements FROM job_requisitions'
+        'SELECT id, feishu_record_id, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, created_at, description, requirements, salary_range, budget, expected_date FROM job_requisitions'
       ).all();
       const d1Map = new Map();
       for (const row of (d1Reqs.results || [])) {
@@ -2143,6 +2311,9 @@ app.get('/api/requisitions', authMiddleware, async (c) => {
           item.created_at = d1.created_at || item.created_at || '';
           if (d1.description) item.description = d1.description;
           if (d1.requirements) item.requirements = d1.requirements;
+          if (d1.salary_range && !item.salary_range) item.salary_range = d1.salary_range;
+          if (d1.budget != null && !item.budget) item.budget = d1.budget;
+          if (d1.expected_date && !item.expected_date) item.expected_date = d1.expected_date;
         } else {
           item.city = item.city ? [item.city] : [];
           item.hard_requirements = [];
@@ -2920,6 +3091,71 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       console.log(`[Upload] 前端未提取到 PDF 文本，跳过 AI 解析`);
     }
 
+    // === 环节串联：加载岗位上下文 ===
+    let positionName = '';
+    if (positionId) {
+      // 从 D1 positions 表获取岗位名
+      try {
+        const pos = await c.env.DB.prepare('SELECT title FROM positions WHERE id = ?').bind(positionId).first() as any;
+        if (pos?.title) positionName = pos.title;
+      } catch {}
+    }
+    // 如果前端没传 position_id，尝试从文件名提取岗位
+    if (!positionName) {
+      const fnMatch = file.name.match(/(.+?)[_\-—](.+?)(?:[_\-—].*)?\.pdf$/i);
+      if (fnMatch) {
+        // 尝试 fnMatch[2] 作为岗位名（姓名在前，岗位在后）
+        const candidatePosition = fnMatch[2].trim();
+        if (candidatePosition && candidatePosition.length >= 2 && !/^\d+$/.test(candidatePosition)) {
+          positionName = candidatePosition;
+        }
+      }
+    }
+
+    let positionContext: any = null;
+    if (positionName) {
+      try {
+        positionContext = await getPositionContext(c.env.DB, positionName);
+      } catch {}
+    }
+
+    // 如果获取到岗位上下文且有简历文本，做一次增强性的岗位匹配评估
+    let enrichedEval = parsedEval;
+    if (positionContext && extractedText && extractedText.length > 20 && !aiParseFailed) {
+      try {
+        const enrichSystem = `你是一个专业的HR简历评估助手。请根据以下岗位要求对候选人进行岗位匹配评估，返回JSON格式（不要加markdown代码块）：
+{
+  "position_match_score": 0-100的岗位匹配度,
+  "position_match_reason": "匹配度说明（100字以内）",
+  "key_match_points": ["匹配点1", "匹配点2", "匹配点3"],
+  "key_gaps": ["差距1", "差距2"]
+}`;
+        let enrichUser = `岗位名称：${positionContext.standardPosition}\n`;
+        if (positionContext.salaryRange) enrichUser += `薪资范围：${positionContext.salaryRange}\n`;
+        if (positionContext.capabilityDimensions) enrichUser += `能力维度要求：${positionContext.capabilityDimensions}\n`;
+        if (positionContext.personalizedRequirements) enrichUser += `个性化要求：${positionContext.personalizedRequirements}\n`;
+        enrichUser += `\n候选人简历摘要：${extractedText.substring(0, 3000)}`;
+
+        const enrichResp = await callAI(c.env, enrichSystem, enrichUser, 'deepseek-v4-flash');
+        if (enrichResp) {
+          const enriched = JSON.parse(extractJSON(enrichResp) || '{}');
+          if (enriched.position_match_score || enriched.key_match_points) {
+            enrichedEval = JSON.stringify({
+              basic_eval: parsedEval || '{}',
+              position_match: enriched,
+              position_context: {
+                standard_position: positionContext.standardPosition,
+                capability_dimensions: positionContext.capabilityDimensions,
+                personalized_requirements: positionContext.personalizedRequirements,
+              }
+            });
+          }
+        }
+      } catch (enrichErr: any) {
+        console.error(`[Upload] Position matching enrichment failed: ${enrichErr.message}`);
+      }
+    }
+
     // 4. 更新 Bitable 记录（AI 解析结果）
     try {
       const updateFields: Record<string, any> = {};
@@ -2930,12 +3166,13 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       if (parsedCity) updateFields['城市'] = parsedCity;
       if (parsedAdvantage) updateFields['优势分析'] = parsedAdvantage;
       if (parsedRisk) updateFields['风险点'] = parsedRisk;
-      if (parsedEval) updateFields['AI简历评估'] = parsedEval;
+      if (enrichedEval) updateFields['AI简历评估'] = enrichedEval;
       if (parsedPhone) updateFields['手机'] = parsedPhone;
       if (parsedEmail) updateFields['邮箱'] = parsedEmail;
       if (parsedWorkYears) updateFields['工作年限'] = parsedWorkYears;
       if (parsedSkills.length > 0) updateFields['技能'] = parsedSkills.join(', ');
       if (parsedExperience) updateFields['工作经历'] = parsedExperience;
+      if (positionName) updateFields['面试岗位'] = positionName;
       await bitableUpdateRecord(c.env, tableId, recordId, updateFields);
     } catch (updateErr: any) {
       console.error(`[Upload] Failed to update bitable with AI data: ${updateErr.message}`);
@@ -3084,7 +3321,7 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
           item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos,
           item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
-          JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age }),
+          JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age, advantage: item.advantage, risk: item.risk, interview_suggestion: item.interview_suggestion, interview_questions: item.interview_questions, notes: item.notes, reserve_type: item.reserve_type, biz_owner: item.biz_owner, biz_review: item.biz_review, hr_pass_date: item.hr_pass_date }),
           id
         ).run();
         updated++;
@@ -3094,7 +3331,7 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
         ).bind(
           id, item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos, item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
-          JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age }),
+          JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age, advantage: item.advantage, risk: item.risk, interview_suggestion: item.interview_suggestion, interview_questions: item.interview_questions, notes: item.notes, reserve_type: item.reserve_type, biz_owner: item.biz_owner, biz_review: item.biz_review, hr_pass_date: item.hr_pass_date }),
           now()
         ).run();
         created++;
@@ -3512,6 +3749,19 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
   // 文本为空：说明 PDF 未被前端提取（扫描件/加密PDF），deepseek-chat 无法直接解析 base64
   if (!rawText) return c.json({ detail: '该简历未提取到文本内容（可能是扫描件或加密PDF），请重新上传或手动编辑', need_manual: true }, 400);
   const candidateName = resume.candidate_name || resume.parsed_name || '';
+
+  // 加载岗位上下文（用于增强 reparse 的 prompt）
+  let reparsePosName = resume.position_applied || '';
+  const reparsePosContext = reparsePosName ? await getPositionContext(c.env.DB, reparsePosName) : null;
+
+  // 构建追加到 userPrompt 的岗位背景文本
+  let appendContext = '';
+  if (reparsePosContext) {
+    appendContext += `\n岗位背景：\n- 标准岗位：${reparsePosContext.standardPosition}\n`;
+    if (reparsePosContext.capabilityDimensions) appendContext += `- 能力维度：${reparsePosContext.capabilityDimensions}\n`;
+    if (reparsePosContext.personalizedRequirements) appendContext += `- 个性化要求：${reparsePosContext.personalizedRequirements}\n`;
+  }
+
   // 优先读取数据库中的自定义 prompt，key 为 analyze_resume
   const customPrompt = await getCustomPrompt(c.env, 'analyze_resume');
   let systemPrompt: string, userPrompt: string;
@@ -3555,7 +3805,7 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
 - recommendation: 推荐建议（"strongly_recommend"/"recommend"/"neutral"/"not_recommend"/"strongly_not_recommend"）
 - summary: 综合分析摘要（中文，2-3句话）
 - suggested_questions: 建议面试问题（中文，3-5个）`;
-    userPrompt = '简历文本（请提取完整信息）：\n' + rawText;
+    userPrompt = '简历文本（请提取完整信息）：' + appendContext + '\n\n' + rawText;
   }
   try {
     const result = await callAI(c.env, systemPrompt, userPrompt);
@@ -3667,7 +3917,16 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
     user: ''
   });
   const systemPrompt = prompt.system;
-  const userPrompt = `Job Position:\nTitle: ${posTitle}\nDepartment: ${posDept}\nSalary: ${posSalary}\nDescription: ${posDesc}\nRequirements: ${posReq}\n\nCandidate Resume:\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
+
+  // 加载岗位上下文
+  const posContext = await getPositionContext(c.env.DB, posTitle);
+
+  const userPrompt = `Job Position:\nTitle: ${posContext.standardPosition}\n` +
+    (posContext.salaryRange ? `Salary: ${posContext.salaryRange}\n` : '') +
+    `Department: ${posDept}\nDescription: ${posDesc}\nRequirements: ${posReq}\n` +
+    (posContext.capabilityDimensions ? `\nCapability Dimensions (能力维度):\n${posContext.capabilityDimensions}\n` : '') +
+    (posContext.personalizedRequirements ? `\nPersonalized Requirements (个性化要求):\n${posContext.personalizedRequirements}\n` : '') +
+    `\nCandidate Resume:\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
   try {
     const result = await callAI(c.env, systemPrompt, userPrompt);
     let parsed: any;
@@ -6803,12 +7062,18 @@ app.post('/api/interviews/sync-from-feishu', authMiddleware, async (c) => {
         'SELECT id, status FROM interviews WHERE feishu_record_id = ? LIMIT 1'
       ).bind(feishuId).first() as any;
 
+      const resumeRow = await c.env.DB.prepare(
+        'SELECT id FROM resumes WHERE candidate_name = ? LIMIT 1'
+      ).bind(candidateName).first() as any;
+      const resumeId = resumeRow?.id || '';
+
       if (existing) {
         // 只更新面试官信息，不覆盖本地管理的状态/评价/结果
         await c.env.DB.prepare(
           `UPDATE interviews SET interviewer = ?, primary_interviewer = ?, secondary_interviewer = ?,
+           resume_id = COALESCE(NULLIF(?, ''), resume_id),
            updated_at = ? WHERE feishu_record_id = ?`
-        ).bind(interviewerStr, primaryIv, secondaryIv, now, feishuId).run();
+        ).bind(interviewerStr, primaryIv, secondaryIv, resumeId, now, feishuId).run();
         updated++;
       } else {
         const id = crypto.randomUUID();
@@ -6816,7 +7081,7 @@ app.post('/api/interviews/sync-from-feishu', authMiddleware, async (c) => {
           `INSERT INTO interviews (id, feishu_record_id, resume_id, interviewer, primary_interviewer,
            secondary_interviewer, status, created_at)
            VALUES (?, ?, ?, ?, ?, ?, 'scheduled', ?)`
-        ).bind(id, feishuId, candidateName, interviewerStr, primaryIv, secondaryIv, now).run();
+        ).bind(id, feishuId, resumeId, interviewerStr, primaryIv, secondaryIv, now).run();
         created++;
       }
     }
