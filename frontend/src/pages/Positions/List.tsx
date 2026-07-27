@@ -1308,11 +1308,11 @@ const CapabilityDimensionEditor: React.FC<{
     setDeleteTarget(name);
   };
 
-  const confirmDelete = (removeFromPool: boolean) => {
+  const confirmDelete = () => {
     if (!deleteTarget) return;
-    if (removeFromPool) {
-      setAllDimNames(prev => prev.filter(n => n !== deleteTarget));
-    }
+    // 从全局预设池中移除
+    setAllDimNames(prev => prev.filter(n => n !== deleteTarget));
+    // 从当前岗位中移除勾选
     const newDims = dims.filter(d => d.name !== deleteTarget);
     onChange?.(newDims);
     setDeleteTarget(null);
@@ -1347,7 +1347,7 @@ const CapabilityDimensionEditor: React.FC<{
             <DeleteOutlined 
               onClick={() => handleDeleteDim(name)} 
               style={{ fontSize: 11, color: '#ff4d4f', cursor: 'pointer', marginLeft: 4 }} 
-              title="移除此维度"
+              title="删除此维度"
             />
             <div style={{ marginLeft: 24, marginBottom: 8 }}>
               <a onClick={() => toggleExpand(name)} style={{ fontSize: 11, display: 'block', marginBottom: expanded.has(name) ? 6 : 2 }}>
@@ -1371,19 +1371,16 @@ const CapabilityDimensionEditor: React.FC<{
 
       {/* 删除确认弹窗 */}
       <Modal
-        title={`移除维度「${deleteTarget || ''}」`}
+        title={`删除维度「${deleteTarget || ''}」`}
         open={!!deleteTarget}
         onCancel={() => setDeleteTarget(null)}
-        footer={[
-          <Button key="remove-all" danger onClick={() => confirmDelete(true)}>彻底移除（所有岗位）</Button>,
-          <Button key="cancel" onClick={() => setDeleteTarget(null)}>取消</Button>,
-          <Button key="remove-this" type="primary" onClick={() => confirmDelete(false)}>仅移除此岗位</Button>,
-        ]}
+        onOk={confirmDelete}
+        okText="确认删除"
+        okButtonProps={{ danger: true }}
       >
-        <p>确定要移除维度「{deleteTarget}」吗？</p>
-        <p style={{ color: '#64748b', fontSize: 13 }}>
-          <strong>仅移除此岗位：</strong>其他岗位仍可选用该维度。<br />
-          <strong>彻底移除：</strong>将从所有岗位的预设维度列表中删除。
+        <p>确定要删除维度「<strong>{deleteTarget}</strong>」吗？</p>
+        <p style={{ color: '#ef4444', fontSize: 13 }}>
+          删除后将从此页面和所有岗位的预设维度列表中移除，不可恢复。
         </p>
       </Modal>
     </div>
