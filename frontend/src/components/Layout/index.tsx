@@ -17,7 +17,6 @@ import {
   FilterOutlined,
   BarChartOutlined,
   FolderOpenOutlined,
-  PartitionOutlined,
   MailOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
@@ -109,12 +108,6 @@ const AppLayout: React.FC = () => {
       key: '/settings/interviewer-mappings',
       icon: <TeamOutlined />,
       label: '面试官管理',
-      roles: ['admin'],
-    },
-    {
-      key: '/settings/capability-dimensions',
-      icon: <PartitionOutlined />,
-      label: '能力维度',
       roles: ['admin'],
     },
     {

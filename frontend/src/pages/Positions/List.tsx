@@ -918,15 +918,28 @@ const PositionsList: React.FC = () => {
                 <span>能力维度（可多选）</span>
               </Space>
             }
-            extra="如需新维度，请先在「设置 → 能力维度配置」中添加"
+            extra="直接输入新维度名称并回车即可添加，支持搜索已有维度"
           >
             <Select
-              mode="multiple"
+              mode="tags"
               size="large"
-              placeholder="选择能力维度，支持搜索"
+              placeholder="选择或输入能力维度，支持搜索"
               allowClear
               showSearch
               optionFilterProp="label"
+              maxTagCount="responsive"
+              onChange={async (vals: string[]) => {
+                // 自动保存新增的维度名称到后端
+                const newNames = vals.filter(v => !allDimNames.includes(v));
+                for (const name of newNames) {
+                  try {
+                    await request.post('/capability-dimension-names', { name });
+                  } catch {}
+                }
+                if (newNames.length > 0) {
+                  setAllDimNames(prev => [...new Set([...prev, ...newNames])]);
+                }
+              }}
             >
               {allDimNames.map(name => (
                 <Select.Option key={name} value={name} label={name}>{name}</Select.Option>

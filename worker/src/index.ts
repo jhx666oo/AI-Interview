@@ -4989,6 +4989,27 @@ app.get('/api/capability-dimension-names', authMiddleware, async (c) => {
   return c.json(Array.from(names).sort());
 });
 
+// POST /api/capability-dimension-names — 快速添加维度名称到全局池
+app.post('/api/capability-dimension-names', authMiddleware, async (c) => {
+  try {
+    const { name } = await c.req.json();
+    if (!name || !name.trim()) return c.json({ detail: '名称不能为空' }, 400);
+    const trimmedName = name.trim();
+    // 检查是否已存在，避免重复
+    const existing = await c.env.DB.prepare(
+      "SELECT id FROM capability_dimensions WHERE position_name = ?"
+    ).bind(trimmedName).first();
+    if (!existing) {
+      await c.env.DB.prepare(
+        "INSERT INTO capability_dimensions (id, position_name, dimensions_json) VALUES (?, ?, ?)"
+      ).bind(crypto.randomUUID(), trimmedName, JSON.stringify([{ name: trimmedName, definition: '', behavior: '' }])).run();
+    }
+    return c.json({ name: trimmedName, created: !existing });
+  } catch (e: any) {
+    return c.json({ detail: e.message }, 500);
+  }
+});
+
 // CRUD for recruitment tasks
 registerCrud('recruitment-tasks', 'recruitment_tasks', { status: 'eq', position_name: 'like' });
 

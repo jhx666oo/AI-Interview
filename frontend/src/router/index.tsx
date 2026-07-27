@@ -30,7 +30,6 @@ const ProbationList = lazy(() => import('../pages/Probation/List'));
 const BackgroundChecksList = lazy(() => import('../pages/BackgroundChecks/List'));
 const DailyReportsList = lazy(() => import('../pages/DailyReports/List'));
 const WorkflowsList = lazy(() => import('../pages/Workflows/List'));
-const CapabilityDimensions = lazy(() => import('../pages/Settings/CapabilityDimensions'));
 const JDManagementList = lazy(() => import('../pages/JDManagement/List'));
 const JDManagementEditor = lazy(() => import('../pages/JDManagement/Editor'));
 const PositionMappings = lazy(() => import('../pages/Settings/PositionMappings'));
@@ -166,10 +165,6 @@ const router = createBrowserRouter([
       {
         path: 'settings/interviewer-mappings',
         element: <RoleRoute roles={['admin']}><LazyPage><InterviewerMappings /></LazyPage></RoleRoute>,
-      },
-      {
-        path: 'settings/capability-dimensions',
-        element: <RoleRoute roles={['admin']}><LazyPage><CapabilityDimensions /></LazyPage></RoleRoute>,
       },
       {
         path: 'settings/mail',
