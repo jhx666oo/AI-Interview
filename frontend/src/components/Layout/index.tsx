@@ -8,7 +8,6 @@ import {
   LogoutOutlined,
   BellOutlined,
   SettingOutlined,
-  ApartmentOutlined,
   FileProtectOutlined,
   UsergroupAddOutlined,
   SafetyOutlined,
@@ -93,12 +92,6 @@ const AppLayout: React.FC = () => {
       roles: ['admin', 'hr'],
     },
     {
-      key: '/workflows',
-      icon: <ApartmentOutlined />,
-      label: '工作流',
-      roles: ['admin', 'hr'],
-    },
-    {
       key: '/settings/position-mappings',
       icon: <FolderOpenOutlined />,
       label: '岗位映射',
@@ -136,9 +129,7 @@ const AppLayout: React.FC = () => {
         ? '系统设置'
         : location.pathname.startsWith('/settings/mail')
           ? '邮件设置'
-          : location.pathname.startsWith('/workflows/')
-            ? '工作流编辑'
-            : menuItems.find(item => item.key === location.pathname)?.label || 'AI 面试助手';
+          : menuItems.find(item => item.key === location.pathname)?.label || 'AI 面试助手';
 
   const userMenuItems: any[] = [
     {
