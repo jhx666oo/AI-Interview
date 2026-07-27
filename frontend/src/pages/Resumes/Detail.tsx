@@ -73,7 +73,9 @@ const ResumeDetail: React.FC = () => {
     try {
       const res = await request.get(`/resumes/${resumeId}`) as any;
       setResume(res);
-      form.setFieldsValue({
+      // 延迟设置表单值，等待 Form 组件挂载完成
+      setTimeout(() => {
+        form.setFieldsValue({
           candidate_name: res.candidate_name,
           email: res.email,
           contact: res.contact,
@@ -82,7 +84,8 @@ const ResumeDetail: React.FC = () => {
           major: res.parsed_data?.major,
           years_of_experience: res.parsed_data?.years_of_experience,
           recent_company: res.parsed_data?.recent_company
-      });
+        });
+      }, 0);
 
       // 获取部门评审汇总
       if (res.status === 'pending_dept_review' || res.status === 'pending_hr_decision' || res.department_reviews) {
@@ -553,7 +556,7 @@ const ResumeDetail: React.FC = () => {
       {/* Right: AI Analysis & Details */}
       <div style={{ flex: '1 1 55%', minWidth: 0, overflowY: 'auto', paddingRight: '4px' }}>
         <Card
-          bordered={false}
+          variant="borderless"
           style={{ borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', border: '1px solid #E2E8F0' }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, gap: 20, flexWrap: 'wrap' }}>
@@ -602,7 +605,7 @@ const ResumeDetail: React.FC = () => {
                   <Progress
                     type="circle"
                     percent={resume.match_score}
-                    width={44}
+                    size={44}
                     format={percent => <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>{percent}%</span>}
                     strokeColor={resume.match_score >= 80 ? '#10B981' : resume.match_score >= 60 ? '#F59E0B' : '#EF4444'}
                   />
