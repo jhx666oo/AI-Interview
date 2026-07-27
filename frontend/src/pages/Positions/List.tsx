@@ -671,14 +671,17 @@ const PositionsList: React.FC = () => {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
             {dimNames.slice(0, showCount).map((d: any, i: number) => {
               const name = d.name || d;
+              const desc = d.description || '';
               const def = d.definition || '';
               const beh = d.behavior || '';
+              const hasDetail = desc || def || beh;
               const popContent = (
-                <div style={{ maxWidth: 320, wordBreak: 'break-word' }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 14 }}>{name}</div>
+                <div style={{ maxWidth: 340, wordBreak: 'break-word' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>{name}</div>
+                  {desc && <div style={{ marginBottom: 4, color: '#1e293b', lineHeight: 1.5 }}>{desc}</div>}
                   {def && <div style={{ marginBottom: 4, color: '#475569' }}><Text type="secondary">定义：</Text>{def}</div>}
                   {beh && <div style={{ color: '#475569' }}><Text type="secondary">典型行为：</Text>{beh}</div>}
-                  {!def && !beh && <Text type="secondary">无详细信息</Text>}
+                  {!hasDetail && <Text type="secondary">暂无详细信息</Text>}
                 </div>
               );
               return (
