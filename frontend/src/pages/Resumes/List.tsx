@@ -831,7 +831,7 @@ const ResumesList: React.FC = () => {
       setIsModalVisible(false);
       fetchResumes();
     } catch (error) {
-      message.error(e?.response?.data?.detail || e?.message || '上传失败');
+      message.error(error?.response?.data?.detail || error?.message || '上传失败');
     } finally {
       setSubmitting(false);
     }
