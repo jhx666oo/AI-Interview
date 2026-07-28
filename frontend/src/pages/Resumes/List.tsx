@@ -49,7 +49,14 @@ const ResumesList: React.FC = () => {
   const [searchPerson, setSearchPerson] = useState<string | undefined>(undefined);
   const [responsiblePersons, setResponsiblePersons] = useState<string[]>([]);
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
-  const { selectedOwner } = useOwner();
+  const { selectedOwner, setSelectedOwner } = useOwner();
+  
+  // 初始化：从持久化的 selectedOwner 恢复负责人筛选状态
+  useEffect(() => {
+    if (selectedOwner && !searchPerson) {
+      setSearchPerson(selectedOwner);
+    }
+  }, []); // eslint-disable-line
   const fetchResponsiblePersons = async () => {
     try {
       const res = await request.get('/positions');
@@ -424,6 +431,7 @@ const ResumesList: React.FC = () => {
     setSearchName('');
     setSearchStatus(undefined);
     setSearchPerson(undefined);
+    setSelectedOwner(undefined);
     setSearchPosition(undefined);
     setCardPage(1);
     dataCache.current = [];
@@ -1149,7 +1157,14 @@ const ResumesList: React.FC = () => {
               <Select
                 placeholder="全部"
                 value={searchPerson}
-                onChange={val => { setSearchPerson(val); }}
+                onChange={val => {
+                  setSearchPerson(val);
+                  setSelectedOwner(val);
+                  setCardPage(1);
+                  dataCache.current = [];
+                  loadedRef.current = false;
+                  fetchResumes();
+                }}
                 style={{ width: 120 }}
                 allowClear
                 showSearch
