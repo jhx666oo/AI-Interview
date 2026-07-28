@@ -63,6 +63,7 @@ interface MergedRow {
   primary_interviewer: string;
   secondary_interviewer: string;
   created_at: string;
+  create_time: number;           // 飞书多维表格入库时间戳（毫秒），用于排序
 }
 
 const InterviewsList: React.FC = () => {
@@ -242,6 +243,7 @@ const InterviewsList: React.FC = () => {
           primary_interviewer: matchedIv?.primary_interviewer || '',
           secondary_interviewer: matchedIv?.secondary_interviewer || '',
           created_at: matchedIv?.created_at || '',
+          create_time: Number(c.create_time) || 0,
         };
       });
 
@@ -272,11 +274,17 @@ const InterviewsList: React.FC = () => {
           primary_interviewer: iv.primary_interviewer || '',
           secondary_interviewer: iv.secondary_interviewer || '',
           created_at: iv.created_at || '',
+          create_time: 0,
         });
       }
 
-      // 按创建时间倒序：最新创建的排最前
-      merged.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      // 按入库时间倒序：最新入库排最前（create_time 毫秒时间戳，无值时回退 created_at 字符串比较）
+      merged.sort((a, b) => {
+        if (a.create_time && b.create_time) return b.create_time - a.create_time;
+        if (a.create_time) return -1;
+        if (b.create_time) return 1;
+        return (b.created_at || '').localeCompare(a.created_at || '');
+      });
 
       // 过滤状态下拉
       let filtered = merged;
@@ -419,12 +427,24 @@ const InterviewsList: React.FC = () => {
       okType: 'danger',
       onOk: async () => {
         try {
-          const ids = selectedRowKeys.filter(k => data.find(r => r.id === k)?.interview_id);
-          await Promise.all(ids.map(id => {
+          const deletableKeys = selectedRowKeys.filter(k => data.find(r => r.id === k)?.interview_id);
+          const skippedCount = selectedRowKeys.length - deletableKeys.length;
+
+          if (deletableKeys.length === 0) {
+            message.warning('所选记录均未安排面试，无法删除（仅已安排面试的记录可删除）');
+            return;
+          }
+
+          await Promise.all(deletableKeys.map(id => {
             const record = data.find(r => r.id === id);
-            return record?.interview_id ? request.delete(`/interviews/${record.interview_id}`) : Promise.resolve();
+            return request.delete(`/interviews/${record.interview_id}`);
           }));
-          message.success(`成功删除 ${selectedRowKeys.length} 条记录`);
+
+          if (skippedCount > 0) {
+            message.success(`成功删除 ${deletableKeys.length} 条，${skippedCount} 条因未安排面试已跳过`);
+          } else {
+            message.success(`成功删除 ${deletableKeys.length} 条记录`);
+          }
           setSelectedRowKeys([]);
           fetchMergedData();
         } catch (e: any) {
