@@ -425,13 +425,13 @@ const DailyReportsList: React.FC = () => {
               }
               notFoundContent={contactsLoading ? <Spin size="small" /> : '未找到联系人，可手动输入'}
               filterOption={(input, option: any) =>
-                option?.label?.toLowerCase().includes(input.toLowerCase()) ||
-                option?.value?.toLowerCase().includes(input.toLowerCase())
+                option?.title?.toLowerCase().includes(input.toLowerCase())
               }
               options={(() => {
                 const list = sendTargetType === 'chat' ? contacts.groups : contacts.users;
                 const opts = list.map((c) => ({
                   value: c.id,
+                  title: (c.name || '') + ' ' + (c.role || '') + ' ' + c.id,
                   label: (
                     <Space>
                       <span>{sendTargetType === 'chat' ? <TeamOutlined /> : <UserOutlined />}</span>
