@@ -7079,6 +7079,20 @@ app.get('/api/feishu/contacts', authMiddleware, async (c) => {
       }
     } catch {}
 
+    // 2.5 从 interviewer_mappings 表补全面试官（招聘任务表中的面试官，未登录过系统）
+    try {
+      const mappings = await c.env.DB.prepare(
+        "SELECT name, open_id FROM interviewer_mappings WHERE open_id IS NOT NULL AND open_id != ''"
+      ).all() as any;
+      if (mappings.results) {
+        for (const m of mappings.results) {
+          if (!result.users.some((u: any) => u.id === m.open_id)) {
+            result.users.push({ id: m.open_id, name: m.name, role: 'interviewer' });
+          }
+        }
+      }
+    } catch {}
+
     // 3. 加兜底 HR
     const hrId = FEISHU_CONFIG.defaultHrOpenId || '';
     if (hrId && !result.users.some((u: any) => u.id === hrId)) {
