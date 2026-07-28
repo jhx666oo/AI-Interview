@@ -2586,6 +2586,13 @@ app.get('/api/talent-pool', authMiddleware, async (c) => {
     }
     if (nameFilter) filtered = filtered.filter(i => i.candidate_name?.includes(nameFilter));
 
+    // 按入库时间倒序：最新入库排最前面（create_time 为飞书多维表格的毫秒时间戳）
+    filtered.sort((a: any, b: any) => {
+      const aTime = Number(a.create_time) || 0;
+      const bTime = Number(b.create_time) || 0;
+      return bTime - aTime;
+    });
+
     return c.json(filtered);
   } catch (e: any) {
     console.error(`[Bitable] 人才库列表失败: ${e.message}`);
