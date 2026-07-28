@@ -2976,9 +2976,32 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     const tableId = getBitableTableId(c.env, 'talent');
     const fields: Record<string, any> = {};
 
-    // 用文件名作为临时姓名
+    // 从文件名智能提取姓名和岗位
+    // 支持格式：【岗位_城市_薪资】姓名_年限.pdf  或  姓名_岗位_城市.pdf
+    let parsedPositionName = '';
+    let parsedCandidateName = '';
+    const bracketMatch = file.name.match(/^【(.+?)】(.+?)\.pdf$/i);
+    if (bracketMatch) {
+      // 格式：【社群用户运营专员_杭州_6-8K】曹圣培_3年.pdf
+      parsedPositionName = bracketMatch[1].split('_')[0] || '';
+      parsedCandidateName = bracketMatch[2].split('_')[0] || '';
+    } else {
+      // 旧格式：姓名_岗位_城市.pdf（取前两个下划线分段）
+      const parts = file.name.replace(/\.pdf$/i, '').split('_');
+      if (parts.length >= 2) {
+        parsedCandidateName = parts[0] || '';
+        parsedPositionName = parts[1] || '';
+      }
+    }
+
+    const displayName = parsedCandidateName || file.name.replace(/\.pdf$/i, '');
     const fileNameWithoutExt = file.name.replace(/\.pdf$/i, '');
-    fields['姓名'] = fileNameWithoutExt;
+    fields['姓名'] = displayName;
+
+    // 如果有解析出的岗位名，直接写入
+    if (parsedPositionName) {
+      fields['招聘岗位匹配'] = parsedPositionName;
+    }
 
     // 如果有 position_id，尝试匹配岗位
     if (positionId) {
@@ -3012,7 +3035,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     }
 
     // 3. AI 解析简历（单阶段：前端 pdfjs-dist 提取纯文本 → AI 结构化提取字段）
-    // 注意：deepseek-chat/v4-flash 是文本模型，无法直接处理 PDF base64，
+    // 注意：deepseek-v4-flash 是文本模型，无法直接处理 PDF base64，
     // 所以必须由前端 pdfjs-dist 完成 PDF→文本 这一步。
     const frontendRawText = (formData.get('raw_text') as string) || '';
     let extractedText = frontendRawText || '';
@@ -3085,7 +3108,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       const aiResp = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
       if (aiResp) {
         const parsed = JSON.parse(extractJSON(aiResp) || '{}');
-        parsedName = parsed.name || fileNameWithoutExt;
+        parsedName = parsed.name || parsedCandidateName || fileNameWithoutExt;
         parsedGender = parsed.gender || '';
         parsedAge = parsed.age || null;
         parsedEducation = parsed.education || '';
@@ -3118,12 +3141,14 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         if (pos?.title) positionName = pos.title;
       } catch {}
     }
-    // 如果前端没传 position_id，尝试从文件名提取岗位
+    // 如果前端没传 position_id，优先用文件名解析结果，其次正则兜底
+    if (!positionName && parsedPositionName) {
+      positionName = parsedPositionName;
+    }
     if (!positionName) {
       const fnMatch = file.name.match(/(.+?)[_\-—](.+?)(?:[_\-—].*)?\.pdf$/i);
       if (fnMatch) {
-        // 尝试 fnMatch[2] 作为岗位名（姓名在前，岗位在后）
-        const candidatePosition = fnMatch[2].trim();
+        const candidatePosition = fnMatch[2]?.trim();
         if (candidatePosition && candidatePosition.length >= 2 && !/^\d+$/.test(candidatePosition)) {
           positionName = candidatePosition;
         }
@@ -3196,7 +3221,39 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       console.error(`[Upload] Failed to update bitable with AI data: ${updateErr.message}`);
     }
 
-    // 5. 获取最终记录并返回
+    // 5. 同步写入 D1 resumes 表（供 reparse/ai-screen 等本地查询使用）
+    try {
+      const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ?').bind(recordId).first();
+      const mappedPos = positionName || parsedPositionName || '';
+      const parsedData = JSON.stringify({
+        name: parsedName,
+        gender: parsedGender,
+        age: parsedAge,
+        education: parsedEducation,
+        city: parsedCity,
+        phone: parsedPhone,
+        email: parsedEmail,
+        skills: parsedSkills,
+        work_years: parsedWorkYears,
+        position_applied: mappedPos,
+        advantage: parsedAdvantage,
+        risk: parsedRisk,
+        evaluation: parsedEval,
+      });
+      if (existing) {
+        await c.env.DB.prepare(
+          'UPDATE resumes SET candidate_name=?, position_applied=?, mapped_position=?, parsed_data=?, raw_text=?, parse_status=?, updated_at=? WHERE id=?'
+        ).bind(parsedName || displayName, mappedPos, mappedPos, parsedData, extractedText?.substring(0, 200000) || '', aiParseFailed ? 'needs_manual' : 'completed', now(), recordId).run();
+      } else {
+        await c.env.DB.prepare(
+          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(recordId, parsedName || displayName, mappedPos, mappedPos, parsedData, extractedText?.substring(0, 200000) || '', aiParseFailed ? 'needs_manual' : 'completed', now()).run();
+      }
+    } catch (dbErr: any) {
+      console.error('[Upload] D1 写入失败:', dbErr.message);
+    }
+
+    // 6. 获取最终记录并返回
     const record = await bitableGetRecord(c.env, tableId, recordId);
     if (!record) {
       // 记录已创建成功，飞书可能未即时同步，不报错
@@ -3764,7 +3821,7 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
   const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first() as any;
   if (!resume) return c.json({ detail: 'Resume not found' }, 404);
   let rawText = resume.raw_text || resume.resume_markdown || '';
-  // 文本为空：说明 PDF 未被前端提取（扫描件/加密PDF），deepseek-chat 无法直接解析 base64
+  // 文本为空：说明 PDF 未被前端提取（扫描件/加密PDF），deepseek-v4-flash 无法直接解析 base64
   if (!rawText) return c.json({ detail: '该简历未提取到文本内容（可能是扫描件或加密PDF），请重新上传或手动编辑', need_manual: true }, 400);
   const candidateName = resume.candidate_name || resume.parsed_name || '';
 
@@ -3826,7 +3883,7 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     userPrompt = '简历文本（请提取完整信息）：' + appendContext + '\n\n' + rawText;
   }
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt);
+    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     let parsed: any;
     try { parsed = extractJSON(result); } catch { parsed = { raw_response: result }; }
     // Flatten nested structure (some AI models wrap Basic Info / AI Screening as sub-objects)
@@ -3915,7 +3972,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
     position = await c.env.DB.prepare('SELECT * FROM positions WHERE id = ?').bind(resume.position_id).first() as any;
   }
   let resumeText = resume.resume_markdown || resume.raw_text || '';
-  // 文本为空：deepseek-chat 无法直接解析 PDF base64，直接报错
+  // 文本为空：deepseek-v4-flash 无法直接解析 PDF base64，直接报错
   if (!resumeText) return c.json({ detail: '该简历未提取到文本内容，无法进行 AI 评估', need_manual: true }, 400);
   const posTitle = position?.title || resume.position_id || 'Unknown';
   const posDesc = position?.description || '';
@@ -3946,7 +4003,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
     (posContext.personalizedRequirements ? `\nPersonalized Requirements (个性化要求):\n${posContext.personalizedRequirements}\n` : '') +
     `\nCandidate Resume:\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt);
+    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     let parsed: any;
     try { parsed = extractJSON(result); } catch { parsed = { raw_response: result, summary: result }; }
     await c.env.DB.prepare(
@@ -5246,7 +5303,7 @@ app.post('/api/jd-management/:id/evaluate', authMiddleware, async (c) => {
     });
     const systemPrompt = prompt.system;
     const userPrompt = `岗位：${pos.title}\n部门：${pos.department}\nJD：${pos.description}\n要求：${pos.requirements || ''}`;
-    const result = await callAI(c.env, systemPrompt, userPrompt);
+    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     return c.json(extractJSON(result));
   } catch (e: any) {
     return c.json({ detail: 'AI 评估失败: ' + e.message }, 500);
@@ -5473,7 +5530,7 @@ app.post('/api/resumes/:id/check-hard-requirements', authMiddleware, async (c) =
     });
     const systemPrompt = prompt.system;
     const userPrompt = `简历：${resume.raw_text.slice(0, 3000)}\n硬性要求：${JSON.stringify(hardReqs)}`;
-    const result = await callAI(c.env, systemPrompt, userPrompt);
+    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     const parsed = extractJSON(result);
 
     await c.env.DB.prepare('UPDATE resumes SET hard_requirement_result = ? WHERE id = ?')
@@ -5510,7 +5567,7 @@ app.post('/api/resumes/:id/score-capabilities', authMiddleware, async (c) => {
     });
     const systemPrompt = prompt.system;
     const userPrompt = `能力维度：${dimNames.join('、')}\n简历：${resume.raw_text.slice(0, 3000)}`;
-    const result = await callAI(c.env, systemPrompt, userPrompt);
+    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     const parsed = extractJSON(result);
 
     await c.env.DB.prepare('UPDATE resumes SET capability_scores = ? WHERE id = ?')
@@ -5649,7 +5706,7 @@ ${resumeText}`;
 
   let aiAnalysis = '';
   try {
-    aiAnalysis = await callAI(c.env, systemPrompt, userPrompt);
+    aiAnalysis = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
   } catch (e: any) {
     return c.json({ detail: `AI分析失败: ${e.message}` }, 500);
   }
@@ -5765,7 +5822,7 @@ app.post('/api/resume-screening/batch-analyze', authMiddleware, async (c) => {
       const dimensionsText = dimsResult.results?.map((r: any) => r.full_text || '').filter(Boolean).join('\n') || '';
       const systemPrompt = `你是简历初筛专家。分析简历并输出：初筛结果（通过/不通过/待定）、匹配分数（0-5）、优势分析、风险点、能力维度匹配（每项0-5分）、面试问题建议（3个）、互动引导语。用中文输出。`;
       const userPrompt = `岗位：${mappedPosition}\n能力维度要求：${dimensionsText || '(无)'}\n候选人：${rec.candidate_name} ${rec.age || ''}岁 ${rec.gender || ''} ${rec.education || ''}\n简历：${resumeText}`;
-      const aiAnalysis = await callAI(c.env, systemPrompt, userPrompt);
+      const aiAnalysis = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
       const scoreMatch = aiAnalysis.match(/匹配分数[：:]\s*(\d+(\.\d+)?)/);
       const matchScore = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
       const resultMatch = aiAnalysis.match(/初筛结果[：:]\s*(通过|不通过|待定)/);
@@ -5838,7 +5895,8 @@ app.post('/api/daily-reports/generate', authMiddleware, async (c) => {
   try {
     aiSummary = await callAI(c.env,
       '你是招聘数据分析专家。根据招聘统计数据生成一份简洁的日报摘要（中文），包含：整体进展概述、关键指标分析、风险提示、明日建议。控制在300字以内。',
-      `日期：${reportDate}\n统计数据：${JSON.stringify(stats, null, 2)}`
+      `日期：${reportDate}\n统计数据：${JSON.stringify(stats, null, 2)}`,
+      'deepseek-v4-flash'
     );
   } catch (e: any) {
     aiSummary = '(AI摘要生成失败)';
@@ -7169,7 +7227,7 @@ async function getResumeText(env: Env, candidateName: string): Promise<string> {
           const extraction = await callAI(env,
             'You are a PDF text extractor. Extract ALL readable text from this base64 PDF content. Return ONLY the extracted text, no explanations.',
             'Extract resume text from this base64 PDF (' + (fileRow.file_name || 'resume.pdf') + '):\n\n' + base64Content,
-            'deepseek-chat'
+            'deepseek-v4-flash'
           );
           if (extraction && extraction.length > 50) {
             try {
@@ -7832,7 +7890,7 @@ app.post('/api/resumes/fix-missing-fields', authMiddleware, requireRole(['admin'
         const aiResult = await callAI(c.env,
           parsePrompt.system,
           '评估文本：\n' + evalText.substring(0, 5000),
-          'deepseek-chat'
+          'deepseek-v4-flash'
         );
 
         if (!aiResult) { skipped++; continue; }
@@ -7858,7 +7916,7 @@ app.post('/api/resumes/fix-missing-fields', authMiddleware, requireRole(['admin'
               const pdfExtract = await callAI(c.env,
                 pdfParsePrompt.system,
                 '简历原文：\n' + resumeText.substring(0, 4000),
-                'deepseek-chat'
+                'deepseek-v4-flash'
               );
               if (pdfExtract) {
                 const pm = pdfExtract.match(/\{[\s\S]*\}/);
