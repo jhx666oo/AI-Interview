@@ -4827,25 +4827,56 @@ app.get('/api/settings/interviewers/search', authMiddleware, async (c) => {
  */
 async function batchSyncFeishuOpenIds(env: Env, names: string[]): Promise<{ synced: number; notFound: string[]; details: string[] }> {
   const token = await getFeishuToken(env);
-  // 分页拉取全量通讯录用户（page_size=50，最多20页=1000人）
+
+  // 1. 获取应用通讯录授权范围（部门列表 + 用户列表）
+  const scopeResp = await fetch('https://open.feishu.cn/open-apis/contact/v3/scopes', {
+    headers: { Authorization: `Bearer ${token}` },
+  }).then(r => r.json()) as any;
+  if (scopeResp.code !== 0) throw new Error(`获取通讯录范围失败: ${scopeResp.code} ${scopeResp.msg}`);
+
+  const deptIds: string[] = scopeResp?.data?.department_ids || [];
+  const scopeUserIds: string[] = scopeResp?.data?.user_ids || [];
+  console.log(`[BatchSyncOpenIds] 授权范围: ${deptIds.length}个部门, ${scopeUserIds.length}个用户`);
+
+  // 2. 遍历每个授权部门，拉取部门下所有用户（find_by_department 自动包含子部门）
   const allUsers: Array<{ name: string; open_id: string }> = [];
-  let pageToken = '';
-  let hasMore = true;
-  let pageCount = 0;
-  while (hasMore && pageCount < 20) {
-    const url = `https://open.feishu.cn/open-apis/contact/v3/users?page_size=50&user_id_type=open_id${pageToken ? `&page_token=${pageToken}` : ''}`;
-    const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as any;
-    if (resp.code !== 0) throw new Error(`通讯录API失败: ${JSON.stringify(resp)}`);
-    const items = resp?.data?.items || [];
-    for (const u of items) {
-      if (u.name && u.open_id) allUsers.push({ name: u.name, open_id: u.open_id });
+  for (const deptId of deptIds) {
+    let pageToken = '';
+    let hasMore = true;
+    let pageCount = 0;
+    while (hasMore && pageCount < 20) {
+      const url = `https://open.feishu.cn/open-apis/contact/v3/users/find_by_department?department_id=${deptId}&page_size=50&user_id_type=open_id${pageToken ? `&page_token=${pageToken}` : ''}`;
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as any;
+      if (resp.code !== 0) {
+        console.warn(`[BatchSyncOpenIds] 部门 ${deptId} 拉取失败: ${resp.code} ${resp.msg}`);
+        break;
+      }
+      const items = resp?.data?.items || [];
+      for (const u of items) {
+        if (u.name && u.open_id) allUsers.push({ name: u.name, open_id: u.open_id });
+      }
+      hasMore = resp?.data?.has_more === true;
+      pageToken = resp?.data?.page_token || '';
+      pageCount++;
+      if (!hasMore) break;
     }
-    hasMore = resp?.data?.has_more === true;
-    pageToken = resp?.data?.page_token || '';
-    pageCount++;
-    if (!hasMore) break;
   }
-  console.log(`[BatchSyncOpenIds] 通讯录拉取 ${allUsers.length} 人（${pageCount}页）`);
+
+  // 3. 补充授权范围内的独立用户（scopeUserIds 里的 open_id）
+  for (const openId of scopeUserIds) {
+    if (!allUsers.some(u => u.open_id === openId)) {
+      try {
+        const userResp = await fetch(`https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).then(r => r.json()) as any;
+        if (userResp.code === 0 && userResp?.data?.user?.name) {
+          allUsers.push({ name: userResp.data.user.name, open_id: openId });
+        }
+      } catch {}
+    }
+  }
+
+  console.log(`[BatchSyncOpenIds] 通讯录拉取 ${allUsers.length} 人（${deptIds.length}个部门+${scopeUserIds.length}个独立用户）`);
 
   // 按姓名匹配并 upsert 到 interviewer_mappings
   const nameSet = new Set(names.filter(Boolean));
