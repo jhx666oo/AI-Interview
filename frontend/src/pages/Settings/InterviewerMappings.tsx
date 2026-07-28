@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Input, message, Popconfirm, Space, Card, Typography, Modal } from 'antd';
-import { PlusOutlined, DeleteOutlined, SaveOutlined, BellOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, SaveOutlined, BellOutlined, SearchOutlined, CloudSyncOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 
 const { Title } = Typography;
@@ -19,6 +19,7 @@ const InterviewerMappings: React.FC = () => {
   const [notifyLoading, setNotifyLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => { fetchMappings(); }, []);
 
@@ -113,6 +114,39 @@ const InterviewerMappings: React.FC = () => {
     finally { setNotifyLoading(false); }
   };
 
+  const handleSyncFromFeishu = async () => {
+    setSyncing(true);
+    try {
+      const res = await request.post('/settings/interviewers/batch-sync-from-feishu') as any;
+      if (res.ok) {
+        const { synced, notFound, details, total_names } = res;
+        Modal.info({
+          title: '飞书同步完成',
+          content: (
+            <div>
+              <p>收集到 <b>{total_names}</b> 位面试官姓名</p>
+              <p>✅ 成功同步 open_id：<b>{synced}</b> 人</p>
+              {notFound?.length > 0 && (
+                <p style={{ color: '#faad14' }}>⚠️ 未在飞书通讯录找到：{notFound.join('、')}</p>
+              )}
+              {synced === 0 && notFound?.length === 0 && (
+                <p>📭 没有需要同步的面试官（请先添加招聘任务或面试记录）</p>
+              )}
+            </div>
+          ),
+          okText: '知道了',
+        });
+        fetchMappings();
+      } else {
+        message.error(res.detail || res.message || '同步失败');
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '同步失败，请稍后重试');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const columns = [
     {
       title: '姓名',
@@ -158,6 +192,7 @@ const InterviewerMappings: React.FC = () => {
             <Button icon={<BellOutlined />} loading={notifyLoading} disabled={notifyLoading} onClick={handleNotifyAll}>通知全部面试官</Button>
             <Button icon={<PlusOutlined />} type="dashed" onClick={handleAdd}>添加</Button>
             <Button icon={<SaveOutlined />} type="primary" loading={saving} onClick={handleSave}>保存</Button>
+            <Button icon={<CloudSyncOutlined />} loading={syncing} onClick={handleSyncFromFeishu}>从飞书同步</Button>
           </Space>
         </div>
         {/* 飞书搜索 */}

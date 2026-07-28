@@ -4894,8 +4894,33 @@ app.post('/api/settings/interviewers/batch-sync-from-feishu', authMiddleware, re
     ).all() as any;
     for (const u of (unbound.results || [])) names.add(u.full_name);
 
+    // 3. 从 interviews 表收集面试官（primary_interviewer / secondary_interviewer / interviewer）
+    const ivRows = await c.env.DB.prepare(
+      'SELECT DISTINCT interviewer, primary_interviewer, secondary_interviewer FROM interviews WHERE (interviewer IS NOT NULL AND interviewer != \'\') OR (primary_interviewer IS NOT NULL AND primary_interviewer != \'\') OR (secondary_interviewer IS NOT NULL AND secondary_interviewer != \'\')'
+    ).all() as any;
+    for (const row of (ivRows.results || [])) {
+      // interviewer 可能是逗号分隔的多人名："张三, 李四"
+      for (const field of [row.interviewer, row.primary_interviewer, row.secondary_interviewer]) {
+        if (!field) continue;
+        for (const n of String(field).split(/[,，、;；\s]+/)) {
+          const t = n.trim();
+          if (t) names.add(t);
+        }
+      }
+    }
+
+    // 4. 从 positions 表收集面试官（primary_interviewer / secondary_interviewer / responsible_person）
+    const posRows = await c.env.DB.prepare(
+      'SELECT DISTINCT primary_interviewer, secondary_interviewer, responsible_person FROM positions WHERE (primary_interviewer IS NOT NULL AND primary_interviewer != \'\') OR (secondary_interviewer IS NOT NULL AND secondary_interviewer != \'\') OR (responsible_person IS NOT NULL AND responsible_person != \'\')'
+    ).all() as any;
+    for (const row of (posRows.results || [])) {
+      if (row.primary_interviewer?.trim()) names.add(row.primary_interviewer.trim());
+      if (row.secondary_interviewer?.trim()) names.add(row.secondary_interviewer.trim());
+      if (row.responsible_person?.trim()) names.add(row.responsible_person.trim());
+    }
+
     if (names.size === 0) {
-      return c.json({ ok: true, synced: 0, notFound: [], details: [], message: '没有需要同步的面试官（请先同步招聘任务）' });
+      return c.json({ ok: true, synced: 0, notFound: [], details: [], message: '没有需要同步的面试官（请先添加招聘任务或面试记录）' });
     }
 
     const result = await batchSyncFeishuOpenIds(c.env, Array.from(names));
