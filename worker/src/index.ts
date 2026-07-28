@@ -7068,10 +7068,15 @@ async function sendFeishuMessageWithFallback(
   } catch {}
 
   // 第 3 层：bot token
-  const botToken = await getFeishuToken(env);
-  await sendFeishuMessageToUser(botToken, openId, cardContent);
-  console.log(`[sendFeishuMsg] 以 bot 身份发送成功`);
-  return { usedUserToken: false, sender: 'bot' };
+  try {
+    const botToken = await getFeishuToken(env);
+    await sendFeishuMessageToUser(botToken, openId, cardContent);
+    console.log(`[sendFeishuMsg] 以 bot 身份发送成功`);
+    return { usedUserToken: false, sender: 'bot' };
+  } catch (botErr: any) {
+    console.error(`[sendFeishuMsg] bot 也发送失败: ${botErr.feishuCode || botErr.message}`);
+    throw new Error(`所有发送方式均失败 (bot: ${botErr.message || '发送失败'})`);
+  }
 }
 
 /** 通知候选人对应的面试官 */
