@@ -1807,7 +1807,8 @@ app.get('/api/interviews', authMiddleware, async (c) => {
   if (conditions.length > 0) {
     sql += ' WHERE ' + conditions.join(' AND ');
   }
-  sql += ' ORDER BY i.created_at DESC';
+  // 按简历入库时间倒序（入库越晚越靠前）；无关联简历时回退到面试创建时间
+  sql += ' ORDER BY COALESCE(r.created_at, i.created_at) DESC';
 
   // 可选服务端分页（向后兼容：不传 page/pageSize 时返回全量数组）
   const page = parseInt(c.req.query('page') || '0', 10);
