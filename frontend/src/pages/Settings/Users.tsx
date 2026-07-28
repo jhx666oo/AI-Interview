@@ -15,7 +15,7 @@ interface User {
   is_active: boolean;
   has_password: boolean;
   created_at: string;
-  feishu_token?: string;
+  has_feishu?: boolean;
 }
 
 const UsersList: React.FC = () => {
@@ -64,7 +64,6 @@ const UsersList: React.FC = () => {
     form.setFieldsValue({
       full_name: record.full_name,
       role: record.role,
-      feishu_token: record.feishu_token || '',
     });
     setIsModalVisible(true);
   };
@@ -78,7 +77,6 @@ const UsersList: React.FC = () => {
         const payload: any = { full_name: values.full_name };
         if (values.password) payload.password = values.password;
         if (values.role !== editingUser.role) payload.role = values.role;
-        if (values.feishu_token) payload.feishu_token = values.feishu_token;
         await request.put(`/auth/users/${editingUser.id}`, payload);
         if (values.password) {
           message.success(`用户已更新，新密码: ${values.password}（请告知用户自行修改）`);
@@ -271,12 +269,11 @@ const UsersList: React.FC = () => {
       ),
     },
     {
-      title: '飞书 Token',
-      dataIndex: 'feishu_token',
-      key: 'feishu_token',
-      width: 200,
-      ellipsis: true,
-      render: (token: string) => token ? <Tooltip title={token}><Tag color="purple">已绑定</Tag></Tooltip> : <span style={{ color: '#bbb' }}>—</span>,
+      title: '飞书绑定',
+      dataIndex: 'has_feishu',
+      key: 'has_feishu',
+      width: 120,
+      render: (v: boolean) => v ? <Tag color="purple">已绑定</Tag> : <span style={{ color: '#bbb' }}>—</span>,
     },
     {
       title: '创建时间',

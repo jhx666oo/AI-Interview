@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
   feishu_token TEXT DEFAULT '',
   feishu_open_id TEXT DEFAULT '',
   feishu_name TEXT DEFAULT '',
+  feishu_refresh_token TEXT DEFAULT '',
+  feishu_token_expires_at INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -132,6 +134,8 @@ CREATE TABLE IF NOT EXISTS interviews (
   feishu_record_id TEXT DEFAULT '',
   primary_interviewer TEXT DEFAULT '',
   secondary_interviewer TEXT DEFAULT '',
+  candidate_name TEXT DEFAULT '',
+  position_applied TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT
 );
@@ -558,6 +562,8 @@ CREATE TABLE IF NOT EXISTS capability_dimensions (
 );
 
 -- Recruitment Tasks
+-- 面试提醒功能依赖：interviewers(JSON数组)、responsible_person、city
+-- 数据来源：从飞书多维表格招聘任务表(requisitionTableId)同步
 CREATE TABLE IF NOT EXISTS recruitment_tasks (
   id TEXT PRIMARY KEY,
   position_name TEXT NOT NULL,
@@ -565,6 +571,9 @@ CREATE TABLE IF NOT EXISTS recruitment_tasks (
   assignee TEXT DEFAULT '',
   due_date TEXT,
   notes TEXT DEFAULT '',
+  interviewers TEXT DEFAULT '[]',      -- JSON数组，面试官姓名 ["张三","李四"]
+  responsible_person TEXT DEFAULT '',   -- 责任人姓名
+  city TEXT DEFAULT '',                 -- 招聘城市
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );

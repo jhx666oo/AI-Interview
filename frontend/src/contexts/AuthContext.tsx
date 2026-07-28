@@ -10,6 +10,7 @@ interface User {
   role: 'admin' | 'hr' | 'interviewer';
   feishu_open_id?: string;
   feishu_name?: string;
+  has_feishu?: boolean;
 }
 
 interface AuthContextType {

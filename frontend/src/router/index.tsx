@@ -32,6 +32,7 @@ const JDManagementList = lazy(() => import('../pages/JDManagement/List'));
 const JDManagementEditor = lazy(() => import('../pages/JDManagement/Editor'));
 const PositionMappings = lazy(() => import('../pages/Settings/PositionMappings'));
 const InterviewerMappings = lazy(() => import('../pages/Settings/InterviewerMappings'));
+const TalentPoolList = lazy(() => import('../pages/TalentPool/List'));
 const NotFound = lazy(() => import('../pages/NotFound'));
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, loading } = useAuth();
@@ -191,6 +192,10 @@ const router = createBrowserRouter([
       {
         path: 'daily-reports',
         element: <LazyPage><DailyReportsList /></LazyPage>,
+      },
+      {
+        path: 'talent-pool',
+        element: <LazyPage><TalentPoolList /></LazyPage>,
       },
     ],
   },

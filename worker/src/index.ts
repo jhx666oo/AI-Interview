@@ -489,8 +489,12 @@ const authMiddleware = async (c: any, next: any) => {
 };
 
 function serializeUser(user: any) {
-  const { hashed_password, plain_password, ...rest } = user;
-  return { ...rest, has_password: !!hashed_password };
+  const { hashed_password, plain_password, feishu_token, feishu_refresh_token, feishu_token_expires_at, ...rest } = user;
+  return {
+    ...rest,
+    has_password: !!hashed_password,
+    has_feishu: !!(feishu_token || rest.feishu_open_id),
+  };
 }
 
 function requireRole(roles: string[]) {
@@ -600,7 +604,8 @@ app.get('/api/auth/feishu-oauth-url', authMiddleware, async (c) => {
   const token = await createJwt(c.env.SECRET_KEY, user.email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const oauthUrl = `https://open.feishu.cn/open-apis/authen/v1/index?redirect_uri=${encodeURIComponent(baseUrl)}&app_id=${appId}&state=${token}`;
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly offline_access';
+  const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl });
 });
 
@@ -612,7 +617,8 @@ app.post('/api/auth/feishu-oauth-url', authMiddleware, requireRole(['admin']), a
   const token = await createJwt(c.env.SECRET_KEY, email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const oauthUrl = `https://open.feishu.cn/open-apis/authen/v1/index?redirect_uri=${encodeURIComponent(baseUrl)}&app_id=${appId}&state=${token}`;
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly offline_access';
+  const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl, email });
 });
 
@@ -646,42 +652,46 @@ app.get('/api/auth/feishu-callback', async (c) => {
 
     console.log(`[FeishuOAuth] 交换 token: email=${userEmail}, appId=${appId}, code=${code.substring(0, 20)}...`);
 
-    const tokenResp = await fetch('https://open.feishu.cn/open-apis/authen/v1/access_token', {
+    const redirectUri = getFeishuRedirectUri(c);
+    const tokenResp = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         grant_type: 'authorization_code',
+        client_id: appId,
+        client_secret: appSecret,
         code,
-        app_id: appId,
-        app_secret: appSecret,
+        redirect_uri: redirectUri,
       }),
     });
     const tokenData = await tokenResp.json() as any;
-    if (tokenData.code !== 0) {
-      console.error(`[FeishuOAuth] token 交换失败: code=${tokenData.code}, msg=${tokenData.msg}`);
+    // v2 顶层返回 access_token/refresh_token（无 data 包裹），防御性兜底
+    const userAccessToken = tokenData.access_token || tokenData.data?.access_token || '';
+    const refreshToken = tokenData.refresh_token || tokenData.data?.refresh_token || '';
+    const expiresIn = tokenData.expires_in || tokenData.data?.expires_in || 7200;
+    if (!userAccessToken) {
+      console.error(`[FeishuOAuth] token 交换失败: code=${tokenData.code}, msg=${tokenData.msg}, raw=${JSON.stringify(tokenData)}`);
       return c.redirect(`/settings/profile?feishu_error=1&err=${encodeURIComponent('token交换失败:' + tokenData.code + ' ' + tokenData.msg)}`);
     }
 
-    const userAccessToken = tokenData.data.access_token;
     console.log(`[FeishuOAuth] token 交换成功, 获取用户信息...`);
 
     const userInfoResp = await fetch('https://open.feishu.cn/open-apis/authen/v1/user_info', {
       headers: { Authorization: `Bearer ${userAccessToken}` },
     });
     const userInfoData = await userInfoResp.json() as any;
-    if (userInfoData.code !== 0) {
-      console.error(`[FeishuOAuth] 获取用户信息失败: code=${userInfoData.code}, msg=${userInfoData.msg}`);
-      return c.redirect(`/settings/profile?feishu_error=1&err=${encodeURIComponent('user信息失败:' + userInfoData.code + ' ' + userInfoData.msg)}`);
-    }
-
-    const feishuOpenId = userInfoData.data.open_id || userInfoData.data.sub || '';
-    const feishuName = userInfoData.data.name || '';
+    console.log(`[FeishuOAuth] userinfo 响应: code=${userInfoData.code}, open_id=${userInfoData.data?.open_id || userInfoData.open_id || '(空)'}, name=${userInfoData.data?.name || userInfoData.name || '(空)'}`);
+    // v2 userinfo 顶层返回，防御性兜底
+    const feishuOpenId = userInfoData.open_id || userInfoData.sub || userInfoData.data?.open_id || '';
+    const feishuName = userInfoData.name || userInfoData.nickname || userInfoData.data?.name || '';
 
     console.log(`[FeishuOAuth] 用户信息: openId=${feishuOpenId}, name=${feishuName}, 更新 ${userEmail}...`);
 
     if (feishuOpenId) {
-      await c.env.DB.prepare('UPDATE users SET feishu_open_id = ?, feishu_name = ?, feishu_token = ?, updated_at = ? WHERE email = ?')
-        .bind(feishuOpenId, feishuName, userAccessToken, now(), userEmail).run();
+      const expiresAt = Date.now() + (expiresIn - 300) * 1000; // 提前 5 分钟过期
+      await c.env.DB.prepare(
+        'UPDATE users SET feishu_open_id = ?, feishu_name = ?, feishu_token = ?, feishu_refresh_token = ?, feishu_token_expires_at = ?, updated_at = ? WHERE email = ?'
+      ).bind(feishuOpenId, feishuName, userAccessToken, refreshToken, expiresAt, now(), userEmail).run();
     }
 
     console.log(`[FeishuOAuth] 绑定成功, 跳转`);
@@ -734,7 +744,7 @@ app.put('/api/auth/users/:id', authMiddleware, requireRole(['admin']), async (c)
   const id = c.req.param('id');
   const body = await c.req.json();
   const updates: Record<string, any> = {};
-  for (const k of ['full_name', 'email', 'role', 'feishu_token']) {
+  for (const k of ['full_name', 'email', 'role']) {
     if (body[k] !== undefined) updates[k] = k === 'role' ? body[k].toLowerCase() : body[k];
   }
   if (body.is_active !== undefined) updates.is_active = body.is_active ? 1 : 0;
@@ -4107,7 +4117,6 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
   if (row) {
     c.executionCtx.waitUntil((async () => {
       try {
-        const token = await getFeishuToken(c.env);
         // 找到对应简历信息
         const resumeId = row.resume_id;
         let candidateName = '未知';
@@ -4121,7 +4130,7 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
           }
         }
         const fakeRecord = { candidate_name: candidateName, mapped_position: positionName, position_applied: positionName };
-        await notifyInterviewersForCandidate(c.env, token, fakeRecord);
+        await notifyInterviewersForCandidate(c.env, fakeRecord, c.get('user'));
       } catch (e: any) {
         console.error(`开始面试通知失败: ${e.message}`);
       }
@@ -4153,7 +4162,6 @@ app.post('/api/interviews/start-from-talent-pool/:talentId', authMiddleware, asy
   // 异步通知面试官
   c.executionCtx.waitUntil((async () => {
     try {
-      const token = await getFeishuToken(c.env);
       const fakeRecord = {
         candidate_name: candidateName,
         mapped_position: posName,
@@ -4161,7 +4169,7 @@ app.post('/api/interviews/start-from-talent-pool/:talentId', authMiddleware, asy
         city: city,
         ai_analysis: aiEval,
       };
-      await notifyInterviewersForCandidate(c.env, token, fakeRecord);
+      await notifyInterviewersForCandidate(c.env, fakeRecord, c.get('user'));
     } catch (e: any) {
       console.error(`通知面试官失败: ${e.message}`);
     }
@@ -4812,6 +4820,91 @@ app.get('/api/settings/interviewers/search', authMiddleware, async (c) => {
   }
 });
 
+/**
+ * 从飞书通讯录批量查询用户 open_id，写入 interviewer_mappings 表
+ * 用于让未 OAuth 绑定的面试官也能收到飞书通知
+ * 注意：通讯录API返回的 open_id 是当前应用(cli_aad2cb7fab385cb6)的，可用于发消息
+ */
+async function batchSyncFeishuOpenIds(env: Env, names: string[]): Promise<{ synced: number; notFound: string[]; details: string[] }> {
+  const token = await getFeishuToken(env);
+  // 分页拉取全量通讯录用户（page_size=50，最多20页=1000人）
+  const allUsers: Array<{ name: string; open_id: string }> = [];
+  let pageToken = '';
+  let hasMore = true;
+  let pageCount = 0;
+  while (hasMore && pageCount < 20) {
+    const url = `https://open.feishu.cn/open-apis/contact/v3/users?page_size=50&user_id_type=open_id${pageToken ? `&page_token=${pageToken}` : ''}`;
+    const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as any;
+    if (resp.code !== 0) throw new Error(`通讯录API失败: ${JSON.stringify(resp)}`);
+    const items = resp?.data?.items || [];
+    for (const u of items) {
+      if (u.name && u.open_id) allUsers.push({ name: u.name, open_id: u.open_id });
+    }
+    hasMore = resp?.data?.has_more === true;
+    pageToken = resp?.data?.page_token || '';
+    pageCount++;
+    if (!hasMore) break;
+  }
+  console.log(`[BatchSyncOpenIds] 通讯录拉取 ${allUsers.length} 人（${pageCount}页）`);
+
+  // 按姓名匹配并 upsert 到 interviewer_mappings
+  const nameSet = new Set(names.filter(Boolean));
+  const ts = now();
+  let synced = 0;
+  const notFound: string[] = [];
+  const details: string[] = [];
+
+  for (const name of nameSet) {
+    const found = allUsers.find(u => u.name === name);
+    if (found) {
+      await env.DB.prepare(
+        `INSERT INTO interviewer_mappings (id, name, open_id, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET open_id = excluded.open_id, updated_at = excluded.updated_at`
+      ).bind(`im_${found.open_id}`, name, found.open_id, ts).run();
+      synced++;
+      details.push(`${name} → ${found.open_id}`);
+    } else {
+      notFound.push(name);
+    }
+  }
+  return { synced, notFound, details };
+}
+
+/**
+ * 批量同步面试官飞书 open_id（从飞书通讯录）
+ * POST /api/settings/interviewers/batch-sync-from-feishu
+ * 自动收集 recruitment_tasks 的面试官+责任人 + users 表未绑定飞书的用户，查通讯录写入 interviewer_mappings
+ */
+app.post('/api/settings/interviewers/batch-sync-from-feishu', authMiddleware, requireRole(['admin']), async (c) => {
+  try {
+    // 1. 从 recruitment_tasks 收集所有面试官姓名 + 责任人
+    const tasks = await c.env.DB.prepare('SELECT interviewers, responsible_person FROM recruitment_tasks').all() as any;
+    const names = new Set<string>();
+    for (const t of (tasks.results || [])) {
+      if (t.responsible_person) names.add(t.responsible_person);
+      try {
+        const ivs = typeof t.interviewers === 'string' ? JSON.parse(t.interviewers) : t.interviewers;
+        if (Array.isArray(ivs)) for (const n of ivs) if (n) names.add(n);
+      } catch {}
+    }
+    // 2. 也加上 users 表里未绑定飞书的用户
+    const unbound = await c.env.DB.prepare(
+      "SELECT full_name FROM users WHERE (feishu_open_id IS NULL OR feishu_open_id = '') AND full_name != ''"
+    ).all() as any;
+    for (const u of (unbound.results || [])) names.add(u.full_name);
+
+    if (names.size === 0) {
+      return c.json({ ok: true, synced: 0, notFound: [], details: [], message: '没有需要同步的面试官（请先同步招聘任务）' });
+    }
+
+    const result = await batchSyncFeishuOpenIds(c.env, Array.from(names));
+    return c.json({ ok: true, ...result, total_names: names.size });
+  } catch (e: any) {
+    return c.json({ detail: '批量同步失败: ' + e.message }, 500);
+  }
+});
+
 app.put('/api/settings/interviewers', authMiddleware, async (c) => {
   const body = await c.req.json();
   const items: Array<{ name: string; open_id: string }> = body.items || body || [];
@@ -4878,7 +4971,7 @@ app.post('/api/settings/interviewers/notify-all', authMiddleware, async (c) => {
     const results: string[] = [];
     for (const row of rows.results) {
       try {
-        await sendFeishuMessageToUser(token, row.open_id, card);
+        await sendFeishuMessageWithFallback(c.env, c.get('user')?.email, row.open_id, card);
         results.push(`${row.name}: ✅`);
       } catch (e: any) {
         results.push(`${row.name}: ❌ ${e.message}`);
@@ -4947,6 +5040,8 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE positions ADD COLUMN personalized_requirements TEXT DEFAULT ''",
     "ALTER TABLE positions ADD COLUMN capability_dimensions TEXT DEFAULT '[]'",
     "ALTER TABLE users ADD COLUMN feishu_token TEXT DEFAULT ''",
+    "ALTER TABLE users ADD COLUMN feishu_refresh_token TEXT DEFAULT ''",
+    "ALTER TABLE users ADD COLUMN feishu_token_expires_at INTEGER DEFAULT 0",
     "ALTER TABLE positions ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE positions ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE interviews ADD COLUMN primary_interviewer TEXT DEFAULT ''",
@@ -5560,7 +5655,7 @@ app.post('/api/resume-screening/:id/approve', authMiddleware, async (c) => {
       await pushCandidateToGroup(c.env, updated);
 
       // 提醒对应的面试官
-      await notifyInterviewersForCandidate(c.env, token, updated);
+      await notifyInterviewersForCandidate(c.env, updated, c.get('user'));
     } catch (e: any) {
       console.error(`入库后处理失败: ${e.message}`);
     }
@@ -5759,7 +5854,7 @@ app.post('/api/daily-reports/:id/send', authMiddleware, async (c) => {
     if (target_type === 'chat') {
       await sendFeishuMessageToChat(token, target_id, cardContent);
     } else if (target_type === 'user') {
-      await sendFeishuMessageToUser(token, target_id, cardContent);
+      await sendFeishuMessageWithFallback(c.env, c.get('user')?.email, target_id, cardContent);
     } else {
       return c.json({ detail: '不支持的发送类型' }, 400);
     }
@@ -5843,6 +5938,79 @@ async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
   //    直接返回空，让调用方知道面试官未绑定飞书
   console.warn(`[getInterviewerOpenId] ⚠ "${name}" 未找到任何绑定，返回空字符串`);
   return '';
+}
+
+/**
+ * 用 refresh_token 刷新 user_access_token
+ * 返回 { access_token, refresh_token, expires_at } 或 null（刷新失败）
+ */
+async function refreshUserAccessToken(env: Env, email: string): Promise<{ access_token: string; refresh_token: string; expires_at: number } | null> {
+  const row = await env.DB.prepare(
+    "SELECT feishu_refresh_token FROM users WHERE email = ? AND feishu_refresh_token IS NOT NULL AND feishu_refresh_token != ''"
+  ).bind(email).first() as any;
+  if (!row?.feishu_refresh_token) return null;
+
+  const appId = env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
+  const appSecret = env.FEISHU_APP_SECRET || FEISHU_CONFIG.appSecret;
+  const redirectUri = env.FEISHU_OAUTH_REDIRECT_URI || FEISHU_REDIRECT_URI;
+
+  try {
+    const resp = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        client_id: appId,
+        client_secret: appSecret,
+        refresh_token: row.feishu_refresh_token,
+        redirect_uri: redirectUri,
+      }),
+    });
+    const data: any = await resp.json();
+    const newAccessToken = data.access_token || data.data?.access_token || '';
+    const newRefreshToken = data.refresh_token || data.data?.refresh_token || row.feishu_refresh_token;
+    if (!newAccessToken) {
+      console.error(`[refreshUserAccessToken] 刷新失败: ${JSON.stringify(data)}`);
+      return null;
+    }
+    const expiresIn = data.expires_in || data.data?.expires_in || 7200;
+    const expiresAt = Date.now() + (expiresIn - 300) * 1000;
+    await env.DB.prepare(
+      'UPDATE users SET feishu_token = ?, feishu_refresh_token = ?, feishu_token_expires_at = ?, updated_at = ? WHERE email = ?'
+    ).bind(newAccessToken, newRefreshToken, expiresAt, now(), email).run();
+    console.log(`[refreshUserAccessToken] 刷新成功: ${email}`);
+    return { access_token: newAccessToken, refresh_token: newRefreshToken, expires_at: expiresAt };
+  } catch (e: any) {
+    console.error(`[refreshUserAccessToken] 异常: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * 获取有效（未过期）的 user_access_token，过期则自动刷新
+ * 返回 token 字符串或 null
+ */
+async function getValidUserAccessToken(env: Env, email: string): Promise<string | null> {
+  const row = await env.DB.prepare(
+    "SELECT feishu_token, feishu_token_expires_at, feishu_refresh_token FROM users WHERE email = ?"
+  ).bind(email).first() as any;
+  if (!row?.feishu_token) return null;
+
+  // 未设置过期时间（老数据兼容：v2 之前的绑定只存了 feishu_token，expires_at/refresh_token 为空）
+  // 不预判过期，直接返回 token，交给发送环节验证；若返回 99991677 再由调用方触发刷新
+  if (!row.feishu_token_expires_at || row.feishu_token_expires_at <= 0) {
+    return row.feishu_token;
+  }
+
+  // 未过期，直接用
+  if (Date.now() < row.feishu_token_expires_at) {
+    return row.feishu_token;
+  }
+
+  // 过期，尝试刷新
+  console.log(`[getValidUserAccessToken] token 已过期，尝试刷新: ${email}`);
+  const refreshed = await refreshUserAccessToken(env, email);
+  return refreshed?.access_token || null;
 }
 
 async function getFeishuToken(env: Env): Promise<string> {
@@ -6693,34 +6861,26 @@ app.post('/api/cron/interview-reminder', async (c) => {
     const pending = await c.env.DB.prepare(
       "SELECT COUNT(*) as c FROM resume_screening_queue WHERE status = 'pending'"
     ).first() as any;
+    const count = pending?.c || 0;
 
-    const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
-    if (chatId && (pending?.c || 0) > 0) {
+    if (count > 0) {
       const token = await getFeishuToken(c.env);
-      const cardContent = {
-        config: { wide_screen_mode: true },
-        header: {
-          title: { tag: 'plain_text', content: `⏰ 面试提醒` },
-          template: 'orange'
-        },
-        elements: [
-          {
-            tag: 'div',
-            text: {
-              tag: 'lark_md',
-              content: `当前还有 **${pending.c}** 位候选人待审核处理，请及时安排面试。`
-            }
-          },
-          {
-            tag: 'note',
-            elements: [{ tag: 'plain_text', content: `系统自动提醒 | ${new Date().toLocaleString('zh-CN')}` }]
-          }
-        ]
-      };
-      await sendFeishuMessageToChat(token, chatId, cardContent);
+      const card = buildReminderCard(count);
+      const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
+      if (chatId) {
+        await sendFeishuMessageToChat(token, chatId, card);
+        console.log(`[cron:interview-reminder] 已发群提醒，pending=${count}`);
+      } else if (FEISHU_CONFIG.defaultHrOpenId) {
+        await sendFeishuMessageToUser(token, FEISHU_CONFIG.defaultHrOpenId, card);
+        console.log(`[cron:interview-reminder] 已发默认HR提醒，pending=${count}`);
+      } else {
+        console.log(`[cron:interview-reminder] pending=${count} 但无群和默认HR配置，跳过`);
+      }
+    } else {
+      console.log('[cron:interview-reminder] 无待审核，跳过');
     }
 
-    return c.json({ ok: true, pending: pending?.c || 0 });
+    return c.json({ ok: true, pending: count });
   } catch (err: any) {
     return c.json({ ok: false, detail: `发送提醒失败: ${err.message}` }, 500);
   }
@@ -6836,8 +6996,82 @@ async function sendFeishuMessageToUser(token: string, openId: string, cardConten
     })
   });
   const data: any = await resp.json();
-  if (data.code !== 0) throw new Error(`发送用户消息失败: ${JSON.stringify(data)}`);
+  if (data.code !== 0) {
+    const err = new Error(`发送用户消息失败: ${JSON.stringify(data)}`) as any;
+    err.feishuCode = data.code;
+    err.feishuMsg = data.msg;
+    throw err;
+  }
   return data.data;
+}
+
+/**
+ * 三层 fallback 发送消息：
+ * 1. 当前登录用户的 user_access_token（以用户身份发，自动刷新过期 token）
+ * 2. DB 中任意已绑定飞书用户的 token（兜底用户身份）
+ * 3. bot tenant_access_token（以应用身份发）
+ */
+async function sendFeishuMessageWithFallback(
+  env: Env,
+  userEmail: string | undefined,
+  openId: string,
+  cardContent: any
+): Promise<{ usedUserToken: boolean; sender: string }> {
+  // 第 1 层：当前用户 token（自动刷新）
+  if (userEmail) {
+    const userToken = await getValidUserAccessToken(env, userEmail);
+    if (userToken) {
+      try {
+        await sendFeishuMessageToUser(userToken, openId, cardContent);
+        console.log(`[sendFeishuMsg] 以用户 ${userEmail} 身份发送成功`);
+        return { usedUserToken: true, sender: userEmail };
+      } catch (e: any) {
+        // 99991677 = token 过期，尝试刷新后重试；其他错误直接降级
+        if (e.feishuCode === 99991677) {
+          console.log(`[sendFeishuMsg] 用户token过期(99991677)，刷新后重试`);
+          const refreshed = await refreshUserAccessToken(env, userEmail);
+          if (refreshed) {
+            try {
+              await sendFeishuMessageToUser(refreshed.access_token, openId, cardContent);
+              console.log(`[sendFeishuMsg] 刷新后以用户 ${userEmail} 身份发送成功`);
+              return { usedUserToken: true, sender: userEmail };
+            } catch (e2: any) {
+              console.log(`[sendFeishuMsg] 刷新后仍失败(${e2.feishuCode || e2.message})，降级`);
+            }
+          }
+        } else if (e.feishuCode === 230013) {
+          console.warn(`[sendFeishuMsg] 用户token无权限(230013)，可能未授权 im:message.send_as_user，降级`);
+        } else {
+          console.log(`[sendFeishuMsg] 用户token失败(${e.feishuCode || e.message})，降级`);
+        }
+      }
+    }
+  }
+
+  // 第 2 层：DB 中任意已绑定用户的 token（兜底用户身份）
+  try {
+    const anyUser = await env.DB.prepare(
+      "SELECT email FROM users WHERE feishu_token IS NOT NULL AND feishu_token != '' AND email != ? LIMIT 1"
+    ).bind(userEmail || '').first() as any;
+    if (anyUser?.email) {
+      const fallbackToken = await getValidUserAccessToken(env, anyUser.email);
+      if (fallbackToken) {
+        try {
+          await sendFeishuMessageToUser(fallbackToken, openId, cardContent);
+          console.log(`[sendFeishuMsg] 以兜底用户 ${anyUser.email} 身份发送成功`);
+          return { usedUserToken: true, sender: anyUser.email };
+        } catch (e: any) {
+          console.log(`[sendFeishuMsg] 兜底用户token失败(${e.feishuCode || e.message})，降级bot`);
+        }
+      }
+    }
+  } catch {}
+
+  // 第 3 层：bot token
+  const botToken = await getFeishuToken(env);
+  await sendFeishuMessageToUser(botToken, openId, cardContent);
+  console.log(`[sendFeishuMsg] 以 bot 身份发送成功`);
+  return { usedUserToken: false, sender: 'bot' };
 }
 
 /** 通知候选人对应的面试官 */
@@ -6903,7 +7137,105 @@ async function getResumeText(env: Env, candidateName: string): Promise<string> {
   return candidateName + ' - 无法获取简历原文';
 }
 
-async function notifyInterviewersForCandidate(env: Env, token: string, record: any, operatorName?: string): Promise<void> {
+// ==================== 定时提醒卡片（cron 触发）====================
+
+/** 构建定时批量提醒卡片，发给默认HR或招聘群 */
+function buildReminderCard(pendingCount: number): any {
+  const ts = new Date().toLocaleString('zh-CN');
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: `⏰ 面试提醒` },
+      template: 'orange',
+    },
+    elements: [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `当前还有 **${pendingCount}** 位候选人待审核处理，请及时安排面试。`,
+        },
+      },
+      { tag: 'note', elements: [{ tag: 'plain_text', content: `系统自动提醒 | ${ts}` }] },
+    ],
+  };
+}
+
+// ==================== 从飞书多维表格同步招聘任务 ====================
+
+/**
+ * 从飞书多维表格(招聘任务表 requisitionTableId)同步到 D1 recruitment_tasks 表
+ * 提取字段：招聘岗位、招聘状态、招聘城市、责任人、业务一面、HR二面、终面
+ * 面试官 = [业务一面, HR二面, 终面] 去重后的姓名数组
+ * 注意：只提取姓名。open_id 不从飞书表取（那是多维表格应用的 open_id，不能跨应用发消息），
+ *       改由 batchSyncFeishuOpenIds 通过通讯录API单独同步。
+ */
+async function syncRecruitmentTasksFromFeishu(env: Env): Promise<{ synced: number; details: string[] }> {
+  const tableId = getBitableTableId(env, 'requisition');
+  const records = await bitableListRecords(env, tableId);
+  const ts = now();
+  let synced = 0;
+  const details: string[] = [];
+
+  for (const rec of records) {
+    const f = rec.fields || {};
+    const positionName = getFirstValue(f['招聘岗位']) || '';
+    if (!positionName) continue;
+
+    const status = getFirstValue(f['招聘状态']) || '';
+    const city = getFirstValue(f['招聘城市']) || '';
+    const responsiblePerson = getUserName(f['责任人']) || '';
+
+    // 收集面试官姓名（业务一面 + HR二面 + 终面）
+    const ivNames: string[] = [];
+    for (const field of ['业务一面', 'HR二面', '终面']) {
+      const raw = f[field];
+      const users = extractFeishuUsers(raw);
+      if (users.length > 0) {
+        for (const u of users) {
+          if (u.name && !ivNames.includes(u.name)) ivNames.push(u.name);
+        }
+      } else {
+        const n = getUserName(raw);
+        if (n && !ivNames.includes(n)) ivNames.push(n);
+      }
+    }
+
+    const id = `req_${rec.record_id}`;
+    const interviewersJson = JSON.stringify(ivNames);
+
+    await env.DB.prepare(
+      `INSERT INTO recruitment_tasks (id, position_name, status, responsible_person, interviewers, city, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         position_name = excluded.position_name,
+         status = excluded.status,
+         responsible_person = excluded.responsible_person,
+         interviewers = excluded.interviewers,
+         city = excluded.city,
+         updated_at = excluded.updated_at`
+    ).bind(id, positionName, status, responsiblePerson, interviewersJson, city, ts).run();
+    synced++;
+    details.push(`${positionName} | 面试官: ${ivNames.join('、') || '无'} | 责任人: ${responsiblePerson || '无'} | ${city || '-'}`);
+  }
+  return { synced, details };
+}
+
+/**
+ * 同步招聘任务（从飞书多维表格）
+ * POST /api/recruitment-tasks/sync-from-feishu
+ */
+app.post('/api/recruitment-tasks/sync-from-feishu', authMiddleware, requireRole(['admin']), async (c) => {
+  try {
+    const result = await syncRecruitmentTasksFromFeishu(c.env);
+    return c.json({ ok: true, synced: result.synced, details: result.details });
+  } catch (e: any) {
+    return c.json({ detail: '同步失败: ' + e.message }, 500);
+  }
+});
+
+async function notifyInterviewersForCandidate(env: Env, record: any, currentUser?: any): Promise<void> {
+  const operatorName = currentUser?.full_name;
   const posName = record.mapped_position || record.position_applied?.split('_')[0] || '未知岗位';
   try {
     // 查找匹配的招聘任务
@@ -6918,7 +7250,7 @@ async function notifyInterviewersForCandidate(env: Env, token: string, record: a
       const defaultOpenId = FEISHU_CONFIG.defaultHrOpenId;
       if (defaultOpenId) {
         const cardContent = buildInterviewerCard(record.candidate_name, posName, record.city, record.ai_analysis, operatorName);
-        await sendFeishuMessageToUser(token, defaultOpenId, cardContent);
+        await sendFeishuMessageWithFallback(env, currentUser?.email, defaultOpenId, cardContent);
         console.log(`[NotifyInterviewers] ✅ 已通知默认 HR (${defaultOpenId})`);
       }
       return;
@@ -6950,18 +7282,13 @@ async function notifyInterviewersForCandidate(env: Env, token: string, record: a
         // 🔑 只使用 DB 中 OAuth 绑定的 feishu_open_id（和 cli_aad2cb7fab385cb6 同应用）
         // 硬编码的 interviewerOpenIds 来自多维表格人员字段，属于不同应用，会导致 open_id cross app 错误
         let openId = '';
-        let userToken = token;
         try {
           const userRow = await env.DB.prepare(
-            'SELECT feishu_open_id, feishu_token FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != \'\' LIMIT 1'
+            'SELECT feishu_open_id FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != \'\' LIMIT 1'
           ).bind(name).first() as any;
           if (userRow?.feishu_open_id) {
             openId = userRow.feishu_open_id;
             console.log(`[NotifyInterviewers] 使用 DB 中 ${name} 的 feishu_open_id`);
-          }
-          if (userRow?.feishu_token) {
-            userToken = userRow.feishu_token;
-            console.log(`[NotifyInterviewers] 使用 ${name} 自己的飞书 token`);
           }
         } catch {}
 
@@ -6971,9 +7298,9 @@ async function notifyInterviewersForCandidate(env: Env, token: string, record: a
           continue;
         }
 
-        // 发送卡片
+        // 三层 fallback 发送（当前用户token → DB任意用户token → bot）
         const cardContent = buildInterviewerCard(record.candidate_name, posName, record.city, record.ai_analysis, operatorName);
-        await sendFeishuMessageToUser(userToken, openId, cardContent);
+        await sendFeishuMessageWithFallback(env, currentUser?.email, openId, cardContent);
         console.log(`[NotifyInterviewers] ✅ 已通知 ${name} (${openId}) - ${record.candidate_name}`);
       }
     }
@@ -7013,8 +7340,7 @@ app.post('/api/resume-screening/:id/notify-interviewers', authMiddleware, async 
   if (!record) return c.json({ detail: '记录不存在' }, 404);
 
   try {
-    const token = await getFeishuToken(c.env);
-    await notifyInterviewersForCandidate(c.env, token, record, currentUser?.full_name);
+    await notifyInterviewersForCandidate(c.env, record, currentUser);
     return c.json({ ok: true, message: `已通知对应面试官: ${record.candidate_name}` });
   } catch (err: any) {
     return c.json({ detail: `通知失败: ${err.message}` }, 500);
@@ -7139,27 +7465,8 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       interviewTime
     );
 
-    // 3. 优先用用户 token，失败回退 bot token
-    let usedUserToken = false;
-    try {
-      // 先尝试用登录用户的 user_access_token（以用户身份）发送
-      const userRow = await c.env.DB.prepare(
-        "SELECT feishu_token FROM users WHERE id = ? AND feishu_token IS NOT NULL AND feishu_token != '' LIMIT 1"
-      ).bind(currentUser?.id || '').first() as any;
-      if (userRow?.feishu_token) {
-        try {
-          await sendFeishuMessageToUser(userRow.feishu_token, openId, cardContent);
-          usedUserToken = true;
-        } catch (ue: any) {
-          console.log(`[NotifyInterviewer] 用户token失败(${ue.message}), 回退bot`);
-        }
-      }
-    } catch {}
-
-    if (!usedUserToken) {
-      const botToken = await getFeishuToken(c.env);
-      await sendFeishuMessageToUser(botToken, openId, cardContent);
-    }
+    // 3. 三层 fallback 发送（当前用户token → DB任意用户token → bot）
+    await sendFeishuMessageWithFallback(c.env, currentUser?.email, openId, cardContent);
 
     console.log(`[NotifyInterviewer] ✅ 通知面试官: ${interviewerName} (open_id: ${openId})`);
 
@@ -7539,16 +7846,42 @@ app.notFound(async (c) => {
   return c.text('Not found', 404);
 });
 
-// Worker Cron 触发器：每天凌晨 3 点清除内存缓存（不删除数据库数据）
+// Worker Cron 触发器：每天北京时间 9:00（UTC 1:00）
+// 1. 清除内存缓存  2. 检查待审核候选人，>0 则发飞书提醒
 export default {
   fetch: app.fetch,
   async scheduled(event: any, env: any, ctx: any) {
-    // v2.0: 仅清除内存 bitableCache，不删除数据库中的任何数据
+    // 1. 清除内存 bitableCache（原有逻辑）
     let beforeSize = bitableCache.size;
     for (const [key, entry] of bitableCache) {
       if (entry.expiry < Date.now()) bitableCache.delete(key);
     }
-    let afterSize = bitableCache.size;
-    console.log(`[cron:cleanup-cache] cleared ${beforeSize - afterSize} stale cache entries. resume_files and raw_text preserved.`);
+    console.log(`[cron:cleanup-cache] cleared ${beforeSize - bitableCache.size} stale cache entries.`);
+
+    // 2. 面试定时提醒：查 resume_screening_queue 待审核数，>0 发提醒
+    try {
+      const pending = await env.DB.prepare(
+        "SELECT COUNT(*) as c FROM resume_screening_queue WHERE status = 'pending'"
+      ).first() as any;
+      const count = pending?.c || 0;
+      if (count > 0) {
+        const token = await getFeishuToken(env);
+        const card = buildReminderCard(count);
+        const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
+        if (chatId) {
+          await sendFeishuMessageToChat(token, chatId, card);
+          console.log(`[cron:interview-reminder] 已发群提醒，pending=${count}`);
+        } else if (FEISHU_CONFIG.defaultHrOpenId) {
+          await sendFeishuMessageToUser(token, FEISHU_CONFIG.defaultHrOpenId, card);
+          console.log(`[cron:interview-reminder] 已发默认HR提醒，pending=${count}`);
+        } else {
+          console.log(`[cron:interview-reminder] pending=${count} 但无群和默认HR配置，跳过`);
+        }
+      } else {
+        console.log('[cron:interview-reminder] 无待审核，跳过');
+      }
+    } catch (e: any) {
+      console.error(`[cron:interview-reminder] 失败: ${e.message}`);
+    }
   },
 };

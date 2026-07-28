@@ -1,0 +1,24 @@
+name: Interview Reminder Cron
+
+# 每天 UTC 1:00（北京时间 9:00）触发面试提醒
+# Cloudflare Pages 不支持 cron triggers，改用 GitHub Actions 定时调用 HTTP 路由
+on:
+  schedule:
+    - cron: '0 1 * * *'  # UTC 1:00 = 北京时间 9:00
+  workflow_dispatch: {}  # 支持手动触发（测试用）
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger interview reminder API
+        run: |
+          echo "调用面试提醒接口..."
+          response=$(curl -s -X POST -w "\n%{http_code}" https://ai-interview-88r.pages.dev/api/cron/interview-reminder)
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "HTTP $http_code"
+          echo "Response: $body"
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::提醒接口返回非 200"
+          fi

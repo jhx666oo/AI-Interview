@@ -17,6 +17,6 @@ binding = "DB"
 database_name = "ai-interview-db"
 database_id = "3f82993e-210d-4b0b-9d83-4ed4be69724f"
 
-# Cron triggers - 每天凌晨 3 点自动清理超过 7 天的 PDF 缓存
+# Cron triggers - 每天北京时间 9:00（UTC 1:00）检查待审核候选人并发飞书提醒
 [triggers]
-crons = ["0 3 * * *"]
+crons = ["0 1 * * *"]
