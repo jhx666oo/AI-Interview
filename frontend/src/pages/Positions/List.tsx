@@ -861,7 +861,6 @@ const PositionsList: React.FC = () => {
         confirmLoading={submitting}
         width={880}
         centered
-        destroyOnHidden
         footer={
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Checkbox checked={syncDescriptions} onChange={e => setSyncDescriptions(e.target.checked)} style={{ fontSize: 12 }}>
@@ -1281,7 +1280,8 @@ const CapabilityDimensionEditor: React.FC<{
 
   const dims: { name: string; description: string }[] = (Array.isArray(value) ? value : []).map((d: any) => {
     if (typeof d === 'string') return { name: d, description: '' };
-    return { name: d?.name || d || '', description: d?.description || '' };
+    const desc = d?.description || [d?.definition, d?.behaviors].filter(Boolean).join('；') || '';
+    return { name: d?.name || d || '', description: desc };
   }).filter(d => d.name);
 
   const checkedNames = new Set(dims.map(d => d.name));
