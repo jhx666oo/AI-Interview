@@ -4,7 +4,7 @@
 ![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20Vite%207-646CFF.svg)
 ![Backend](https://img.shields.io/badge/backend-Cloudflare%20Workers%20(Hono)-F48120.svg)
 ![Database](https://img.shields.io/badge/database-Cloudflare%20D1%20(SQLite)-F48120.svg)
-![AI](https://img.shields.io/badge/AI-DeepSeek%20V4%20Flash-7C3AED.svg)
+![AI](https://img.shields.io/badge/AI-DeepSeek%20%7C%20Workers%20AI%20(Llama)-7C3AED.svg)
 ![Status](https://img.shields.io/badge/status-active%20development-brightgreen.svg)
 
 > 🚀 线上地址: https://ai-interview-88r.pages.dev
@@ -13,7 +13,7 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 
 ---
 
-## 当前开发状态 (2026-07-24)
+## 当前开发状态 (2026-07-29)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
@@ -24,14 +24,38 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 | 面试官管理 | ✅ 运行中 | 手动添加 open_id，飞书搜索（待权限审批） |
 | 入职管理 | ✅ 运行中 | 飞书同步 |
 | 试用期管理 | ✅ 运行中 | |
-| 招聘日报 | ✅ 运行中 | |
+| 招聘日报 | ✅ 运行中 | Workers AI 自动生成��要，字段映射已修复 |
 | 需求管理 | ✅ 运行中 | |
 | 飞书集成 | ✅ 已接入 | 多维表格数据同步 + 机器人卡片消息、token D1 缓存 |
 | 飞书 OAuth 绑定 | ✅ 运行中 | 登录用户绑定飞书身份，本地自动判断回调地址 |
-| 安全加固 | ✅ 已完成 | 明文密码移除、timing-safe 比较、CORS 白名单、DOMPurify |
+| AI 三层降级 | ✅ 已启用 | DeepSeek API → Workers AI Llama 3.3 70B → Llama 3.1 8B |
+| 安全加固 | ✅ 已完成 | 明文密码移除、timing-safe 比较、CORS 白名单、DOMPurify、密钥迁移到 Pages Secrets |
 | 性能优化 | ✅ 已完成 | N+1 修复、静态资源缓存、图片压缩、chunk 拆分、D1 索引 |
+| 日志审计 | ✅ 已完成 | operation_logs 表 8 处核心埋点，上线自检 5 项全绿 |
 
-### 最近更新 (2026-07-23)
+### 最近更新 (2026-07-29)
+
+**AI 三层降级启用：**
+- `callAI()` 逻辑改为：**用户在前端配置了 API Key → 走自定义模型；未配置 → 默认走 Cloudflare Workers AI（免费）**
+- 移除 `getLLMConfig` 中对 `env.AI_API_KEY` 的 fallback，只为 DB 中用户显式配置的 Key 生效
+- Workers AI 降级链路：`@cf/meta/llama-3.3-70b-instruct-fp8-fast` → `@cf/meta/llama-3.1-8b-instruct`
+- `frontend/wrangler.toml` 启用 `[ai] binding = "AI"`，生产确认 `ai_binding: true`
+- `frontend/Settings/System.tsx`：API Key 改为可选，未填时提示"将降级使用 Workers AI"
+
+**日报功能修复：**
+- `daily_reports` 表新增 `stats` 列（远程 ALTER TABLE）
+- INSERT 字段名从不存在列（`report_type/title/content/status`）修正为实际列
+- 前端日报页字段映射对齐：`record.ai_summary`（AI 摘要）/ `record.stats`（统计数据对象）
+- 发送端点字段引用修复（`r.content/r.stats/r.title` → `r.ai_summary/r.stats/r.report_date`）
+
+**安全与运维：**
+- 密钥管理改造：生产密钥全迁入 Cloudflare Pages Secrets，源码/wrangler.toml 禁止明文
+- cron 鉴权：`/api/cron/*` 需 `X-Cron-Secret` header
+- `scripts/pre-deploy-check.mjs`：上线前 5 项自检（产物新鲜度/路由完整性/密钥扫描/wrangler/旧URL）
+- `GET /health` 增加 `ai_binding` 诊断字段
+- 冗余脚本归档至 `_archive_20260729/`
+
+### 历史更新 (2026-07-23)
 
 **安全修复（第二批）：**
 - 移除明文密码存储（DB 不再保留 plain_password）
@@ -67,17 +91,15 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 ## 部署
 
 ```bash
-# 编译 Worker（esbuild Node API，沙箱拦截 CLI 必须用此方式）
-cd ai-interview && node -e "const e=require('./worker/node_modules/esbuild'); \
-  e.build({entryPoints:['worker/src/index.ts'],bundle:true,outfile:'frontend/dist/_worker.js',\
-  format:'esm',platform:'browser',target:'es2021',minify:true,external:['__STATIC_CONTENT_MANIFEST']})"
-
-# 编译前端（先清缓存，否则 Vite hash 不变导致部署时 0 files uploaded）
+# 构建（tsc + vite + esbuild Worker 编译，一步到位）
 cd frontend && rm -rf dist node_modules/.vite && npm run build
+
+# 上线前自检（失败禁止部署）
+node ../scripts/pre-deploy-check.mjs
 
 # 部署到 Cloudflare Pages
 cd frontend && CLOUDFLARE_ACCOUNT_ID=ed758fc82ca4400593ddb447d3db57a4 \
-  wrangler pages deploy dist --project-name=ai-interview
+  npx wrangler pages deploy dist
 ```
 
 > ⚠️ **部署缓存坑**：若只改源码重新 `wrangler pages deploy` 却提示 `0 files uploaded (N already uploaded)`，是 Vite 构建缓存（`node_modules/.vite`）导致产物 hash 不变。先 `rm -rf dist node_modules/.vite` 再 `npm run build` 即可强制生成新 hash。
@@ -219,17 +241,16 @@ ai-interview/
 
 ## AI 模型配置
 
-AI 调用统一走 `worker/src/index.ts` 的 `getLLMConfig()` + `callAI()`，配置优先级如下：
+AI 调用统一走 `worker/src/index.ts` 的 `getLLMConfig()` + `callAI()`：
 
-1. **系统配置（D1 `system_configs` 表）**：`llm_api_key` / `llm_base_url` / `llm_model` —— 在「系统设置 → AI 模型配置」页填写，优先级最高。
-2. **环境变量 `AI_API_KEY`**：若系统配置为空则回退到此。
-3. **Workers AI（`env.AI` binding）**：若上述均无，自动降级到 Cloudflare Pages 已配置的 Workers AI，无需额外 key 即可生成。
+| 优先级 | 配置来源 | 说明 |
+|--------|----------|------|
+| 1 | **系统设置页配置**（D1 `system_configs` 表） | 用户在「系统设置 → AI 模型配置」页填写 API Key / Base URL / Model，填写后生效 |
+| 2 | **Workers AI 降级**（`env.AI` binding） | 未配置 API Key 时，自动使用 Cloudflare Workers AI（免费），无需额外密钥 |
 
-`callAI()` 逻辑：有 `apiKey` 走 DeepSeek 兼容接口，无则降级 Workers AI；DeepSeek 返回 401 会抛出明确错误。
+**降级链路**：`DeepSeek/自定义 API` → `Llama 3.3 70B (Workers AI)` → `Llama 3.1 8B (Workers AI)`
 
-> ⚠️ **踩坑记录**：生产 `system_configs.llm_api_key` 曾填入失效的 DeepSeek key，导致 `callAI` 失败。旧 `ai-jd` 代码在失败时**静默返回空内容（HTTP 200）**，前端「显示成功实际未生成」。现已修复为：空结果检测 → 明确返回 500 报错；同时撤销失效 key 后 `callAI` 自动走 Workers AI 正常生成。
->
-> ✅ **建议**：若未配置有效 DeepSeek key，保持 `llm_api_key` 为空，系统自动使用 Workers AI 降级通道。
+> ✅ **建议**：日常使用无需配置 API Key，系统自动使用 Workers AI 免费通��。如需更高质量的模型（如 DeepSeek），在前端系统设置页填写 Key 即可切换。
 
 ---
 
