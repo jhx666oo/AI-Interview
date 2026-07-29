@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = join(__dirname, '..');
 const WORKER_DIR = join(__dirname, '..', 'worker');
-const BASE = 'https://ai-interview-22u.pages.dev';
+const BASE = 'https://ai-interview-88r.pages.dev';
 const SECRET_KEY = process.env.SECRET_KEY || '';
 
 // hiring-platform: https://hiring-platform-ex4.pages.dev

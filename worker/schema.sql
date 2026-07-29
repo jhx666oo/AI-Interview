@@ -698,3 +698,18 @@ CREATE TABLE IF NOT EXISTS resume_screening_queue (
 CREATE INDEX IF NOT EXISTS idx_screening_status ON resume_screening_queue(status);
 CREATE INDEX IF NOT EXISTS idx_screening_created ON resume_screening_queue(created_at);
 CREATE INDEX IF NOT EXISTS idx_screening_resume ON resume_screening_queue(resume_id);
+
+-- 操作日志表（2026-07-29 日志埋点改造）：核心业务链路结构化审计日志
+CREATE TABLE IF NOT EXISTS operation_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,           -- 操作类型: resume.create / interview.create / interview.notify / feishu.sync / interview.evaluate 等
+  entity_type TEXT,               -- 实体类型: resume / interview / recruitment_task ...
+  entity_id TEXT,                 -- 实体 ID
+  actor TEXT,                     -- 操作人（email 或 system/cron）
+  status TEXT DEFAULT 'success',  -- success / failure
+  detail TEXT,                    -- 附加信息（JSON 或文本）
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oplogs_action ON operation_logs(action);
+CREATE INDEX IF NOT EXISTS idx_oplogs_entity ON operation_logs(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_oplogs_created ON operation_logs(created_at);

@@ -17,12 +17,13 @@ interface Env {
   FEISHU_TALENT_TABLE_ID?: string;
   FEISHU_OAUTH_REDIRECT_URI?: string;
   RESUMES_KV?: KVNamespace;
+  CRON_SECRET?: string;
 }
 
-// 飞书配置（内置 fallback，页面部署时不用再设环境变量）
+// 飞书配置（非敏感 ID 类配置；appSecret 必须通过环境变量 FEISHU_APP_SECRET 提供：
+// 生产 = wrangler pages secret put，本地 = frontend/.dev.vars，均不入库）
 const FEISHU_CONFIG = {
   appId: 'cli_aad2cb7fab385cb6',
-  appSecret: 'wLS4zlbWqEx5PLhDB5r80dn8KbuLCOlE',
   appToken: 'NVh9bDiNRaF0ZysxjeLc5ID2n9c',
   // 招聘任务表：含招聘岗位、部门、城市、人数、紧急度、JD等具体需求数据
   requisitionTableId: 'tblEiMBFXcvSspQd',
@@ -468,6 +469,40 @@ function now(): string {
   return new Date().toISOString();
 }
 
+// ==================== 操作日志（结构化埋点） ====================
+
+/**
+ * 核心业务链路结构化日志（写入 D1 operation_logs 表）
+ * 失败不影响主流程（只 console.error）
+ */
+async function logOperation(
+  env: Env,
+  entry: {
+    action: string;            // resume.create / interview.create / interview.notify / feishu.sync / interview.evaluate ...
+    entityType?: string;
+    entityId?: string | number;
+    actor?: string;            // 操作人 email 或 system/cron
+    status?: 'success' | 'failure';
+    detail?: string;
+  }
+): Promise<void> {
+  try {
+    await env.DB.prepare(
+      'INSERT INTO operation_logs (action, entity_type, entity_id, actor, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(
+      entry.action,
+      entry.entityType || null,
+      entry.entityId != null ? String(entry.entityId) : null,
+      entry.actor || 'system',
+      entry.status || 'success',
+      entry.detail ? entry.detail.substring(0, 2000) : null,
+      now()
+    ).run();
+  } catch (e: any) {
+    console.error(`[logOperation] 写操作日志失败(${entry.action}): ${e.message}`);
+  }
+}
+
 // ==================== Auth Middleware ====================
 
 async function getUser(db: D1Database, email: string): Promise<any | null> {
@@ -648,7 +683,11 @@ app.get('/api/auth/feishu-callback', async (c) => {
 
     // 用 code 换 user_access_token
     const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-    const appSecret = c.env.FEISHU_APP_SECRET || FEISHU_CONFIG.appSecret;
+    const appSecret = c.env.FEISHU_APP_SECRET;
+    if (!appSecret) {
+      console.error('[FeishuOAuth] FEISHU_APP_SECRET 未配置（wrangler pages secret put FEISHU_APP_SECRET）');
+      return c.redirect('/settings/profile?feishu_error=1&err=secret_missing');
+    }
 
     console.log(`[FeishuOAuth] 交换 token: email=${userEmail}, appId=${appId}, code=${code.substring(0, 20)}...`);
 
@@ -2748,6 +2787,15 @@ app.post('/api/interviews/:id/evaluate', authMiddleware, async (c) => {
       ).bind(...binds).run();
     }
 
+    // 埋点：面试评估提交
+    await logOperation(c.env, {
+      action: 'interview.evaluate',
+      entityType: 'interview',
+      entityId: id,
+      actor: c.get('user')?.email,
+      detail: JSON.stringify({ round: r, result: result || '' }),
+    });
+
     return c.json({ ok: true, detail: `第${r}面评价已提交` });
   } catch (e: any) {
     return c.json({ detail: '提交失败: ' + e.message }, 500);
@@ -3044,6 +3092,15 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     } catch (e: any) {
       return c.json({ detail: '保存文件失败: ' + e.message }, 500);
     }
+
+    // 埋点：简历/候选人创建
+    await logOperation(c.env, {
+      action: 'resume.create',
+      entityType: 'resume',
+      entityId: recordId,
+      actor: c.get('user')?.email,
+      detail: JSON.stringify({ file: file.name, size: fileSize, candidate: displayName }),
+    });
 
     // 3. AI 解析简历（单阶段：前端 pdfjs-dist 提取纯文本 → AI 结构化提取字段）
     // 注意：deepseek-v4-flash 是文本模型，无法直接处理 PDF base64，
@@ -3424,6 +3481,13 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
       }
     }
 
+    // 埋点：飞书简历同步
+    await logOperation(c.env, {
+      action: 'feishu.sync',
+      entityType: 'resume',
+      actor: c.get('user')?.email,
+      detail: JSON.stringify({ created, updated, total: records.length }),
+    });
     return c.json({ ok: true, message: `简历同步完成：新增 ${created} 条，更新 ${updated} 条`, created, updated, total: records.length });
   } catch (e: any) {
     return c.json({ detail: '简历同步失败: ' + e.message }, 500);
@@ -4340,6 +4404,14 @@ app.post('/api/interviews', authMiddleware, async (c) => {
     body.interviewer || body.primary_interviewer || '', body.primary_interviewer || '',
     body.secondary_interviewer || '',
     time, body.interview_location || '', 'scheduled', now()).run();
+  // 埋点：面试安排创建
+  await logOperation(c.env, {
+    action: 'interview.create',
+    entityType: 'interview',
+    entityId: id,
+    actor: c.get('user')?.email,
+    detail: JSON.stringify({ candidate: body.candidate_name || '', time, interviewer: body.primary_interviewer || body.interviewer || '' }),
+  });
   return c.json({ ok: true, id });
 });
 
@@ -4348,6 +4420,14 @@ app.post('/api/interviews/:id/score', authMiddleware, async (c) => {
   const body = await c.req.json();
   await c.env.DB.prepare('UPDATE interviews SET scores = ?, total_score = ?, comments = ?, evaluation = ?, suggestion = ?, status = ? WHERE id = ?')
     .bind(JSON.stringify(body.scores || {}), body.total_score, JSON.stringify(body.comments || {}), body.evaluation || '', body.suggestion || '', body.status || 'completed', id).run();
+  // 埋点：面试打分
+  await logOperation(c.env, {
+    action: 'interview.score',
+    entityType: 'interview',
+    entityId: id,
+    actor: c.get('user')?.email,
+    detail: JSON.stringify({ total_score: body.total_score, status: body.status || 'completed' }),
+  });
   const row = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
 });
@@ -6084,7 +6164,11 @@ async function refreshUserAccessToken(env: Env, email: string): Promise<{ access
   if (!row?.feishu_refresh_token) return null;
 
   const appId = env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const appSecret = env.FEISHU_APP_SECRET || FEISHU_CONFIG.appSecret;
+  const appSecret = env.FEISHU_APP_SECRET;
+  if (!appSecret) {
+    console.error('[refreshUserAccessToken] FEISHU_APP_SECRET 未配置');
+    return null;
+  }
   const redirectUri = env.FEISHU_OAUTH_REDIRECT_URI || FEISHU_REDIRECT_URI;
 
   try {
@@ -6159,7 +6243,10 @@ async function getFeishuToken(env: Env): Promise<string> {
   } catch { /* 缓存查询失败，继续走正常获取流程 */ }
 
   const appId = env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const appSecret = env.FEISHU_APP_SECRET || FEISHU_CONFIG.appSecret;
+  const appSecret = env.FEISHU_APP_SECRET;
+  if (!appSecret) {
+    throw new Error('FEISHU_APP_SECRET 未配置（wrangler pages secret put FEISHU_APP_SECRET）');
+  }
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
   let resp: Response;
@@ -6894,7 +6981,48 @@ app.post('/api/feishu/event-callback', async (c) => {
   }
 });
 
+// ==================== 操作日志查询 ====================
+
+/**
+ * 查询操作日志（核心链路埋点数据）
+ * GET /api/operation-logs?action=&limit=
+ */
+app.get('/api/operation-logs', authMiddleware, requireRole(['admin']), async (c) => {
+  try {
+    const action = c.req.query('action') || '';
+    const limit = Math.min(parseInt(c.req.query('limit') || '100', 10) || 100, 500);
+    let stmt;
+    if (action) {
+      stmt = c.env.DB.prepare('SELECT * FROM operation_logs WHERE action = ? ORDER BY id DESC LIMIT ?').bind(action, limit);
+    } else {
+      stmt = c.env.DB.prepare('SELECT * FROM operation_logs ORDER BY id DESC LIMIT ?').bind(limit);
+    }
+    const rows = await stmt.all();
+    return c.json(rows.results || []);
+  } catch (e: any) {
+    return c.json({ detail: e.message }, 500);
+  }
+});
+
 // ==================== Cron 定时任务 Endpoints ====================
+
+/**
+ * Cron 路由鉴权中间件：校验 X-Cron-Secret header（外部定时服务需携带）
+ * 密钥通过 wrangler pages secret put CRON_SECRET 配置
+ */
+app.use('/api/cron/*', async (c, next) => {
+  const secret = (c.env as any).CRON_SECRET;
+  if (!secret) {
+    console.error('[cron-auth] CRON_SECRET 未配置，拒绝所有 cron 请求');
+    return c.json({ detail: 'cron not configured' }, 503);
+  }
+  const provided = c.req.header('X-Cron-Secret') || '';
+  if (provided !== secret) {
+    console.warn('[cron-auth] cron 请求鉴权失败');
+    return c.json({ detail: 'unauthorized' }, 401);
+  }
+  await next();
+});
 
 /**
  * 日报生成与推送
@@ -7013,8 +7141,21 @@ app.post('/api/cron/interview-reminder', async (c) => {
       console.log('[cron:interview-reminder] 无待审核，跳过');
     }
 
+    // 埋点：定时面试提醒
+    await logOperation(c.env, {
+      action: 'cron.interview_reminder',
+      actor: 'cron',
+      detail: JSON.stringify({ pending: count }),
+    });
+
     return c.json({ ok: true, pending: count });
   } catch (err: any) {
+    await logOperation(c.env, {
+      action: 'cron.interview_reminder',
+      actor: 'cron',
+      status: 'failure',
+      detail: err.message,
+    });
     return c.json({ ok: false, detail: `发送提醒失败: ${err.message}` }, 500);
   }
 });
@@ -7380,6 +7521,13 @@ async function syncRecruitmentTasksFromFeishu(env: Env): Promise<{ synced: numbe
 app.post('/api/recruitment-tasks/sync-from-feishu', authMiddleware, requireRole(['admin']), async (c) => {
   try {
     const result = await syncRecruitmentTasksFromFeishu(c.env);
+    // 埋点：飞书招聘任务同步
+    await logOperation(c.env, {
+      action: 'feishu.sync',
+      entityType: 'recruitment_task',
+      actor: c.get('user')?.email,
+      detail: JSON.stringify({ synced: result.synced }),
+    });
     return c.json({ ok: true, synced: result.synced, details: result.details });
   } catch (e: any) {
     return c.json({ detail: '同步失败: ' + e.message }, 500);
@@ -7621,6 +7769,15 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
     await sendFeishuMessageWithFallback(c.env, currentUser?.email, openId, cardContent);
 
     console.log(`[NotifyInterviewer] ✅ 通知面试官: ${interviewerName} (open_id: ${openId})`);
+
+    // 埋点：面试官通知
+    await logOperation(c.env, {
+      action: 'interview.notify',
+      entityType: 'interview',
+      entityId: id,
+      actor: currentUser?.email,
+      detail: JSON.stringify({ interviewer: interviewerName, candidate: candidateName }),
+    });
 
     // 如果是提醒二面面试官，标记 status2 = 'scheduled'
     const ivRow = await c.env.DB.prepare('SELECT secondary_interviewer FROM interviews WHERE id = ?').bind(id).first() as any;

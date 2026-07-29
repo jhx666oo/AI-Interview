@@ -14,7 +14,7 @@ jobs:
       - name: Trigger interview reminder API
         run: |
           echo "调用面试提醒接口..."
-          response=$(curl -s -X POST -w "\n%{http_code}" https://ai-interview-88r.pages.dev/api/cron/interview-reminder)
+          response=$(curl -s -X POST -w "\n%{http_code}" -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" https://ai-interview-88r.pages.dev/api/cron/interview-reminder)
           http_code=$(echo "$response" | tail -1)
           body=$(echo "$response" | head -n -1)
           echo "HTTP $http_code"

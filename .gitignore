@@ -66,6 +66,7 @@ node_modules/
 # OS specific
 
 # Temp / cache
+_archive*/
 .wrangler/
 memory/
 _frontend/
