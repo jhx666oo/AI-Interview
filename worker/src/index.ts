@@ -223,7 +223,8 @@ async function getLLMConfig(env: Env): Promise<{ apiKey: string; baseUrl: string
   } catch (e) {
     console.error('[AI] getLLMConfig read failed:', e);
   }
-  const apiKey = (cfg.llm_api_key && String(cfg.llm_api_key).trim()) || env.AI_API_KEY || '';
+  // 只从用户前端配置取值，不 fallback 到环境变量；用户未配置 Key 时默认走 Workers AI
+  const apiKey = (cfg.llm_api_key && String(cfg.llm_api_key).trim()) || '';
   const baseUrl = normalizeBaseUrl(cfg.llm_base_url) || env.AI_BASE_URL || 'https://api.deepseek.com';
   const model = (cfg.llm_model && String(cfg.llm_model).trim()) || env.AI_MODEL || 'deepseek-v4-flash';
   return { apiKey, baseUrl, model };
