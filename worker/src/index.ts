@@ -223,8 +223,8 @@ async function getLLMConfig(env: Env): Promise<{ apiKey: string; baseUrl: string
   } catch (e) {
     console.error('[AI] getLLMConfig read failed:', e);
   }
-  // 只从用户前端配置取值，不 fallback 到环境变量；用户未配置 Key 时默认走 Workers AI
-  const apiKey = (cfg.llm_api_key && String(cfg.llm_api_key).trim()) || '';
+  // 优先用户前端配置，其次环境变量（本地 dev），不配则走 Workers AI
+  const apiKey = (cfg.llm_api_key && String(cfg.llm_api_key).trim()) || (env.AI_API_KEY && String(env.AI_API_KEY).trim()) || '';
   const baseUrl = normalizeBaseUrl(cfg.llm_base_url) || env.AI_BASE_URL || 'https://api.deepseek.com';
   const model = (cfg.llm_model && String(cfg.llm_model).trim()) || env.AI_MODEL || 'deepseek-v4-flash';
   return { apiKey, baseUrl, model };
@@ -1606,6 +1606,80 @@ async function getPositionContext(db: any, positionName: string): Promise<{
   } catch {}
 
   return result;
+}
+
+// 三级降级获取简历文本，供 batch-auto-screen 使用
+async function getResumeTextForScreening(env: Env, row: any): Promise<{ text: string; source: string }> {
+  // 1. ocr_markdown 已有（MinerU 已处理）
+  if (row.ocr_markdown && row.ocr_markdown.length > 50) {
+    return { text: row.ocr_markdown, source: 'ocr_markdown' };
+  }
+  // 2. raw_text 已有缓存
+  if (row.raw_text && row.raw_text.length > 50) {
+    return { text: row.raw_text, source: 'raw_text' };
+  }
+  // 3. 尝试从飞书下载 PDF → MinerU OCR
+  try {
+    const tableId = getBitableTableId(env, 'talent');
+    const record = await bitableGetRecord(env, tableId, row.id);
+    if (record) {
+      const f = record.fields || {};
+      for (const [, fieldValue] of Object.entries(f)) {
+        if (Array.isArray(fieldValue) && fieldValue.length > 0) {
+          const item = fieldValue[0] as any;
+          const dlUrl = item?.url || item?.download_url || item?.tmp_url;
+          if (dlUrl) {
+            const feishuToken = await getFeishuToken(env);
+            const dlResp = await fetch(dlUrl, { headers: { Authorization: `Bearer ${feishuToken}` } });
+            if (dlResp.ok) {
+              const pdfBytes = new Uint8Array(await dlResp.arrayBuffer());
+              // MinerU sign
+              const signResp = await fetch(`${MINERU_BASE()}/api/v1/agent/parse/file`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_name: `${row.candidate_name || 'resume'}.pdf`, language: 'ch', is_ocr: true, enable_table: true, enable_formula: false }),
+              });
+              const signData: any = await signResp.json().catch(() => ({}));
+              if (signData?.data?.file_url && signData?.data?.task_id) {
+                await fetch(signData.data.file_url, { method: 'PUT', body: pdfBytes, headers: { 'Content-Type': '' } });
+                let markdown = '';
+                for (let i = 0; i < 20; i++) {
+                  const pollResp = await fetch(`${MINERU_BASE()}/api/v1/agent/parse/${signData.data.task_id}`);
+                  const pollData: any = await pollResp.json().catch(() => ({}));
+                  if (pollData?.data?.state === 'done') {
+                    const mdResp = await fetch(pollData.data.markdown_url);
+                    markdown = await mdResp.text();
+                    break;
+                  }
+                  if (pollData?.data?.state === 'failed') break;
+                  await new Promise(r => setTimeout(r, 2000));
+                }
+                if (markdown && markdown.length > 50) {
+                  // 顺便缓存 ocr_markdown
+                  try { await env.DB.prepare('UPDATE resumes SET ocr_markdown=?, ocr_status=? WHERE id=?').bind(markdown.substring(0, 200000), 'ocr_done', row.id).run(); } catch {}
+                  return { text: markdown, source: 'mineru_ocr_ondemand' };
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+  } catch { /* fall through */ }
+
+  // 4. 兜底：从 parsed_data 构造结构化摘要块
+  const pd = typeof row.parsed_data === 'string' ? (() => { try { return JSON.parse(row.parsed_data); } catch { return {}; } })() : (row.parsed_data || {});
+  const parts: string[] = [];
+  if (pd.highest_degree) parts.push(`学历：${pd.highest_degree}`);
+  if (pd.school) parts.push(`学校：${pd.school}`);
+  if (pd.major) parts.push(`专业：${pd.major}`);
+  if (pd.years_of_experience) parts.push(`工作年限：${pd.years_of_experience}年`);
+  if (pd.recent_company) parts.push(`最近公司：${pd.recent_company}`);
+  if (Array.isArray(pd.skills) && pd.skills.length) parts.push(`技能：${pd.skills.join('、')}`);
+  if (pd.self_evaluation) parts.push(`自我评价：${pd.self_evaluation}`);
+  if (pd.work_experience_summary) parts.push(`工作经历：${pd.work_experience_summary}`);
+  const summary = parts.join('\n');
+  return { text: summary, source: 'parsed_summary' };
 }
 
 // 将 AI 初筛结果 + 评估文本映射为匹配度分数
@@ -3807,7 +3881,7 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
       }
     } catch {}
 
-    let created = 0, updated = 0;
+    let created = 0, updated = 0, needsScreening = 0;
     for (const rec of records) {
       const item = parseTalentRecord(rec);
       const screening = item.screening_result || '';   // AI简历初筛结果：通过/淘汰
@@ -3851,24 +3925,34 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
         _need_ocr: (!aiFields.school && !aiFields.major) ? true : false,
       };
 
+      // 检测是否需要自动 AI 初筛（飞书侧未完成解析/评估时由本系统补齐）
+      const feishuAiEval = item.ai_evaluation || '';
+      const feishuScreening = item.screening_result || '';
+      const fieldIncomplete = !aiFields.highest_degree && !aiFields.school;
+      const needsAutoScreen = (!feishuScreening || feishuAiEval.length < 50 || fieldIncomplete);
+      const parseStatus = needsAutoScreen ? 'pending_screening' : 'completed';
+      if (needsAutoScreen) needsScreening++;
+
       if (existing) {
         await c.env.DB.prepare(
-          `UPDATE resumes SET candidate_name=?, email=?, position_applied=?, mapped_position=?, match_score=?, screening_result=?, ai_review=?, hr_review=?, status=?, stage=?, parsed_data=?, parse_status='completed' WHERE id=?`
+          `UPDATE resumes SET candidate_name=?, email=?, position_applied=?, mapped_position=?, match_score=?, screening_result=?, ai_review=?, hr_review=?, status=?, stage=?, parsed_data=?, parse_status=? WHERE id=?`
         ).bind(
           item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos,
           item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
           JSON.stringify(mergedParsedData),
+          parseStatus,
           id
         ).run();
         updated++;
       } else {
         await c.env.DB.prepare(
-          `INSERT INTO resumes (id, candidate_name, email, position_applied, mapped_position, match_score, screening_result, ai_review, hr_review, status, stage, parsed_data, parse_status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'completed', ?)`
+          `INSERT INTO resumes (id, candidate_name, email, position_applied, mapped_position, match_score, screening_result, ai_review, hr_review, status, stage, parsed_data, parse_status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?, ?)`
         ).bind(
           id, item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos, item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
           JSON.stringify(mergedParsedData),
+          parseStatus,
           now()
         ).run();
         created++;
@@ -3891,7 +3975,7 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
       actor: c.get('user')?.email,
       detail: JSON.stringify({ created, updated, total: records.length, needs_ocr: needsOcr }),
     });
-    return c.json({ ok: true, message: `简历同步完成：新增 ${created} 条，更新 ${updated} 条${needsOcr ? `，${needsOcr} 条需要 OCR 兜底` : ''}`, created, updated, total: records.length, needs_ocr: needsOcr });
+    return c.json({ ok: true, message: `简历同步完成：新增 ${created} 条，更新 ${updated} 条${needsOcr ? `，${needsOcr} 条需要 OCR 兜底` : ''}${needsScreening ? `，${needsScreening} 条待 AI 初筛` : ''}`, created, updated, total: records.length, needs_ocr: needsOcr, needs_screening: needsScreening });
   } catch (e: any) {
     return c.json({ detail: '简历同步失败: ' + e.message }, 500);
   }
@@ -4017,6 +4101,182 @@ app.post('/api/resumes/batch-ocr-mineru', authMiddleware, async (c) => {
     return c.json({ ok: true, results, count: results.length });
   } catch (e: any) {
     return c.json({ detail: '批量 OCR 失败: ' + e.message }, 500);
+  }
+});
+
+// 批量 AI 初筛 + 字段解析：对飞书未完成评估的简历（parse_status='pending_screening'），
+// 分两步调 callAI：①字段解析更新 parsed_data ②AI 初筛评分更新 ai_evaluation/screening_result
+app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
+  const results: any[] = [];
+  try {
+    const rows = await c.env.DB.prepare(
+      `SELECT * FROM resumes WHERE parse_status = 'pending_screening' LIMIT 5`
+    ).all();
+    for (const row of (rows.results || []) as any[]) {
+      const rid = row.id;
+      try {
+        // Step 1: 获取简历文本
+        const { text: resumeText, source: textSource } = await getResumeTextForScreening(c.env, row);
+        if (!resumeText || resumeText.length < 20) {
+          results.push({ id: rid, candidate_name: row.candidate_name, status: 'no_text' });
+          continue;
+        }
+
+        // Step 2: callAI #1 — 字段解析
+        const parseSysPrompt = `你是一个专业的简历解析助手。请从简历文本中提取所有信息，用 JSON 返回（不���加 markdown 代码块）。找不到的字段设为 null 或空字符串/空数组。
+
+{
+  "name": "姓名",
+  "gender": "性别（男/女）",
+  "age": 年龄数字或null,
+  "birthday": "出生年月",
+  "phone": "手机号",
+  "email": "邮箱",
+  "highest_degree": "最高学历（本科/硕士/博士/大专）",
+  "school": "毕业院校",
+  "major": "专业",
+  "city": "所在城市",
+  "years_of_experience": "工作年限数字",
+  "recent_company": "最近公司",
+  "current_position": "当前/最近职位",
+  "skills": ["技能1","技能2"],
+  "work_experience_summary": "工作经历摘要200字以内",
+  "advantage": "核心优势200字以内",
+  "risk": "潜在风险200字以内",
+  "self_evaluation": "自我评价"
+}`;
+        const parseUserPrompt = `简历文本：\n\n${resumeText}`;
+        let parsedFields: any = {};
+        try {
+          const parseResp = await callAI(c.env, parseSysPrompt, parseUserPrompt, 'deepseek-v4-flash');
+          if (parseResp) {
+            parsedFields = JSON.parse(extractJSON(parseResp) || '{}');
+            // 合并到 parsed_data
+            const existingData = typeof row.parsed_data === 'string'
+              ? (() => { try { return JSON.parse(row.parsed_data); } catch { return {}; } })()
+              : (row.parsed_data || {});
+            const merged = {
+              ...existingData,
+              highest_degree: parsedFields.highest_degree || existingData.highest_degree || '',
+              school: parsedFields.school || existingData.school || '',
+              major: parsedFields.major || existingData.major || '',
+              years_of_experience: parsedFields.years_of_experience ?? existingData.years_of_experience ?? null,
+              recent_company: parsedFields.recent_company || existingData.recent_company || '',
+              current_position: parsedFields.current_position || existingData.current_position || '',
+              phone: parsedFields.phone || existingData.phone || '',
+              email: parsedFields.email || existingData.email || '',
+              gender: parsedFields.gender || existingData.gender || '',
+              age: parsedFields.age ?? existingData.age ?? null,
+              birthday: parsedFields.birthday || existingData.birthday || '',
+              city: parsedFields.city || existingData.city || '',
+              skills: Array.isArray(parsedFields.skills) ? parsedFields.skills : (existingData.skills || []),
+              work_experience_summary: parsedFields.work_experience_summary || existingData.work_experience_summary || '',
+              advantage: parsedFields.advantage || existingData.advantage || '',
+              risk: parsedFields.risk || existingData.risk || '',
+              self_evaluation: parsedFields.self_evaluation || existingData.self_evaluation || '',
+              _parse_source: 'ai_auto_screen',
+              _need_ocr: false,
+            };
+            await c.env.DB.prepare('UPDATE resumes SET parsed_data=? WHERE id=?')
+              .bind(JSON.stringify(merged), rid).run();
+            // 更新内存引用供 step3 用
+            parsedFields = merged;
+          }
+        } catch (parseErr: any) {
+          console.error(`[Batch-Auto-Screen] Parse failed for ${rid}: ${parseErr.message}`);
+          // 字段解析失败不阻塞，继续用已有的 parsed_data
+          const existingData = typeof row.parsed_data === 'string'
+            ? (() => { try { return JSON.parse(row.parsed_data); } catch { return {}; } })()
+            : (row.parsed_data || {});
+          parsedFields = existingData;
+        }
+
+        // Step 3: callAI #2 — AI 初筛评分（能力维度匹配）
+        const posName = row.position_applied || '';
+        const posCtx = await getPositionContext(c.env.DB, posName);
+        const structuredBlock = [
+          parsedFields.highest_degree ? `学历：${parsedFields.highest_degree}` : '',
+          parsedFields.school ? `学校：${parsedFields.school}` : '',
+          parsedFields.major ? `专业：${parsedFields.major}` : '',
+          parsedFields.years_of_experience ? `工作年限：${parsedFields.years_of_experience}年` : '',
+          parsedFields.recent_company ? `最近公司：${parsedFields.recent_company}` : '',
+          parsedFields.current_position ? `当前职位：${parsedFields.current_position}` : '',
+          Array.isArray(parsedFields.skills) && parsedFields.skills.length ? `技能：${parsedFields.skills.join('、')}` : '',
+          parsedFields.work_experience_summary ? `工作经历：${parsedFields.work_experience_summary}` : '',
+          parsedFields.self_evaluation ? `自我评价：${parsedFields.self_evaluation}` : '',
+        ].filter(Boolean).join('\n');
+
+        const screenSysPrompt = `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON（不要加 markdown 代码块）：
+
+{
+  "match_score": 0-100的整数,
+  "recommendation": "strongly_recommend | recommend | neutral | not_recommend | strongly_not_recommend",
+  "summary": "2-3句话的综合评估摘要",
+  "strengths": ["优势1","优势2","优势3"],
+  "risks": ["风险1","风险2"],
+  "suggested_questions": ["面试问题1","面试问题2","面试问题3"],
+  "dimensions": [{"name":"能力维度名","score":0-5整数,"reason":"打分依据一句话"}]
+}
+
+重要：必须依据岗位「能力维度」逐条打分。若岗位未提供能力维度，则自行归纳 3-5 个关键维度。`;
+
+        const screenUserPrompt = [
+          `【岗位】${posCtx.standardPosition || posName}`,
+          posCtx.capabilityDimensions ? `【能力维度】${posCtx.capabilityDimensions}` : '',
+          posCtx.personalizedRequirements ? `【个性化需求】${posCtx.personalizedRequirements}` : '',
+          posCtx.salaryRange ? `【薪资范围】${posCtx.salaryRange}` : '',
+          `【候选人结构化信息】\n${structuredBlock || '暂无结构化信息'}`,
+          `【简历原文／OCR 文本】\n${resumeText.substring(0, 6000)}`,
+        ].filter(Boolean).join('\n\n');
+
+        let matchScore = 50;
+        try {
+          const screenResp = await callAI(c.env, screenSysPrompt, screenUserPrompt, 'deepseek-v4-flash');
+          if (screenResp) {
+            const screening: any = JSON.parse(extractJSON(screenResp) || '{}');
+            const screeningResult = (screening.match_score ?? 50) >= 80 ? '通过'
+              : (screening.match_score ?? 50) >= 55 ? '存疑' : '淘汰';
+            matchScore = screening.match_score ?? 50;
+
+            // 写 D1
+            await c.env.DB.prepare(
+              `UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status='ai_screened', updated_at=? WHERE id=?`
+            ).bind(
+              JSON.stringify(screening),
+              JSON.stringify({ summary: screening.summary, match_score: matchScore, recommendation: screening.recommendation, dimensions: screening.dimensions }),
+              matchScore,
+              screeningResult,
+              now(),
+              rid
+            ).run();
+
+            // 写回飞书 Bitable
+            try {
+              const tableId = getBitableTableId(c.env, 'talent');
+              await bitableUpdateRecord(c.env, tableId, rid, {
+                'AI简历评估': JSON.stringify({ summary: screening.summary, match_score: matchScore, recommendation: screening.recommendation, dimensions: screening.dimensions }),
+                'AI简历初筛结果': screeningResult,
+                '优势分析': (screening.strengths || []).join('\n'),
+                '风险点': (screening.risks || []).join('\n'),
+              });
+            } catch { /* 飞书回写失败不阻塞 */ }
+
+            results.push({ id: rid, candidate_name: row.candidate_name, status: 'done', match_score: matchScore, screening_result: screeningResult });
+            continue;
+          }
+        } catch (screenErr: any) {
+          console.error(`[Batch-Auto-Screen] Screening failed for ${rid}: ${screenErr.message}`);
+        }
+
+        // AI 初筛失败：保留 pending_screening 供重试
+        results.push({ id: rid, candidate_name: row.candidate_name, status: 'screen_failed' });
+      } catch (e: any) {
+        results.push({ id: rid, candidate_name: row.candidate_name, status: 'error', detail: e.message });
+      }
+    }
+    return c.json({ ok: true, results, count: results.length });
+  } catch (e: any) {
+    return c.json({ detail: '批量 AI 初筛失败: ' + e.message }, 500);
   }
 });
 
@@ -4589,9 +4849,9 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
   if (resume.position_id) {
     position = await c.env.DB.prepare('SELECT * FROM positions WHERE id = ?').bind(resume.position_id).first() as any;
   }
-  let resumeText = resume.ocr_markdown || resume.resume_markdown || resume.raw_text || '';
-  // 文本为空：deepseek-v4-flash 无法直接解析 PDF base64，直接报错
-  if (!resumeText) return c.json({ detail: '该简历未提取到文本内容，无法进行 AI 评估', need_manual: true }, 400);
+  // 三级降级获取文本：ocr_markdown → raw_text → 飞书PDF+MinerU → parsed_data摘要
+  const { text: resumeText, source: textSource } = await getResumeTextForScreening(c.env, resume);
+  if (!resumeText || resumeText.length < 20) return c.json({ detail: '该简历未提取到文本内容，无法进行 AI 评估', need_manual: true }, 400);
   const posTitle = position?.title || resume.position_id || 'Unknown';
   const posDesc = position?.description || '';
   const posReq = position?.requirements || '';
