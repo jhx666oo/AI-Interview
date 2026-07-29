@@ -4106,6 +4106,7 @@ app.post('/api/resumes/batch-ocr-mineru', authMiddleware, async (c) => {
 
 // 批量 AI 初筛 + 字段解析：对飞书未完成评估的简历（parse_status='pending_screening'），
 // 分两步调 callAI：①字段解析更新 parsed_data ②AI 初筛评分更新 ai_evaluation/screening_result
+// 批量 AI 初筛：完全复用 ai-screen 路由的 prompt 和解析逻辑
 app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
   const results: any[] = [];
   try {
@@ -4114,164 +4115,100 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
     ).all();
     for (const row of (rows.results || []) as any[]) {
       const rid = row.id;
+      const name = row.candidate_name || '';
       try {
-        // Step 1: 获取简历文本
-        const { text: resumeText, source: textSource } = await getResumeTextForScreening(c.env, row);
+        // 获取简历文本
+        const { text: resumeText } = await getResumeTextForScreening(c.env, row);
         if (!resumeText || resumeText.length < 20) {
-          results.push({ id: rid, candidate_name: row.candidate_name, status: 'no_text' });
+          results.push({ id: rid, candidate_name: name, status: 'no_text' });
           continue;
         }
 
-        // Step 2: callAI #1 — 字段解析
-        const parseSysPrompt = `你是一个专业的简历解析助手。请从简历文本中提取所有信息，用 JSON 返回（不���加 markdown 代码块）。找不到的字段设为 null 或空字符串/空数组。
+        // Prompt 与 ai-screen 路由完全一致
+        const posCtx = await getPositionContext(c.env.DB, row.position_applied || '');
+        const prompt = await getAIPrompt(c.env, 'analyze_resume', {
+          system: `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON 对象：
 
-{
-  "name": "姓名",
-  "gender": "性别（男/女）",
-  "age": 年龄数字或null,
-  "birthday": "出生年月",
-  "phone": "手机号",
-  "email": "邮箱",
-  "highest_degree": "最高学历（本科/硕士/博士/大专）",
-  "school": "毕业院校",
-  "major": "专业",
-  "city": "所在城市",
-  "years_of_experience": "工作年限数字",
-  "recent_company": "最近公司",
-  "current_position": "当前/最近职位",
-  "skills": ["技能1","技能2"],
-  "work_experience_summary": "工作经历摘要200字以内",
-  "advantage": "核心优势200字以内",
-  "risk": "潜在风险200字以内",
-  "self_evaluation": "自我评价"
-}`;
-        const parseUserPrompt = `简历文本：\n\n${resumeText}`;
-        let parsedFields: any = {};
+- match_score: 人岗匹配度整数 0-100
+- recommendation: 推荐建议，取值 "strongly_recommend" / "recommend" / "neutral" / "not_recommend" / "strongly_not_recommend"
+- summary: 候选人综合摘要（中文，2-3 句）
+- strengths: 3-5 个核心优势（中文数组）
+- risks: 2-4 个潜在风险（中文数组）
+- suggested_questions: 3-5 个建议面试问题（中文数组）
+- dimensions: 能力维度评分明细数组，必须依据岗位给出的「能力维度」逐条打分。每个元素格式：
+  { "name": "维度名称（与岗位能力维度保持一致）", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }
+  若岗位未提供能力维度，则基于岗位通用要求自行归纳 3-5 个关键维度打分。`,
+          user: ''
+        });
+
+        // 从 parsed_data 构造结构化摘要块（与 ai-screen 路由一致）
+        let structuredBlock = '';
         try {
-          const parseResp = await callAI(c.env, parseSysPrompt, parseUserPrompt, 'deepseek-v4-flash');
-          if (parseResp) {
-            parsedFields = JSON.parse(extractJSON(parseResp) || '{}');
-            // 合并到 parsed_data
-            const existingData = typeof row.parsed_data === 'string'
-              ? (() => { try { return JSON.parse(row.parsed_data); } catch { return {}; } })()
-              : (row.parsed_data || {});
-            const merged = {
-              ...existingData,
-              highest_degree: parsedFields.highest_degree || existingData.highest_degree || '',
-              school: parsedFields.school || existingData.school || '',
-              major: parsedFields.major || existingData.major || '',
-              years_of_experience: parsedFields.years_of_experience ?? existingData.years_of_experience ?? null,
-              recent_company: parsedFields.recent_company || existingData.recent_company || '',
-              current_position: parsedFields.current_position || existingData.current_position || '',
-              phone: parsedFields.phone || existingData.phone || '',
-              email: parsedFields.email || existingData.email || '',
-              gender: parsedFields.gender || existingData.gender || '',
-              age: parsedFields.age ?? existingData.age ?? null,
-              birthday: parsedFields.birthday || existingData.birthday || '',
-              city: parsedFields.city || existingData.city || '',
-              skills: Array.isArray(parsedFields.skills) ? parsedFields.skills : (existingData.skills || []),
-              work_experience_summary: parsedFields.work_experience_summary || existingData.work_experience_summary || '',
-              advantage: parsedFields.advantage || existingData.advantage || '',
-              risk: parsedFields.risk || existingData.risk || '',
-              self_evaluation: parsedFields.self_evaluation || existingData.self_evaluation || '',
-              _parse_source: 'ai_auto_screen',
-              _need_ocr: false,
-            };
-            await c.env.DB.prepare('UPDATE resumes SET parsed_data=? WHERE id=?')
-              .bind(JSON.stringify(merged), rid).run();
-            // 更新内存引用供 step3 用
-            parsedFields = merged;
-          }
-        } catch (parseErr: any) {
-          console.error(`[Batch-Auto-Screen] Parse failed for ${rid}: ${parseErr.message}`);
-          // 字段解析失败不阻塞，继续用已有的 parsed_data
-          const existingData = typeof row.parsed_data === 'string'
-            ? (() => { try { return JSON.parse(row.parsed_data); } catch { return {}; } })()
-            : (row.parsed_data || {});
-          parsedFields = existingData;
+          const pd = typeof row.parsed_data === 'string' ? JSON.parse(row.parsed_data || '{}') : (row.parsed_data || {});
+          const parts: string[] = [];
+          if (pd.name || name) parts.push(`- 姓名：${pd.name || name}`);
+          if (pd.highest_degree) parts.push(`- 学历：${pd.highest_degree}${pd.school ? `（${pd.school}${pd.major ? ' ' + pd.major : ''}）` : ''}`);
+          if (pd.years_of_experience !== undefined && pd.years_of_experience !== null && pd.years_of_experience !== '')
+            parts.push(`- 工作年限：${pd.years_of_experience}年`);
+          if (pd.recent_company) parts.push(`- 最近公司：${pd.recent_company}${pd.current_position ? ' / ' + pd.current_position : ''}`);
+          if (Array.isArray(pd.skills) && pd.skills.length) parts.push(`- 技能：${pd.skills.join('、')}`);
+          if (pd.advantage) parts.push(`- 优势：${pd.advantage}`);
+          if (pd.risk) parts.push(`- 风险点：${pd.risk}`);
+          if (parts.length) structuredBlock = `\n候选人结构化信息（已解析字段）：\n${parts.join('\n')}\n`;
+        } catch {}
+
+        const userPrompt = `Job Position:\nTitle: ${posCtx.standardPosition}\n` +
+          (posCtx.salaryRange ? `Salary: ${posCtx.salaryRange}\n` : '') +
+          `Department: \nDescription: \nRequirements: \n` +
+          (posCtx.capabilityDimensions ? `\nCapability Dimensions (能力维度):\n${posCtx.capabilityDimensions}\n` : '') +
+          (posCtx.personalizedRequirements ? `\nPersonalized Requirements (个性化要求):\n${posCtx.personalizedRequirements}\n` : '') +
+          structuredBlock +
+          `\nCandidate Resume (full text):\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
+
+        const result = await callAI(c.env, prompt.system, userPrompt, 'deepseek-v4-flash');
+        if (!result || result.length < 10) {
+          results.push({ id: rid, candidate_name: name, status: 'no_response' });
+          continue;
         }
 
-        // Step 3: callAI #2 — AI 初筛评分（能力维度匹配）
-        const posName = row.position_applied || '';
-        const posCtx = await getPositionContext(c.env.DB, posName);
-        const structuredBlock = [
-          parsedFields.highest_degree ? `学历：${parsedFields.highest_degree}` : '',
-          parsedFields.school ? `学校：${parsedFields.school}` : '',
-          parsedFields.major ? `专业：${parsedFields.major}` : '',
-          parsedFields.years_of_experience ? `工作年限：${parsedFields.years_of_experience}年` : '',
-          parsedFields.recent_company ? `最近公司：${parsedFields.recent_company}` : '',
-          parsedFields.current_position ? `当前职位：${parsedFields.current_position}` : '',
-          Array.isArray(parsedFields.skills) && parsedFields.skills.length ? `技能：${parsedFields.skills.join('、')}` : '',
-          parsedFields.work_experience_summary ? `工作经历：${parsedFields.work_experience_summary}` : '',
-          parsedFields.self_evaluation ? `自我评价：${parsedFields.self_evaluation}` : '',
-        ].filter(Boolean).join('\n');
+        // 解析（与 ai-screen 路由一致：extractJSON 直接调用，失败用 raw）
+        let parsed: any;
+        try { parsed = extractJSON(result); } catch { parsed = { raw_response: result, summary: result }; }
 
-        const screenSysPrompt = `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON（不要加 markdown 代码块）：
+        const matchScore = parsed.match_score ?? 50;
+        const screeningResult = matchScore >= 80 ? '通过' : matchScore >= 55 ? '存疑' : '淘汰';
 
-{
-  "match_score": 0-100的整数,
-  "recommendation": "strongly_recommend | recommend | neutral | not_recommend | strongly_not_recommend",
-  "summary": "2-3句话的综合评估摘要",
-  "strengths": ["优势1","优势2","优势3"],
-  "risks": ["风险1","风险2"],
-  "suggested_questions": ["面试问题1","面试问题2","面试问题3"],
-  "dimensions": [{"name":"能力维度名","score":0-5整数,"reason":"打分依据一句话"}]
-}
-
-重要：必须依据岗位「能力维度」逐条打分。若岗位未提供能力维度，则自行归纳 3-5 个关键维度。`;
-
-        const screenUserPrompt = [
-          `【岗位】${posCtx.standardPosition || posName}`,
-          posCtx.capabilityDimensions ? `【能力维度】${posCtx.capabilityDimensions}` : '',
-          posCtx.personalizedRequirements ? `【个性化需求】${posCtx.personalizedRequirements}` : '',
-          posCtx.salaryRange ? `【薪资范围】${posCtx.salaryRange}` : '',
-          `【候选人结构化信息】\n${structuredBlock || '暂无结构化信息'}`,
-          `【简历原文／OCR 文本】\n${resumeText.substring(0, 6000)}`,
-        ].filter(Boolean).join('\n\n');
-
-        let matchScore = 50;
-        try {
-          const screenResp = await callAI(c.env, screenSysPrompt, screenUserPrompt, 'deepseek-v4-flash');
-          if (screenResp) {
-            const screening: any = JSON.parse(extractJSON(screenResp) || '{}');
-            const screeningResult = (screening.match_score ?? 50) >= 80 ? '通过'
-              : (screening.match_score ?? 50) >= 55 ? '存疑' : '淘汰';
-            matchScore = screening.match_score ?? 50;
-
-            // 写 D1
-            await c.env.DB.prepare(
-              `UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status='ai_screened', updated_at=? WHERE id=?`
-            ).bind(
-              JSON.stringify(screening),
-              JSON.stringify({ summary: screening.summary, match_score: matchScore, recommendation: screening.recommendation, dimensions: screening.dimensions }),
-              matchScore,
-              screeningResult,
-              now(),
-              rid
-            ).run();
-
-            // 写回飞书 Bitable
-            try {
-              const tableId = getBitableTableId(c.env, 'talent');
-              await bitableUpdateRecord(c.env, tableId, rid, {
-                'AI简历评估': JSON.stringify({ summary: screening.summary, match_score: matchScore, recommendation: screening.recommendation, dimensions: screening.dimensions }),
-                'AI简历初筛结果': screeningResult,
-                '优势分析': (screening.strengths || []).join('\n'),
-                '风险点': (screening.risks || []).join('\n'),
-              });
-            } catch { /* 飞书回写失败不阻塞 */ }
-
-            results.push({ id: rid, candidate_name: row.candidate_name, status: 'done', match_score: matchScore, screening_result: screeningResult });
-            continue;
-          }
-        } catch (screenErr: any) {
-          console.error(`[Batch-Auto-Screen] Screening failed for ${rid}: ${screenErr.message}`);
+        // ai_evaluation 与 ai-screen 路由格式一致
+        const aiEvalObj: any = { summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '' };
+        if (Array.isArray(parsed.dimensions) && parsed.dimensions.length) {
+          aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({
+            name: d.name || '', score: typeof d.score === 'number' ? d.score : (parseFloat(d.score) || 0), reason: d.reason || '',
+          }));
         }
+        const aiReviewText = JSON.stringify({
+          summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '',
+          strengths: parsed.strengths || [], risks: parsed.risks || [],
+          suggested_questions: parsed.suggested_questions || [], dimensions: aiEvalObj.dimensions || [],
+        });
 
-        // AI 初筛失败：保留 pending_screening 供重试
-        results.push({ id: rid, candidate_name: row.candidate_name, status: 'screen_failed' });
+        await c.env.DB.prepare(
+          `UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status='ai_screened', updated_at=? WHERE id=?`
+        ).bind(aiReviewText, JSON.stringify(aiEvalObj), matchScore, screeningResult, now(), rid).run();
+
+        // 写回飞书
+        try {
+          const tid = getBitableTableId(c.env, 'talent');
+          await bitableUpdateRecord(c.env, tid, rid, {
+            'AI简历评估': JSON.stringify({ summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '', dimensions: aiEvalObj.dimensions || [] }),
+            'AI简历初筛结果': screeningResult,
+            '优势分析': (parsed.strengths || []).join('\n'),
+            '风险点': (parsed.risks || []).join('\n'),
+          });
+        } catch {}
+
+        results.push({ id: rid, candidate_name: name, status: 'done', match_score: matchScore, screening_result: screeningResult });
       } catch (e: any) {
-        results.push({ id: rid, candidate_name: row.candidate_name, status: 'error', detail: e.message });
+        results.push({ id: rid, candidate_name: name, status: 'error', detail: e.message });
       }
     }
     return c.json({ ok: true, results, count: results.length });
