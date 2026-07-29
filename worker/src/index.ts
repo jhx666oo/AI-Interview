@@ -474,6 +474,11 @@ function now(): string {
   return new Date().toISOString();
 }
 
+function safeJsonParse(v: any): any {
+  if (!v || typeof v !== 'string') return null;
+  try { return JSON.parse(v); } catch { return null; }
+}
+
 // ==================== 操作日志（结构化埋点） ====================
 
 /**
@@ -3834,11 +3839,19 @@ app.get('/api/resumes', authMiddleware, async (c) => {
         if (d1r.ai_review) {
           try { item.ai_review = JSON.parse(d1r.ai_review); } catch { item.ai_review = d1r.ai_review; }
         }
+        if (d1r.ai_evaluation) {
+          item.ai_evaluation = safeJsonParse(d1r.ai_evaluation) || item.ai_evaluation;
+        }
         if (d1r.screening_result) item.screening_result = d1r.screening_result;
         if (d1r.parsed_data) {
           try { item.parsed_data = JSON.parse(d1r.parsed_data); } catch { item.parsed_data = d1r.parsed_data; }
         }
         if (d1r.parse_status) item.parse_status = d1r.parse_status;
+        // 派生初筛标签（卡片状态用）
+        if (d1r.screening_result) {
+          const sr = d1r.screening_result;
+          item.screening_label = sr.includes('通过') ? '通过' : sr.includes('淘汰') ? '淘汰' : sr.includes('存疑') ? '存疑' : sr;
+        }
         return item;
       });
     } catch {}
@@ -4323,7 +4336,7 @@ app.get('/api/resumes/:id', authMiddleware, async (c) => {
           try { item.ai_review = JSON.parse(d1Row.ai_review); } catch { item.ai_review = d1Row.ai_review; }
         }
         if (d1Row.ai_evaluation) {
-          try { item.ai_evaluation = JSON.parse(d1Row.ai_evaluation); } catch { item.ai_evaluation = d1Row.ai_evaluation; }
+          item.ai_evaluation = safeJsonParse(d1Row.ai_evaluation) || item.ai_evaluation;
         }
         if (d1Row.screening_result) item.screening_result = d1Row.screening_result;
         if (d1Row.parsed_data) {
