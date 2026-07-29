@@ -3818,6 +3818,31 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       });
     } catch {}
 
+    // 合并 D1 中的 AI 初筛结果和解析字段（飞书没有这些数据）
+    try {
+      const d1Rows = await c.env.DB.prepare(
+        'SELECT id, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status FROM resumes'
+      ).all();
+      const d1Map = new Map<string, any>();
+      for (const r of (d1Rows.results || []) as any[]) {
+        d1Map.set(r.id, r);
+      }
+      items = items.map((item: any) => {
+        const d1r = d1Map.get(item.id);
+        if (!d1r) return item;
+        if (d1r.match_score != null) item.match_score = d1r.match_score;
+        if (d1r.ai_review) {
+          try { item.ai_review = JSON.parse(d1r.ai_review); } catch { item.ai_review = d1r.ai_review; }
+        }
+        if (d1r.screening_result) item.screening_result = d1r.screening_result;
+        if (d1r.parsed_data) {
+          try { item.parsed_data = JSON.parse(d1r.parsed_data); } catch { item.parsed_data = d1r.parsed_data; }
+        }
+        if (d1r.parse_status) item.parse_status = d1r.parse_status;
+        return item;
+      });
+    } catch {}
+
     // 加载岗位映射表，将 position_applied 映射为标准岗位名
     try {
       const map = await buildPositionMapping(c.env.DB);
