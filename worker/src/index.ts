@@ -5987,20 +5987,28 @@ app.post('/api/daily-reports/generate', authMiddleware, async (c) => {
   try {
     aiSummary = await callAI(c.env,
       '你是招聘数据分析专家。根据招聘统计数据生成一份简洁的日报摘要（中文），包含：整体进展概述、关键指标分析、风险提示、明日建议。控制在300字以内。',
-      `日期：${reportDate}\n统计数据：${JSON.stringify(stats, null, 2)}`,
-      'deepseek-v4-flash'
+      `日期：${reportDate}\n统计数据：${JSON.stringify(stats, null, 2)}`
     );
   } catch (e: any) {
+    console.error('[daily-report] AI summary failed:', e?.message);
     aiSummary = '(AI摘要生成失败)';
   }
 
   const content = JSON.stringify(stats);
-  const title = `招聘日报 - ${reportDate}`;
   const id = uuid();
 
   await c.env.DB.prepare(
-    'INSERT INTO daily_reports (id, report_date, report_type, title, content, stats, status, created_at) VALUES (?,?,?,?,?,?,?,?)'
-  ).bind(id, reportDate, reportType, title, content, aiSummary, 'generated', now()).run();
+    `INSERT INTO daily_reports (id, report_date, total_resumes, pending_screening, approved, rejected, total_interviews, total_onboarding, ai_summary, stats, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(id, reportDate,
+    (stats as any).total_resumes || 0,
+    (stats as any).pending_screening || 0,
+    (stats as any).approved_candidates || 0,
+    (stats as any).rejected_candidates || 0,
+    (stats as any).active_interviews || 0,
+    (stats as any).onboarding_count || 0,
+    aiSummary, content, now()
+  ).run();
 
   const row = await c.env.DB.prepare('SELECT * FROM daily_reports WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
@@ -6024,13 +6032,15 @@ app.post('/api/daily-reports/:id/send', authMiddleware, async (c) => {
     if (!row) return c.json({ detail: '日报不存在' }, 404);
 
     const r: any = transformRow(row);
-    const stats = r.content ? (() => { try { return JSON.parse(r.content); } catch { return {}; } })() : {};
-    const aiSummary = r.stats || '(无AI摘要)';
+    // stats 列存 JSON 数据，ai_summary 列存 AI 摘要
+    let statsData: any = {};
+    try { if (r.stats) statsData = typeof r.stats === 'string' ? JSON.parse(r.stats) : r.stats; } catch {}
+    const aiSummary = r.ai_summary || '(无AI摘要)';
 
     const cardContent = {
       config: { wide_screen_mode: true },
       header: {
-        title: { tag: 'plain_text', content: `📊 ${r.title || '招聘日报'}` },
+        title: { tag: 'plain_text', content: `📊 招聘日报 · ${r.report_date || '-'}` },
         template: 'blue',
       },
       elements: [
@@ -6040,11 +6050,12 @@ app.post('/api/daily-reports/:id/send', authMiddleware, async (c) => {
             tag: 'lark_md',
             content: [
               `**报告日期**：${r.report_date || '-'}`,
-              `**待筛选**：${stats.pending_screening ?? '-'}`,
-              `**面试中**：${stats.active_interviews ?? '-'}`,
-              `**已通过**：${stats.approved_candidates ?? '-'}`,
-              `**入职中**：${stats.onboarding_count ?? '-'}`,
-              `**开放需求**：${stats.open_requisitions ?? '-'}`,
+              `**简历总数**：${r.total_resumes ?? '-'}`,
+              `**待筛选**：${r.pending_screening ?? '-'}`,
+              `**已通过**：${r.approved ?? '-'}`,
+              `**已拒绝**：${r.rejected ?? '-'}`,
+              `**面试中**：${r.total_interviews ?? '-'}`,
+              `**入职中**：${r.total_onboarding ?? '-'}`,
               '',
               `**📝 AI 摘要**`,
               aiSummary.length > 500 ? aiSummary.slice(0, 500) + '...' : aiSummary,
