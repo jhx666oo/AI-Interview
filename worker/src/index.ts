@@ -3112,6 +3112,8 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     let parsedGender = '';
     let parsedAge: number | null = null;
     let parsedEducation = '';
+    let parsedSchool = '';
+    let parsedMajor = '';
     let parsedCity = '';
     let parsedAdvantage = '';
     let parsedRisk = '';
@@ -3120,6 +3122,8 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     let parsedEmail = '';
     let parsedSkills: string[] = [];
     let parsedWorkYears: number | null = null;
+    let parsedRecentCompany = '';
+    let parsedCurrentPosition = '';
     let parsedExperience: string = '';
     let aiParseFailed = false;
 
@@ -3159,13 +3163,13 @@ app.post('/api/resumes', authMiddleware, async (c) => {
   "age": 年龄数字或null,
   "phone": "手机号码",
   "email": "电子邮箱",
-  "education": "最高学历（如：本科/硕士/博士）",
+  "highest_degree": "最高学历（如：本科/硕士/博士）",
   "school": "毕业院校",
   "major": "专业",
   "city": "所在城市",
-  "work_years": "工作年限（数字）",
+  "years_of_experience": "工作年限（数字）",
   "skills": ["技能1", "技能2", "技能3", "..."],
-  "current_company": "目前/最近所在公司",
+  "recent_company": "目前/最近所在公司",
   "current_position": "目前/最近职位",
   "work_experience_summary": "工作经历摘要（200字以内，突出公司、职位、职责、业绩）",
   "advantage": "候选人核心优势分析（3-5个优势，200字以内）",
@@ -3180,7 +3184,10 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         parsedName = parsed.name || parsedCandidateName || fileNameWithoutExt;
         parsedGender = parsed.gender || '';
         parsedAge = parsed.age || null;
-        parsedEducation = parsed.education || '';
+        // 兼容新旧字段名（education→highest_degree, work_years→years_of_experience, current_company→recent_company）
+        parsedEducation = parsed.highest_degree || parsed.education || '';
+        parsedSchool = parsed.school || '';
+        parsedMajor = parsed.major || '';
         parsedCity = parsed.city || '';
         parsedAdvantage = parsed.advantage || '';
         parsedRisk = parsed.risk || '';
@@ -3188,8 +3195,10 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         parsedPhone = parsed.phone || '';
         parsedEmail = parsed.email || '';
         parsedSkills = Array.isArray(parsed.skills) ? parsed.skills : [];
-        parsedWorkYears = parsed.work_years || null;
+        parsedWorkYears = parsed.years_of_experience || parsed.work_years || null;
         parsedExperience = parsed.work_experience_summary || '';
+        parsedRecentCompany = parsed.recent_company || parsed.current_company || '';
+        parsedCurrentPosition = parsed.current_position || '';
       }
     } catch (aiErr: any) {
       aiParseFailed = true;
@@ -3285,12 +3294,15 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       if (parsedSkills.length > 0) updateFields['技能'] = parsedSkills.join(', ');
       if (parsedExperience) updateFields['工作经历'] = parsedExperience;
       if (positionName) updateFields['面试岗位'] = positionName;
+      if (parsedRecentCompany) updateFields['最近公司'] = parsedRecentCompany;
+      if (parsedCurrentPosition) updateFields['最近职位'] = parsedCurrentPosition;
       await bitableUpdateRecord(c.env, tableId, recordId, updateFields);
     } catch (updateErr: any) {
       console.error(`[Upload] Failed to update bitable with AI data: ${updateErr.message}`);
     }
 
     // 5. 同步写入 D1 resumes 表（供 reparse/ai-screen 等本地查询使用）
+    // 注意：parsed_data 统一使用标准字段集，与飞书同步路径(parseAIEvalForFields)、前端详情页读取保持一致
     try {
       const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ?').bind(recordId).first();
       const mappedPos = positionName || parsedPositionName || '';
@@ -3298,12 +3310,16 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         name: parsedName,
         gender: parsedGender,
         age: parsedAge,
-        education: parsedEducation,
+        highest_degree: parsedEducation,
+        school: parsedSchool,
+        major: parsedMajor,
         city: parsedCity,
         phone: parsedPhone,
         email: parsedEmail,
         skills: parsedSkills,
-        work_years: parsedWorkYears,
+        years_of_experience: parsedWorkYears,
+        recent_company: parsedRecentCompany,
+        current_position: parsedCurrentPosition,
         position_applied: mappedPos,
         advantage: parsedAdvantage,
         risk: parsedRisk,
@@ -3973,6 +3989,14 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     }
     // Ensure we keep anything from the original parsed that wasn't in sub-objects
     const merged = { ...parsed, ...flattened };
+    // 归一化 parsed_data 为标准字段集（兼容 AI 返回的新旧字段名）
+    const normalized: any = { ...merged };
+    if (!normalized.highest_degree && normalized.education) normalized.highest_degree = normalized.education;
+    if (!normalized.years_of_experience && normalized.work_years) normalized.years_of_experience = normalized.work_years;
+    if (!normalized.recent_company && normalized.current_company) normalized.recent_company = normalized.current_company;
+    if (normalized.highest_degree) delete normalized.education;
+    if (normalized.years_of_experience !== undefined) delete normalized.work_years;
+    if (normalized.recent_company) delete normalized.current_company;
     // Build ai_review markdown from screening data
     const advantage = merged.advantage || merged.advantages || '';
     const risk = merged.risk || merged.risks || '';
@@ -3997,8 +4021,8 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     await c.env.DB.prepare(
       'UPDATE resumes SET parsed_data = ?, ai_review = ?, match_score = ?, screening_result = ?, parse_status = ? WHERE id = ?'
     ).bind(
-      JSON.stringify(merged),
-      aiReview || JSON.stringify(merged),
+      JSON.stringify(normalized),
+      aiReview || JSON.stringify(normalized),
       matchScore,
       merged.recommendation || JSON.stringify(merged),
       'reparsed',
@@ -4056,15 +4080,17 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
   const posDept = position?.department || '';
   const posSalary = position?.salary_range || '';
   const prompt = await getAIPrompt(c.env, 'analyze_resume', {
-    system: `You are an expert HR recruiter AI. Analyze the candidate resume against the job requirements. Respond in Chinese. Return a JSON object with:
-- match_score: integer 0-100
-- recommendation: one of "strongly_recommend", "recommend", "neutral", "not_recommend", "strongly_not_recommend"
-- summary: brief summary of the candidate (2-3 sentences in Chinese)
-- strengths: array of 3-5 key strengths in Chinese
-- risks: array of 2-4 potential risks or concerns in Chinese
-- skill_match: object with "matched" (array) and "gaps" (array) in Chinese
-- suggested_questions: array of 3-5 interview questions in Chinese
-- experience_analysis: brief analysis of relevant experience in Chinese (2-3 sentences)`,
+    system: `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON 对象：
+
+- match_score: 人岗匹配度整数 0-100
+- recommendation: 推荐建议，取值 "strongly_recommend" / "recommend" / "neutral" / "not_recommend" / "strongly_not_recommend"
+- summary: 候选人综合摘要（中文，2-3 句）
+- strengths: 3-5 个核心优势（中文数组）
+- risks: 2-4 个潜在风险（中文数组）
+- suggested_questions: 3-5 个建议面试问题（中文数组）
+- dimensions: 能力维度评分明细数组，必须依据岗位给出的「能力维度」逐条打分。每个元素格式：
+  { "name": "维度名称（与岗位能力维度保持一致）", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }
+  若岗位未提供能力维度，则基于岗位通用要求自行归纳 3-5 个关键维度打分。`,
     user: ''
   });
   const systemPrompt = prompt.system;
@@ -4072,19 +4098,56 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
   // 加载岗位上下文
   const posContext = await getPositionContext(c.env.DB, posTitle);
 
+  // 从已解析的结构化字段构造摘要块（基于解析出的 PDF 字段，而非仅纯文本）
+  let structuredBlock = '';
+  try {
+    const pd = typeof resume.parsed_data === 'string' ? JSON.parse(resume.parsed_data || '{}') : (resume.parsed_data || {});
+    const parts: string[] = [];
+    if (pd.name) parts.push(`- 姓名：${pd.name}`);
+    if (pd.highest_degree) parts.push(`- 学历：${pd.highest_degree}${pd.school ? `（${pd.school}${pd.major ? ' ' + pd.major : ''}）` : ''}`);
+    if (pd.years_of_experience !== undefined && pd.years_of_experience !== null && pd.years_of_experience !== '')
+      parts.push(`- 工作年限：${pd.years_of_experience}年`);
+    if (pd.recent_company) parts.push(`- 最近公司：${pd.recent_company}${pd.current_position ? ' / ' + pd.current_position : ''}`);
+    if (Array.isArray(pd.skills) && pd.skills.length) parts.push(`- 技能：${pd.skills.join('、')}`);
+    if (pd.advantage) parts.push(`- 优势：${pd.advantage}`);
+    if (pd.risk) parts.push(`- 风险点：${pd.risk}`);
+    if (parts.length) structuredBlock = `\n候选人结构化信息（已解析字段）：\n${parts.join('\n')}\n`;
+  } catch {}
+
   const userPrompt = `Job Position:\nTitle: ${posContext.standardPosition}\n` +
     (posContext.salaryRange ? `Salary: ${posContext.salaryRange}\n` : '') +
     `Department: ${posDept}\nDescription: ${posDesc}\nRequirements: ${posReq}\n` +
     (posContext.capabilityDimensions ? `\nCapability Dimensions (能力维度):\n${posContext.capabilityDimensions}\n` : '') +
     (posContext.personalizedRequirements ? `\nPersonalized Requirements (个性化要求):\n${posContext.personalizedRequirements}\n` : '') +
-    `\nCandidate Resume:\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
+    structuredBlock +
+    `\nCandidate Resume (full text):\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
   try {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     let parsed: any;
     try { parsed = extractJSON(result); } catch { parsed = { raw_response: result, summary: result }; }
+    // ai_evaluation：写入能力维度评分明细 JSON（格式与前端 parseScoreDetail 兼容：{dimensions:[{name,score,reason}]}）
+    const aiEvalObj: any = { summary: parsed.summary || '', match_score: parsed.match_score ?? null, recommendation: parsed.recommendation || '' };
+    if (Array.isArray(parsed.dimensions) && parsed.dimensions.length) {
+      aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({
+        name: d.name || '',
+        score: typeof d.score === 'number' ? d.score : (parseFloat(d.score) || 0),
+        reason: d.reason || '',
+      }));
+    }
+    const aiEvalText = JSON.stringify(aiEvalObj);
+    // ai_review：完整评估 JSON（供详情页展示）
+    const aiReviewText = JSON.stringify({
+      summary: parsed.summary || '',
+      match_score: parsed.match_score ?? null,
+      recommendation: parsed.recommendation || '',
+      strengths: parsed.strengths || [],
+      risks: parsed.risks || [],
+      suggested_questions: parsed.suggested_questions || [],
+      dimensions: aiEvalObj.dimensions || [],
+    });
     await c.env.DB.prepare(
-      'UPDATE resumes SET ai_review = ?, match_score = ?, screening_result = ?, parse_status = ?, updated_at = ? WHERE id = ?'
-    ).bind(JSON.stringify(parsed), parsed.match_score || null, JSON.stringify(parsed), 'ai_screened', now(), id).run();
+      'UPDATE resumes SET ai_review = ?, ai_evaluation = ?, match_score = ?, screening_result = ?, parse_status = ?, updated_at = ? WHERE id = ?'
+    ).bind(aiReviewText, aiEvalText, parsed.match_score || null, JSON.stringify(parsed), 'ai_screened', now(), id).run();
 
     // 同步写回飞书多维表格（人才库表）
     try {

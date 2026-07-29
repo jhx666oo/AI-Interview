@@ -628,6 +628,12 @@ const ResumeDetail: React.FC = () => {
             <Descriptions.Item label="专业">{parsedData.major || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="工作年限">{parsedData.years_of_experience || '0'}年</Descriptions.Item>
             <Descriptions.Item label="最近公司">{parsedData.recent_company || '未识别'}</Descriptions.Item>
+            <Descriptions.Item label="技能">
+              {Array.isArray(parsedData.skills) && parsedData.skills.length
+                ? parsedData.skills.join('、')
+                : (typeof parsedData.skills === 'string' && parsedData.skills ? parsedData.skills : '未识别')}
+            </Descriptions.Item>
+            <Descriptions.Item label="电话">{resume.contact || parsedData.phone || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="解析状态">{statusInfo.text}</Descriptions.Item>
             <Descriptions.Item label="失败原因">{resume.parse_status === 'failed' ? (resume.parse_error || '未知') : '-'}</Descriptions.Item>
             {resume.reject_reason_category && (
