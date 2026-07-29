@@ -2166,8 +2166,8 @@ app.put('/api/onboarding/:id', authMiddleware, async (c) => {
   }
 });
 
-registerCrud('onboarding', 'onboarding_records', { status: 'eq' });
-registerCrud('probation', 'probation_records', { status: 'eq', result: 'eq' });
+registerCrud('onboarding', 'onboarding_records', { status: 'eq', responsible_person: 'eq' });
+registerCrud('probation', 'probation_records', { status: 'eq', result: 'eq', responsible_person: 'eq' });
 
 // ==================== Onboarding / Probation 数据同步 ====================
 

@@ -184,7 +184,7 @@ const PositionsList: React.FC = () => {
           params: {
               title: searchTitle,
               status: searchStatus,
-              responsible_person: (user as any)?.role !== 'admin' ? (user as any)?.full_name : undefined,
+              responsible_person: (user as any)?.role !== 'admin' ? (user as any)?.full_name : (selectedOwner || undefined),
           }
       });
       setData(res);

@@ -11,6 +11,7 @@ import {
   FileTextOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useOwner } from '../../contexts/OwnerContext';
 import ReactMarkdown from 'react-markdown';
 import dayjs from 'dayjs';
 
@@ -28,6 +29,7 @@ const DailyReportsList: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [selectedDate, setSelectedDate] = useState<dayjs.Dayjs>(dayjs());
+  const { selectedOwner } = useOwner();
 
   // 发送到飞书
   const [sendModal, setSendModal] = useState<any>(null);
@@ -59,6 +61,7 @@ const DailyReportsList: React.FC = () => {
       const res = await request.post('/daily-reports/generate', {
         report_date: selectedDate.format('YYYY-MM-DD'),
         report_type: 'progress',
+        responsible_person: selectedOwner || undefined,
       }) as any;
       if (res && !res.detail) {
         message.success('日报已生成');

@@ -51,12 +51,10 @@ const ResumesList: React.FC = () => {
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
   const { selectedOwner, setSelectedOwner } = useOwner();
   
-  // 初始化：从持久化的 selectedOwner 恢复负责人筛选状态
+  // 同步：全局筛选变化时同步到本地 searchPerson
   useEffect(() => {
-    if (selectedOwner && !searchPerson) {
-      setSearchPerson(selectedOwner);
-    }
-  }, []); // eslint-disable-line
+    setSearchPerson(selectedOwner);
+  }, [selectedOwner]);
   const fetchResponsiblePersons = async () => {
     try {
       const res = await request.get('/positions');
@@ -271,8 +269,8 @@ const ResumesList: React.FC = () => {
 
       // 不再区分 role，统一显示全部
 
-      // 没有筛选条件且有缓存时直接复用（缓存已排序）
-      if (!searchName && !searchStatus && !searchPosition && loadedRef.current && dataCache.current.length > 0) {
+      // 没有筛选条件且有缓存时直接复用（缓存已排序）—— 但负责人筛选走 API 不做缓存
+      if (!searchName && !searchStatus && !searchPosition && !personFilter && loadedRef.current && dataCache.current.length > 0) {
         setData(dataCache.current);
         if (!silent) setLoading(false);
         return;

@@ -9,6 +9,7 @@ import {
   EyeOutlined, CheckCircleOutlined, HomeOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 
 const { TextArea } = Input;
@@ -35,21 +36,27 @@ const OnboardingList: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const { selectedOwner } = useOwner();
   const pageSize = 10;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    try { const res = await request.get('/onboarding'); setData(res || []); }
+    try {
+      const params: any = {};
+      if (selectedOwner) params.responsible_person = selectedOwner;
+      const res = await request.get('/onboarding', { params });
+      setData(res || []);
+    }
     catch (e) { message.error('加载失败'); }
     finally { setLoading(false); }
-  }, []);
+  }, [selectedOwner]);
 
   const fetchResumes = useCallback(async () => {
     try { const res = await request.get('/resumes', { params: { limit: 200 } }); setResumes(res || []); }
     catch (e) { }
   }, []);
 
-  useEffect(() => { fetchData(); fetchResumes() }, []) // eslint-disable-line;
+  useEffect(() => { fetchData(); fetchResumes(); }, [fetchData]);
 
   const handleCreate = () => {
     setEditing(null); form.resetFields();

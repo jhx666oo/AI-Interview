@@ -11,6 +11,7 @@ import {
   ThunderboltOutlined, LoadingOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 
 const { TextArea } = Input;
@@ -43,6 +44,7 @@ const ProbationList: React.FC = () => {
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const { selectedOwner } = useOwner();
   const pageSize = 10;
 
   const handleAIAssessment = async (id: string) => {
@@ -65,12 +67,17 @@ const ProbationList: React.FC = () => {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    try { const res = await request.get('/probation'); setData(res || []); }
+    try {
+      const params: any = {};
+      if (selectedOwner) params.responsible_person = selectedOwner;
+      const res = await request.get('/probation', { params });
+      setData(res || []);
+    }
     catch (e) { message.error('加载失败'); }
     finally { setLoading(false); }
-  }, []);
+  }, [selectedOwner]);
 
-  useEffect(() => { fetchData(); }, []); // eslint-disable-line
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleCreate = () => {
     setEditing(null); form.resetFields();

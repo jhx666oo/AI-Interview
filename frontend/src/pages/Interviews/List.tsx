@@ -308,7 +308,7 @@ const InterviewsList: React.FC = () => {
     }
   }, [search, filterStatus, selectedOwner]);
 
-  useEffect(() => { fetchMergedData(); }, []) // eslint-disable-line;
+  useEffect(() => { fetchMergedData(); }, [fetchMergedData]);
 
   // == 飞书导入 ==
   const handleFeishuSync = async () => {

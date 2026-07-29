@@ -8,6 +8,7 @@ import {
   ReloadOutlined, SearchOutlined, BellOutlined, LoadingOutlined, DownloadOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
@@ -26,6 +27,7 @@ const TalentPoolList: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string | undefined>();
   const [notifyLoading, setNotifyLoading] = useState<string | null>(null);
   const [tablePage, setTablePage] = useState(1);
+  const { selectedOwner } = useOwner();
   const pageSize = 10;
 
   const fetchData = useCallback(async () => {
@@ -34,6 +36,7 @@ const TalentPoolList: React.FC = () => {
       const params: any = {};
       if (search) params.candidate_name = search;
       if (filterStatus) params.status = filterStatus;
+      if (selectedOwner) params.responsible_person = selectedOwner;
       const res = await request.get('/talent-pool', { params });
       setData(res || []);
     } catch {
@@ -41,9 +44,9 @@ const TalentPoolList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [search, filterStatus]);
+  }, [search, filterStatus, selectedOwner]);
 
-  useEffect(() => { fetchData(); }, []) // eslint-disable-line;
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleNotifyInterviewer = async (record: any) => {
     const name = record.candidate_name || '该候选人';
