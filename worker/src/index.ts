@@ -3913,8 +3913,10 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
   const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first() as any;
   if (!resume) return c.json({ detail: 'Resume not found' }, 404);
   let rawText = resume.raw_text || resume.resume_markdown || '';
-  // 文本为空：说明 PDF 未被前端提取（扫描件/加密PDF），deepseek-v4-flash 无法直接解析 base64
-  if (!rawText) return c.json({ detail: '该简历未提取到文本内容（可能是扫描件或加密PDF），请重新上传或手动编辑', need_manual: true }, 400);
+  let parsedDataText = '';
+  try { parsedDataText = resume.parsed_data ? (typeof resume.parsed_data === 'string' ? resume.parsed_data : JSON.stringify(resume.parsed_data)) : ''; } catch { parsedDataText = ''; }
+  // 文本为空：尝试用已解析的结构化字段（如飞书同步来的简历）作为 reparse 输入
+  let reparseSource = rawText ? 'text' : (parsedDataText ? 'parsed' : 'none');
   const candidateName = resume.candidate_name || resume.parsed_name || '';
 
   // 加载岗位上下文（用于增强 reparse 的 prompt）
@@ -3932,13 +3934,15 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
   // 优先读取数据库中的自定义 prompt，key 为 analyze_resume
   const customPrompt = await getCustomPrompt(c.env, 'analyze_resume');
   let systemPrompt: string, userPrompt: string;
+  // reparse 输入文本：优先 raw_text，其次 parsed_data（飞书同步简历）
+  const reparseInputText = rawText || parsedDataText;
   if (customPrompt) {
     let sp = customPrompt.system;
     let up = customPrompt.user;
     if (sp.includes('{candidate_name}')) sp = sp.replace(/\{candidate_name\}/g, candidateName);
     if (up.includes('{candidate_name}')) up = up.replace(/\{candidate_name\}/g, candidateName);
-    if (up.includes('{resume_text}')) up = up.replace(/\{resume_text\}/g, rawText);
-    if (sp.includes('{resume_text}')) sp = sp.replace(/\{resume_text\}/g, rawText);
+    if (up.includes('{resume_text}')) up = up.replace(/\{resume_text\}/g, reparseInputText);
+    if (sp.includes('{resume_text}')) sp = sp.replace(/\{resume_text\}/g, reparseInputText);
     systemPrompt = sp;
     userPrompt = up;
   } else {
@@ -3972,7 +3976,12 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
 - recommendation: 推荐建议（"strongly_recommend"/"recommend"/"neutral"/"not_recommend"/"strongly_not_recommend"）
 - summary: 综合分析摘要（中文，2-3句话）
 - suggested_questions: 建议面试问题（中文，3-5个）`;
-    userPrompt = '简历文本（请提取完整信息）：' + appendContext + '\n\n' + rawText;
+    const inputHint = reparseSource === 'parsed' ? '已解析的结构化字段（来自飞书同步）：' : '简历文本（请提取完整信息）：';
+    userPrompt = inputHint + appendContext + '\n\n' + reparseInputText;
+  }
+  // 既无原文也无结构化字段：无法 reparse
+  if (reparseSource === 'none') {
+    return c.json({ detail: '该简历既无原始文本也无已解析字段，无法重新解析。请重新上传 PDF 或手动编辑', need_manual: true }, 400);
   }
   try {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
