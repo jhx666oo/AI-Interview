@@ -4287,6 +4287,26 @@ app.get('/api/resumes/:id', authMiddleware, async (c) => {
         item.standard_position = item.position_applied || '';
       }
     } catch { item.standard_position = item.position_applied || ''; }
+    // 合并 D1 中的 AI 初筛结果（飞书没有这些字段）
+    try {
+      const d1Row = await c.env.DB.prepare(
+        'SELECT match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, ocr_markdown, raw_text FROM resumes WHERE id = ?'
+      ).bind(c.req.param('id')).first() as any;
+      if (d1Row) {
+        if (d1Row.match_score != null) item.match_score = d1Row.match_score;
+        if (d1Row.ai_review) {
+          try { item.ai_review = JSON.parse(d1Row.ai_review); } catch { item.ai_review = d1Row.ai_review; }
+        }
+        if (d1Row.ai_evaluation) {
+          try { item.ai_evaluation = JSON.parse(d1Row.ai_evaluation); } catch { item.ai_evaluation = d1Row.ai_evaluation; }
+        }
+        if (d1Row.screening_result) item.screening_result = d1Row.screening_result;
+        if (d1Row.parsed_data) {
+          try { item.parsed_data = JSON.parse(d1Row.parsed_data); } catch { item.parsed_data = d1Row.parsed_data; }
+        }
+        if (d1Row.parse_status) item.parse_status = d1Row.parse_status;
+      }
+    } catch {}
     return c.json(item);
   } catch (e: any) {
     return c.json({ detail: e.message }, 500);
