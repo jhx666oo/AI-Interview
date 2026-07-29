@@ -553,7 +553,7 @@ function getOwnerName(c: any): string | null {
 
 // ==================== Health Check ====================
 
-app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString(), ai_binding: !!c.env.AI }));
 
 // ==================== Auth Routes ====================
 

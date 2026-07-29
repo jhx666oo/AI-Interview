@@ -128,14 +128,13 @@ const DailyReportsList: React.FC = () => {
     }
   };
 
-  // 解析统计数据的工具函数
-  const parseStats = (content: string) => {
-    try { return JSON.parse(content); } catch { return null; }
-  };
-
   // 截取 AI 摘要前 150 字
-  const summaryPreview = (text: string) => {
+  const summaryPreview = (text: any) => {
     if (!text) return '';
+    if (typeof text !== 'string') {
+      if (typeof text === 'object') return JSON.stringify(text).slice(0, 150) + '...';
+      return String(text).slice(0, 150) + '...';
+    }
     return text.length > 150 ? text.slice(0, 150) + '...' : text;
   };
 
@@ -186,7 +185,8 @@ const DailyReportsList: React.FC = () => {
       ) : (
         <Row gutter={[16, 16]}>
           {data.map((record: any) => {
-            const stats = parseStats(record.content);
+            // stats 列存的是 JSON 统计数据（transformRow 已解析为对象），ai_summary 是 AI 摘要文本
+            const stats = record.stats && typeof record.stats === 'object' ? record.stats : null;
 
             return (
               <Col key={record.id} xs={24} sm={24} md={12} lg={8}>
@@ -211,14 +211,8 @@ const DailyReportsList: React.FC = () => {
                   {/* 卡片头部 */}
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <Text strong style={{ fontSize: 16 }}>{record.title || '招聘日报'}</Text>
-                      <Tag color="blue" style={{ borderRadius: 4 }}>
-                        {{
-                          progress: '招聘进展',
-                          interview_stats: '面试统计',
-                          leader_summary: '负责人汇总',
-                        }[record.report_type] || record.report_type}
-                      </Tag>
+                      <Text strong style={{ fontSize: 16 }}>📊 招聘日报 · {record.report_date || '-'}</Text>
+                      <Tag color="blue" style={{ borderRadius: 4 }}>日报</Tag>
                     </div>
                     <Space size={12}>
                       <Space size={4}>
@@ -260,7 +254,7 @@ const DailyReportsList: React.FC = () => {
                   )}
 
                   {/* AI 摘要预览 */}
-                  {record.stats ? (
+                  {record.ai_summary ? (
                     <div style={{ flex: 1, marginBottom: 12 }}>
                       <Space style={{ marginBottom: 4 }}>
                         <RobotOutlined style={{ color: '#1677ff' }} />
@@ -276,7 +270,7 @@ const DailyReportsList: React.FC = () => {
                         maxHeight: 120,
                         overflow: 'hidden',
                       }}>
-                        {summaryPreview(record.stats)}
+                        {summaryPreview(record.ai_summary)}
                       </div>
                     </div>
                   ) : (
@@ -301,20 +295,16 @@ const DailyReportsList: React.FC = () => {
                         icon={<FileTextOutlined />}
                         onClick={() => {
                           Modal.info({
-                            title: record.title || '日报详情',
+                            title: `📊 招聘日报 · ${record.report_date}`,
                             width: 700,
                             content: (
                               <div>
                                 <Row gutter={16} style={{ marginBottom: 16, marginTop: 16 }}>
-                                  <Col span={8}>
+                                  <Col span={12}>
                                     <Text type="secondary">报告日期: </Text>
                                     <Text strong>{record.report_date}</Text>
                                   </Col>
-                                  <Col span={8}>
-                                    <Text type="secondary">类型: </Text>
-                                    <Text strong>{record.report_type}</Text>
-                                  </Col>
-                                  <Col span={8}>
+                                  <Col span={12}>
                                     <Text type="secondary">生成时间: </Text>
                                     <Text strong>{record.created_at ? dayjs(record.created_at).format('MM-DD HH:mm') : '-'}</Text>
                                   </Col>
@@ -338,7 +328,7 @@ const DailyReportsList: React.FC = () => {
                                 <Divider>
                                   <Space><RobotOutlined /> AI 摘要</Space>
                                 </Divider>
-                                {record.stats ? (
+                                {record.ai_summary ? (
                                   <div style={{
                                     background: '#f5f5f5',
                                     padding: 16,
@@ -346,7 +336,7 @@ const DailyReportsList: React.FC = () => {
                                     fontSize: 13,
                                     lineHeight: 1.8,
                                   }}>
-                                    <ReactMarkdown>{record.stats}</ReactMarkdown>
+                                    <ReactMarkdown>{String(record.ai_summary)}</ReactMarkdown>
                                   </div>
                                 ) : (
                                   <Text type="secondary">无AI摘要</Text>
