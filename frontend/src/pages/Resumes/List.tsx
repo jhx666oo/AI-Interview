@@ -788,6 +788,53 @@ const ResumesList: React.FC = () => {
     } catch { message.error({ content: '同步失败', key }); }
   };
 
+  // MinerU 扫描件解析流程：sign → PUT 直传 → 轮询 → 建记录 + ocr-parse 落库
+  const mineruFlow = async (file: File, positionId: string): Promise<void> => {
+    const isOcr = true; // 扫描件场景，强制开启 OCR
+    const authHeader = { Authorization: `Bearer ${localStorage.getItem('token') || ''}` };
+
+    // ① 获取签名上传 URL
+    const signRes = await request.post('/mineru/sign', { file_name: file.name, is_ocr: isOcr }) as any;
+    if (!signRes?.task_id || !signRes?.file_url) {
+      throw new Error(signRes?.detail || 'MinerU 签名失败');
+    }
+    const { task_id: taskId, file_url: fileUrl } = signRes;
+
+    // ② PUT 直传文件到 MinerU OSS
+    const putRes = await fetch(fileUrl, { method: 'PUT', body: file });
+    if (putRes.status !== 200 && putRes.status !== 201) {
+      throw new Error(`文件上传 MinerU 失败 (HTTP ${putRes.status})`);
+    }
+
+    // ③ 轮询解析状态（前端轮询，最多约 4 分钟）
+    let markdown = '';
+    const pollStart = Date.now();
+    while (Date.now() - pollStart < 240000) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const st = await request.get(`/mineru/status/${taskId}`) as any;
+      if (st?.status === 'done' && st.markdown) {
+        markdown = st.markdown;
+        break;
+      }
+      if (st?.status === 'failed') {
+        throw new Error(st?.detail || 'MinerU 解析失败');
+      }
+    }
+    if (!markdown) throw new Error('MinerU 解析超时，请稍后在详情页点击「重新解析」');
+
+    // ④ 先建空记录（ocr_pending）拿 id，再 ocr-parse 落库
+    const fd = new FormData();
+    fd.append('position_id', positionId);
+    fd.append('file', file);
+    fd.append('ocr_pending', 'true');
+    const created = await request.post('/resumes', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }) as any;
+    if (!created?.id) throw new Error('创建简历记录失败');
+
+    await request.post(`/resumes/${created.id}/ocr-parse`, { markdown });
+  };
+
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
@@ -801,7 +848,7 @@ const ResumesList: React.FC = () => {
       // v2.0: 前端提取 PDF 文本（零 Token）
       let rawText = '';
       const firstFile = fileList[0];
-      if (firstFile.type === 'application/pdf' || firstFile.name?.endsWith('.pdf')) {
+      if (fileList.length === 1 && (firstFile.type === 'application/pdf' || firstFile.name?.endsWith('.pdf'))) {
         try {
           rawText = await extractPdfText(firstFile);
           if (rawText) console.log(`[PDF] 提取文本 ${rawText.length} 字符`);
@@ -810,16 +857,27 @@ const ResumesList: React.FC = () => {
       
       // Determine if single or batch upload
       if (fileList.length === 1) {
-        const formData = new FormData();
-        formData.append('position_id', values.position_id);
-        formData.append('file', fileList[0]);
-        if (rawText) formData.append('raw_text', rawText);
-        await request.post('/resumes', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-        message.success('简历上传成功，AI正在解析中...');
+        if (rawText) {
+          // 正常文本路径
+          const formData = new FormData();
+          formData.append('position_id', values.position_id);
+          formData.append('file', fileList[0]);
+          formData.append('raw_text', rawText);
+          await request.post('/resumes', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          message.success('简历上传成功，AI正在解析中...');
+        } else {
+          // 扫描件/抽不到文本 → MinerU OCR 流程
+          message.loading({ content: '检测到扫描件，正在 OCR 解析...', key: 'ocr' });
+          try {
+            await mineruFlow(firstFile, values.position_id);
+            message.success({ content: 'OCR 解析完成，字段已提取', key: 'ocr' });
+          } catch (ocrErr: any) {
+            message.error({ content: ocrErr?.message || 'OCR 解析失败', key: 'ocr' });
+            throw ocrErr;
+          }
+        }
       } else {
         const formData = new FormData();
         formData.append('position_id', values.position_id);

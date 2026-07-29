@@ -628,11 +628,41 @@ const ResumeDetail: React.FC = () => {
             <Descriptions.Item label="专业">{parsedData.major || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="工作年限">{parsedData.years_of_experience || '0'}年</Descriptions.Item>
             <Descriptions.Item label="最近公司">{parsedData.recent_company || '未识别'}</Descriptions.Item>
+            <Descriptions.Item label="性别">{parsedData.gender || resume.gender || '未识别'}</Descriptions.Item>
+            <Descriptions.Item label="出生年月">{parsedData.birthday || '未识别'}</Descriptions.Item>
+            <Descriptions.Item label="当前职位">{parsedData.current_position || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="技能">
               {Array.isArray(parsedData.skills) && parsedData.skills.length
                 ? parsedData.skills.join('、')
                 : (typeof parsedData.skills === 'string' && parsedData.skills ? parsedData.skills : '未识别')}
             </Descriptions.Item>
+            <Descriptions.Item label="证书/资质">
+              {Array.isArray(parsedData.certifications) && parsedData.certifications.length
+                ? parsedData.certifications.join('、')
+                : '未识别'}
+            </Descriptions.Item>
+            <Descriptions.Item label="自我评价" span={2}>
+              {parsedData.self_evaluation || '未识别'}
+            </Descriptions.Item>
+            {Array.isArray(parsedData.work_experience) && parsedData.work_experience.length > 0 && (
+              <Descriptions.Item label="工作经历" span={2}>
+                {parsedData.work_experience.map((w: any, i: number) => (
+                  <div key={i} style={{ marginBottom: 6 }}>
+                    <strong>{w.company || '公司不详'}</strong> · {w.title || ''}（{w.duration || `${w.start || ''}~${w.end || ''}`}）
+                    {w.description && <div style={{ color: '#666' }}>{w.description}</div>}
+                  </div>
+                ))}
+              </Descriptions.Item>
+            )}
+            {Array.isArray(parsedData.education) && parsedData.education.length > 0 && (
+              <Descriptions.Item label="教育经历" span={2}>
+                {parsedData.education.map((e: any, i: number) => (
+                  <div key={i} style={{ marginBottom: 4 }}>
+                    <strong>{e.school || '学校不详'}</strong> · {e.degree || ''} · {e.major || ''}（{e.start || ''}~{e.end || ''}）
+                  </div>
+                ))}
+              </Descriptions.Item>
+            )}
             <Descriptions.Item label="电话">{resume.contact || parsedData.phone || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="解析状态">{statusInfo.text}</Descriptions.Item>
             <Descriptions.Item label="失败原因">{resume.parse_status === 'failed' ? (resume.parse_error || '未知') : '-'}</Descriptions.Item>

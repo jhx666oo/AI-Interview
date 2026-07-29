@@ -82,6 +82,16 @@ CREATE TABLE IF NOT EXISTS resumes (
   reject_reason_detail TEXT,
   rejected_at TEXT,
   rejected_by TEXT,
+  -- MinerU OCR 接入扩展字段
+  ocr_status TEXT DEFAULT 'none',        -- none/ocr_processing/ocr_done/ocr_failed
+  ocr_markdown TEXT,                      -- MinerU 原始 Markdown 原文
+  ocr_task_id TEXT,                       -- MinerU task_id（便于续轮询）
+  gender TEXT,                            -- 男/女
+  birthday TEXT,                          -- 出生年月，如 1990-01
+  work_experience TEXT,                   -- JSON 数组
+  education TEXT,                         -- JSON 数组
+  certifications TEXT,                    -- JSON 数组（证书/资质）
+  self_evaluation TEXT,                   -- 候选人自评/总结
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );

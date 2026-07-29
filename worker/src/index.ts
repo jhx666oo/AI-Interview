@@ -1439,40 +1439,114 @@ function parseTalentRecord(record: any): any {
   };
 }
 
-// 从 AI 评估 JSON 文本中提取字段（纯函数，避免 esbuild 变量冲突）
+// 从 AI 评估纯文本中提取字段 + 飞书目字列 → 拼成右侧面板所需的完整 parsed_data
+// 飞书 AI 评估格式示例：性别：男\n学历：本科\n学校：XX大学\n专业：计算机科学\n年龄：25岁
 function parseAIEvalForFields(rawAiEval: any, aiEvalStr: string, f: any): Record<string, any> {
-  try {
-    let obj: any = null;
-    // 先尝试直接当对象用
-    if (rawAiEval !== null && rawAiEval !== undefined && typeof rawAiEval === 'object' && !Array.isArray(rawAiEval)) {
-      obj = rawAiEval;
-    }
-    // 否则尝试 JSON 解析
-    if (!obj && aiEvalStr && aiEvalStr.length > 5 && aiEvalStr !== 'null') {
-      try { obj = JSON.parse(aiEvalStr); } catch { /* ignore */ }
-    }
-    if (obj) {
-      return {
-        highest_degree: obj.highest_degree || obj.education || obj['学历'] || getFirstValue(f['学历']) || '',
-        school: obj.school || obj['院校'] || '',
-        major: obj.major || obj['专业'] || '',
-        years_of_experience: obj.years_of_experience || obj.work_years || obj['工作年限'] || null,
-        recent_company: obj.current_company || obj.recent_company || obj['当前公司'] || '',
-        contact: obj.phone || obj.email || obj.contact || '',
-      };
-    }
-  } catch { /* fall through to default */ }
-  // 兜底返回基础信息
+  // ---- 路径 A1：飞书目字列直接取值（最可靠）----
+  const colHighestDegree = getFirstValue(f['学历']) || '';
+  const colGender = getFirstValue(f['性别']) || '';
+  const colPhone = getFirstValue(f['手机']) || '';
+  const colEmail = getFirstValue(f['邮箱']) || '';
+  const colCity = getFirstValue(f['城市']) || '';
+  const colSkills = getFirstValue(f['技能']) || '';
+  const colWorkExp = getFirstValue(f['工作经历']) || '';
+  const colWorkYears = f['工作年限'];
+
+  // ---- 路径 A2：从飞书 AI 简历评估纯文本中正则提取 ----
+  const evalText = aiEvalStr || '';
+  // 归一化：统一全角/半角冒号、去除多余空白
+  const normalized = evalText.replace(/：/g, ':').replace(/\n+/g, '\n');
+
+  // 正则提取常见字段模式（中文标签+冒号+值）
+  const reExtract = (label: string): string => {
+    const m = normalized.match(new RegExp(`${label}\\s*[:：]\\s*([^\\n，。;；]+)`, 'i'));
+    return (m?.[1] || '').trim().replace(/[（(][^)）]*[)）]/g, '').trim();
+  };
+
+  const evalSchool = reExtract('学校') || reExtract('毕业院校') || reExtract('院校');
+  const evalMajor = reExtract('专业');
+  const evalAge = reExtract('年龄');
+  const evalGender = reExtract('性别');
+  const evalHighestDegree = reExtract('学历');
+  const evalRecentCompany = reExtract('公司') || reExtract('当前公司') || reExtract('最近公司') || reExtract('目前公司') || reExtract('工作单位');
+
+  // 第一次提取可能没命中的备用标签
+  const evalSchool2 = reExtract('毕业学校') || reExtract('本科院校');
+  const finalSchool = evalSchool || evalSchool2;
+
+  // 提取工作年限数字
+  let evalWorkYears: number | null = null;
+  const wyMatch = normalized.match(/(?:工作年限|工作经验|经验)[:：]\s*(\d+\.?\d*)\s*(?:年|y|Y)/i);
+  if (wyMatch) evalWorkYears = parseFloat(wyMatch[1]);
+
+  // 提取技能列表（从"技能"或"专业技能"段落后提取逗号/顿号分隔的技能）
+  let evalSkillsList: string[] = [];
+  const skillsBlock = normalized.match(/(?:技能|专业技能|技术栈|擅长)[:：]\s*([^\n]+)/i);
+  if (skillsBlock) {
+    evalSkillsList = skillsBlock[1]
+      .split(/[,，、；;]/)
+      .map(s => s.trim())
+      .filter(s => s.length > 1 && s.length < 30);
+  }
+
+  // 提取优势/风险（从 AI 评估中摘取段落）
+  const advMatch = normalized.match(/(?:优势分析|优势|核心优势)[:：]?\s*\n?([\s\S]*?)(?=(?:风险|能力维度|面试问题|建议追问|互动引导|$))/i);
+  const riskMatch = normalized.match(/(?:风险点|风险分析|潜在风险)[:：]?\s*\n?([\s\S]*?)(?=(?:能力维度|面试问题|建议追问|互动引导|$))/i);
+
+  // 提取 自我评价 段落（通常在简历开头或末尾）
+  const selfEvalMatch = normalized.match(/(?:自我评价|个人评价|自我介绍|个人总结)[:：]?\s*\n?([\s\S]*?)(?=(?:\n\n|\n(?:教育|工作|项目|技能|证书|优势|风险)))/i);
+
+  // ---- 合并结果：飞书列 优先，AI 提取 补充 ----
+  const highest_degree = colHighestDegree || evalHighestDegree;
+  const gender = colGender || evalGender;
+  const school = finalSchool;
+  const major = evalMajor;
+  const phone = colPhone;
+  const email = colEmail;
+  const city = colCity;
+  const years_of_experience = colWorkYears ? Number(colWorkYears) : (evalWorkYears ?? null);
+  const skills = colSkills
+    ? colSkills.split(/[,，、；;]/).map((s: string) => s.trim()).filter((s: string) => s.length > 1)
+    : evalSkillsList;
+  const recent_company = evalRecentCompany;
+
+  // 飞书 AI 评估中的完整分析文本
+  const advantageText = advMatch?.[1]?.trim() || '';
+  const riskText = riskMatch?.[1]?.trim() || '';
+  const selfEvalText = selfEvalMatch?.[1]?.trim() || '';
+
+  // work_experience: 优先飞书目字列，缺失则从 AI 评估中提取段落
+  const work_experience = colWorkExp || '';
+  // 尝试将工作经历文本按段落拆分为数组
+  let workExpArr: any[] = [];
+  if (work_experience) {
+    workExpArr = [{ description: work_experience }];
+  }
+
   return {
-    highest_degree: getFirstValue(f['学历']) || '',
-    school: '',
-    major: '',
-    years_of_experience: null,
-    recent_company: '',
-    contact: '',
-    phone: getFirstValue(f['手机']) || '',
-    skills: getFirstValue(f['技能']) || '',
-    work_experience: getFirstValue(f['工作经历']) || '',
+    highest_degree,
+    school,
+    major,
+    years_of_experience,
+    recent_company,
+    phone,
+    email,
+    contact: phone || email || '',
+    gender,
+    city,
+    age: evalAge ? parseInt(evalAge) : null,
+    birthday: '',  // AI 评估中通常无出生年月
+    current_position: '',
+    skills,
+    work_experience: workExpArr,
+    education: [] as any[],
+    certifications: [] as string[],
+    self_evaluation: selfEvalText,
+    advantage: advantageText,
+    risk: riskText,
+    work_experience_summary: work_experience,
+    // 标记数据来源
+    _source: 'feishu_ai_eval',
   };
 }
 
@@ -3107,7 +3181,36 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     // 注意：deepseek-v4-flash 是文本模型，无法直接处理 PDF base64，
     // 所以必须由前端 pdfjs-dist 完成 PDF→文本 这一步。
     const frontendRawText = (formData.get('raw_text') as string) || '';
+    const ocrPending = (formData.get('ocr_pending') as string) === 'true';
     let extractedText = frontendRawText || '';
+
+    // —— 扫描件/OCR 模式：前端 pdfjs 抽不到文本，先建空记录返回 id，由前端走 MinerU 流程后回填 ——
+    if (ocrPending && !extractedText) {
+      try {
+        await c.env.DB.prepare(
+          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, ocr_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(
+          recordId,
+          displayName,
+          parsedPositionName || '',
+          parsedPositionName || '',
+          JSON.stringify({ name: displayName }),
+          '',
+          'ocr_processing',
+          'ocr_processing',
+          now()
+        ).run();
+      } catch (dbErr: any) {
+        console.error('[Upload] OCR pending D1 写入失败:', dbErr.message);
+      }
+      return c.json({
+        id: recordId,
+        candidate_name: displayName,
+        status: 'ocr_processing',
+        ocr_pending: true,
+        detail: '简历已上传，等待 OCR 解析...',
+      });
+    }
     let parsedName = fileNameWithoutExt;
     let parsedGender = '';
     let parsedAge: number | null = null;
@@ -3351,6 +3454,254 @@ app.post('/api/resumes', authMiddleware, async (c) => {
   }
 });
 
+// ==================== MinerU 文档解析代理（Agent 轻量 API，免登录）====================
+// 背景：扫描件/图片型简历用 pdfjs 抽不到文本，需经 MinerU 转成 Markdown 后再走现有 callAI 结构化抽取。
+// 模式：前端签名上传（文件不经过 D1，避免 Pages 无 R2 的限制）。
+//   sign  → 代理 POST /api/v1/agent/parse/file 拿 task_id + file_url
+//   status→ 代理 GET  /api/v1/agent/parse/{task_id}，done 时下载 markdown_url 返回文本
+//   ocr-parse → 收 markdown，写入 ocr_markdown 并复用现有 callAI 结构化抽取落库
+const MINERU_BASE = (c?: any) => ((c?.env?.MINERU_BASE as string) || 'https://mineru.net');
+
+// ① 获取 MinerU 签名上传 URL（前端再 PUT 直传文件）
+app.post('/api/mineru/sign', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const fileName: string = body.file_name || '';
+    const isOcr: boolean = !!body.is_ocr;
+    if (!fileName) return c.json({ detail: 'file_name 必填' }, 400);
+    const resp = await fetch(`${MINERU_BASE(c)}/api/v1/agent/parse/file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_name: fileName,
+        language: 'ch',
+        enable_table: true,
+        is_ocr: isOcr,
+        enable_formula: false,
+      }),
+    });
+    const data: any = await resp.json().catch(() => ({}));
+    if (data?.code !== 0 || !data?.data?.task_id) {
+      // -30001 超10MB / -30002 类型 / -30003 超20页 / -30004 参数
+      const errCode = data?.data?.err_code ?? data?.code;
+      const retry = false;
+      return c.json({ detail: data?.msg || 'MinerU 签名失败', err_code: errCode, retry }, 502);
+    }
+    return c.json({ task_id: data.data.task_id, file_url: data.data.file_url });
+  } catch (e: any) {
+    return c.json({ detail: 'MinerU sign 失败: ' + e.message, retry: true }, 502);
+  }
+});
+
+// ② 轮询 MinerU 解析状态；done 时下载 markdown 返回文本
+app.get('/api/mineru/status/:task_id', authMiddleware, async (c) => {
+  const taskId = c.req.param('task_id');
+  try {
+    const resp = await fetch(`${MINERU_BASE(c)}/api/v1/agent/parse/${taskId}`, { method: 'GET' });
+    const data: any = await resp.json().catch(() => ({}));
+    const state = data?.data?.state;
+    if (state === 'done') {
+      const mdUrl = data.data.markdown_url;
+      if (!mdUrl) return c.json({ status: 'failed', detail: '缺少 markdown_url' }, 502);
+      const mdResp = await fetch(mdUrl);
+      const md = await mdResp.text();
+      return c.json({ status: 'done', markdown: md, task_id: taskId });
+    }
+    if (state === 'failed') {
+      return c.json({ status: 'failed', detail: data?.data?.err_msg || '解析失败', err_code: data?.data?.err_code }, 200);
+    }
+    return c.json({ status: 'processing', state, task_id: taskId });
+  } catch (e: any) {
+    return c.json({ status: 'failed', detail: 'MinerU 状态查询失败: ' + e.message, retry: true }, 502);
+  }
+});
+
+// ③ 接收前端回传的 markdown，写库并触发结构化抽取（复用上传路径的 callAI 逻辑）
+app.post('/api/resumes/:id/ocr-parse', authMiddleware, async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => ({}));
+  const markdown: string = (body.markdown || '').toString();
+  const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first() as any;
+  if (!resume) return c.json({ detail: 'Resume not found' }, 404);
+  if (!markdown || markdown.length < 20) return c.json({ detail: 'markdown 内容过短，无法解析' }, 400);
+
+  // 写回 ocr 原文
+  try {
+    await c.env.DB.prepare('UPDATE resumes SET ocr_markdown=?, ocr_status=?, updated_at=? WHERE id=?')
+      .bind(markdown.substring(0, 200000), 'ocr_done', now(), id).run();
+  } catch {}
+
+  // 复用上传路径的解析 prompt + callAI 结构化抽取
+  let parsedName = resume.candidate_name || '';
+  let parsedGender = '';
+  let parsedAge: number | null = null;
+  let parsedEducation = '';
+  let parsedSchool = '';
+  let parsedMajor = '';
+  let parsedCity = '';
+  let parsedAdvantage = '';
+  let parsedRisk = '';
+  let parsedEval = '';
+  let parsedPhone = '';
+  let parsedEmail = '';
+  let parsedSkills: string[] = [];
+  let parsedWorkYears: number | null = null;
+  let parsedRecentCompany = '';
+  let parsedCurrentPosition = '';
+  let parsedExperience = '';
+  let parsedBirthday = '';
+  let parsedWorkExpArr: any[] = [];
+  let parsedEduArr: any[] = [];
+  let parsedCerts: string[] = [];
+  let parsedSelfEval = '';
+  let aiParseFailed = false;
+
+  try {
+    const customPrompt = await getCustomPrompt(c.env, 'parse_resume_pdf');
+    let systemPrompt: string, userPrompt: string;
+    if (customPrompt?.system && customPrompt?.user) {
+      let sp = customPrompt.system, up = customPrompt.user;
+      if (sp.includes('{candidate_name}')) sp = sp.replace(/\{candidate_name\}/g, parsedName);
+      if (up.includes('{candidate_name}')) up = up.replace(/\{candidate_name\}/g, parsedName);
+      if (up.includes('{resume_text}')) up = up.replace(/\{resume_text\}/g, markdown);
+      systemPrompt = sp; userPrompt = up;
+    } else {
+      // 默认 prompt：在原有字段基础上扩展 TalentFlow 式数组维度
+      systemPrompt = `你是一个专业的简历解析助手。请从简历文本（可能来自 OCR/文档解析的 Markdown）中提取以下所有信息，并用JSON格式返回（不要加markdown代码块）。找不到的字段设为null或空字符串/空数组。
+
+{
+  "name": "候选人姓名",
+  "gender": "性别（男/女）",
+  "age": 年龄数字或null,
+  "birthday": "出生年月（如 1990-01，推断不出可null）",
+  "phone": "手机号码",
+  "email": "电子邮箱",
+  "highest_degree": "最高学历（如：本科/硕士/博士）",
+  "school": "毕业院校",
+  "major": "专业",
+  "city": "所在城市",
+  "years_of_experience": "工作年限（数字）",
+  "skills": ["技能1", "技能2", "..."],
+  "recent_company": "目前/最近所在公司",
+  "current_position": "目前/最近职位",
+  "work_experience": [{"company":"","title":"","start":"","end":"","duration":"","description":"","achievements":""}],
+  "education": [{"school":"","degree":"","major":"","start":"","end":""}],
+  "certifications": ["证书/资质1", "证书/资质2"],
+  "self_evaluation": "候选人自我介绍/自我评价摘要",
+  "work_experience_summary": "工作经历摘要（200字以内）",
+  "advantage": "候选人核心优势分析（3-5个优势，200字以内）",
+  "risk": "候选人潜在风险点（200字以内）",
+  "evaluation": "综合评估（100字以内）"
+}`;
+      userPrompt = `以下是一份简历的文本内容，请从中提取所有字段信息：\n\n${markdown}`;
+    }
+    const aiResp = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    if (aiResp) {
+      const parsed: any = JSON.parse(extractJSON(aiResp) || '{}');
+      parsedName = parsed.name || parsedName;
+      parsedGender = parsed.gender || '';
+      parsedAge = parsed.age || null;
+      parsedBirthday = parsed.birthday || '';
+      parsedEducation = parsed.highest_degree || parsed.education || '';
+      parsedSchool = parsed.school || '';
+      parsedMajor = parsed.major || '';
+      parsedCity = parsed.city || '';
+      parsedAdvantage = parsed.advantage || '';
+      parsedRisk = parsed.risk || '';
+      parsedEval = parsed.evaluation || '';
+      parsedPhone = parsed.phone || '';
+      parsedEmail = parsed.email || '';
+      parsedSkills = Array.isArray(parsed.skills) ? parsed.skills : [];
+      parsedWorkYears = parsed.years_of_experience || parsed.work_years || null;
+      parsedExperience = parsed.work_experience_summary || '';
+      parsedRecentCompany = parsed.recent_company || parsed.current_company || '';
+      parsedCurrentPosition = parsed.current_position || '';
+      parsedWorkExpArr = Array.isArray(parsed.work_experience) ? parsed.work_experience : [];
+      parsedEduArr = Array.isArray(parsed.education) ? parsed.education : [];
+      parsedCerts = Array.isArray(parsed.certifications) ? parsed.certifications : [];
+      parsedSelfEval = parsed.self_evaluation || '';
+    }
+  } catch (aiErr: any) {
+    aiParseFailed = true;
+    console.error(`[OCR-Parse] AI parsing failed: ${aiErr.message}`);
+  }
+
+  // 写 D1 parsed_data（标准字段集 + 扩展数组）
+  try {
+    const parsedData = JSON.stringify({
+      name: parsedName,
+      gender: parsedGender,
+      age: parsedAge,
+      birthday: parsedBirthday,
+      highest_degree: parsedEducation,
+      school: parsedSchool,
+      major: parsedMajor,
+      city: parsedCity,
+      phone: parsedPhone,
+      email: parsedEmail,
+      skills: parsedSkills,
+      years_of_experience: parsedWorkYears,
+      recent_company: parsedRecentCompany,
+      current_position: parsedCurrentPosition,
+      position_applied: resume.position_applied || '',
+      advantage: parsedAdvantage,
+      risk: parsedRisk,
+      evaluation: parsedEval,
+      work_experience: parsedWorkExpArr,
+      education: parsedEduArr,
+      certifications: parsedCerts,
+      self_evaluation: parsedSelfEval,
+    });
+    await c.env.DB.prepare(
+      'UPDATE resumes SET parsed_data=?, raw_text=?, resume_markdown=?, gender=?, birthday=?, work_experience=?, education=?, certifications=?, self_evaluation=?, parse_status=?, updated_at=? WHERE id=?'
+    ).bind(
+      parsedData,
+      markdown.substring(0, 200000),
+      markdown.substring(0, 200000),
+      parsedGender || null,
+      parsedBirthday || null,
+      JSON.stringify(parsedWorkExpArr),
+      JSON.stringify(parsedEduArr),
+      JSON.stringify(parsedCerts),
+      parsedSelfEval || null,
+      aiParseFailed ? 'needs_manual' : 'ocr_done',
+      now(),
+      id
+    ).run();
+  } catch (dbErr: any) {
+    console.error('[OCR-Parse] D1 写入失败:', dbErr.message);
+  }
+
+  // 同步写回飞书（复用上传路径的字段映射，含扩展字段）
+  try {
+    const tableId = getBitableTableId(c.env, 'talent');
+    const updateFields: Record<string, any> = {};
+    if (parsedName) updateFields['姓名'] = parsedName;
+    if (parsedGender) updateFields['性别'] = parsedGender;
+    if (parsedAge) updateFields['年龄'] = parsedAge;
+    if (parsedEducation) updateFields['学历'] = parsedEducation;
+    if (parsedCity) updateFields['城市'] = parsedCity;
+    if (parsedAdvantage) updateFields['优势分析'] = parsedAdvantage;
+    if (parsedRisk) updateFields['风险点'] = parsedRisk;
+    if (parsedPhone) updateFields['手机'] = parsedPhone;
+    if (parsedEmail) updateFields['邮箱'] = parsedEmail;
+    if (parsedWorkYears) updateFields['工作年限'] = parsedWorkYears;
+    if (parsedSkills.length) updateFields['技能'] = parsedSkills.join(', ');
+    if (parsedExperience) updateFields['工作经历'] = parsedExperience;
+    if (resume.position_applied) updateFields['面试岗位'] = resume.position_applied;
+    if (parsedRecentCompany) updateFields['最近公司'] = parsedRecentCompany;
+    if (parsedCurrentPosition) updateFields['最近职位'] = parsedCurrentPosition;
+    if (parsedSelfEval) updateFields['自我评价'] = parsedSelfEval;
+    const evalSummary = [parsedEval || '', parsedAdvantage ? `\n优势:\n${parsedAdvantage}` : '', parsedRisk ? `\n风险:\n${parsedRisk}` : ''].filter(Boolean).join('\n');
+    if (evalSummary) updateFields['AI简历评估'] = evalSummary;
+    await bitableUpdateRecord(c.env, tableId, id, updateFields);
+  } catch (e: any) {
+    console.error(`[OCR-Parse] 同步到飞书失败: ${e.message}`);
+  }
+
+  return c.json({ detail: 'OCR parse completed', id, parse_status: aiParseFailed ? 'needs_manual' : 'ocr_done' });
+});
+
 app.get('/api/resumes', authMiddleware, async (c) => {
   try {
     const tableId = getBitableTableId(c.env, 'talent');
@@ -3474,6 +3825,31 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
       const id = item.id; // = 飞书 record_id，保证幂等
       const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ? LIMIT 1').bind(id).first();
 
+      // 合并 parsed_data：AI 解析字段（学校/专业/技能等）+ 飞书元数据（保持兼容）
+      const aiFields = item.parsed_data || {};
+      const mergedParsedData = {
+        ...aiFields,
+        // 补充飞书元数据字段（前端/ai-screen 可能依赖）
+        position_applied: item.position_applied || '',
+        standard_position: positionName,
+        city: item.city || aiFields.city || '',
+        education: item.education || '',
+        gender: item.gender || aiFields.gender || '',
+        age: item.age ?? aiFields.age ?? null,
+        advantage: item.advantage || aiFields.advantage || '',
+        risk: item.risk || aiFields.risk || '',
+        interview_suggestion: item.interview_suggestion || '',
+        interview_questions: item.interview_questions || '',
+        notes: item.notes || '',
+        reserve_type: item.reserve_type || '',
+        biz_owner: item.biz_owner || '',
+        biz_review: item.biz_review || '',
+        hr_pass_date: item.hr_pass_date || null,
+        // 标记解析状态：如果学校/专业为空且无 ocr，后续可触发 MinerU 兜底
+        _parse_source: aiFields._source || 'feishu',
+        _need_ocr: (!aiFields.school && !aiFields.major) ? true : false,
+      };
+
       if (existing) {
         await c.env.DB.prepare(
           `UPDATE resumes SET candidate_name=?, email=?, position_applied=?, mapped_position=?, match_score=?, screening_result=?, ai_review=?, hr_review=?, status=?, stage=?, parsed_data=?, parse_status='completed' WHERE id=?`
@@ -3481,7 +3857,7 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
           item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos,
           item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
-          JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age, advantage: item.advantage, risk: item.risk, interview_suggestion: item.interview_suggestion, interview_questions: item.interview_questions, notes: item.notes, reserve_type: item.reserve_type, biz_owner: item.biz_owner, biz_review: item.biz_review, hr_pass_date: item.hr_pass_date }),
+          JSON.stringify(mergedParsedData),
           id
         ).run();
         updated++;
@@ -3491,23 +3867,155 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
         ).bind(
           id, item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos, item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
-          JSON.stringify({ position_applied: item.position_applied, standard_position: positionName, city: item.city, education: item.education, gender: item.gender, age: item.age, advantage: item.advantage, risk: item.risk, interview_suggestion: item.interview_suggestion, interview_questions: item.interview_questions, notes: item.notes, reserve_type: item.reserve_type, biz_owner: item.biz_owner, biz_review: item.biz_review, hr_pass_date: item.hr_pass_date }),
+          JSON.stringify(mergedParsedData),
           now()
         ).run();
         created++;
       }
     }
 
+    // 统计需要 OCR 兜底的简历数
+    let needsOcr = 0;
+    try {
+      const needRows = await c.env.DB.prepare(
+        `SELECT COUNT(*) AS cnt FROM resumes WHERE parsed_data LIKE '%"_need_ocr":true%' AND (ocr_status IS NULL OR ocr_status != 'ocr_done')`
+      ).all();
+      needsOcr = (needRows?.results?.[0] as any)?.cnt || 0;
+    } catch {}
+
     // 埋点：飞书简历同步
     await logOperation(c.env, {
       action: 'feishu.sync',
       entityType: 'resume',
       actor: c.get('user')?.email,
-      detail: JSON.stringify({ created, updated, total: records.length }),
+      detail: JSON.stringify({ created, updated, total: records.length, needs_ocr: needsOcr }),
     });
-    return c.json({ ok: true, message: `简历同步完成：新增 ${created} 条，更新 ${updated} 条`, created, updated, total: records.length });
+    return c.json({ ok: true, message: `简历同步完成：新增 ${created} 条，更新 ${updated} 条${needsOcr ? `，${needsOcr} 条需要 OCR 兜底` : ''}`, created, updated, total: records.length, needs_ocr: needsOcr });
   } catch (e: any) {
     return c.json({ detail: '简历同步失败: ' + e.message }, 500);
+  }
+});
+
+// 批量 MinerU OCR 兜底：对飞书未成功解析的简历（_need_ocr: true），
+// 下载 PDF → MinerU OCR → callAI 结构化抽取 → 更新 parsed_data
+app.post('/api/resumes/batch-ocr-mineru', authMiddleware, async (c) => {
+  const results: any[] = [];
+  try {
+    const rows = await c.env.DB.prepare(
+      `SELECT id, candidate_name, position_applied FROM resumes WHERE parsed_data LIKE '%"_need_ocr":true%' AND (ocr_status IS NULL OR ocr_status != 'ocr_done') LIMIT 5`
+    ).all();
+    for (const row of (rows.results || []) as any[]) {
+      try {
+        // 1. 尝试从飞书获取 PDF
+        const tableId = getBitableTableId(c.env, 'talent');
+        const record = await bitableGetRecord(c.env, tableId, row.id);
+        let pdfBytes: Uint8Array | null = null;
+        if (record) {
+          const f = record.fields || {};
+          for (const [, fieldValue] of Object.entries(f)) {
+            if (Array.isArray(fieldValue) && fieldValue.length > 0) {
+              const item = fieldValue[0] as any;
+              const dlUrl = item?.url || item?.download_url || item?.tmp_url;
+              if (dlUrl) {
+                const feishuToken = await getFeishuToken(c.env);
+                const dlResp = await fetch(dlUrl, { headers: { Authorization: `Bearer ${feishuToken}` } });
+                if (dlResp.ok) pdfBytes = new Uint8Array(await dlResp.arrayBuffer());
+                break;
+              }
+            }
+          }
+        }
+        // 2. 尝试从 D1 本地缓存获取
+        if (!pdfBytes) {
+          const fileRow = await c.env.DB.prepare('SELECT content FROM resume_files WHERE id = ?').bind(row.id).first() as any;
+          if (fileRow?.content) pdfBytes = b64ToBuf(fileRow.content);
+        }
+        if (!pdfBytes) { results.push({ id: row.id, status: 'no_pdf' }); continue; }
+
+        // 3. MinerU sign
+        const signResp = await fetch(`${MINERU_BASE(c)}/api/v1/agent/parse/file`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_name: `${row.candidate_name || 'resume'}.pdf`, language: 'ch', is_ocr: true, enable_table: true, enable_formula: false }),
+        });
+        const signData: any = await signResp.json().catch(() => ({}));
+        if (!signData?.data?.file_url || !signData?.data?.task_id) { results.push({ id: row.id, status: 'sign_failed' }); continue; }
+        const { file_url, task_id } = signData.data;
+
+        // 4. PUT 上传（空 Content-Type，兼容 MinerU 签名）
+        const putResp = await fetch(file_url, { method: 'PUT', body: pdfBytes });
+        if (!putResp.ok) { results.push({ id: row.id, status: 'upload_failed' }); continue; }
+
+        // 5. 轮询等待 done
+        let markdown = '';
+        for (let i = 0; i < 40; i++) {
+          const pollResp = await fetch(`${MINERU_BASE(c)}/api/v1/agent/parse/${task_id}`);
+          const pollData: any = await pollResp.json().catch(() => ({}));
+          if (pollData?.data?.state === 'done') {
+            const mdResp = await fetch(pollData.data.markdown_url);
+            markdown = await mdResp.text();
+            break;
+          }
+          if (pollData?.data?.state === 'failed') { results.push({ id: row.id, status: 'ocr_failed' }); break; }
+          await new Promise(r => setTimeout(r, 3000));
+        }
+        if (!markdown) { results.push({ id: row.id, status: 'ocr_timeout' }); continue; }
+
+        // 6. 保存 ocr_markdown 并更新 parsed_data
+        await c.env.DB.prepare('UPDATE resumes SET ocr_markdown=?, ocr_status=?, updated_at=? WHERE id=?')
+          .bind(markdown.substring(0, 200000), 'ocr_done', now(), row.id).run();
+
+        // 7. callAI 结构化抽取 & 合并到 parsed_data
+        try {
+          const customPrompt = await getCustomPrompt(c.env, 'parse_resume_pdf');
+          let systemPrompt: string, userPrompt: string;
+          if (customPrompt?.system && customPrompt?.user) {
+            systemPrompt = customPrompt.system.replace(/\{candidate_name\}/g, row.candidate_name || '');
+            userPrompt = customPrompt.user.replace(/\{candidate_name\}/g, row.candidate_name || '').replace(/\{resume_text\}/g, markdown);
+          } else {
+            systemPrompt = `你是一个专业的简历解析助手。请从以下 OCR 文本中提取所有字段，用 JSON 返回：{name, gender, age, highest_degree, school, major, years_of_experience, recent_company, current_position, phone, email, skills:[], work_experience:[{company,title,start,end}], education:[{school,degree,major,start,end}], certifications:[], self_evaluation, advantage, risk, evaluation}`;
+            userPrompt = `简历文本：\n\n${markdown}`;
+          }
+          const aiResp = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+          if (aiResp) {
+            const parsed: any = JSON.parse(extractJSON(aiResp) || '{}');
+            // 合并：保留飞书原有元数据 + OCR 解析字段
+            const existingData = JSON.parse((await c.env.DB.prepare('SELECT parsed_data FROM resumes WHERE id = ?').bind(row.id).first() as any)?.parsed_data || '{}');
+            const merged = {
+              ...existingData,
+              highest_degree: parsed.highest_degree || existingData.highest_degree || '',
+              school: parsed.school || existingData.school || '',
+              major: parsed.major || existingData.major || '',
+              years_of_experience: parsed.years_of_experience ?? existingData.years_of_experience ?? null,
+              recent_company: parsed.recent_company || existingData.recent_company || '',
+              current_position: parsed.current_position || existingData.current_position || '',
+              phone: parsed.phone || existingData.phone || '',
+              gender: parsed.gender || existingData.gender || '',
+              age: parsed.age ?? existingData.age ?? null,
+              skills: Array.isArray(parsed.skills) ? parsed.skills : (existingData.skills || []),
+              work_experience: Array.isArray(parsed.work_experience) ? parsed.work_experience : (existingData.work_experience || []),
+              education: Array.isArray(parsed.education) ? parsed.education : (existingData.education || []),
+              certifications: Array.isArray(parsed.certifications) ? parsed.certifications : (existingData.certifications || []),
+              self_evaluation: parsed.self_evaluation || existingData.self_evaluation || '',
+              _parse_source: 'mineru_ocr',
+              _need_ocr: false,
+            };
+            await c.env.DB.prepare('UPDATE resumes SET parsed_data=?, parse_status=?, updated_at=? WHERE id=?')
+              .bind(JSON.stringify(merged), 'completed', now(), row.id).run();
+          }
+        } catch (aiErr: any) {
+          // AI 抽取失败不阻塞（ocr_markdown 已留存）
+          console.error(`[Batch-OCR] AI parse failed for ${row.id}: ${aiErr.message}`);
+        }
+
+        results.push({ id: row.id, candidate_name: row.candidate_name, status: 'done' });
+      } catch (e: any) {
+        results.push({ id: row.id, status: 'error', detail: e.message });
+      }
+    }
+    return c.json({ ok: true, results, count: results.length });
+  } catch (e: any) {
+    return c.json({ detail: '批量 OCR 失败: ' + e.message }, 500);
   }
 });
 
@@ -3912,7 +4420,7 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first() as any;
   if (!resume) return c.json({ detail: 'Resume not found' }, 404);
-  let rawText = resume.raw_text || resume.resume_markdown || '';
+  let rawText = resume.ocr_markdown || resume.raw_text || resume.resume_markdown || '';
   let parsedDataText = '';
   try { parsedDataText = resume.parsed_data ? (typeof resume.parsed_data === 'string' ? resume.parsed_data : JSON.stringify(resume.parsed_data)) : ''; } catch { parsedDataText = ''; }
   // 文本为空：尝试用已解析的结构化字段（如飞书同步来的简历）作为 reparse 输入
@@ -4080,7 +4588,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
   if (resume.position_id) {
     position = await c.env.DB.prepare('SELECT * FROM positions WHERE id = ?').bind(resume.position_id).first() as any;
   }
-  let resumeText = resume.resume_markdown || resume.raw_text || '';
+  let resumeText = resume.ocr_markdown || resume.resume_markdown || resume.raw_text || '';
   // 文本为空：deepseek-v4-flash 无法直接解析 PDF base64，直接报错
   if (!resumeText) return c.json({ detail: '该简历未提取到文本内容，无法进行 AI 评估', need_manual: true }, 400);
   const posTitle = position?.title || resume.position_id || 'Unknown';
