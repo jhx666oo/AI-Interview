@@ -329,6 +329,10 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
     if (data?.choices?.[0]?.message?.content) {
       return data.choices[0].message.content;
     }
+    // deepseek-v4-flash 推理模型可能返回空 content，用 reasoning_content
+    if (data?.choices?.[0]?.message?.reasoning_content) {
+      return data.choices[0].message.reasoning_content;
+    }
     throw new Error(`DeepSeek API response format unexpected: ${JSON.stringify(data)}`);
   }
 
@@ -1581,10 +1585,25 @@ async function getPositionContext(db: any, positionName: string): Promise<{
     if (pos) {
       if (pos.capability_dimensions) {
         let dims = pos.capability_dimensions;
-        try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.join('、'); } catch {}
+        try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? (d.name || d.title || '') : String(d)).join('、'); } catch {}
         result.capabilityDimensions = String(dims);
       }
       if (pos.salary_range) result.salaryRange = pos.salary_range;
+    }
+  } catch {}
+
+  // 2b. 补充：从 capability_dimensions 独立表读取（岗位管理页可能只写这张表）
+  try {
+    const dimRow = await db.prepare(
+      'SELECT dimensions_json, personalized_requirements FROM capability_dimensions WHERE position_name = ? LIMIT 1'
+    ).bind(lookupName).first() as any;
+    if (dimRow?.dimensions_json) {
+      let dims = dimRow.dimensions_json;
+      try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? (d.name || d.title || '') : String(d)).join('、'); } catch {}
+      if (dims && String(dims) !== '[]') result.capabilityDimensions = String(dims);
+    }
+    if (dimRow?.personalized_requirements && !result.personalizedRequirements) {
+      result.personalizedRequirements = String(dimRow.personalized_requirements);
     }
   } catch {}
 
@@ -4124,7 +4143,43 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
           continue;
         }
 
-        // Prompt 与 ai-screen 路由完全一致
+        // callAI #1 — 字段解析：从简历文本提取结构化字段，更新 parsed_data
+        let enrichedParsedData: any = typeof row.parsed_data === 'string'
+          ? (() => { try { return JSON.parse(row.parsed_data); } catch { return {}; } })()
+          : (row.parsed_data || {});
+        let parseError = '';
+        let parseResp: any = null;
+        try {
+          const parseSysPrompt = `你是一个简历解析助手。请从简历文本中提取以下字段，用 JSON 返回。重视教育背景部分。找不到的设为 null。
+
+{"highest_degree":"最高学历(本科/硕士/博士)","school":"毕业院校全称","major":"专业全称","years_of_experience":"工作年限数字","recent_company":"最近公司","current_position":"最近职位","phone":"手机号","email":"邮箱","skills":["技能1","技能2"],"self_evaluation":"自我评价"}`;
+          parseResp = await callAI(c.env, parseSysPrompt, resumeText, 'deepseek-chat');
+          if (parseResp) {
+            const parsed: any = JSON.parse(extractJSON(parseResp) || '{}');
+            enrichedParsedData = {
+              ...enrichedParsedData,
+              highest_degree: parsed.highest_degree || enrichedParsedData.highest_degree || '',
+              school: parsed.school || enrichedParsedData.school || '',
+              major: parsed.major || enrichedParsedData.major || '',
+              years_of_experience: parsed.years_of_experience ?? enrichedParsedData.years_of_experience ?? null,
+              recent_company: parsed.recent_company || enrichedParsedData.recent_company || '',
+              current_position: parsed.current_position || enrichedParsedData.current_position || '',
+              phone: parsed.phone || enrichedParsedData.phone || '',
+              email: parsed.email || enrichedParsedData.email || '',
+              skills: Array.isArray(parsed.skills) ? parsed.skills : (enrichedParsedData.skills || []),
+              self_evaluation: parsed.self_evaluation || enrichedParsedData.self_evaluation || '',
+              _parse_source: 'ai_field_parse',
+            };
+            await c.env.DB.prepare('UPDATE resumes SET parsed_data=? WHERE id=?')
+              .bind(JSON.stringify(enrichedParsedData), rid).run();
+          }
+        } catch (parseErr: any) {
+          parseError = `parse_failed:${(parseErr.message||'').slice(0,80)}|resp_type:${typeof parseResp}|len:${(String(parseResp||'')).length}`;
+          console.error(`[Batch-Auto-Screen] Field parse failed for ${rid}: ${parseErr.message}`);
+          // 字段解析失败不阻塞，继续用已有 parsed_data
+        }
+
+        // callAI #2 — AI 初筛评分（与 ai-screen 路由完全一致）
         const posCtx = await getPositionContext(c.env.DB, row.position_applied || '');
         const prompt = await getAIPrompt(c.env, 'analyze_resume', {
           system: `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON 对象：
@@ -4141,10 +4196,10 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
           user: ''
         });
 
-        // 从 parsed_data 构造结构化摘要块（与 ai-screen 路由一致）
+        // 从 parsed_data 构造结构化摘要块（使用刚解析的 enrichedParsedData）
         let structuredBlock = '';
         try {
-          const pd = typeof row.parsed_data === 'string' ? JSON.parse(row.parsed_data || '{}') : (row.parsed_data || {});
+          const pd = enrichedParsedData;
           const parts: string[] = [];
           if (pd.name || name) parts.push(`- 姓名：${pd.name || name}`);
           if (pd.highest_degree) parts.push(`- 学历：${pd.highest_degree}${pd.school ? `（${pd.school}${pd.major ? ' ' + pd.major : ''}）` : ''}`);
@@ -4206,7 +4261,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
           });
         } catch {}
 
-        results.push({ id: rid, candidate_name: name, status: 'done', match_score: matchScore, screening_result: screeningResult });
+        results.push({ id: rid, candidate_name: name, status: 'done', match_score: matchScore, screening_result: screeningResult, parse_error: parseError || undefined });
       } catch (e: any) {
         results.push({ id: rid, candidate_name: name, status: 'error', detail: e.message });
       }
@@ -4789,7 +4844,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
   // 三级降级获取文本：ocr_markdown → raw_text → 飞书PDF+MinerU → parsed_data摘要
   const { text: resumeText, source: textSource } = await getResumeTextForScreening(c.env, resume);
   if (!resumeText || resumeText.length < 20) return c.json({ detail: '该简历未提取到文本内容，无法进行 AI 评估', need_manual: true }, 400);
-  const posTitle = position?.title || resume.position_id || 'Unknown';
+  const posTitle = position?.title || resume.position_applied || resume.position_id || 'Unknown';
   const posDesc = position?.description || '';
   const posReq = position?.requirements || '';
   const posDept = position?.department || '';
