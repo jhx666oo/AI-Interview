@@ -2440,11 +2440,19 @@ app.post('/api/requisitions', authMiddleware, async (c) => {
       if (engKey === 'urgency' && typeof v === 'string' && isNaN(Number(v))) continue; // 非数字跳过
       fields[cnKey] = v;
     }
-    const recordId = await bitableCreateRecord(c.env, tableId, fields);
-    if (!recordId) return c.json({ detail: '飞书多维表格创建记录失败（上游依赖）' }, 502);
 
-    // v2.0: 同步写 D1（城市、硬性要求、个性化需求、面试官）
+    // v2.1: D1 优先落库，飞书同步失败不阻断主流程
     const d1Id = uuid();
+    let feishuRecordId = '';
+    let feishuSynced = false;
+    try {
+      feishuRecordId = await bitableCreateRecord(c.env, tableId, fields);
+      feishuSynced = !!feishuRecordId;
+      if (!feishuRecordId) console.warn(`[Requisition] 飞书创建记录失败，但 D1 将保存`);
+    } catch (fe: any) {
+      console.warn(`[Requisition] 飞书创建记录异常: ${fe.message}`);
+    }
+
     await c.env.DB.prepare(
       `INSERT INTO job_requisitions (id, title, department, status, description, requirements, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, feishu_record_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -2453,17 +2461,20 @@ app.post('/api/requisitions', authMiddleware, async (c) => {
       body.description || '', body.requirements || '',
       JSON.stringify(body.city || []), JSON.stringify(body.hard_requirements || []), JSON.stringify(body.personalized_requirements || {}),
       body.hr_interviewer || '', body.biz_interviewer || '', body.final_interviewer || '',
-      body.responsible_person || '', recordId, now()
+      body.responsible_person || '', feishuRecordId || '', now()
     ).run();
 
-    const record = await bitableGetRecord(c.env, tableId, recordId);
-    const item = parseRequisitionRecord(record);
-    item.city = body.city || [];
-    item.hard_requirements = body.hard_requirements || [];
-    item.personalized_requirements = body.personalized_requirements || {};
-    item.hr_interviewer = body.hr_interviewer || '';
-    item.biz_interviewer = body.biz_interviewer || '';
-    item.final_interviewer = body.final_interviewer || '';
+    // 返回以 D1 数据为准
+    const row = await c.env.DB.prepare(
+      'SELECT * FROM job_requisitions WHERE id = ?'
+    ).bind(d1Id).first() as any;
+    const item = transformRow(row) as any;
+    if (body.city !== undefined) item.city = body.city;
+    if (body.hard_requirements !== undefined) item.hard_requirements = body.hard_requirements;
+    if (body.personalized_requirements !== undefined) item.personalized_requirements = body.personalized_requirements;
+    if (body.description !== undefined) item.description = body.description;
+    if (body.requirements !== undefined) item.requirements = body.requirements;
+    item.feishu_synced = feishuSynced;
     return c.json(item);
   } catch (e: any) {
     return c.json({ detail: '创建需求失败: ' + e.message }, 500);
