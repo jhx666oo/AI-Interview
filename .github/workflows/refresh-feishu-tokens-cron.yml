@@ -1,0 +1,24 @@
+name: Refresh Feishu User Tokens
+
+# 每 12 小时刷新一次已绑定的飞书用户 access_token
+# 防止 refresh_token 超过 30 天过期导致用户需重新授权
+on:
+  schedule:
+    - cron: '0 */12 * * *'  # 每 12 小时
+  workflow_dispatch: {}  # 支持手动触发
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger token refresh API
+        run: |
+          echo "调用飞书 token 刷新接口..."
+          response=$(curl -s -X POST -w "\n%{http_code}" -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" https://ai-interview-88r.pages.dev/api/cron/refresh-feishu-tokens)
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "HTTP $http_code"
+          echo "Response: $body"
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::token 刷新接口返回非 200"
+          fi

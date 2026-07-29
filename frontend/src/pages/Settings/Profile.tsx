@@ -138,8 +138,9 @@ const ProfileSettings: React.FC = () => {
             <Form.Item label="飞书身份">
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <Text>{(user as any)?.feishu_name ? `已绑定: ${(user as any).feishu_name}` : '未绑定'}</Text>
+                {(user as any)?.feishu_token_failed && <Tag color="error" style={{ marginLeft: 8 }}>授权已过期</Tag>}
                 <Button onClick={bindFeishu} loading={feishuBinding} size="small">
-                  绑定飞书
+                  {(user as any)?.feishu_token_failed ? '重新授权' : '绑定飞书'}
                 </Button>
               </div>
             </Form.Item>

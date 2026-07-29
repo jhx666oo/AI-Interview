@@ -525,11 +525,12 @@ const authMiddleware = async (c: any, next: any) => {
 };
 
 function serializeUser(user: any) {
-  const { hashed_password, plain_password, feishu_token, feishu_refresh_token, feishu_token_expires_at, ...rest } = user;
+  const { hashed_password, plain_password, feishu_token, feishu_refresh_token, feishu_token_expires_at, feishu_token_failed_at, ...rest } = user;
   return {
     ...rest,
     has_password: !!hashed_password,
     has_feishu: !!(feishu_token || rest.feishu_open_id),
+    feishu_token_failed: !!feishu_token_failed_at,  // token 刷新失败，需要重新授权
   };
 }
 
@@ -6780,12 +6781,15 @@ async function refreshUserAccessToken(env: Env, email: string): Promise<{ access
     const newRefreshToken = data.refresh_token || data.data?.refresh_token || row.feishu_refresh_token;
     if (!newAccessToken) {
       console.error(`[refreshUserAccessToken] 刷新失败: ${JSON.stringify(data)}`);
+      await env.DB.prepare(
+        "UPDATE users SET feishu_token_failed_at = ? WHERE email = ?"
+      ).bind(now(), email).run();
       return null;
     }
     const expiresIn = data.expires_in || data.data?.expires_in || 7200;
     const expiresAt = Date.now() + (expiresIn - 300) * 1000;
     await env.DB.prepare(
-      'UPDATE users SET feishu_token = ?, feishu_refresh_token = ?, feishu_token_expires_at = ?, updated_at = ? WHERE email = ?'
+      'UPDATE users SET feishu_token = ?, feishu_refresh_token = ?, feishu_token_expires_at = ?, feishu_token_failed_at = NULL, updated_at = ? WHERE email = ?'
     ).bind(newAccessToken, newRefreshToken, expiresAt, now(), email).run();
     console.log(`[refreshUserAccessToken] 刷新成功: ${email}`);
     return { access_token: newAccessToken, refresh_token: newRefreshToken, expires_at: expiresAt };
@@ -7749,6 +7753,48 @@ app.post('/api/cron/interview-reminder', async (c) => {
       detail: err.message,
     });
     return c.json({ ok: false, detail: `发送提醒失败: ${err.message}` }, 500);
+  }
+});
+
+/**
+ * 飞书用户 token 批量刷新
+ * POST /api/cron/refresh-feishu-tokens
+ * 每 12 小时遍历已绑定飞书的用户，自动刷新 user_access_token，防止 refresh_token 过期
+ */
+app.post('/api/cron/refresh-feishu-tokens', async (c) => {
+  try {
+    const users = await c.env.DB.prepare(
+      "SELECT email, feishu_refresh_token, feishu_token_expires_at FROM users WHERE feishu_refresh_token IS NOT NULL AND feishu_refresh_token != ''"
+    ).all();
+    let refreshed = 0, failed = 0, skipped = 0;
+
+    for (const u of users.results || []) {
+      const user = u as any;
+      // 只在 token 剩余有效期 < 12 小时时刷新（避免频繁刷新）
+      const expiresAt = user.feishu_token_expires_at || 0;
+      if (expiresAt > 0 && Date.now() < expiresAt - 12 * 3600 * 1000) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        const result = await refreshUserAccessToken(c.env, user.email);
+        if (result) refreshed++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+
+    await logOperation(c.env, {
+      action: 'cron.refresh_feishu_tokens',
+      actor: 'cron',
+      detail: JSON.stringify({ refreshed, failed, skipped, total: users.results?.length }),
+    });
+
+    return c.json({ ok: true, refreshed, failed, skipped, total: users.results?.length });
+  } catch (err: any) {
+    return c.json({ ok: false, detail: err.message }, 500);
   }
 });
 
