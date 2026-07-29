@@ -264,7 +264,7 @@ const SystemSettingsPage: React.FC = () => {
                 <Text type="secondary">
                   {meta?.llm_api_key_set
                     ? `已设置${meta?.llm_api_key_last4 ? `（末 4 位：${meta.llm_api_key_last4}）` : ''}`
-                    : '未设置，请先配置 API Key'}
+                    : '未设置，将降级使用 Cloudflare Workers AI（免费，Llama 模型）'}
                 </Text>
                 {meta?.llm_api_key_set && !editingKey && (
                   <Button type="link" onClick={() => setEditingKey(true)} style={{ padding: 0, height: 'auto' }}>
@@ -277,7 +277,6 @@ const SystemSettingsPage: React.FC = () => {
               {
                 validator: async (_, value) => {
                   const trimmed = (value || '').trim();
-                  if (!meta?.llm_api_key_set && !trimmed) throw new Error('请先配置 API Key');
                   if (editingKey && !trimmed) throw new Error('请输入新的 API Key');
                 },
               },

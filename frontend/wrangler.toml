@@ -17,6 +17,5 @@ database_id = "3f82993e-210d-4b0b-9d83-4ed4be69724f"
 # 定时面试提醒改用 GitHub Actions 定时调用 POST /api/cron/interview-reminder
 # 见 .github/workflows/interview-reminder-cron.yml
 
-# [ai]
-# binding = "AI"
-# NOTE: 本地 `wrangler pages dev` 需注释掉；生产部署 `wrangler pages deploy` 时取消注释
+[ai]
+binding = "AI"

@@ -332,7 +332,7 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
   }
 
   // 降级：Cloudflare Workers AI
-  if (!env.AI) throw new Error('AI not configured: set AI_API_KEY env or add Workers AI binding');
+  if (!env.AI) throw new Error('AI 未配置：请在系统设置中填写 API Key，或在 wrangler.toml 中启用 [ai] 绑定以使用 Cloudflare Workers AI（免费）');
   const aiModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
   async function runModel(name: string): Promise<string> {
     const result: any = await env.AI!.run(name, {
