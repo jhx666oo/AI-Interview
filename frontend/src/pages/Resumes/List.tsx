@@ -881,17 +881,26 @@ const ResumesList: React.FC = () => {
           }
         }
       } else {
-        const formData = new FormData();
-        formData.append('position_id', values.position_id);
-        fileList.forEach(file => {
-          formData.append('files', file);
-        });
-        await request.post('/resumes/batch', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-        message.success(`成功上传 ${fileList.length} 份简历，AI正在解析中...`);
+        // 批量上传：逐文件异步上传，每个 ~2s 返回不阻塞
+        let uploadedCount = 0;
+        for (const file of fileList) {
+          try {
+            const formData = new FormData();
+            formData.append('position_id', values.position_id);
+            formData.append('file', file);
+            // 尝试用 pdfjs 提取文本
+            let fileRawText = '';
+            try { fileRawText = await extractPdfText(file); } catch {}
+            if (fileRawText) formData.append('raw_text', fileRawText);
+            await request.post('/resumes', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            uploadedCount++;
+          } catch (e) {
+            console.error('批量上传单文件失败:', file.name, e);
+          }
+        }
+        message.success(`成功上传 ${uploadedCount}/${fileList.length} 份简历，AI 初筛将在后台自动进行...`);
       }
 
       setIsModalVisible(false);

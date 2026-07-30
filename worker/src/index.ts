@@ -3444,7 +3444,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         if (!resume) return;
         const { text: resumeText } = await getResumeTextForScreening(c.env, resume);
         if (!resumeText || resumeText.length < 20) return;
-        const posName = _positionId || _parsedPositionName || '';
+        const posName = resume.position_applied || resume.mapped_position || _positionId || _parsedPositionName || '';
         const posCtx = await getPositionContext(c.env.DB, posName);
         const prompt = await getAIPrompt(c.env, 'analyze_resume', {
           system: '你是一位资深的 HR 招聘评估 AI。请按岗位能力维度逐条 0-5 打分，用中文返回 JSON：{match_score:0-100,recommendation,summary,strengths:[],risks:[],suggested_questions:[],dimensions:[{name,score,reason}]}。',
