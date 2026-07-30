@@ -1997,7 +1997,8 @@ async function bitableGetRecord(env: Env, tableId: string, recordId: string): Pr
 }
 
 async function bitableCreateRecord(env: Env, tableId: string, fields: Record<string, any>): Promise<string | null> {
-  bitableCache.delete(tableId);
+  // 增量更新缓存：不删全量，新记录插入头部
+  const cached = bitableCache.get(tableId);
   const token = await getFeishuToken(env);
   const appToken = env.FEISHU_BITABLE_APP_TOKEN || FEISHU_CONFIG.appToken;
   const resp = await fetch(
@@ -2009,11 +2010,18 @@ async function bitableCreateRecord(env: Env, tableId: string, fields: Record<str
     }
   );
   const data: any = await resp.json();
-  return data.data?.record?.record_id || null;
+  const newId = data.data?.record?.record_id;
+  // 增量更新缓存：新记录插入头部，不用重拉全量
+  if (newId && cached) {
+    cached.data.unshift({ record_id: newId, fields });
+    cached.expiry = Date.now() + BITABLE_CACHE_TTL;
+  }
+  return newId || null;
 }
 
 async function bitableUpdateRecord(env: Env, tableId: string, recordId: string, fields: Record<string, any>): Promise<boolean> {
-  bitableCache.delete(tableId);
+  // 增量更新缓存：更新已有记录，不删全量
+  const cached = bitableCache.get(tableId);
   const token = await getFeishuToken(env);
   const appToken = env.FEISHU_BITABLE_APP_TOKEN || FEISHU_CONFIG.appToken;
   const resp = await fetch(
@@ -2025,6 +2033,12 @@ async function bitableUpdateRecord(env: Env, tableId: string, recordId: string, 
     }
   );
   const data: any = await resp.json();
+  if (data.data?.record && cached) {
+    // 更新缓存中对应记录
+    const idx = cached.data.findIndex((r: any) => r.record_id === recordId);
+    if (idx >= 0) cached.data[idx] = { record_id: recordId, fields: { ...cached.data[idx].fields, ...fields } };
+    cached.expiry = Date.now() + BITABLE_CACHE_TTL;
+  }
   return !!data.data?.record;
 }
 
