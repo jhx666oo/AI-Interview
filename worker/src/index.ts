@@ -1710,8 +1710,8 @@ async function getResumeTextForScreening(env: Env, row: any): Promise<{ text: st
 function mapAIResultToScore(screeningResult: string, aiEvalText: string): number {
   const r = (screeningResult || '').trim();
   if (r.includes('通过')) return 85;
-  if (r.includes('淘汰')) return 25;
-  if (r.includes('存疑')) return 55;
+  if (r.includes('淘汰')) return 30;
+  if (r.includes('存疑')) return 67;
   // 从文本中尝试提取分数
   const extracted = extractScoreFromEval(aiEvalText);
   if (extracted !== null && extracted >= 0 && extracted <= 100) return extracted;
@@ -3378,7 +3378,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         let parsed: any;
         try { parsed = extractJSON(aiResp); } catch { parsed = { summary: aiResp }; }
         const matchScore = parsed.match_score ?? 50;
-        const screeningResult = matchScore >= 80 ? '通过' : matchScore >= 55 ? '存疑' : '淘汰';
+        const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
         const aiEvalObj: any = { summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '' };
         if (Array.isArray(parsed.dimensions)) {
           aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({ name: d.name || '', score: d.score ?? 0, reason: d.reason || '' }));
@@ -4125,7 +4125,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
         try { parsed = extractJSON(result); } catch { parsed = { raw_response: result, summary: result }; }
 
         const matchScore = parsed.match_score ?? 50;
-        const screeningResult = matchScore >= 80 ? '通过' : matchScore >= 55 ? '存疑' : '淘汰';
+        const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
 
         // ai_evaluation 与 ai-screen 路由格式一致
         const aiEvalObj: any = { summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '' };
