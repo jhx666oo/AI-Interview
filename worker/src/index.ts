@@ -1145,7 +1145,51 @@ app.get('/api/dashboard/overview', authMiddleware, async (c) => {
         { name: '已入职', count: hiVal },
       ],
     },
-    divisions: [],
+    divisions: await (async () => {
+      try {
+        const ownerCond = owner ? 'AND p.responsible_person = ?' : '';
+        const ownerParams = owner ? [owner] : [];
+        // 按部门聚合：岗位数、编制数、活跃岗位数
+        const deptRows = await db.prepare(
+          `SELECT p.department, COUNT(*) as pos_cnt, COALESCE(SUM(p.headcount),0) as hc,
+            COUNT(CASE WHEN p.status IN ('open','published') THEN 1 END) as active_cnt
+           FROM positions p WHERE p.department != '' ${ownerCond}
+           GROUP BY p.department ORDER BY pos_cnt DESC`
+        ).bind(...ownerParams).all();
+        // 按部门查简历数（通过 position_applied → positions.title → department）
+        const resumeRows = await db.prepare(
+          `SELECT p.department, COUNT(DISTINCT r.id) as r_cnt
+           FROM positions p LEFT JOIN resumes r ON r.position_applied = p.title OR r.position_id = p.id
+           WHERE p.department != '' GROUP BY p.department`
+        ).all();
+        const rMap = new Map((resumeRows.results || []).map((r: any) => [r.department, r.r_cnt || 0]));
+        // 按部门查面试数
+        const ivRows = await db.prepare(
+          `SELECT p.department, COUNT(DISTINCT i.id) as iv_cnt
+           FROM positions p LEFT JOIN interviews i ON i.position_id = p.id
+           WHERE p.department != '' GROUP BY p.department`
+        ).all();
+        const ivMap = new Map((ivRows.results || []).map((r: any) => [r.department, r.iv_cnt || 0]));
+        return (deptRows.results || []).map((d: any) => ({
+          name: d.department,
+          hrbp: '',
+          active_positions: d.active_cnt || 0,
+          total_headcount: d.hc || 0,
+          total_resumes: rMap.get(d.department) || 0,
+          scheduled_interviews: ivMap.get(d.department) || 0,
+          interview_pass_rate: 0,
+          hired: 0,
+          funnel: {
+            stages: [
+              { name: '简历', count: rMap.get(d.department) || 0 },
+              { name: '面试', count: ivMap.get(d.department) || 0 },
+              { name: 'Offer', count: 0 },
+              { name: '入职', count: 0 },
+            ],
+          },
+        }));
+      } catch { return []; }
+    })(),
   });
 });
 
