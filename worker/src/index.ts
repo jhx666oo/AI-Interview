@@ -3776,7 +3776,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
         if (          ownerPositions.size > 0) {
           filtered = filtered.filter((i: any) => {
             const pos = i.mapped_position || i.position_applied || '';
-            return Array.from(ownerPositions).some(p => pos.includes(p));
+            return ownerPositions.has(pos);
           });
         }
       } catch (e) {}
