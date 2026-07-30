@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, Fragment } from 'react';
 import { Card, Row, Col, Typography, Spin, message, Table, Tag, Space, Button, Input, Select } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import { SyncOutlined, ReloadOutlined, SearchOutlined, ClearOutlined } from '@ant-design/icons';
@@ -127,8 +127,22 @@ const Dashboard: React.FC = () => {
   ];
 
   // 漏斗阶段
-  const funnelColors = ['#3B82F6', '#6366F1', '#8B5CF6', '#EC4899', '#EF4444', '#F59E0B'];
-  const maxFunnelCount = Math.max(...((overview?.funnel?.stages || []).map(s => s.count || 0) || [1]), 1);
+  const funnelStages = overview?.funnel?.stages || [];
+  const maxFunnelCount = Math.max(...funnelStages.map(s => s.count || 0), 1);
+  const funnelColors = [
+    { bg: 'linear-gradient(135deg, #3B82F6, #60A5FA)', shadow: '#3B82F6' },
+    { bg: 'linear-gradient(135deg, #6366F1, #818CF8)', shadow: '#6366F1' },
+    { bg: 'linear-gradient(135deg, #8B5CF6, #A78BFA)', shadow: '#8B5CF6' },
+    { bg: 'linear-gradient(135deg, #EC4899, #F472B6)', shadow: '#EC4899' },
+    { bg: 'linear-gradient(135deg, #EF4444, #F87171)', shadow: '#EF4444' },
+  ];
+  // 计算各级转化率
+  const stageLabels = ['简历推送', '安排面试', '面试通过', '发放Offer', '已入职'];
+  const conversionRates = funnelStages.map((s, i) => {
+    if (i === 0) return null;
+    const prev = funnelStages[i - 1]?.count || 0;
+    return prev > 0 ? Math.round(s.count / prev * 100) : 0;
+  });
 
   // 岗位明细列
   // 筛选选项（动态从数据中提取）
@@ -246,49 +260,67 @@ const Dashboard: React.FC = () => {
         <Col xs={24} lg={8}>
           <Card
             size="small"
-            title={<Text strong style={{ fontSize: 14 }}>招聘漏斗（全事业部汇总）</Text>}
+            title={<Text strong style={{ fontSize: 14 }}>招聘漏斗</Text>}
             style={{ borderRadius: 8, height: '100%' }}
           >
-            {overview?.funnel?.stages?.length ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-                {overview.funnel.stages.map((stage, idx) => {
-                  const total = overview.funnel.stages.length;
-                  const widthPct = 100 - idx * (60 / Math.max(total - 1, 1)); // 100% → 40% 逐级收窄
-                  const color = funnelColors[idx % funnelColors.length];
-                  const pct = maxFunnelCount > 0 ? Math.round((stage.count / maxFunnelCount) * 100) : 0;
+            {funnelStages.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, padding: '4px 8px' }}>
+                {funnelStages.map((stage, idx) => {
+                  const total = funnelStages.length;
+                  const widthPct = 100 - idx * (56 / Math.max(total - 1, 1));
+                  const color = funnelColors[idx];
+                  const fillPct = maxFunnelCount > 0 ? Math.round((stage.count / maxFunnelCount) * 100) : 0;
+                  const conv = conversionRates[idx];
                   return (
-                    <div key={stage.name} style={{
-                      width: `${widthPct}%`,
-                      minWidth: 120,
-                      position: 'relative',
-                      marginBottom: 2,
-                    }}>
-                      {/* 梯形主体 */}
+                    <Fragment key={stage.name}>
                       <div style={{
-                        height: 48,
-                        background: `linear-gradient(135deg, ${color}, ${color}cc)`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        clipPath: 'polygon(2% 0%, 98% 0%, 94% 100%, 6% 100%)',
-                        boxShadow: `0 2px 8px ${color}33`,
-                        transition: 'all 0.3s ease',
+                        width: `${widthPct}%`,
+                        minWidth: 130,
+                        position: 'relative',
+                        marginBottom: 0,
                       }}>
                         <div style={{
-                          color: '#fff', fontWeight: 600, fontSize: 13,
-                          textAlign: 'center', lineHeight: 1.2,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.2)',
-                        }}>
-                          {stage.name}
-                          <br />
-                          <span style={{ fontSize: 18 }}>{stage.count}</span>
-                          <span style={{ fontSize: 11, opacity: 0.8 }}>（{pct}%）</span>
+                          height: 52,
+                          background: color.bg,
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '0 16px 0 20px',
+                          clipPath: 'polygon(3% 0%, 97% 0%, 93% 100%, 7% 100%)',
+                          boxShadow: `0 3px 10px ${color.shadow}40`,
+                          transition: 'transform 0.2s ease',
+                          cursor: 'default',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.03)')}
+                        onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                        >
+                          <span style={{ color: '#fff', fontWeight: 600, fontSize: 13, textShadow: '0 1px 2px rgba(0,0,0,0.15)' }}>
+                            {stageLabels[idx]}
+                          </span>
+                          <span style={{
+                            color: '#fff', fontWeight: 700, fontSize: 18,
+                            minWidth: 44, textAlign: 'right',
+                            textShadow: '0 1px 2px rgba(0,0,0,0.15)',
+                          }}>
+                            {stage.count}
+                          </span>
                         </div>
                       </div>
-                    </div>
+                      {conv !== null && conv !== undefined && (
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 4, margin: '1px 0',
+                          fontSize: 11, color: '#94A3B8',
+                        }}>
+                          <span style={{ letterSpacing: 1 }}>▾</span>
+                          <span>转化率 {conv}%</span>
+                        </div>
+                      )}
+                    </Fragment>
                   );
                 })}
               </div>
             ) : (
-              <Text type="secondary">暂无数据</Text>
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#94A3B8' }}>
+                <Text type="secondary">暂无漏斗数据</Text>
+              </div>
             )}
           </Card>
         </Col>
@@ -347,7 +379,7 @@ const Dashboard: React.FC = () => {
                                 <div style={{
                                   width: `${(s.count / max) * 100}%`,
                                   height: '100%',
-                                  background: funnelColors[si % funnelColors.length],
+                                  background: funnelColors[si % funnelColors.length]?.bg || '#3B82F6',
                                   borderRadius: 3,
                                 }} />
                               </div>
