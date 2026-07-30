@@ -317,7 +317,7 @@ const ResumesList: React.FC = () => {
       }
 
       // 检查是否有正在解析中的简历
-      const hasProcessing = res.some((r: any) => r.parse_status === 'processing');
+      const hasProcessing = res.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
       setPollingEnabled(hasProcessing);
 
       return res;
@@ -335,7 +335,7 @@ const ResumesList: React.FC = () => {
         try {
           const res = await request.get('/resumes', { params: {} });
           if (Array.isArray(res)) {
-            const hasProcessing = res.some((r: any) => r.parse_status === 'processing');
+            const hasProcessing = res.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
             if (!hasProcessing) {
               setPollingEnabled(false);
               fetchResumes(); // 解析完成，刷新数据
@@ -438,7 +438,7 @@ const ResumesList: React.FC = () => {
     request.get('/resumes')
       .then(res => {
         setData(res);
-        const hasProcessing = res.some((r: any) => r.parse_status === 'processing');
+        const hasProcessing = res.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
         setPollingEnabled(hasProcessing);
       })
       .catch(() => message.error('获取简历列表失败'))
