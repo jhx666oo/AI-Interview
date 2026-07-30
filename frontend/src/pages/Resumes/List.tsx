@@ -863,11 +863,22 @@ const ResumesList: React.FC = () => {
           formData.append('position_id', values.position_id);
           formData.append('file', fileList[0]);
           formData.append('raw_text', rawText);
-          await request.post('/resumes', formData, {
+          const uploadRes = await request.post('/resumes', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
           message.success('简历上传成功，AI 初筛将在后台自动进行...');
-          // 上传返回后立即刷新列表（显示 pending_screening 标签）
+          // 立即把新简历加到本地列表（飞书 API 有延迟，不能等 refresh）
+          if (uploadRes?.id) {
+            setData(prev => [{
+              id: uploadRes.id,
+              candidate_name: uploadRes.candidate_name || fileList[0].name.replace('.pdf',''),
+              position_applied: values.position_id || '',
+              parse_status: 'pending_screening',
+              mapped_position: '',
+              status: 'pending_screening',
+              match_score: null,
+            }, ...prev]);
+          }
           fetchResumes(true);
         } else {
           // 扫描件/抽不到文本 → MinerU OCR 流程
@@ -892,9 +903,20 @@ const ResumesList: React.FC = () => {
             let fileRawText = '';
             try { fileRawText = await extractPdfText(file); } catch {}
             if (fileRawText) formData.append('raw_text', fileRawText);
-            await request.post('/resumes', formData, {
+            const uploadRes = await request.post('/resumes', formData, {
               headers: { 'Content-Type': 'multipart/form-data' },
             });
+            if (uploadRes?.id) {
+              setData(prev => [{
+                id: uploadRes.id,
+                candidate_name: uploadRes.candidate_name || file.name.replace('.pdf',''),
+                position_applied: values.position_id || '',
+                parse_status: 'pending_screening',
+                mapped_position: '',
+                status: 'pending_screening',
+                match_score: null,
+              }, ...prev]);
+            }
             uploadedCount++;
           } catch (e) {
             console.error('批量上传单文件失败:', file.name, e);
