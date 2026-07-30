@@ -1,0 +1,24 @@
+name: Daily Report Cron
+
+# 每天 UTC 10:00（北京时间 18:00）自动生成招聘日报并推送飞书群
+# Cloudflare Pages 不支持 cron triggers，改用 GitHub Actions 定时调用
+on:
+  schedule:
+    - cron: '0 10 * * *'  # UTC 10:00 = 北京时间 18:00
+  workflow_dispatch: {}  # 支持手动触发（测试用）
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily report generation
+        run: |
+          echo "调用日报生成接口..."
+          response=$(curl -s -X POST -w "\n%{http_code}" -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" https://ai-interview-88r.pages.dev/api/cron/daily-report)
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+          echo "HTTP $http_code"
+          echo "Response: $body"
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::日报接口返回非 200"
+          fi
