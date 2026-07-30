@@ -103,6 +103,9 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
+    // 切换负责人时先清空旧数据，避免短暂看到错误内容
+    setOverview({} as any);
+    setPositions([]);
     fetchData();
   }, [selectedOwner]);
 
