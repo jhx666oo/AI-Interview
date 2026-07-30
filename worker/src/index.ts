@@ -2013,7 +2013,7 @@ async function bitableCreateRecord(env: Env, tableId: string, fields: Record<str
   const newId = data.data?.record?.record_id;
   // 增量更新缓存：新记录插入头部，不用重拉全量
   if (newId && cached) {
-    cached.data.unshift({ record_id: newId, fields });
+    cached.data.unshift({ record_id: newId, fields: { ...fields, '创建时间': Date.now() } });
     cached.expiry = Date.now() + BITABLE_CACHE_TTL;
   }
   return newId || null;
