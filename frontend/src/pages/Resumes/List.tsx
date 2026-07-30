@@ -866,7 +866,9 @@ const ResumesList: React.FC = () => {
           await request.post('/resumes', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
-          message.success('简历上传成功，AI正在解析中...');
+          message.success('简历上传成功，AI 初筛将在后台自动进行...');
+          // 上传返回后立即刷新列表（显示 pending_screening 标签）
+          fetchResumes(true);
         } else {
           // 扫描件/抽不到文本 → MinerU OCR 流程
           message.loading({ content: '检测到扫描件，正在 OCR 解析...', key: 'ocr' });
