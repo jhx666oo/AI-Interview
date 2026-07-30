@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, Fragment } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Card, Row, Col, Typography, Spin, message, Table, Tag, Space, Button, Input, Select } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import { SyncOutlined, ReloadOutlined, SearchOutlined, ClearOutlined } from '@ant-design/icons';
@@ -129,20 +129,7 @@ const Dashboard: React.FC = () => {
   // 漏斗阶段
   const funnelStages = overview?.funnel?.stages || [];
   const maxFunnelCount = Math.max(...funnelStages.map(s => s.count || 0), 1);
-  const funnelColors = [
-    { bg: 'linear-gradient(135deg, #3B82F6, #60A5FA)', shadow: '#3B82F6' },
-    { bg: 'linear-gradient(135deg, #6366F1, #818CF8)', shadow: '#6366F1' },
-    { bg: 'linear-gradient(135deg, #8B5CF6, #A78BFA)', shadow: '#8B5CF6' },
-    { bg: 'linear-gradient(135deg, #EC4899, #F472B6)', shadow: '#EC4899' },
-    { bg: 'linear-gradient(135deg, #EF4444, #F87171)', shadow: '#EF4444' },
-  ];
-  // 计算各级转化率
-  const stageLabels = ['简历推送', '安排面试', '面试通过', '发放Offer', '已入职'];
-  const conversionRates = funnelStages.map((s, i) => {
-    if (i === 0) return null;
-    const prev = funnelStages[i - 1]?.count || 0;
-    return prev > 0 ? Math.round(s.count / prev * 100) : 0;
-  });
+  const funnelColors = ['#3B82F6', '#6366F1', '#8B5CF6', '#EC4899', '#EF4444'];
 
   // 岗位明细列
   // 筛选选项（动态从数据中提取）
@@ -260,67 +247,44 @@ const Dashboard: React.FC = () => {
         <Col xs={24} lg={8}>
           <Card
             size="small"
-            title={<Text strong style={{ fontSize: 14 }}>招聘漏斗</Text>}
+            title={<Text strong style={{ fontSize: 14 }}>招聘漏斗（全事业部汇总）</Text>}
             style={{ borderRadius: 8, height: '100%' }}
           >
             {funnelStages.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0, padding: '4px 8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
                 {funnelStages.map((stage, idx) => {
                   const total = funnelStages.length;
-                  const widthPct = 100 - idx * (56 / Math.max(total - 1, 1));
-                  const color = funnelColors[idx];
-                  const fillPct = maxFunnelCount > 0 ? Math.round((stage.count / maxFunnelCount) * 100) : 0;
-                  const conv = conversionRates[idx];
+                  const widthPct = 100 - idx * (60 / Math.max(total - 1, 1));
+                  const color = funnelColors[idx % funnelColors.length];
+                  const pct = maxFunnelCount > 0 ? Math.round((stage.count / maxFunnelCount) * 100) : 0;
                   return (
-                    <Fragment key={stage.name}>
+                    <div key={stage.name} style={{
+                      width: `${widthPct}%`, minWidth: 120, position: 'relative', marginBottom: 2,
+                    }}>
                       <div style={{
-                        width: `${widthPct}%`,
-                        minWidth: 130,
-                        position: 'relative',
-                        marginBottom: 0,
+                        height: 48,
+                        background: `linear-gradient(135deg, ${color}, ${color}cc)`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        clipPath: 'polygon(2% 0%, 98% 0%, 94% 100%, 6% 100%)',
+                        boxShadow: `0 2px 8px ${color}33`,
+                        transition: 'all 0.3s ease',
                       }}>
                         <div style={{
-                          height: 52,
-                          background: color.bg,
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          padding: '0 16px 0 20px',
-                          clipPath: 'polygon(3% 0%, 97% 0%, 93% 100%, 7% 100%)',
-                          boxShadow: `0 3px 10px ${color.shadow}40`,
-                          transition: 'transform 0.2s ease',
-                          cursor: 'default',
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.03)')}
-                        onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
-                        >
-                          <span style={{ color: '#fff', fontWeight: 600, fontSize: 13, textShadow: '0 1px 2px rgba(0,0,0,0.15)' }}>
-                            {stageLabels[idx]}
-                          </span>
-                          <span style={{
-                            color: '#fff', fontWeight: 700, fontSize: 18,
-                            minWidth: 44, textAlign: 'right',
-                            textShadow: '0 1px 2px rgba(0,0,0,0.15)',
-                          }}>
-                            {stage.count}
-                          </span>
+                          color: '#fff', fontWeight: 600, fontSize: 13,
+                          textAlign: 'center', lineHeight: 1.2,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                        }}>
+                          {stage.name}
+                          <br />
+                          <span style={{ fontSize: 18 }}>{stage.count}</span>
                         </div>
                       </div>
-                      {conv !== null && conv !== undefined && (
-                        <div style={{
-                          display: 'flex', alignItems: 'center', gap: 4, margin: '1px 0',
-                          fontSize: 11, color: '#94A3B8',
-                        }}>
-                          <span style={{ letterSpacing: 1 }}>▾</span>
-                          <span>转化率 {conv}%</span>
-                        </div>
-                      )}
-                    </Fragment>
+                    </div>
                   );
                 })}
               </div>
             ) : (
-              <div style={{ textAlign: 'center', padding: '40px 0', color: '#94A3B8' }}>
-                <Text type="secondary">暂无漏斗数据</Text>
-              </div>
+              <Text type="secondary">暂无数据</Text>
             )}
           </Card>
         </Col>
@@ -348,47 +312,23 @@ const Dashboard: React.FC = () => {
                       <Text type="secondary" style={{ fontSize: 12 }}>HRBP：{div.hrbp}</Text>
                     </div>
                     <Row gutter={[8, 8]}>
-                      <Col span={8} style={{ textAlign: 'center' }}>
-                        <Text type="secondary" style={{ fontSize: 11 }}>在招岗位</Text>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: '#3B82F6' }}>{div.active_positions}</div>
+                      <Col span={6} style={{ textAlign: 'center' }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>在招</Text>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#3B82F6' }}>{div.active_positions}</div>
                       </Col>
-                      <Col span={8} style={{ textAlign: 'center' }}>
-                        <Text type="secondary" style={{ fontSize: 11 }}>在招人数</Text>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: '#10B981' }}>{div.total_headcount}</div>
+                      <Col span={6} style={{ textAlign: 'center' }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>编制</Text>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#10B981' }}>{div.total_headcount}</div>
                       </Col>
-                      <Col span={8} style={{ textAlign: 'center' }}>
-                        <Text type="secondary" style={{ fontSize: 11 }}>简历推送</Text>
-                        <div style={{ fontSize: 20, fontWeight: 700, color: '#6366F1' }}>{div.total_resumes}</div>
+                      <Col span={6} style={{ textAlign: 'center' }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>简历</Text>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#6366F1' }}>{div.total_resumes}</div>
+                      </Col>
+                      <Col span={6} style={{ textAlign: 'center' }}>
+                        <Text type="secondary" style={{ fontSize: 11 }}>面试</Text>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#EC4899' }}>{div.scheduled_interviews}</div>
                       </Col>
                     </Row>
-                    {div.funnel?.stages?.length && (
-                      <div style={{ marginTop: 12 }}>
-                        <Text type="secondary" style={{ fontSize: 11 }}>招聘漏斗</Text>
-                        {div.funnel.stages.filter(s => s.count > 0).map((s, si) => {
-                          const max = Math.max(...div.funnel.stages.map(x => x.count), 1);
-                          return (
-                            <div key={si} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                              <Text style={{ fontSize: 11, width: 60, flexShrink: 0 }}>{s.name}</Text>
-                              <div style={{
-                                flex: 1,
-                                height: 6,
-                                background: '#F1F5F9',
-                                borderRadius: 3,
-                                overflow: 'hidden',
-                              }}>
-                                <div style={{
-                                  width: `${(s.count / max) * 100}%`,
-                                  height: '100%',
-                                  background: funnelColors[si % funnelColors.length]?.bg || '#3B82F6',
-                                  borderRadius: 3,
-                                }} />
-                              </div>
-                              <Text style={{ fontSize: 11, width: 40, textAlign: 'right' }}>{s.count}</Text>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
                   </div>
                 </Col>
               )) : (
