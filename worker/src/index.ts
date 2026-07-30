@@ -3415,7 +3415,21 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     }
 
     // === 写 D1 resumes 表（立即完成，不阻塞） ===
-    const mappedPos = positionId || parsedPositionName || '';
+    // === 解析 positionId（可能是 UUID 或名字）为岗位名 ===
+    let resolvedPositionName = parsedPositionName || '';
+    if (positionId) {
+      // 先查 positions 表（UUID → title）
+      try {
+        const pos = await c.env.DB.prepare('SELECT title FROM positions WHERE id = ?').bind(positionId).first() as any;
+        if (pos?.title) resolvedPositionName = pos.title;
+      } catch {}
+      // 如果没查到，再看是否是名字本身（不是 UUID 格式）
+      if (!resolvedPositionName && !/^[0-9a-f]{8}-/.test(positionId)) {
+        resolvedPositionName = positionId;
+      }
+    }
+
+    const mappedPos = resolvedPositionName || parsedPositionName || '';
     try {
       const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ?').bind(recordId).first();
       if (existing) {
