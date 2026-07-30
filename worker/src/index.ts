@@ -860,11 +860,32 @@ app.get('/api/question-banks', authMiddleware, async (c) => {
 
 // ==================== Dashboard Routes ====================
 
+// 构建负责人过滤条件（返回 SQL 片段 + 参数）
+function buildOwnerFilter(c: any): { where: string; params: any[] } {
+  const owner = c.req.query('responsible_person') || getOwnerName(c);
+  if (!owner) return { where: '', params: [] };
+  return { where: 'AND responsible_person = ?', params: [owner] };
+}
+
+// 构建基于 positions 表的负责人过滤（用于 resumes/interviews/offers 等关联表）
+function buildOwnerPosFilter(c: any): { wherePos: string; whereResume: string; params: any[] } {
+  const owner = c.req.query('responsible_person') || getOwnerName(c);
+  if (!owner) return { wherePos: '', whereResume: '', params: [] };
+  const p = [owner];
+  return {
+    wherePos: 'AND responsible_person = ?',
+    whereResume: 'AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT title FROM positions WHERE responsible_person = ?))',
+    params: [owner, owner, owner],
+  };
+}
+
 app.get('/api/dashboard/stats', authMiddleware, async (c) => {
   const db = c.env.DB;
-  const activePos = await db.prepare("SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open','published')").first();
-  const pendingResumes = await db.prepare("SELECT COUNT(*) as cnt FROM resumes WHERE status IN ('pending_screening','pending_review','pending_dept_review','pending_hr_decision')").first();
-  const todayInterviews = await db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE date(interview_time) = date('now')").first();
+  const { where: ow, params: op } = buildOwnerFilter(c);
+  const activePos = await db.prepare(`SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open','published') ${ow}`).bind(...op).first();
+  const { whereResume: rw, params: rp } = buildOwnerPosFilter(c);
+  const pendingResumes = await db.prepare(`SELECT COUNT(*) as cnt FROM resumes WHERE status IN ('pending_screening','pending_review','pending_dept_review','pending_hr_decision') ${rw}`).bind(...rp).first();
+  const todayInterviews = await db.prepare(`SELECT COUNT(*) as cnt FROM interviews WHERE date(interview_time) = date('now')`).first();
   return c.json({
     stats: {
       active_positions: activePos?.cnt || 0,
@@ -878,7 +899,7 @@ app.get('/api/dashboard/stats', authMiddleware, async (c) => {
 
 app.get('/api/dashboard/funnel', authMiddleware, async (c) => {
   const db = c.env.DB;
-  // 单条聚合查询替代 5 次循环 COUNT（修复 N+1）
+  const { whereResume: rw, params: rp } = buildOwnerPosFilter(c);
   const row = await db.prepare(
     `SELECT COUNT(*) as total,
        SUM(CASE WHEN stage = 'new' THEN 1 ELSE 0 END) as new_cnt,
@@ -886,8 +907,8 @@ app.get('/api/dashboard/funnel', authMiddleware, async (c) => {
        SUM(CASE WHEN stage = 'interview' THEN 1 ELSE 0 END) as interview_cnt,
        SUM(CASE WHEN stage = 'offer' THEN 1 ELSE 0 END) as offer_cnt,
        SUM(CASE WHEN stage = 'hired' THEN 1 ELSE 0 END) as hired_cnt
-     FROM resumes`
-  ).first() as any;
+     FROM resumes WHERE 1=1 ${rw}`
+  ).bind(...rp).first() as any;
   const totalResumes = row?.total || 0;
   const stages = [
     { stage: 'new', stage_name: '新简历', count: row?.new_cnt || 0 },
@@ -908,22 +929,36 @@ app.get('/api/dashboard/positions-detail', authMiddleware, dashboardPositionsHan
 
 async function dashboardPositionsHandler(c: any) {
   const db = c.env.DB;
-  const positions = await db.prepare(`SELECT * FROM positions ORDER BY created_at DESC`).all();
+  const { where: ow, params: op } = buildOwnerFilter(c);
+  const positions = await db.prepare(`SELECT * FROM positions WHERE 1=1 ${ow} ORDER BY created_at DESC`).bind(...op).all();
 
-  // 7 次聚合查询替代 N*7 次逐条查询（修复 N+1）
+  const pIds = (positions.results || []).map((p: any) => p.id);
+  let posFilter = '';
+  let posParams: any[] = [];
+  if (pIds.length > 0) {
+    const placeholders = pIds.map(() => '?').join(',');
+    posFilter = `AND position_id IN (${placeholders})`;
+    posParams = pIds;
+  } else if (ow) {
+    // owner 有选中但无岗位 → 全部返回 0
+    const emptyResult = [];
+    return c.json(emptyResult);
+  }
+
+  const bindAll = (sql: string) => db.prepare(sql).bind(...posParams);
+
   const [
     resumeCounts, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
   ] = await Promise.all([
-    db.prepare("SELECT position_id, COUNT(*) as cnt FROM resumes GROUP BY position_id").all(),
-    db.prepare("SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 AND status = 'scheduled' GROUP BY position_id").all(),
-    db.prepare("SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 AND (result = 'pass' OR status2 = 'passed') GROUP BY position_id").all(),
-    db.prepare("SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 2 AND (result = 'pass' OR status2 = 'passed') GROUP BY position_id").all(),
-    db.prepare("SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 3 AND (result = 'pass' OR status2 = 'passed') GROUP BY position_id").all(),
-    db.prepare("SELECT position_id, COUNT(*) as cnt FROM offers WHERE status NOT IN ('draft','cancelled') GROUP BY position_id").all(),
-    db.prepare("SELECT position_id, COUNT(*) as cnt FROM onboarding_records WHERE status = 'onboarded' GROUP BY position_id").all(),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM resumes WHERE 1=1 ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 AND status = 'scheduled' ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 AND (result = 'pass' OR status2 = 'passed') ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 2 AND (result = 'pass' OR status2 = 'passed') ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 3 AND (result = 'pass' OR status2 = 'passed') ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM offers WHERE status NOT IN ('draft','cancelled') ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM onboarding_records WHERE status = 'onboarded' ${posFilter} GROUP BY position_id`),
   ]);
 
-  // 构建 position_id → count 的查找表
   const toMap = (rows: any[]) => new Map((rows.results || []).map((r: any) => [r.position_id, r.cnt || 0]));
   const rMap = toMap(resumeCounts);
   const f1SchedMap = toMap(iv1Scheduled);
@@ -941,15 +976,12 @@ async function dashboardPositionsHandler(c: any) {
     const thirdPass = f3PassMap.get(pos.id) || 0;
     const offers = oMap.get(pos.id) || 0;
     const hired = hMap.get(pos.id) || 0;
-
     const passRate = firstInterview > 0 ? Math.round(firstPass / firstInterview * 100) + '%' : '0%';
-
     const statusMap: Record<string, string> = {
       'open': '招聘中', 'published': '招聘中', 'closed': '已完成',
       'draft': '草稿', 'paused': '暂停', 'cancelled': '已终止',
     };
     const displayStatus = statusMap[pos.status] || pos.status;
-
     return {
       division: pos.department || '',
       hrbp: '',
@@ -1057,62 +1089,54 @@ app.get('/api/dashboard/interviewers', authMiddleware, async (c) => {
 
 app.get('/api/dashboard/overview', authMiddleware, async (c) => {
   const db = c.env.DB;
+  const owner = c.req.query('responsible_person') || getOwnerName(c);
 
-  // 并行查询所有汇总数据
-  const [
-    activePos, totalPos, totalResumes, scheduledIvs, completedIvs,
-    passedIvs, offersRs, hiredRs, pendingOb, totalOb
-  ] = await Promise.all([
-    db.prepare("SELECT COUNT(*) as cnt FROM positions").first(),
-    db.prepare("SELECT COALESCE(SUM(headcount),0) as cnt FROM positions").first(),
-    db.prepare("SELECT COUNT(*) as cnt FROM resumes").first(),
-    db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE status = 'scheduled'").first(),
-    db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE status = 'completed'").first(),
-    db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE result = 'pass' OR status2 = 'passed'").first(),
-    db.prepare("SELECT COUNT(*) as cnt FROM offers WHERE status NOT IN ('draft','cancelled')").first(),
-    db.prepare("SELECT COUNT(*) as cnt FROM onboarding_records WHERE status = 'onboarded'").first(),
-    db.prepare("SELECT COUNT(*) as cnt FROM onboarding_records WHERE status = 'pending'").first(),
-    db.prepare("SELECT COUNT(*) as cnt FROM onboarding_records").first(),
-  ]);
+  const posWhere = owner ? 'WHERE responsible_person = ?' : '';
+  const posParams = owner ? [owner] : [];
+  const ivWhere = owner ? 'WHERE position_id IN (SELECT id FROM positions WHERE responsible_person = ?)' : '';
+  const resWhere = owner ? 'WHERE (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT title FROM positions WHERE responsible_person = ?))' : '';
+  const resParams = owner ? [owner, owner] : [];
+  const obWhere = owner ? 'WHERE responsible_person = ?' : '';
+  const ofWhere = owner ? 'WHERE status NOT IN (\'draft\',\'cancelled\') AND position_id IN (SELECT id FROM positions WHERE responsible_person = ?)' : '';
 
-  const ap = activePos?.cnt || 0;
-  const th = totalPos?.cnt || 0;
-  const tr = totalResumes?.cnt || 0;
-  const si = scheduledIvs?.cnt || 0;
-  const ci = completedIvs?.cnt || 0;
-  const pi = passedIvs?.cnt || 0;
-  const of = offersRs?.cnt || 0;
-  const hi = hiredRs?.cnt || 0;
-  const po = pendingOb?.cnt || 0;
+  const q = (sql: string, params: any[] = []) => params.length ? db.prepare(sql).bind(...params).first() : db.prepare(sql).first();
 
-  // 转化率计算
-  const pushConversionRate = tr > 0 ? Math.round((si + ci) / tr * 100) : 0;
-  const interviewPassRate = ci > 0 ? Math.round(pi / ci * 100) : 0;
-  const offerConversionRate = pi > 0 ? Math.round(of / pi * 100) : 0;
-  const hireConversionRate = of > 0 ? Math.round(hi / of * 100) : 0;
+  const ap = await q(`SELECT COUNT(*) as cnt FROM positions ${posWhere}`, posParams);
+  const th = await q(`SELECT COALESCE(SUM(headcount),0) as cnt FROM positions ${posWhere}`, posParams);
+  const tr = await q(`SELECT COUNT(*) as cnt FROM resumes ${resWhere}`, resParams);
+  const si = await q(`SELECT COUNT(*) as cnt FROM interviews ${ivWhere ? ivWhere + ' AND status = \'scheduled\'' : "WHERE status = 'scheduled'"}`, posParams);
+  const ci = await q(`SELECT COUNT(*) as cnt FROM interviews ${ivWhere ? ivWhere + ' AND status = \'completed\'' : "WHERE status = 'completed'"}`, posParams);
+  const pi = await q(`SELECT COUNT(*) as cnt FROM interviews ${ivWhere ? ivWhere + ' AND (result = \'pass\' OR status2 = \'passed\')' : "WHERE (result = 'pass' OR status2 = 'passed')"}`, posParams);
+  const of = await q(`SELECT COUNT(*) as cnt FROM offers ${ofWhere || "WHERE status NOT IN ('draft','cancelled')"}`, posParams);
+  const hi = await q(`SELECT COUNT(*) as cnt FROM onboarding_records ${obWhere ? obWhere + ' AND status = \'onboarded\'' : "WHERE status = 'onboarded'"}`, posParams);
+  const po = await q(`SELECT COUNT(*) as cnt FROM onboarding_records ${obWhere ? obWhere + ' AND status = \'pending\'' : "WHERE status = 'pending'"}`, posParams);
+
+  const trVal = (tr as any)?.cnt || 0;
+  const siVal = (si as any)?.cnt || 0;
+  const ciVal = (ci as any)?.cnt || 0;
+  const piVal = (pi as any)?.cnt || 0;
+  const ofVal = (of as any)?.cnt || 0;
+  const hiVal = (hi as any)?.cnt || 0;
+
+  const pushConversionRate = trVal > 0 ? Math.round((siVal + ciVal) / trVal * 100) : 0;
+  const interviewPassRate = ciVal > 0 ? Math.round(piVal / ciVal * 100) : 0;
+  const offerConversionRate = piVal > 0 ? Math.round(ofVal / piVal * 100) : 0;
+  const hireConversionRate = ofVal > 0 ? Math.round(hiVal / ofVal * 100) : 0;
 
   return c.json({
     overview: {
-      active_positions: ap,
-      total_headcount: th,
-      total_resumes: tr,
-      scheduled_interviews: si,
-      push_conversion_rate: pushConversionRate,
-      interview_pass_rate: interviewPassRate,
-      offers: of,
-      offer_conversion_rate: offerConversionRate,
-      hired: hi,
-      hire_conversion_rate: hireConversionRate,
-      pending_onboarding: po,
+      active_positions: (ap as any)?.cnt || 0, total_headcount: (th as any)?.cnt || 0, total_resumes: trVal,
+      scheduled_interviews: siVal, push_conversion_rate: pushConversionRate,
+      interview_pass_rate: interviewPassRate, offers: ofVal,
+      offer_conversion_rate: offerConversionRate, hired: hiVal,
+      hire_conversion_rate: hireConversionRate, pending_onboarding: (po as any)?.cnt || 0,
       last_updated: new Date().toISOString(),
     },
     funnel: {
       stages: [
-        { name: '简历推送', count: tr },
-        { name: '安排面试', count: si + ci },
-        { name: '面试通过', count: pi },
-        { name: '发放Offer', count: of },
-        { name: '已入职', count: hi },
+        { name: '简历推送', count: trVal }, { name: '安排面试', count: siVal + ciVal },
+        { name: '面试通过', count: piVal }, { name: '发放Offer', count: ofVal },
+        { name: '已入职', count: hiVal },
       ],
     },
     divisions: [],
@@ -1121,12 +1145,13 @@ app.get('/api/dashboard/overview', authMiddleware, async (c) => {
 
 app.get('/api/dashboard/hr-stats', authMiddleware, async (c) => {
   const db = c.env.DB;
-  const totalReq = await db.prepare("SELECT COUNT(*) as cnt FROM job_requisitions").first();
-  const pendingReq = await db.prepare("SELECT COUNT(*) as cnt FROM job_requisitions WHERE status = 'pending'").first();
-  const approvedReq = await db.prepare("SELECT COUNT(*) as cnt FROM job_requisitions WHERE status = 'approved'").first();
+  const { where: ow, params: op } = buildOwnerFilter(c);
+  const totalReq = await db.prepare(`SELECT COUNT(*) as cnt FROM job_requisitions ${ow ? 'WHERE 1=1 ' + ow : ''}`).bind(...op).first();
+  const pendingReq = await db.prepare(`SELECT COUNT(*) as cnt FROM job_requisitions WHERE status = 'pending' ${ow ? 'AND 1=1 ' + ow : ''}`).bind(...op).first();
+  const approvedReq = await db.prepare(`SELECT COUNT(*) as cnt FROM job_requisitions WHERE status = 'approved' ${ow ? 'AND 1=1 ' + ow : ''}`).bind(...op).first();
   const tpSize = await db.prepare("SELECT COUNT(*) as cnt FROM talent_pool").first();
-  const obCnt = await db.prepare("SELECT COUNT(*) as cnt FROM onboarding_records").first();
-  const pbCnt = await db.prepare("SELECT COUNT(*) as cnt FROM probation_records").first();
+  const obCnt = await db.prepare(`SELECT COUNT(*) as cnt FROM onboarding_records ${ow ? 'WHERE 1=1 ' + ow : ''}`).bind(...op).first();
+  const pbCnt = await db.prepare(`SELECT COUNT(*) as cnt FROM probation_records ${ow ? 'WHERE 1=1 ' + ow : ''}`).bind(...op).first();
   return c.json({
     total_requisitions: totalReq?.cnt || 0, pending_requisitions: pendingReq?.cnt || 0,
     approved_requisitions: approvedReq?.cnt || 0, talent_pool_size: tpSize?.cnt || 0,
@@ -1149,20 +1174,22 @@ app.get('/api/dashboard/timeline', authMiddleware, async (c) => {
 
 app.get('/api/dashboard/ai-insights', authMiddleware, async (c) => {
   const db = c.env.DB;
-  const totalResumes = await db.prepare("SELECT COUNT(*) as cnt FROM resumes").first();
-  const pendingResumes = await db.prepare("SELECT COUNT(*) as cnt FROM resumes WHERE status LIKE 'pending%'").first();
-  const totalPositions = await db.prepare("SELECT COUNT(*) as cnt FROM positions").first();
-  const activePositions = await db.prepare("SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open','published')").first();
+  const { where: ow, params: op } = buildOwnerFilter(c);
+  const { whereResume: rw, params: rp } = buildOwnerPosFilter(c);
+  const totalResumes = await db.prepare(`SELECT COUNT(*) as cnt FROM resumes WHERE 1=1 ${rw}`).bind(...rp).first();
+  const pendingResumes = await db.prepare(`SELECT COUNT(*) as cnt FROM resumes WHERE status LIKE 'pending%' ${rw}`).bind(...rp).first();
+  const totalPositions = await db.prepare(`SELECT COUNT(*) as cnt FROM positions WHERE 1=1 ${ow}`).bind(...op).first();
+  const activePositions = await db.prepare(`SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open','published') ${ow}`).bind(...op).first();
   const totalInterviews = await db.prepare("SELECT COUNT(*) as cnt FROM interviews").first();
-  const completedInterviews = await db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE status = 'completed'").first();
+  const completedInterviews = await db.prepare(`SELECT COUNT(*) as cnt FROM interviews WHERE status = 'completed'`).first();
   const stats = {
     total_resumes: totalResumes?.cnt || 0, pending_resumes: pendingResumes?.cnt || 0,
     total_positions: totalPositions?.cnt || 0, active_positions: activePositions?.cnt || 0,
     total_interviews: totalInterviews?.cnt || 0, completed_interviews: completedInterviews?.cnt || 0,
   };
-  const deptResult = await db.prepare("SELECT department, COUNT(*) as cnt FROM positions GROUP BY department ORDER BY cnt DESC LIMIT 10").all();
+  const deptResult = await db.prepare(`SELECT department, COUNT(*) as cnt FROM positions ${ow ? 'WHERE 1=1 ' + ow : ''} GROUP BY department ORDER BY cnt DESC LIMIT 10`).bind(...op).all();
   const departmentDist = deptResult.results.map((r: any) => ({ department: r.department, count: r.cnt }));
-  const stageResult = await db.prepare("SELECT stage, COUNT(*) as cnt FROM resumes GROUP BY stage").all();
+  const stageResult = await db.prepare(`SELECT stage, COUNT(*) as cnt FROM resumes ${rw ? 'WHERE 1=1 ' + rw : ''} GROUP BY stage`).bind(...rp).all();
   const stageDist = stageResult.results.map((r: any) => ({ stage: r.stage, count: r.cnt }));
   const systemPrompt = `You are an expert HR data analyst AI. Analyze the recruitment data and provide insights in Chinese. Return a JSON object with:
 - summary: overall summary in Chinese (2-3 sentences)

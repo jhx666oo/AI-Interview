@@ -3,6 +3,7 @@ import { Card, Row, Col, Typography, Spin, message, Table, Tag, Space, Button, I
 import SimplePagination from '../../components/SimplePagination';
 import { SyncOutlined, ReloadOutlined, SearchOutlined, ClearOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useOwner } from '../../contexts/OwnerContext';
 
 const { Title, Text } = Typography;
 
@@ -73,12 +74,15 @@ const Dashboard: React.FC = () => {
   const [searchPosition, setSearchPosition] = useState('');
   const [tablePage, setTablePage] = useState(1);
   const pageSize = 10;
+  const { selectedOwner } = useOwner();
+
+  const ownerParam = selectedOwner ? { responsible_person: selectedOwner } : {};
 
   const fetchData = async (showLoading = true) => {
     if (showLoading) setLoading(true);
     else setRefreshing(true);
     try {
-      const res = await request.get('/dashboard/overview') as any;
+      const res = await request.get('/dashboard/overview', { params: ownerParam }) as any;
       // 后端返回 {overview, funnel, divisions}，直接使用
       setOverview({
         overview: res.overview || {},
@@ -87,7 +91,7 @@ const Dashboard: React.FC = () => {
       });
 
       // 加载岗位明细
-      const positionsRes = await request.get('/dashboard/positions');
+      const positionsRes = await request.get('/dashboard/positions', { params: ownerParam });
       setPositions((positionsRes as any).positions || (positionsRes as any).position_details || positionsRes);
     } catch (e: any) {
       console.error('Dashboard error:', e);
@@ -100,7 +104,7 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [selectedOwner]);
 
   const overviewData = overview?.overview;
 
