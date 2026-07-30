@@ -4641,23 +4641,53 @@ app.post('/api/resumes/clear-rejected', authMiddleware, async (c) => {
 // ==================== Resume Special Actions ====================
 
 app.post('/api/resumes/batch', authMiddleware, async (c) => {
-  const body = await c.req.json();
-  const results = [];
-  for (const item of (body.items || body || [])) {
-    const id = uuid();
-    const cols = ['id', 'created_at'];
-    const vals: any[] = [id, now()];
-    for (const [k, v] of Object.entries(item)) {
-      if (validCol(k) && !['id', 'created_at'].includes(k)) {
-        cols.push(k);
-        vals.push(prepareValue(v));
-      }
+  // 批量上传已改为前端循环单文件异步接口，此路由保留兼容
+  const contentType = c.req.header('content-type') || '';
+  if (contentType.includes('multipart/form-data')) {
+    // 前端 FormData → 按单文件循环处理
+    const formData = await c.req.formData();
+    const files = formData.getAll('files');
+    const positionId = formData.get('position_id') as string;
+    const results: any[] = [];
+    for (const f of files) {
+      try {
+        const singleForm = new FormData();
+        singleForm.append('file', f);
+        if (positionId) singleForm.append('position_id', positionId);
+        const origin = new URL(c.req.url).origin;
+        const resp = await fetch(origin + '/api/resumes', {
+          method: 'POST',
+          headers: { 'Authorization': c.req.header('Authorization') || '' },
+          body: singleForm,
+        });
+        const r: any = await resp.json();
+        results.push(r);
+      } catch (e) { results.push({ error: String(e) }); }
     }
-    const placeholders = cols.map(() => '?').join(', ');
-    await c.env.DB.prepare(`INSERT INTO resumes (${cols.join(', ')}) VALUES (${placeholders})`).bind(...vals).run();
-    results.push(id);
+    return c.json({ created: results.length, results });
   }
-  return c.json({ created: results.length, ids: results });
+  // 兼容旧 JSON body 格式
+  try {
+    const body = await c.req.json();
+    const results = [];
+    for (const item of (body.items || body || [])) {
+      const id = uuid();
+      const cols = ['id', 'created_at'];
+      const vals: any[] = [id, now()];
+      for (const [k, v] of Object.entries(item)) {
+        if (validCol(k) && !['id', 'created_at'].includes(k)) {
+          cols.push(k);
+          vals.push(prepareValue(v));
+        }
+      }
+      const placeholders = cols.map(() => '?').join(', ');
+      await c.env.DB.prepare(`INSERT INTO resumes (${cols.join(', ')}) VALUES (${placeholders})`).bind(...vals).run();
+      results.push(id);
+    }
+    return c.json({ created: results.length, ids: results });
+  } catch {
+    return c.json({ detail: '批量上传请使用前端逐文件方式或 JSON body' }, 400);
+  }
 });
 
 app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
