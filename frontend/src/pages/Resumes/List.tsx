@@ -863,23 +863,14 @@ const ResumesList: React.FC = () => {
           formData.append('position_id', values.position_id);
           formData.append('file', fileList[0]);
           formData.append('raw_text', rawText);
-          const uploadRes = await request.post('/resumes', formData, {
+          await request.post('/resumes', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
           message.success('简历上传成功，AI 初筛将在后台自动进行...');
-          // 立即把新简历加到本地列表（飞书 API 有延迟，不能等 refresh）
-          if (uploadRes?.id) {
-            setData(prev => [{
-              id: uploadRes.id,
-              candidate_name: uploadRes.candidate_name || fileList[0].name.replace('.pdf',''),
-              position_applied: values.position_id || '',
-              parse_status: 'pending_screening',
-              mapped_position: '',
-              status: 'pending_screening',
-              match_score: null,
-            }, ...prev]);
-          }
-          fetchResumes(true);
+          // 清除缓存并刷新列表
+          loadedRef.current = false;
+          dataCache.current = [];
+          fetchResumes();
         } else {
           // 扫描件/抽不到文本 → MinerU OCR 流程
           message.loading({ content: '检测到扫描件，正在 OCR 解析...', key: 'ocr' });
@@ -906,26 +897,21 @@ const ResumesList: React.FC = () => {
             const uploadRes = await request.post('/resumes', formData, {
               headers: { 'Content-Type': 'multipart/form-data' },
             });
-            if (uploadRes?.id) {
-              setData(prev => [{
-                id: uploadRes.id,
-                candidate_name: uploadRes.candidate_name || file.name.replace('.pdf',''),
-                position_applied: values.position_id || '',
-                parse_status: 'pending_screening',
-                mapped_position: '',
-                status: 'pending_screening',
-                match_score: null,
-              }, ...prev]);
-            }
             uploadedCount++;
           } catch (e) {
             console.error('批量上传单文件失败:', file.name, e);
           }
         }
         message.success(`成功上传 ${uploadedCount}/${fileList.length} 份简历，AI 初筛将在后台自动进行...`);
+        // 清除缓存并刷新列表
+        loadedRef.current = false;
+        dataCache.current = [];
       }
 
       setIsModalVisible(false);
+      // 上传后强制刷新（不走缓存）
+      loadedRef.current = false;
+      dataCache.current = [];
       fetchResumes();
     } catch (error) {
       message.error(error?.response?.data?.detail || error?.message || '上传失败');
