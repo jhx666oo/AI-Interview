@@ -95,7 +95,7 @@ const Dashboard: React.FC = () => {
       setPositions((positionsRes as any).positions || (positionsRes as any).position_details || positionsRes);
     } catch (e: any) {
       console.error('Dashboard error:', e);
-      message.error('获取看板数据失败: ' + (e.response?.data?.detail || e.message));
+      message.error('数据加载失败，请稍后重试');
     } finally {
       setLoading(false);
       setRefreshing(false);

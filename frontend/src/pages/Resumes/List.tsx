@@ -918,6 +918,10 @@ const ResumesList: React.FC = () => {
         message.error('只允许上传 PDF 格式的文件');
         return Upload.LIST_IGNORE;
       }
+      if (file.size && file.size > 10 * 1024 * 1024) {
+        message.error('文件大小不能超过 10MB');
+        return Upload.LIST_IGNORE;
+      }
       setFileList((prev) => [...prev, file]);
       return false;
     },
