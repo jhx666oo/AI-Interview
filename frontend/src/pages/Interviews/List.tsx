@@ -188,7 +188,7 @@ const InterviewsList: React.FC = () => {
     try {
       // 同时拉候选人 + 面试记录
       const [candidates, interviews] = await Promise.all([
-        request.get('/talent-pool', { params: { candidate_name: search || undefined } }).catch(() => []),
+        request.get('/talent-pool', { params: { candidate_name: search || undefined, responsible_person: selectedOwner || undefined } }).catch(() => []),
         request.get('/interviews', { params: { owner_name: selectedOwner || undefined } }).catch(() => []),
       ]);
 
