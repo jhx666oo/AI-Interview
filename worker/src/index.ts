@@ -2026,10 +2026,10 @@ app.get('/api/interviews', authMiddleware, async (c) => {
     binds.push(user.id);
   }
 
-  // 非管理员：只显示自己负责岗位的面试记录
+  // 非管理员：只显示自己负责岗位的面试记录（通过 position_mappings 匹配）
   if (user?.role !== 'admin' && user?.full_name) {
-    conditions.push('p.responsible_person = ?');
-    binds.push(user.full_name);
+    conditions.push("(r.position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR r.mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?) OR i.position_id IN (SELECT id FROM positions WHERE responsible_person = ?))");
+    binds.push(user.full_name, user.full_name, user.full_name);
   }
 
   const status = c.req.query('status');
@@ -2046,8 +2046,8 @@ app.get('/api/interviews', authMiddleware, async (c) => {
 
   const ownerName = c.req.query('owner_name');
   if (ownerName) {
-    conditions.push('p.responsible_person = ?');
-    binds.push(ownerName);
+    conditions.push("(r.position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR r.mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?) OR i.position_id IN (SELECT id FROM positions WHERE responsible_person = ?))");
+    binds.push(ownerName, ownerName, ownerName);
   }
 
   if (conditions.length > 0) {
