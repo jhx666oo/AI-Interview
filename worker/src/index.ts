@@ -74,7 +74,7 @@ const FEISHU_CONFIG = {
 };
 
 // 简单内存缓存，减少飞书 Bitable 重复请求
-const BITABLE_CACHE_TTL = 30_000;
+const BITABLE_CACHE_TTL = 300_000; // 5分钟，减少飞书 API 重复请求
 const bitableCache = new Map<string, { data: any[]; expiry: number }>();
 
 // CORS 白名单：仅允许已知前端域名
