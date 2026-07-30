@@ -875,22 +875,28 @@ function buildOwnerPosFilter(c: any): { wherePos: string; whereResume: string; p
   return {
     wherePos: 'AND responsible_person = ?',
     whereResume: 'AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT title FROM positions WHERE responsible_person = ?))',
-    params: [owner, owner, owner],
+    params: [owner, owner],
   };
 }
 
 app.get('/api/dashboard/stats', authMiddleware, async (c) => {
   const db = c.env.DB;
-  const { where: ow, params: op } = buildOwnerFilter(c);
-  const activePos = await db.prepare(`SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open','published') ${ow}`).bind(...op).first();
-  const { whereResume: rw, params: rp } = buildOwnerPosFilter(c);
-  const pendingResumes = await db.prepare(`SELECT COUNT(*) as cnt FROM resumes WHERE status IN ('pending_screening','pending_review','pending_dept_review','pending_hr_decision') ${rw}`).bind(...rp).first();
-  const todayInterviews = await db.prepare(`SELECT COUNT(*) as cnt FROM interviews WHERE date(interview_time) = date('now')`).first();
+  const owner = c.req.query('responsible_person') || getOwnerName(c);
+  const p1 = owner ? [owner] : [];
+  const p2 = owner ? [owner, owner] : [];
+
+  const activePos = owner
+    ? await db.prepare("SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open','published') AND responsible_person = ?").bind(...p1).first()
+    : await db.prepare("SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open','published')").first();
+  const pendingResumes = owner
+    ? await db.prepare("SELECT COUNT(*) as cnt FROM resumes WHERE status IN ('pending_screening','pending_review','pending_dept_review','pending_hr_decision') AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT title FROM positions WHERE responsible_person = ?))").bind(...p2).first()
+    : await db.prepare("SELECT COUNT(*) as cnt FROM resumes WHERE status IN ('pending_screening','pending_review','pending_dept_review','pending_hr_decision')").first();
+  const todayInterviews = await db.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE date(interview_time) = date('now')").first();
   return c.json({
     stats: {
-      active_positions: activePos?.cnt || 0,
-      pending_resumes: pendingResumes?.cnt || 0,
-      today_interviews: todayInterviews?.cnt || 0,
+      active_positions: (activePos as any)?.cnt || 0,
+      pending_resumes: (pendingResumes as any)?.cnt || 0,
+      today_interviews: (todayInterviews as any)?.cnt || 0,
       trends: { active_positions: 0, pending_resumes: 0, today_interviews: 0 }
     },
     recent_activities: []
