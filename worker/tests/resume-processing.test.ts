@@ -3,7 +3,7 @@ import {
   ACTIVE_JOB_STATUSES,
   isTerminalJobStatus,
 } from '../src/resume-processing/types';
-import { claimJob } from '../src/resume-processing/job-repository';
+import { claimJob, createOrGetActiveJob } from '../src/resume-processing/job-repository';
 
 describe('resume processing job status contract', () => {
   it('only treats completed, failed, and cancelled as terminal', () => {
@@ -20,6 +20,15 @@ describe('resume processing job status contract', () => {
 });
 
 describe('job claiming', () => {
+  it('returns the existing active job instead of creating a duplicate', async () => {
+    const db = createActiveJobDb();
+
+    const first = await createOrGetActiveJob(db as never, 'resume-1');
+    const second = await createOrGetActiveJob(db as never, 'resume-1');
+
+    expect(second.id).toBe(first.id);
+    expect(db.insertAttempts).toBe(2);
+  });
   it('only allows one consumer to claim a queued job', async () => {
     const db = createClaimDb();
 
@@ -55,6 +64,27 @@ function createClaimDb() {
             async first() {
               return { id: 'job-1', status, attempt_count: attemptCount };
             },
+          };
+        },
+      };
+    },
+  };
+}
+
+function createActiveJobDb() {
+  const job = { id: 'job-existing', resume_id: 'resume-1', status: 'queued', step: 'extracting_text' };
+  let insertAttempts = 0;
+  return {
+    get insertAttempts() { return insertAttempts; },
+    prepare(sql: string) {
+      return {
+        bind(...values: unknown[]) {
+          return {
+            async run() {
+              if (sql.includes('INSERT OR IGNORE')) insertAttempts += 1;
+              return { meta: { changes: 0 } };
+            },
+            async first() { return job; },
           };
         },
       };

@@ -1,5 +1,32 @@
 import type { ResumeProcessingJob } from './types';
 
+export async function createOrGetActiveJob(
+  db: D1Database,
+  resumeId: string,
+): Promise<ResumeProcessingJob> {
+  const timestamp = new Date().toISOString();
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO resume_processing_jobs
+         (id, resume_id, status, step, created_at, updated_at)
+       VALUES (?, ?, 'queued', 'extracting_text', ?, ?)`,
+    )
+    .bind(crypto.randomUUID(), resumeId, timestamp, timestamp)
+    .run();
+
+  const job = await db
+    .prepare(
+      `SELECT * FROM resume_processing_jobs
+       WHERE resume_id=? AND status IN ('queued', 'running')
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(resumeId)
+    .first();
+
+  if (!job) throw new Error('Unable to create resume processing job');
+  return job as ResumeProcessingJob;
+}
+
 export async function claimJob(
   db: D1Database,
   jobId: string,
