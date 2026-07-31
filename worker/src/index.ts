@@ -3461,55 +3461,51 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       console.error('[Upload] D1 写入失败:', dbErr.message);
     }
 
-    // === 后台异步 AI 初筛（waitUntil，不阻塞上传返回） ===
-    const _extractedText = extractedText;
-    const _recordId = recordId;
-    const _displayName = displayName;
-    const _parsedPositionName = parsedPositionName;
-    const _positionId = positionId;
-    const _tableId = tableId;
-    c.executionCtx.waitUntil((async () => {
-      try {
-        const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(_recordId).first() as any;
-        if (!resume) return;
+    // === 同步 AI 初筛（确保完成后返回，避免 waitUntil 被杀）===
+    try {
+      const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(recordId).first() as any;
+      if (resume) {
         const { text: resumeText } = await getResumeTextForScreening(c.env, resume);
-        if (!resumeText || resumeText.length < 20) return;
-        const posName = resume.position_applied || resume.mapped_position || _positionId || _parsedPositionName || '';
-        const posCtx = await getPositionContext(c.env.DB, posName);
-        const prompt = await getAIPrompt(c.env, 'analyze_resume', {
-          system: '你是一位资深的 HR 招聘评估 AI。请按岗位能力维度逐条 0-5 打分，用中文返回 JSON：{match_score:0-100,recommendation,summary,strengths:[],risks:[],suggested_questions:[],dimensions:[{name,score,reason}]}。',
-          user: '【岗位】' + (posCtx.standardPosition || posName) + '\n' + (posCtx.capabilityDimensions ? '【能力维度】' + posCtx.capabilityDimensions + '\n' : '') + '\n【简历全文】\n' + resumeText,
-        });
-        const aiResp = await callAI(c.env, prompt.system, prompt.user, 'deepseek-v4-flash');
-        if (!aiResp) return;
-        let parsed: any;
-        try { parsed = extractJSON(aiResp); } catch { parsed = { summary: aiResp }; }
-        const matchScore = parsed.match_score ?? 50;
-        const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
-        const aiEvalObj: any = { summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '' };
-        if (Array.isArray(parsed.dimensions)) {
-          aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({ name: d.name || '', score: d.score ?? 0, reason: d.reason || '' }));
-        }
-        const aiReview = JSON.stringify({ summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '', strengths: parsed.strengths || [], risks: parsed.risks || [], suggested_questions: parsed.suggested_questions || [], dimensions: aiEvalObj.dimensions || [] });
-        await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status=?, updated_at=? WHERE id=?')
-          .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, 'ai_screened', now(), _recordId).run();
-        try {
-          await bitableUpdateRecord(c.env, _tableId, _recordId, {
-            'AI简历评估': JSON.stringify(aiEvalObj),
-            'AI简历初筛结果': screeningResult,
-            '优势分析': (parsed.strengths || []).join('\n'),
-            '风险点': (parsed.risks || []).join('\n'),
+        if (resumeText && resumeText.length >= 20) {
+          const posName = resume.position_applied || resume.mapped_position || positionId || parsedPositionName || '';
+          const posCtx = await getPositionContext(c.env.DB, posName);
+          const prompt = await getAIPrompt(c.env, 'analyze_resume', {
+            system: '你是一位资深的 HR 招聘评估 AI。请按岗位能力维度逐条 0-5 打分，用中文返回 JSON：{match_score:0-100,recommendation,summary,strengths:[],risks:[],suggested_questions:[],dimensions:[{name,score,reason}]}。',
+            user: '【岗位】' + (posCtx.standardPosition || posName) + '\n' + (posCtx.capabilityDimensions ? '【能力维度】' + posCtx.capabilityDimensions + '\n' : '') + '\n【简历全文】\n' + resumeText,
           });
-        } catch {}
-      } catch (bgErr: any) {
-        console.error('[Upload] 后台 AI 初筛失败: ' + bgErr.message);
+          const aiResp = await callAI(c.env, prompt.system, prompt.user, 'deepseek-v4-flash');
+          if (aiResp) {
+            let parsed: any;
+            try { parsed = extractJSON(aiResp); } catch { parsed = { summary: aiResp }; }
+            const matchScore = parsed.match_score ?? 50;
+            const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
+            const aiEvalObj: any = { summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '' };
+            if (Array.isArray(parsed.dimensions)) {
+              aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({ name: d.name || '', score: d.score ?? 0, reason: d.reason || '' }));
+            }
+            const aiReview = JSON.stringify({ summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '', strengths: parsed.strengths || [], risks: parsed.risks || [], suggested_questions: parsed.suggested_questions || [], dimensions: aiEvalObj.dimensions || [] });
+            await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status=?, updated_at=? WHERE id=?')
+              .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, 'ai_screened', now(), recordId).run();
+            try {
+              await bitableUpdateRecord(c.env, tableId, recordId, {
+                'AI简历评估': JSON.stringify(aiEvalObj),
+                'AI简历初筛结果': screeningResult,
+                '优势分析': (parsed.strengths || []).join('\n'),
+                '风险点': (parsed.risks || []).join('\n'),
+              });
+            } catch {}
+          }
+        }
       }
-    })());
+    } catch (screeningErr: any) {
+      console.error('[Upload] AI 初筛失败:', screeningErr.message);
+      // 初筛失败不影响返回，状态保持 pending_screening
+    }
 
-    // === 立即返回（不等待 AI 初筛） ===
+    // === 返回结果（含 AI 初筛结果）===
     const record = await bitableGetRecord(c.env, tableId, recordId);
     if (record) return c.json(parseTalentRecord(record));
-    return c.json({ id: recordId, candidate_name: displayName, status: 'uploaded', parse_status: 'pending_screening', detail: '简历已上传，AI 初筛将在后台进行...' });
+    return c.json({ id: recordId, candidate_name: displayName, status: 'uploaded', parse_status: 'pending_screening', detail: '简历已上传，AI 初筛完成' });
 
   } catch (e: any) {
     return c.json({ detail: '上传简历失败: ' + e.message }, 500);
