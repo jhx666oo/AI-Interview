@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createOrGetActiveJob } from './resume-processing/job-repository';
+import { createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow } from './recruiting-operations/share-links';
+import type { ShareExpiryOption } from './recruiting-operations/types';
 
 interface Env {
   DB: D1Database;
@@ -1293,8 +1295,7 @@ export function getBoardInterviewPassCondition(round: 1 | 2 | 3): string {
   return `(round = 3 AND result ${passed})`;
 }
 
-app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
-  const positions = await getDashboardPositionRows(c);
+function makeRecruitingBoardResponse(positions: RecruitingBoardPositionRow[]) {
   const rows = groupBoardRows(positions);
   const kpis = positions.reduce((totals, row) => ({
     active_positions: totals.active_positions + (row.status === '招聘中' ? 1 : 0),
@@ -1305,12 +1306,149 @@ app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
     hired: totals.hired + row.hired,
   }), { active_positions: 0, total_headcount: 0, total_resumes: 0, first_interview: 0, offers: 0, hired: 0 });
 
-  return c.json({
+  return {
     version: 'v1',
     updated_at: now(),
     kpis,
     rows,
-  });
+  };
+}
+
+app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
+  return c.json(makeRecruitingBoardResponse(await getDashboardPositionRows(c)));
+});
+
+type SharedBoardResult = { status: 200; body: Record<string, unknown> } | { status: 404; body: null };
+
+function toPublicRecruitingBoard(board: Record<string, any>, scopeIds: string[]): Record<string, unknown> {
+  const scopedRows = scopeIds.length
+    ? (board.rows || []).filter((row: any) => scopeIds.includes(row.division))
+    : (board.rows || []);
+  const publicRows = scopedRows.map((row: any) => ({
+    ...toPublicBoardRow({
+      division: row.division,
+      hrbp: row.hrbp,
+      urgency: row.priority,
+      headcount: row.headcount,
+      total_resumes: row.total_resumes,
+      first_interview: row.first_interview,
+      first_interview_passed: row.first_pass,
+      second_interview_passed: row.second_pass,
+      third_interview_passed: row.third_pass,
+      pass_rate: row.pass_rate,
+      offer_count: row.offers,
+      onboarded_count: row.hired,
+      remark: row.notes,
+      status: row.status,
+    }),
+    positions: (row.positions || []).map((position: any) => toPublicBoardRow({
+      division: position.division,
+      hrbp: position.hrbp,
+      position: position.position,
+      urgency: position.priority,
+      headcount: position.headcount,
+      total_resumes: position.total_resumes,
+      first_interview: position.first_interview,
+      first_interview_passed: position.first_pass,
+      second_interview_passed: position.second_pass,
+      third_interview_passed: position.third_pass,
+      pass_rate: position.first_interview ? Math.round(position.first_pass / position.first_interview * 100) : null,
+      offer_count: position.offers,
+      onboarded_count: position.hired,
+      remark: position.notes,
+      status: position.status,
+    })),
+  }));
+  return {
+    version: board.version,
+    updated_at: board.updated_at,
+    kpis: board.kpis,
+    rows: publicRows,
+  };
+}
+
+/** Validates a token before calculating and exposing a privacy-safe board. */
+export async function getSharedBoard(
+  db: D1Database,
+  token: string,
+  at = new Date(),
+  loadBoard?: () => Promise<Record<string, any>>,
+): Promise<SharedBoardResult> {
+  const tokenHash = await hashShareToken(token);
+  const link = await db.prepare(
+    'SELECT scope_type, scope_ids, expires_at, revoked_at FROM dashboard_share_links WHERE token_hash = ?'
+  ).bind(tokenHash).first() as any;
+  if (!link || !isShareLinkActive(link, at)) return { status: 404, body: null };
+
+  const scopeIds = link.scope_type === 'divisions' && typeof link.scope_ids === 'string'
+    ? (safeJsonParse(link.scope_ids) || []).filter((value: unknown): value is string => typeof value === 'string')
+    : [];
+  const board = loadBoard ? await loadBoard() : { version: 'v1', updated_at: at.toISOString(), kpis: {}, rows: [] };
+  return { status: 200, body: toPublicRecruitingBoard(board, scopeIds) };
+}
+
+function createShareToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return b64urlBuf(bytes.buffer);
+}
+
+function serializeShareLink(link: any) {
+  return {
+    id: link.id,
+    scope_type: link.scope_type,
+    scope_ids: safeJsonParse(link.scope_ids) || [],
+    expires_at: link.expires_at,
+    revoked_at: link.revoked_at,
+    created_by: link.created_by,
+    created_at: link.created_at,
+  };
+}
+
+app.post('/api/dashboard/share-links', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
+  const body = await c.req.json().catch(() => ({})) as any;
+  const expiry = body.expiry as ShareExpiryOption;
+  if (!['1d', '7d', '30d', 'permanent'].includes(expiry)) return c.json({ detail: 'Invalid share expiry' }, 400);
+  const scopeType = body.scope_type === 'divisions' ? 'divisions' : 'all';
+  const scopeIds = Array.isArray(body.scope_ids) ? body.scope_ids.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0) : [];
+  if (scopeType === 'divisions' && scopeIds.length === 0) return c.json({ detail: 'Division scope requires at least one division' }, 400);
+
+  const token = createShareToken();
+  const expiresAt = createShareExpiry(expiry)?.toISOString() || null;
+  const user = c.get('user');
+  const id = uuid();
+  const createdAt = now();
+  await c.env.DB.prepare(
+    'INSERT INTO dashboard_share_links (id, token_hash, scope_type, scope_ids, expires_at, revoked_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)'
+  ).bind(id, await hashShareToken(token), scopeType, JSON.stringify(scopeIds), expiresAt, user.email, createdAt).run();
+  return c.json({ link: { id, scope_type: scopeType, scope_ids: scopeIds, expires_at: expiresAt, revoked_at: null, created_by: user.email, created_at: createdAt }, token }, 201);
+});
+
+app.get('/api/dashboard/share-links', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
+  const user = c.get('user');
+  const isAdmin = user.role === 'admin';
+  const query = isAdmin
+    ? c.env.DB.prepare('SELECT * FROM dashboard_share_links ORDER BY created_at DESC')
+    : c.env.DB.prepare('SELECT * FROM dashboard_share_links WHERE created_by = ? ORDER BY created_at DESC').bind(user.email);
+  const result = await query.all();
+  return c.json({ links: (result.results || []).map(serializeShareLink) });
+});
+
+app.delete('/api/dashboard/share-links/:id', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
+  const user = c.get('user');
+  const isAdmin = user.role === 'admin';
+  const statement = isAdmin
+    ? c.env.DB.prepare('UPDATE dashboard_share_links SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').bind(now(), c.req.param('id'))
+    : c.env.DB.prepare('UPDATE dashboard_share_links SET revoked_at = ? WHERE id = ? AND created_by = ? AND revoked_at IS NULL').bind(now(), c.req.param('id'), user.email);
+  const result = await statement.run();
+  if (!result.meta.changes) return c.json({ detail: 'Share link not found' }, 404);
+  return c.json({ ok: true });
+});
+
+app.get('/api/shared/dashboard/:token', async (c) => {
+  const result = await getSharedBoard(c.env.DB, c.req.param('token'), new Date(), async () =>
+    makeRecruitingBoardResponse(await getDashboardPositionRowsForOwner(c.env.DB, null)),
+  );
+  return result.status === 404 ? c.notFound() : c.json(result.body);
 });
 
 async function dashboardPositionsHandler(c: any) {
@@ -1318,8 +1456,12 @@ async function dashboardPositionsHandler(c: any) {
 }
 
 async function getDashboardPositionRows(c: any): Promise<RecruitingBoardPositionRow[]> {
-  const db = c.env.DB;
-  const { where: ow, params: op } = buildOwnerFilter(c);
+  return getDashboardPositionRowsForOwner(c.env.DB, getDashboardOwner(c));
+}
+
+async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | null): Promise<RecruitingBoardPositionRow[]> {
+  const ow = owner ? 'AND responsible_person = ?' : '';
+  const op = owner ? [owner] : [];
   const positions = await db.prepare(`SELECT * FROM positions WHERE 1=1 ${ow} ORDER BY created_at DESC`).bind(...op).all();
 
   const pIds = (positions.results || []).map((p: any) => p.id);

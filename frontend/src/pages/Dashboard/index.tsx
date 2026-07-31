@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Col, Input, Row, Select, Space, Spin, Table, Tag, Typography, message } from 'antd';
-import { ClearOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Card, Col, Input, List, Modal, Radio, Row, Select, Space, Spin, Table, Tag, Typography, message } from 'antd';
+import { ClearOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useOwner } from '../../contexts/OwnerContext';
 
 const { Title, Text } = Typography;
 
 type Priority = 'P0' | 'P1' | 'P2';
+type ShareExpiry = '1d' | '7d' | '30d' | 'permanent';
+
+interface ShareLink {
+  id: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
 
 interface PositionRow {
   position_id: string;
@@ -99,6 +107,11 @@ const Dashboard: React.FC = () => {
   const [priority, setPriority] = useState<Priority>();
   const [status, setStatus] = useState<string>();
   const [keyword, setKeyword] = useState('');
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareExpiry, setShareExpiry] = useState<ShareExpiry>('7d');
+  const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
+  const [creatingShare, setCreatingShare] = useState(false);
+  const [newShareUrl, setNewShareUrl] = useState('');
   const { selectedOwner } = useOwner();
 
   const fetchBoard = async (showLoading = true) => {
@@ -116,6 +129,56 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => { fetchBoard(); }, [selectedOwner]);
+
+  const loadShareLinks = async () => {
+    try {
+      const data = await request.get('/dashboard/share-links') as { links: ShareLink[] };
+      setShareLinks(data.links || []);
+    } catch {
+      message.error('分享链接加载失败');
+    }
+  };
+
+  const openShareModal = async () => {
+    setShareOpen(true);
+    setNewShareUrl('');
+    await loadShareLinks();
+  };
+
+  const createShareLink = async () => {
+    setCreatingShare(true);
+    try {
+      const data = await request.post('/dashboard/share-links', { expiry: shareExpiry }) as { token: string };
+      const url = `${window.location.origin}/shared/dashboard/${data.token}`;
+      setNewShareUrl(url);
+      await navigator.clipboard?.writeText(url);
+      message.success('分享链接已生成并复制');
+      await loadShareLinks();
+    } catch {
+      message.error('分享链接创建失败');
+    } finally {
+      setCreatingShare(false);
+    }
+  };
+
+  const copyShareLink = async (url: string) => {
+    try {
+      await navigator.clipboard?.writeText(url);
+      message.success('已复制链接');
+    } catch {
+      message.error('复制失败，请手动复制');
+    }
+  };
+
+  const revokeShareLink = async (id: string) => {
+    try {
+      await request.delete(`/dashboard/share-links/${id}`);
+      message.success('链接已撤销');
+      await loadShareLinks();
+    } catch {
+      message.error('撤销失败');
+    }
+  };
 
   const positions = useMemo(() => board?.rows.flatMap((row) => row.positions) || [], [board]);
   const divisions = useMemo(() => [...new Set(positions.map((row) => row.division).filter(Boolean))].sort(), [positions]);
@@ -159,7 +222,10 @@ const Dashboard: React.FC = () => {
   return <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
       <div><Title level={4} style={{ margin: 0, fontWeight: 700 }}>招聘运营看板</Title><Text type="secondary">数据更新时间：{board?.updated_at ? new Date(board.updated_at).toLocaleString('zh-CN') : '-'}</Text></div>
-      <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchBoard(false)}>刷新</Button>
+      <Space>
+        <Button icon={<LinkOutlined />} onClick={openShareModal}>分享看板</Button>
+        <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchBoard(false)}>刷新</Button>
+      </Space>
     </div>
     <Card size="small" style={{ marginBottom: 20, borderRadius: 8 }}>
       <Row gutter={[16, 12]}>{kpis.map(([label, value, color]) => <Col key={String(label)} xs={12} sm={8} md={4}><div style={{ textAlign: 'center' }}><Text type="secondary">{label}</Text><div style={{ fontSize: 25, fontWeight: 700, color: String(color) }}>{value ?? 0}</div></div></Col>)}</Row>
@@ -188,6 +254,27 @@ const Dashboard: React.FC = () => {
         locale={{ emptyText: '暂无匹配岗位数据' }}
       />
     </Card>
+    <Modal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
+      <Typography.Paragraph type="secondary">公开链接仅展示聚合招聘数据，不包含候选人或 AI 评估信息。</Typography.Paragraph>
+      <Space direction="vertical" style={{ width: '100%' }} size="middle">
+        <Radio.Group value={shareExpiry} onChange={(event) => setShareExpiry(event.target.value)}>
+          <Space direction="vertical">
+            <Radio value="1d">1 天有效</Radio>
+            <Radio value="7d">7 天有效</Radio>
+            <Radio value="30d">30 天有效</Radio>
+            <Radio value="permanent">长期有效（可随时撤销）</Radio>
+          </Space>
+        </Radio.Group>
+        <Button type="primary" loading={creatingShare} onClick={createShareLink}>生成并复制链接</Button>
+        {newShareUrl && <Input value={newShareUrl} readOnly addonAfter={<Button type="link" size="small" onClick={() => copyShareLink(newShareUrl)}>复制</Button>} />}
+        <Typography.Text strong>已创建链接</Typography.Text>
+        <List size="small" bordered dataSource={shareLinks} locale={{ emptyText: '暂无分享链接' }} renderItem={(link) => (
+          <List.Item actions={link.revoked_at ? [<Tag key="revoked">已撤销</Tag>] : [<Button key="revoke" type="link" danger onClick={() => revokeShareLink(link.id)}>撤销</Button>]}>
+            <span>{link.expires_at ? `有效至 ${new Date(link.expires_at).toLocaleString('zh-CN')}` : '长期有效'} · 创建于 {new Date(link.created_at).toLocaleString('zh-CN')}</span>
+          </List.Item>
+        )} />
+      </Space>
+    </Modal>
   </div>;
 };
 

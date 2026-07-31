@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, getBoardInterviewPassCondition, getDashboardOwner, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
+import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, getBoardInterviewPassCondition, getDashboardOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
 import {
   createShareExpiry,
   hashShareToken,
@@ -40,6 +40,40 @@ describe('dashboard share links', () => {
 
     expect(row).toEqual({ position: '运营', total_resumes: 10 });
     expect(row).not.toHaveProperty('candidate_name');
+  });
+
+  it('returns 404 instead of public data for an expired token', async () => {
+    const fakeDb = {
+      prepare: () => ({ bind: () => ({ first: async () => ({
+        expires_at: '2026-07-30T00:00:00.000Z',
+        revoked_at: null,
+        scope_type: 'all',
+        scope_ids: '[]',
+      }) }) }),
+    };
+
+    const response = await getSharedBoard(fakeDb as never, 'expired-token', now);
+    expect(response.status).toBe(404);
+    expect(response.body).toBeNull();
+  });
+
+  it('returns only public aggregate fields for an active token', async () => {
+    const fakeDb = {
+      prepare: () => ({ bind: () => ({ first: async () => ({
+        expires_at: null,
+        revoked_at: null,
+        scope_type: 'all',
+        scope_ids: '[]',
+      }) }) }),
+    };
+    const response = await getSharedBoard(fakeDb as never, 'live-token', now, async () => ({
+      version: 'v1', updated_at: now.toISOString(), kpis: { total_resumes: 2 },
+      rows: [{ division: 'A', candidate_name: 'Private', positions: [{ position: '运营', candidate_name: 'Private' }] }],
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ rows: [{ division: 'A', positions: [{ position: '运营' }] }] });
+    expect(JSON.stringify(response.body)).not.toContain('Private');
   });
 });
 
