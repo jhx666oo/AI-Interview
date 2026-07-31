@@ -623,6 +623,58 @@ async function logOperation(
   }
 }
 
+export type BulkApprovalResult = {
+  approved: string[];
+  skipped: Array<{ id: string; reason: 'not_found' | 'already_approved' }>;
+  failed: Array<{ id: string; reason: string }>;
+};
+
+/**
+ * Updates D1 one resume at a time so a malformed or deleted row never aborts
+ * the rest of a selected batch. Feishu is deliberately handled by the route
+ * after a D1 success; the list and dashboard both read D1 as their source of truth.
+ */
+export async function approveBatch(db: D1Database, resumeIds: string[], actor = 'system'): Promise<BulkApprovalResult> {
+  const result: BulkApprovalResult = { approved: [], skipped: [], failed: [] };
+  const uniqueIds = [...new Set(resumeIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+
+  for (const id of uniqueIds) {
+    try {
+      const resume = await db.prepare('SELECT id, status, stage FROM resumes WHERE id = ?').bind(id).first<any>();
+      if (!resume) {
+        result.skipped.push({ id, reason: 'not_found' });
+        continue;
+      }
+      if (resume.status === 'approved' && resume.stage === 'talent_pool') {
+        result.skipped.push({ id, reason: 'already_approved' });
+        continue;
+      }
+
+      const update = await db.prepare("UPDATE resumes SET status = 'approved', stage = 'talent_pool', updated_at = ? WHERE id = ?")
+        .bind(now(), id)
+        .run();
+      if (!update.meta.changes) {
+        result.skipped.push({ id, reason: 'not_found' });
+        continue;
+      }
+
+      result.approved.push(id);
+      try {
+        await db.prepare(
+          'INSERT INTO operation_logs (action, entity_type, entity_id, actor, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind('resume.approve_to_talent_pool', 'resume', id, actor, 'success', '批量入库', now()).run();
+      } catch (error: any) {
+        console.error(`[approveBatch] 操作日志写入失败(${id}): ${error?.message || error}`);
+      }
+    } catch (error: any) {
+      console.error(`[approveBatch] 入库失败(${id}): ${error?.message || error}`);
+      result.failed.push({ id, reason: error?.message || 'database_error' });
+    }
+  }
+
+  return result;
+}
+
 // ==================== Auth Middleware ====================
 
 async function getUser(db: D1Database, email: string): Promise<any | null> {
@@ -5201,6 +5253,26 @@ app.post('/api/resumes/:id/approve-to-talent-pool', authMiddleware, async (c) =>
   await bitableUpdateRecord(c.env, talentTableId, id, { 'HR复核结果': '通过' });
   record = await bitableGetRecord(c.env, talentTableId, id);
   return c.json(parseTalentRecord(record));
+});
+
+app.post('/api/resumes/batch-approve-to-talent-pool', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const ids = Array.isArray(body.ids) ? body.ids : [];
+  if (ids.length === 0) return c.json({ detail: 'ids must contain at least one resume id' }, 400);
+  if (ids.some((id: unknown) => typeof id !== 'string' || id.length === 0)) {
+    return c.json({ detail: 'ids must only contain resume ids' }, 400);
+  }
+
+  const result = await approveBatch(c.env.DB, ids, c.get('user')?.email || 'system');
+  const talentTableId = getBitableTableId(c.env, 'talent');
+  for (const id of result.approved) {
+    try {
+      await bitableUpdateRecord(c.env, talentTableId, id, { 'HR复核结果': '通过' });
+    } catch (error: any) {
+      console.error(`[batch-approve-to-talent-pool] 飞书回写失败(${id}): ${error?.message || error}`);
+    }
+  }
+  return c.json(result);
 });
 
 app.post('/api/resumes/:id/reject-from-screening', authMiddleware, async (c) => {

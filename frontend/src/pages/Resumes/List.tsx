@@ -23,6 +23,7 @@ const ResumesList: React.FC = () => {
   const [pollingEnabled, setPollingEnabled] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [batchApproving, setBatchApproving] = useState(false);
   
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [interviewModalVisible, setInterviewModalVisible] = useState(false);
@@ -694,6 +695,38 @@ const ResumesList: React.FC = () => {
     });
   };
 
+  const handleBatchApproveToTalentPool = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要入库的简历');
+      return;
+    }
+    const selectedIds = selectedRowKeys.map(String);
+    Modal.confirm({
+      title: '确认批量入库',
+      content: `确定将选中的 ${selectedIds.length} 份简历入人才库吗？`,
+      okText: '确认入库',
+      cancelText: '取消',
+      onOk: async () => {
+        setBatchApproving(true);
+        try {
+          const res = await request.post('/resumes/batch-approve-to-talent-pool', { ids: selectedIds });
+          const approvedIds = Array.isArray(res.approved) ? res.approved : [];
+          const skipped = Array.isArray(res.skipped) ? res.skipped.length : 0;
+          const failed = Array.isArray(res.failed) ? res.failed.length : 0;
+          message.success(`批量入库完成：成功 ${approvedIds.length} 份，跳过 ${skipped} 份，失败 ${failed} 份`);
+          setSelectedRowKeys(keys => keys.filter(id => !approvedIds.includes(String(id))));
+          dataCache.current = [];
+          loadedRef.current = false;
+          fetchResumes();
+        } catch (error: any) {
+          message.error(error?.response?.data?.detail || '批量入库失败');
+        } finally {
+          setBatchApproving(false);
+        }
+      },
+    });
+  };
+
   const handleReparse = (record: any) => {
     Modal.confirm({
       title: '重新解析简历',
@@ -1261,6 +1294,7 @@ const ResumesList: React.FC = () => {
             {selectedRowKeys.length > 0 && (
               <>
                 <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
+                <Button type="primary" size="small" loading={batchApproving} disabled={batchApproving} onClick={handleBatchApproveToTalentPool}>批量入库</Button>
                 <Button danger size="small" onClick={handleBatchReject}>批量淘汰</Button>
                 <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
                 <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
