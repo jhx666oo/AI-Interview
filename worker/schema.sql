@@ -745,3 +745,17 @@ CREATE TABLE IF NOT EXISTS operation_logs (
 CREATE INDEX IF NOT EXISTS idx_oplogs_action ON operation_logs(action);
 CREATE INDEX IF NOT EXISTS idx_oplogs_entity ON operation_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_oplogs_created ON operation_logs(created_at);
+
+-- Shareable recruiting dashboard links. Tokens are stored as SHA-256 hashes only.
+CREATE TABLE IF NOT EXISTS dashboard_share_links (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  scope_type TEXT NOT NULL CHECK (scope_type IN ('all','divisions')),
+  scope_ids TEXT NOT NULL DEFAULT '[]',
+  expires_at TEXT,
+  revoked_at TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_share_links_active
+  ON dashboard_share_links(revoked_at, expires_at);
