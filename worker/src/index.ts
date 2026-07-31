@@ -1320,6 +1320,15 @@ app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
 
 type SharedBoardResult = { status: 200; body: Record<string, unknown> } | { status: 404; body: null };
 
+const PUBLIC_BOARD_KPI_FIELDS = [
+  'active_positions',
+  'total_headcount',
+  'total_resumes',
+  'first_interview',
+  'offers',
+  'hired',
+] as const;
+
 function toPublicRecruitingBoard(board: Record<string, any>, scopeIds: string[]): Record<string, unknown> {
   const scopedRows = scopeIds.length
     ? (board.rows || []).filter((row: any) => scopeIds.includes(row.division))
@@ -1362,7 +1371,9 @@ function toPublicRecruitingBoard(board: Record<string, any>, scopeIds: string[])
   return {
     version: board.version,
     updated_at: board.updated_at,
-    kpis: board.kpis,
+    kpis: Object.fromEntries(PUBLIC_BOARD_KPI_FIELDS
+      .filter((field) => field in (board.kpis || {}))
+      .map((field) => [field, board.kpis[field]])),
     rows: publicRows,
   };
 }

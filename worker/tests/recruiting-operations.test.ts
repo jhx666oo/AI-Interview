@@ -67,13 +67,14 @@ describe('dashboard share links', () => {
       }) }) }),
     };
     const response = await getSharedBoard(fakeDb as never, 'live-token', now, async () => ({
-      version: 'v1', updated_at: now.toISOString(), kpis: { total_resumes: 2 },
+      version: 'v1', updated_at: now.toISOString(), kpis: { total_resumes: 2, candidate_name: 'Private KPI', ai_evaluation: { hidden: true } },
       rows: [{ division: 'A', candidate_name: 'Private', positions: [{ position: '运营', candidate_name: 'Private' }] }],
     }));
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ rows: [{ division: 'A', positions: [{ position: '运营' }] }] });
     expect(JSON.stringify(response.body)).not.toContain('Private');
+    expect((response.body.kpis as Record<string, unknown>)).toEqual({ total_resumes: 2 });
   });
 });
 
