@@ -845,31 +845,19 @@ const ResumesList: React.FC = () => {
       
       // Determine if single or batch upload
       if (fileList.length === 1) {
-        if (rawText) {
-          // 正常文本路径
-          const formData = new FormData();
-          formData.append('position_id', values.position_id);
-          formData.append('file', fileList[0]);
-          formData.append('raw_text', rawText);
-          await request.post('/resumes', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-          });
-          message.success('简历上传成功，AI 初筛将在后台自动进行...');
-          // 清除缓存并刷新列表
-          loadedRef.current = false;
-          dataCache.current = [];
-          fetchResumes();
-        } else {
-          // 扫描件/抽不到文本 → MinerU OCR 流程
-          message.loading({ content: '检测到扫描件，正在 OCR 解析...', key: 'ocr' });
-          try {
-            await mineruFlow(firstFile, values.position_id);
-            message.success({ content: 'OCR 解析完成，字段已提取', key: 'ocr' });
-          } catch (ocrErr: any) {
-            message.error({ content: ocrErr?.message || 'OCR 解析失败', key: 'ocr' });
-            throw ocrErr;
-          }
-        }
+        // 文本和扫描件都只上传一次并入队；MinerU 由 Worker consumer 调用，
+        // 避免浏览器跨域直传 OSS 被 CORS 拦截，也保证离开页面后仍会继续处理。
+        const formData = new FormData();
+        formData.append('position_id', values.position_id);
+        formData.append('file', fileList[0]);
+        if (rawText) formData.append('raw_text', rawText);
+        await request.post('/resumes', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        message.success(rawText ? '简历已入队，AI 初筛将在后台进行...' : '扫描简历已入队，正在后台 OCR 和初筛...');
+        loadedRef.current = false;
+        dataCache.current = [];
+        fetchResumes();
       } else {
         // 批量上传：逐文件异步上传，每个 ~2s 返回不阻塞
         let uploadedCount = 0;
