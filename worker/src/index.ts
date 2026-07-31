@@ -233,11 +233,15 @@ async function getLLMConfig(env: Env): Promise<{ apiKey: string; baseUrl: string
 }
 
 // ==================== AI 每日 Token 限额（防止调试耗光额度）====================
-const DEFAULT_DAILY_TOKEN_LIMIT = 1_000_000; // 默认每日 100 万 token（≈1 元）
+// 测试阶段不限制 AI 每日 token；正式启用成本治理时改为有限数值。
+const DEFAULT_DAILY_TOKEN_LIMIT: number | null = null;
 
-function getDailyTokenLimit(env: Env): number {
+function getDailyTokenLimit(_env: Env): number | null {
+  return DEFAULT_DAILY_TOKEN_LIMIT;
+  /* 成本治理恢复时启用：
   const v = env.AI_DAILY_TOKEN_LIMIT ? parseInt(env.AI_DAILY_TOKEN_LIMIT, 10) : NaN;
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_DAILY_TOKEN_LIMIT;
+  */
 }
 
 function todayStr(): string {
@@ -286,7 +290,7 @@ export async function callAI(env: Env, systemPrompt: string, userPrompt: string,
     await ensureAiUsageTable(env);
     const limit = getDailyTokenLimit(env);
     const usedToday = await getTodayTokenUsage(env);
-    if (usedToday >= limit) {
+    if (limit !== null && usedToday >= limit) {
       throw new Error(`AI 已达每日 token 限额（上限 ${limit}，今日已用 ${usedToday}）。为防止额度被耗光已暂停调用，请明日再试，或调高 AI_DAILY_TOKEN_LIMIT。`);
     }
 
