@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { createOrGetActiveJob } from './resume-processing/job-repository';
 
 interface Env {
   DB: D1Database;
@@ -18,6 +19,7 @@ interface Env {
   FEISHU_OAUTH_REDIRECT_URI?: string;
   RESUMES_KV?: KVNamespace;
   CRON_SECRET?: string;
+  RESUME_PROCESSING_QUEUE: Queue<{ jobId: string; resumeId: string }>;
 }
 
 // 飞书配置（非敏感 ID 类配置；appSecret 必须通过环境变量 FEISHU_APP_SECRET 提供：
@@ -276,7 +278,7 @@ async function addTokenUsage(env: Env, tokens: number): Promise<void> {
   }
 }
 
-async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?: string): Promise<string> {
+export async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?: string): Promise<string> {
   // 优先读取网站「AI 模型配置」页存的 system_configs，fallback 到 Worker 环境变量
   const llm = await getLLMConfig(env);
   if (llm.apiKey) {
@@ -498,7 +500,7 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
   return { ...parsed, ...flattened };
 }
 
-function extractJSON(text: string): any {
+export function extractJSON(text: string): any {
   if (typeof text !== 'string') return text;
   const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
   // 1) 直接解析
@@ -1742,7 +1744,7 @@ function parseAIEvalForFields(rawAiEval: any, aiEvalStr: string, f: any): Record
 }
 
 // getPositionContext: 根据岗位名查询上下文（标准岗位名、能力维度、个性化需求、薪资范围）
-async function getPositionContext(db: any, positionName: string): Promise<{
+export async function getPositionContext(db: any, positionName: string): Promise<{
   standardPosition: string;
   capabilityDimensions: string;
   personalizedRequirements: string;
@@ -3400,7 +3402,8 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     const fileBase64 = bufToB64(fileBuffer);
     const fileId = 'file_' + crypto.randomUUID();
 
-    // 1. 创建 Bitable 记录 - 使用正确的字段名
+    // 上传必须先可用：D1 UUID 是唯一事实来源；飞书回写由后台任务负责。
+    // 不能以飞书网络成功作为简历入库的前置条件。
     const tableId = getBitableTableId(c.env, 'talent');
     const fields: Record<string, any> = {};
 
@@ -3448,10 +3451,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       } catch {}
     }
 
-    const recordId = await bitableCreateRecord(c.env, tableId, fields);
-    if (!recordId) {
-      return c.json({ detail: '创建飞书记录失败' }, 500);
-    }
+    const recordId = crypto.randomUUID();
 
     // 2. 在 D1 保存文件内容（base64）
     try {
@@ -3497,13 +3497,16 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       } catch (dbErr: any) {
         console.error('[Upload] OCR pending D1 写入失败:', dbErr.message);
       }
+      const job = await createOrGetActiveJob(c.env.DB, recordId);
+      await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId: recordId });
       return c.json({
         id: recordId,
+        job_id: job.id,
         candidate_name: displayName,
-        status: 'ocr_processing',
-        ocr_pending: true,
-        detail: '简历已上传，等待 OCR 解析...',
-      });
+        status: 'queued',
+        parse_status: 'queued',
+        detail: '扫描简历已入队，正在后台 OCR 解析...',
+      }, 202);
     }
     let parsedName = fileNameWithoutExt;
     let parsedGender = '';
@@ -3563,7 +3566,18 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       console.error('[Upload] D1 写入失败:', dbErr.message);
     }
 
-    // === 同步 AI 初筛（确保完成后返回，避免 waitUntil 被杀）===
+    // 后台队列是 AI/OCR 的唯一执行入口。前端关闭、刷新或网络波动都不会中断。
+    const job = await createOrGetActiveJob(c.env.DB, recordId);
+    await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId: recordId });
+    return c.json({
+      id: recordId,
+      job_id: job.id,
+      candidate_name: displayName,
+      parse_status: 'queued',
+      detail: '简历已入队，正在后台处理',
+    }, 202);
+
+    // === 旧的同步 AI 初筛路径（不可达，待后续移除）===
     try {
       const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(recordId).first() as any;
       if (resume) {

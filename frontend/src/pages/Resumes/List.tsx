@@ -296,31 +296,9 @@ const ResumesList: React.FC = () => {
       // 后台触发 PDF 缓存（静默执行，不阻塞展示）
       request.post('/resumes/cache-files').catch(() => {});
 
-      // 检查是否有需要自动评估的简历（有 raw_text 但无 ai_evaluation）
-      // 加防重复锁：evaluatingRef 保证同一页面生命周期内只触发一次
-      const noEval = res.filter((r: any) => !r.ai_evaluation && r.raw_text);
-      
-      if (noEval.length > 0 && !silent && !evaluatingRef.current) {
-        evaluatingRef.current = true;
-        console.log(`[AutoEval] 发现 ${noEval.length} 份简历无评估，触发后台评估...`);
-        
-        // 立即开启轮询（后台评估会持续写入数据，轮询会实时显示进度）
-        setPollingEnabled(true);
-        message.info(`正在后台评估 ${noEval.length} 份简历...`);
-        
-        // 触发后台评估（异步，不等待完成）
-        request.post('/resumes/auto-evaluate-all', {}).then((evalRes) => {
-          if (evalRes.task_started) {
-            console.log(`[AutoEval] 后台评估已启动：待评估 ${evalRes.to_evaluate} 份，跳过 ${evalRes.skipped} 份`);
-          } else {
-            // 没有需要评估的，重置锁
-            evaluatingRef.current = false;
-          }
-        }).catch((err) => {
-          console.warn('[AutoEval] 触发评估失败:', err.message);
-          evaluatingRef.current = false;
-        });
-      }
+      // 页面只观察 D1 中的任务状态，绝不因加载/刷新/路由切换而创建 AI 任务。
+      const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
+      setPollingEnabled(res.some((r: any) => activeStatuses.has(r.parse_status)));
 
       return res;
     } catch (error) {
@@ -340,19 +318,13 @@ const ResumesList: React.FC = () => {
             // 更新数据展示（让用户看到实时进度）
             setData(res);
             
-            // 只有 processing 状态才算"处理中"（MinerU 解析）
-            const hasProcessing = res.some((r: any) => r.parse_status === 'processing');
-            
-            // 所有简历都有评估了
-            const allEvaluated = res.length > 0 && res.every((r: any) => r.ai_evaluation);
-            
-            // 停止条件：没有在处理的 或 全部已评估
-            if (!hasProcessing || allEvaluated) {
+            const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
+            const hasProcessing = res.some((r: any) => activeStatuses.has(r.parse_status));
+            if (!hasProcessing) {
               setPollingEnabled(false);
               setLoading(false);
               clearInterval(pollingRef.current!);
               pollingRef.current = null;
-              evaluatingRef.current = false;
               // 延迟 500ms 再刷新一次，确保最后的数据写入完成
               setTimeout(() => fetchResumes(true), 500);
             }
