@@ -4763,6 +4763,31 @@ app.delete('/api/resumes/:id', authMiddleware, async (c) => {
   }
 });
 
+app.post('/api/resumes/:id/retry-processing', authMiddleware, async (c) => {
+  const resumeId = c.req.param('id');
+  const resume = await c.env.DB.prepare('SELECT id FROM resumes WHERE id=?').bind(resumeId).first();
+  if (!resume) return c.json({ detail: 'Resume not found' }, 404);
+
+  const timestamp = new Date().toISOString();
+  let job = await c.env.DB.prepare(
+    "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 1"
+  ).bind(resumeId).first() as any;
+
+  if (job) {
+    await c.env.DB.prepare(
+      "UPDATE resume_processing_jobs SET status='queued', error_code=NULL, error_message=NULL, updated_at=? WHERE id=? AND status='failed'"
+    ).bind(timestamp, job.id).run();
+  } else {
+    job = await createOrGetActiveJob(c.env.DB, resumeId);
+    if (job.status !== 'queued') return c.json({ job_id: job.id, parse_status: 'queued', detail: '任务已在处理中' });
+  }
+
+  await c.env.DB.prepare("UPDATE resumes SET parse_status='queued', parse_error=NULL, updated_at=? WHERE id=?")
+    .bind(timestamp, resumeId).run();
+  await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId });
+  return c.json({ job_id: job.id, parse_status: 'queued', detail: '已重新入队' }, 202);
+});
+
 // 批量清除已淘汰（HR复核结果='未通过'）
 app.post('/api/resumes/clear-rejected', authMiddleware, async (c) => {
   try {
