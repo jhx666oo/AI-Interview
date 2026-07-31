@@ -1038,6 +1038,18 @@ const ResumesList: React.FC = () => {
     // === 格式1：JSON 对象（来自 D1 ai_evaluation） ===
     if (aiEval && typeof aiEval === 'object' && !Array.isArray(aiEval)) {
       if (Array.isArray(aiEval.dimensions)) return aiEval.dimensions;
+      // 部分模型会返回 { "业务运营能力": 45, "协作沟通能力": 70 }。
+      // 卡片统一以 5 分制展示，保留原维度名称。
+      if (aiEval.dimensions && typeof aiEval.dimensions === 'object' && !Array.isArray(aiEval.dimensions)) {
+        const dimensions = Object.entries(aiEval.dimensions)
+          .map(([name, value]) => {
+            const raw = Number(value);
+            const score = Number.isFinite(raw) ? (raw > 5 ? raw / 20 : raw) : 0;
+            return { name, score: Math.round(score * 10) / 10, reason: '' };
+          })
+          .filter(d => d.name);
+        return dimensions.length > 0 ? dimensions : null;
+      }
     }
     if (typeof aiEval !== 'string' || !aiEval) return null;
 
