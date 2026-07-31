@@ -24,6 +24,7 @@ const ResumesList: React.FC = () => {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [batchApproving, setBatchApproving] = useState(false);
+  const canBatchApproveToTalentPool = user?.role === 'admin' || user?.role === 'hr';
   
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [interviewModalVisible, setInterviewModalVisible] = useState(false);
@@ -1294,7 +1295,9 @@ const ResumesList: React.FC = () => {
             {selectedRowKeys.length > 0 && (
               <>
                 <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
-                <Button type="primary" size="small" loading={batchApproving} disabled={batchApproving} onClick={handleBatchApproveToTalentPool}>批量入库</Button>
+                {canBatchApproveToTalentPool && (
+                  <Button type="primary" size="small" loading={batchApproving} disabled={batchApproving} onClick={handleBatchApproveToTalentPool}>批量入库</Button>
+                )}
                 <Button danger size="small" onClick={handleBatchReject}>批量淘汰</Button>
                 <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
                 <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
