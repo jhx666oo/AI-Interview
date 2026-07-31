@@ -4360,8 +4360,25 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
 
 app.get('/api/resumes/:id', authMiddleware, async (c) => {
   try {
+    const resumeId = c.req.param('id');
+    // D1 是新上传与处理状态的事实来源；飞书只作为可选协作镜像。
+    // 不能因飞书暂未回写/网络失败而把已入库的简历误报 404。
+    const d1Row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(resumeId).first() as any;
+    if (d1Row) {
+      const item: any = transformRow(d1Row);
+      for (const key of ['parsed_data', 'ai_review', 'ai_evaluation', 'work_experience', 'education', 'certifications']) {
+        if (typeof item[key] === 'string') item[key] = safeJsonParse(item[key]) || item[key];
+      }
+      try {
+        const map = await buildPositionMapping(c.env.DB);
+        item.standard_position = map.get(item.position_applied) || item.position_applied || item.mapped_position || '';
+      } catch { item.standard_position = item.position_applied || item.mapped_position || ''; }
+      return c.json(item);
+    }
+
+    // 旧飞书记录兼容：仅对历史数据使用飞书作为回退。
     const tableId = getBitableTableId(c.env, 'talent');
-    const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
+    const record = await bitableGetRecord(c.env, tableId, resumeId);
     if (!record) return c.json({ detail: 'Not found' }, 404);
     const item = parseTalentRecord(record);
     // 加载岗位映射
@@ -4725,8 +4742,17 @@ app.post('/api/resumes/clear-all-except', authMiddleware, async (c) => {
 
 app.delete('/api/resumes/:id', authMiddleware, async (c) => {
   try {
+    const resumeId = c.req.param('id');
+    // 先删除计算真相源，避免 UI 显示已删但刷新后 D1 记录复活。
+    await c.env.DB.batch([
+      c.env.DB.prepare('DELETE FROM resume_processing_jobs WHERE resume_id = ?').bind(resumeId),
+      c.env.DB.prepare('DELETE FROM resume_files WHERE id = ?').bind(resumeId),
+      c.env.DB.prepare('DELETE FROM resumes WHERE id = ?').bind(resumeId),
+    ]);
+
+    // 飞书是异步镜像；其网络失败不应回滚已经完成的本地删除。
     const tableId = getBitableTableId(c.env, 'talent');
-    await bitableDeleteRecord(c.env, tableId, c.req.param('id'));
+    try { await bitableDeleteRecord(c.env, tableId, resumeId); } catch {}
     return c.json({ detail: 'Deleted' });
   } catch (e: any) {
     return c.json({ detail: '删除失败: ' + e.message }, 500);
