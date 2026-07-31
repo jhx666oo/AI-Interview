@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approveBatch } from '../src/index';
+import { approveBatch, evaluateHardRequirements, normalizeCapabilityDimensions, weightedScore } from '../src/index';
 import {
   createShareExpiry,
   hashShareToken,
@@ -54,6 +54,36 @@ describe('bulk talent-pool approval', () => {
     });
     expect(db.updatedIds).toEqual(['resume-1']);
     expect(db.operationLogIds).toEqual(['resume-1']);
+  });
+});
+
+describe('weighted role rules', () => {
+  it('normalizes configured weights before calculating a weighted score', () => {
+    const dimensions = normalizeCapabilityDimensions([
+      { name: '沟通', weight: 40, description: '跨团队协作' },
+      { name: '业务', weight: 60 },
+    ]);
+
+    expect(dimensions).toEqual([
+      { name: '沟通', weight: 40, description: '跨团队协作' },
+      { name: '业务', weight: 60, description: '' },
+    ]);
+    expect(weightedScore([{ score: 4, weight: 40 }, { score: 3, weight: 60 }])).toBe(3.4);
+  });
+
+  it('marks missing age as manual review rather than failed', () => {
+    expect(evaluateHardRequirements({ age: null }, [{ field: 'age', operator: 'between', value: [22, 35] }]))
+      .toMatchObject({ passed: true, unmet_items: [], unknown_items: ['age'] });
+  });
+
+  it('marks a known unmet condition without treating unknown conditions as failed', () => {
+    expect(evaluateHardRequirements(
+      { age: 40, highest_degree: null },
+      [
+        { field: 'age', operator: 'between', value: [22, 35] },
+        { field: 'highest_degree', operator: 'in', value: ['本科', '硕士'] },
+      ],
+    )).toMatchObject({ passed: false, unmet_items: ['age'], unknown_items: ['highest_degree'] });
   });
 });
 

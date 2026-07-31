@@ -398,10 +398,18 @@ async function getPositionRequirements(env: Env, positionName: string): Promise<
       const rawDims = typeof posRow.capability_dimensions === 'string'
         ? JSON.parse(posRow.capability_dimensions)
         : (posRow.capability_dimensions || []);
-      if (Array.isArray(rawDims)) {
-        dimensions = rawDims.map((d: any) =>
-          typeof d === 'string' ? { name: d, description: '' } : d
-        );
+      dimensions = normalizeCapabilityDimensions(rawDims);
+    } catch {}
+    let hardRequirements: any[] = [];
+    try {
+      const requisition = await env.DB.prepare(
+        'SELECT hard_requirements FROM job_requisitions WHERE title = ? LIMIT 1'
+      ).bind(posRow.title).first() as any;
+      if (requisition?.hard_requirements) {
+        const parsed = typeof requisition.hard_requirements === 'string'
+          ? JSON.parse(requisition.hard_requirements)
+          : requisition.hard_requirements;
+        hardRequirements = Array.isArray(parsed) ? parsed : [];
       }
     } catch {}
     return {
@@ -410,8 +418,90 @@ async function getPositionRequirements(env: Env, positionName: string): Promise<
       requirements: posRow.requirements || '',
       personalized_requirements: posRow.personalized_requirements || '',
       capability_dimensions: dimensions,
+      hard_requirements: hardRequirements,
     };
   } catch { return null; }
+}
+
+export type CapabilityDimension = { name: string; weight: number; description: string };
+
+/** Convert historical dimension formats into a stable shape used by AI scoring. */
+export function normalizeCapabilityDimensions(value: unknown): CapabilityDimension[] {
+  let source: unknown = value;
+  if (typeof source === 'string') {
+    try { source = JSON.parse(source); } catch { source = source.split(/[、,，\n]/).filter(Boolean); }
+  }
+  if (!Array.isArray(source)) return [];
+  const dimensions = source.map((item: any) => {
+    if (typeof item === 'string') return { name: item.trim(), weight: 0, description: '' };
+    return {
+      name: String(item?.name || item?.title || '').trim(),
+      weight: Number(item?.weight) || 0,
+      description: String(item?.description || item?.definition || '').trim(),
+    };
+  }).filter((item: CapabilityDimension) => item.name);
+  if (!dimensions.length) return [];
+  const configuredTotal = dimensions.reduce((sum, item) => sum + Math.max(0, item.weight), 0);
+  if (configuredTotal <= 0) {
+    const evenWeight = 100 / dimensions.length;
+    return dimensions.map(item => ({ ...item, weight: evenWeight }));
+  }
+  return dimensions.map(item => ({ ...item, weight: Math.max(0, item.weight) / configuredTotal * 100 }));
+}
+
+export function weightedScore(items: Array<{ score: unknown; weight?: unknown }>): number | null {
+  const valid = items.map(item => ({ score: Number(item.score), weight: Number(item.weight) || 0 }))
+    .filter(item => Number.isFinite(item.score));
+  if (!valid.length) return null;
+  const totalWeight = valid.reduce((sum, item) => sum + Math.max(0, item.weight), 0);
+  const score = totalWeight > 0
+    ? valid.reduce((sum, item) => sum + item.score * Math.max(0, item.weight), 0) / totalWeight
+    : valid.reduce((sum, item) => sum + item.score, 0) / valid.length;
+  return Math.round(score * 10) / 10;
+}
+
+type HardRequirement = { field?: string; name?: string; operator?: string; value?: unknown; required?: unknown };
+
+/** Missing candidate fields are deliberately marked for manual review, never rejected. */
+export function evaluateHardRequirements(candidate: Record<string, any>, requirements: HardRequirement[]) {
+  const unmet_items: string[] = [];
+  const unknown_items: string[] = [];
+  for (const requirement of requirements || []) {
+    const field = String(requirement.field || requirement.name || '').trim();
+    if (!field) continue;
+    const actual = candidate[field];
+    if (actual === null || actual === undefined || actual === '') {
+      unknown_items.push(field);
+      continue;
+    }
+    const expected = requirement.value ?? requirement.required;
+    const operator = String(requirement.operator || 'equals').toLowerCase();
+    const numericActual = Number(actual);
+    let passed = true;
+    if (operator === 'between' && Array.isArray(expected) && expected.length >= 2) {
+      passed = Number.isFinite(numericActual) && numericActual >= Number(expected[0]) && numericActual <= Number(expected[1]);
+    } else if (operator === 'gte' || operator === '>=' || operator === 'min') {
+      passed = Number.isFinite(numericActual) && numericActual >= Number(expected);
+    } else if (operator === 'lte' || operator === '<=' || operator === 'max') {
+      passed = Number.isFinite(numericActual) && numericActual <= Number(expected);
+    } else if (operator === 'in' && Array.isArray(expected)) {
+      passed = expected.map(String).includes(String(actual));
+    } else if (operator === 'contains') {
+      passed = String(actual).includes(String(expected ?? ''));
+    } else {
+      passed = String(actual) === String(expected ?? '');
+    }
+    if (!passed) unmet_items.push(field);
+  }
+  const passed = unmet_items.length === 0;
+  return {
+    passed,
+    unmet_items,
+    unknown_items,
+    message: !requirements?.length ? '无硬性要求配置' : !passed
+      ? `存在 ${unmet_items.length} 项不满足的硬性条件`
+      : unknown_items.length ? `有 ${unknown_items.length} 项待人工复核，其余硬性条件通过` : '硬性条件通过',
+  };
 }
 
 // 构建 AI 初筛 prompt（移植自 zpzt 项目）
@@ -501,7 +591,16 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
       flattened[k] = v;
     }
   }
-  return { ...parsed, ...flattened };
+  const evaluation = { ...parsed, ...flattened };
+  const configuredDimensions = normalizeCapabilityDimensions(positionReq?.capability_dimensions || []);
+  const configuredByName = new Map(configuredDimensions.map(item => [item.name, item]));
+  const dimensions = Array.isArray(evaluation.dimensions) ? evaluation.dimensions.map((item: any) => ({
+    ...item,
+    weight: configuredByName.get(String(item?.name || ''))?.weight,
+  })) : [];
+  const weighted_score = weightedScore(dimensions);
+  const hard_requirement_result = evaluateHardRequirements(evaluation, positionReq?.hard_requirements || []);
+  return { ...evaluation, dimensions, configured_dimensions: configuredDimensions, weighted_score, hard_requirement_result };
 }
 
 export function extractJSON(text: string): any {
@@ -3949,6 +4048,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       if (r.ai_evaluation) { try { item.ai_evaluation = JSON.parse(r.ai_evaluation); } catch {} }
       if (r.parsed_data) { try { item.parsed_data = JSON.parse(r.parsed_data); } catch {} }
       if (r.capability_scores) { try { item.capability_scores = JSON.parse(r.capability_scores); } catch {} }
+      if (r.hard_requirement_result) { try { item.hard_requirement_result = JSON.parse(r.hard_requirement_result); } catch {} }
       if (r.screening_result) {
         const sr = r.screening_result;
         item.screening_label = sr.includes('通过') ? '通过' : sr.includes('淘汰') ? '淘汰' : sr.includes('存疑') ? '存疑' : sr;
@@ -9064,11 +9164,11 @@ app.post('/api/resumes/auto-evaluate', authMiddleware, async (c) => {
     // 写全字段
     const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
     const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
-    const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '', personalized_match_score: evalResult.personalized_match_score, personalized_met_items: evalResult.personalized_met_items, personalized_unmet_items: evalResult.personalized_unmet_items };
+    const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '', personalized_match_score: evalResult.personalized_match_score, personalized_met_items: evalResult.personalized_met_items, personalized_unmet_items: evalResult.personalized_unmet_items };
     const toArray = (v: any): string[] => { if (Array.isArray(v)) return v; if (typeof v === 'string' && v.trim()) return v.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean); return []; };
     const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: toArray(evalResult.advantage), risks: toArray(evalResult.risk), suggested_questions: toArray(evalResult.suggested_questions), dimensions: evalResult.dimensions || [] });
-    await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
-      .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, 'ai_screened', new Date().toISOString(), candidateName).run();
+    await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, hard_requirement_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
+      .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, JSON.stringify(evalResult.hard_requirement_result), 'ai_screened', new Date().toISOString(), candidateName).run();
     return c.json({ ok: true, candidate_name: candidateName, dimensions: evalResult.dimensions || [], match_score: matchScore, summary: evalResult.summary, screening_result: screeningResult });
   } catch (e: any) {
     return c.json({ detail: '自动评估失败: ' + e.message }, 500);
@@ -9123,12 +9223,12 @@ app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
         if (!evalResult) return { name: candidateName, status: 'fail', reason: 'AI返回空' };
         const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
         const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
-        const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
+        const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
         const toArray = (v: any): string[] => { if (Array.isArray(v)) return v; if (typeof v === 'string' && v.trim()) return v.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean); return []; };
         const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: toArray(evalResult.advantage), risks: toArray(evalResult.risk), suggested_questions: toArray(evalResult.suggested_questions), dimensions: evalResult.dimensions || [] });
         // 立即写 D1 — 前端轮询可以实时看到结果
-        await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
-          .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, 'ai_screened', new Date().toISOString(), candidateName).run();
+        await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, hard_requirement_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
+          .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, JSON.stringify(evalResult.hard_requirement_result), 'ai_screened', new Date().toISOString(), candidateName).run();
         return { name: candidateName, status: 'ok', score: matchScore };
       } catch (e: any) {
         return { name: candidateName, status: 'fail', reason: e.message?.substring(0, 100) };
@@ -9188,10 +9288,10 @@ app.post('/api/resumes/batch-ai-evaluate', authMiddleware, async (c) => {
         if (!evalResult) { failed++; continue; }
         const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
         const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
-        const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
+        const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
         const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: (Array.isArray(evalResult.advantage) ? evalResult.advantage : (typeof evalResult.advantage === 'string' ? evalResult.advantage.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), risks: (Array.isArray(evalResult.risk) ? evalResult.risk : (typeof evalResult.risk === 'string' ? evalResult.risk.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), suggested_questions: (Array.isArray(evalResult.suggested_questions) ? evalResult.suggested_questions : (typeof evalResult.suggested_questions === 'string' ? evalResult.suggested_questions.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), dimensions: evalResult.dimensions || [] });
-        await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
-          .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, 'ai_screened', now(), candidateName).run();
+        await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, hard_requirement_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
+          .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, JSON.stringify(evalResult.hard_requirement_result), 'ai_screened', now(), candidateName).run();
         evaluated++;
       } catch (e: any) { failed++; errors.push(candidateName + ': ' + e.message?.substring(0, 100)); }
     }

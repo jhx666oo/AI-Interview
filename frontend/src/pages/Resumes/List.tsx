@@ -51,6 +51,8 @@ const ResumesList: React.FC = () => {
   const [searchPerson, setSearchPerson] = useState<string | undefined>(undefined);
   const [responsiblePersons, setResponsiblePersons] = useState<string[]>([]);
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
+  const [hardConditionFilter, setHardConditionFilter] = useState<'all' | 'passed' | 'unmet' | 'unknown'>('all');
+  const [minimumMatchScore, setMinimumMatchScore] = useState<number | null>(null);
   const { selectedOwner, setSelectedOwner } = useOwner();
   
   // 同步：全局筛选变化时同步到本地 searchPerson
@@ -279,6 +281,17 @@ const ResumesList: React.FC = () => {
       if (searchPosition) {
         filtered = res.filter((r: any) => r.mapped_position === searchPosition);
       }
+      if (hardConditionFilter !== 'all') {
+        filtered = filtered.filter((r: any) => {
+          const result = parseHardRequirementResult(r.hard_requirement_result);
+          if (hardConditionFilter === 'passed') return result?.passed === true && !(result?.unknown_items || []).length;
+          if (hardConditionFilter === 'unmet') return result?.passed === false;
+          return (result?.unknown_items || []).length > 0;
+        });
+      }
+      if (minimumMatchScore != null) {
+        filtered = filtered.filter((r: any) => Number(r.match_score) >= minimumMatchScore);
+      }
       setData(filtered);
       dataCache.current = res;
 
@@ -421,6 +434,8 @@ const ResumesList: React.FC = () => {
     setSearchPerson(undefined);
     setSelectedOwner(undefined);
     setSearchPosition(undefined);
+    setHardConditionFilter('all');
+    setMinimumMatchScore(null);
     setCardPage(1);
     dataCache.current = [];
     loadedRef.current = false;
@@ -1067,6 +1082,12 @@ const ResumesList: React.FC = () => {
     return g === '男' ? '男' : g === '女' ? '女' : null;
   };
 
+  const parseHardRequirementResult = (value: any): { passed?: boolean; unmet_items?: string[]; unknown_items?: string[] } | null => {
+    if (!value) return null;
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(value); } catch { return null; }
+  };
+
   /** 从 ai_evaluation 中解析能力维度评分明细 */
   const parseScoreDetail = (aiEval: any): { name: string; score: number; reason: string }[] | null => {
     // === 格式1：JSON 对象（来自 D1 ai_evaluation） ===
@@ -1292,6 +1313,19 @@ const ResumesList: React.FC = () => {
                 ))}
               </Select>
             </Space>
+            <Space size={4}>
+              <Text style={{ fontSize: 13, color: '#333' }}>硬条件：</Text>
+              <Select value={hardConditionFilter} onChange={setHardConditionFilter} style={{ width: 120 }}>
+                <Select.Option value="all">全部</Select.Option>
+                <Select.Option value="passed">已通过</Select.Option>
+                <Select.Option value="unmet">未满足</Select.Option>
+                <Select.Option value="unknown">待复核</Select.Option>
+              </Select>
+            </Space>
+            <Space size={4}>
+              <Text style={{ fontSize: 13, color: '#333' }}>最低匹配：</Text>
+              <InputNumber min={0} max={100} value={minimumMatchScore} onChange={value => setMinimumMatchScore(value == null ? null : Number(value))} placeholder="不限" style={{ width: 88 }} />
+            </Space>
             {selectedRowKeys.length > 0 && (
               <>
                 <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
@@ -1329,6 +1363,7 @@ const ResumesList: React.FC = () => {
               const totalScore = scoreDetails ? calcTotalScore(scoreDetails) : null;
               const matchCount = scoreDetails?.filter(d => d.score >= 3).length || 0;
               const totalDims = scoreDetails?.length || 0;
+              const hardResult = parseHardRequirementResult(record.hard_requirement_result);
 
               return (
                 <Card
@@ -1366,6 +1401,12 @@ const ResumesList: React.FC = () => {
                       <Tag color={record.screening_label === '通过' ? 'green' : record.screening_label === '存疑' ? 'orange' : 'red'} style={{ margin: 0 }}>
                         AI{record.screening_label}
                       </Tag>
+                    )}
+                    {hardResult?.passed === false && (
+                      <Tag color="red" style={{ margin: 0 }}>硬条件未满足{hardResult.unmet_items?.length ? `：${hardResult.unmet_items.join('、')}` : ''}</Tag>
+                    )}
+                    {hardResult?.passed !== false && (hardResult?.unknown_items || []).length > 0 && (
+                      <Tag color="orange" style={{ margin: 0 }}>硬条件待复核{hardResult.unknown_items?.length ? `：${hardResult.unknown_items.join('、')}` : ''}</Tag>
                     )}
                     {record.create_time && (
                       <span style={{ color: '#8c8c8c', fontSize: 12, whiteSpace: 'nowrap' }}>

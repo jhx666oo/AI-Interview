@@ -57,6 +57,12 @@ export async function processResume(
     const result = await deps.screen(text, fields, resume);
     await deps.updateResume(message.resumeId, {
       ai_evaluation: JSON.stringify(result),
+      hard_requirement_result: JSON.stringify(result.hard_requirement_result || {
+        passed: true,
+        unmet_items: [],
+        unknown_items: [],
+        message: '无硬性要求配置',
+      }),
       parse_status: 'ai_screened',
     });
   } else {

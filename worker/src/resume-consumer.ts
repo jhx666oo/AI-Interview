@@ -2,7 +2,7 @@ import type { ResumeQueueMessage } from './resume-processing/types';
 import { claimJob } from './resume-processing/job-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
-import { callAI, extractJSON, getPositionContext } from './index';
+import { callAI, evaluateHardRequirements, extractJSON, getPositionContext, normalizeCapabilityDimensions, weightedScore } from './index';
 
 export class RetryableResumeError extends Error {
   constructor(public readonly code: string, message?: string) {
@@ -112,14 +112,45 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       const position = String(resume.position_applied || resume.mapped_position || '');
       const context = await getPositionContext(env.DB, position);
       const response = await callAI(env as any, '你是资深招聘评估 AI，只返回 JSON：{match_score,recommendation,summary,strengths,risks,suggested_questions,dimensions}。', `岗位：${context.standardPosition || position}\n能力维度：${context.capabilityDimensions}\n字段：${JSON.stringify(fields)}\n简历：${text}`, 'deepseek-v4-flash');
-      const evaluation = extractJSON(response);
-      const score = Number(evaluation.match_score ?? 0);
+      const parsed = extractJSON(response);
+      const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : { summary: String(parsed || '') };
+      const positionRow = await env.DB.prepare(
+        'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
+      ).bind(context.standardPosition || position).first() as any;
+      const configuredDimensions = normalizeCapabilityDimensions(positionRow?.capability_dimensions || []);
+      const configuredByName = new Map(configuredDimensions.map((item) => [item.name, item]));
+      const dimensions = Array.isArray(evaluation.dimensions)
+        ? evaluation.dimensions.map((item: any) => ({
+          ...item,
+          weight: configuredByName.get(String(item?.name || ''))?.weight,
+        }))
+        : [];
+      let hardRequirements: any[] = [];
+      try {
+        const requisition = await env.DB.prepare(
+          'SELECT hard_requirements FROM job_requisitions WHERE title = ? LIMIT 1'
+        ).bind(positionRow?.title || context.standardPosition || position).first() as any;
+        const value = requisition?.hard_requirements;
+        const parsedRequirements = typeof value === 'string' ? JSON.parse(value) : value;
+        hardRequirements = Array.isArray(parsedRequirements) ? parsedRequirements : [];
+      } catch {}
+      const hard_requirement_result = evaluateHardRequirements({ ...fields, ...evaluation }, hardRequirements);
+      const enrichedEvaluation = {
+        ...evaluation,
+        dimensions,
+        configured_dimensions: configuredDimensions,
+        weighted_score: weightedScore(dimensions),
+        hard_requirement_result,
+      };
+      const score = Number(enrichedEvaluation.match_score ?? 0);
       await updateResume(env.DB, message.resumeId, {
-        ai_review: JSON.stringify(evaluation),
+        ai_review: JSON.stringify(enrichedEvaluation),
         match_score: Number.isFinite(score) ? score : null,
         screening_result: score >= 75 ? '通过' : score >= 60 ? '存疑' : '淘汰',
       });
-      return evaluation;
+      return enrichedEvaluation;
     },
     updateResume: (id, update) => updateResume(env.DB, id, update),
     setJobStep: async (jobId, step) => {

@@ -44,4 +44,27 @@ describe('resume processor', () => {
     expect(fieldCalls).toBe(1);
     expect(updates.at(-1)).toMatchObject({ parse_status: 'ai_screened' });
   });
+
+  it('persists the queue screening hard-condition result without changing AI evidence', async () => {
+    const updates: Record<string, unknown>[] = [];
+    await processResume({ jobId: 'job-1', resumeId: 'resume-1' }, {
+      getResume: async () => ({ id: 'resume-1', raw_text: 'candidate resume text', parsed_data: '{"age":30}', ai_evaluation: null }),
+      getText: async () => 'candidate resume text',
+      extractFields: async () => ({}),
+      screen: async () => ({
+        match_score: 82,
+        dimensions: [{ name: '沟通', score: 4, reason: '有跨部门经验', weight: 100 }],
+        hard_requirement_result: { passed: true, unmet_items: [], unknown_items: ['education'], message: '待复核' },
+      }),
+      updateResume: async (_id, update) => { updates.push(update); },
+      setJobStep: async () => undefined,
+    });
+    expect(updates.at(-1)).toMatchObject({
+      parse_status: 'ai_screened',
+      hard_requirement_result: JSON.stringify({ passed: true, unmet_items: [], unknown_items: ['education'], message: '待复核' }),
+    });
+    expect(JSON.parse(String(updates.at(-1)?.ai_evaluation))).toMatchObject({
+      dimensions: [{ name: '沟通', score: 4, reason: '有跨部门经验', weight: 100 }],
+    });
+  });
 });
