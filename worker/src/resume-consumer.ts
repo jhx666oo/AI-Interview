@@ -2,7 +2,7 @@ import type { ResumeQueueMessage } from './resume-processing/types';
 import { claimJob } from './resume-processing/job-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
-import { callAI, evaluateHardRequirements, extractJSON, getPositionContext, normalizeCapabilityDimensions, weightedScore } from './index';
+import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext } from './index';
 
 export class RetryableResumeError extends Error {
   constructor(public readonly code: string, message?: string) {
@@ -119,14 +119,6 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       const positionRow = await env.DB.prepare(
         'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
       ).bind(context.standardPosition || position).first() as any;
-      const configuredDimensions = normalizeCapabilityDimensions(positionRow?.capability_dimensions || []);
-      const configuredByName = new Map(configuredDimensions.map((item) => [item.name, item]));
-      const dimensions = Array.isArray(evaluation.dimensions)
-        ? evaluation.dimensions.map((item: any) => ({
-          ...item,
-          weight: configuredByName.get(String(item?.name || ''))?.weight,
-        }))
-        : [];
       let hardRequirements: any[] = [];
       try {
         const requisition = await env.DB.prepare(
@@ -136,14 +128,12 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         const parsedRequirements = typeof value === 'string' ? JSON.parse(value) : value;
         hardRequirements = Array.isArray(parsedRequirements) ? parsedRequirements : [];
       } catch {}
-      const hard_requirement_result = evaluateHardRequirements({ ...fields, ...evaluation }, hardRequirements);
-      const enrichedEvaluation = {
-        ...evaluation,
-        dimensions,
-        configured_dimensions: configuredDimensions,
-        weighted_score: weightedScore(dimensions),
-        hard_requirement_result,
-      };
+      const enrichedEvaluation = enrichScreeningEvaluation(
+        evaluation,
+        positionRow?.capability_dimensions || [],
+        hardRequirements,
+        fields,
+      );
       const score = Number(enrichedEvaluation.match_score ?? 0);
       await updateResume(env.DB, message.resumeId, {
         ai_review: JSON.stringify(enrichedEvaluation),

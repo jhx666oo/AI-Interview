@@ -504,6 +504,28 @@ export function evaluateHardRequirements(candidate: Record<string, any>, require
   };
 }
 
+/** Adds configured weight and deterministic hard-condition data without replacing AI evidence. */
+export function enrichScreeningEvaluation(
+  evaluation: Record<string, any>,
+  configuredDimensionInput: unknown,
+  hardRequirements: HardRequirement[] = [],
+  candidateFields: Record<string, any> = {},
+) {
+  const configured_dimensions = normalizeCapabilityDimensions(configuredDimensionInput);
+  const configuredByName = new Map(configured_dimensions.map(item => [item.name, item]));
+  const dimensions = Array.isArray(evaluation.dimensions) ? evaluation.dimensions.map((item: any) => ({
+    ...item,
+    weight: configuredByName.get(String(item?.name || ''))?.weight,
+  })) : [];
+  return {
+    ...evaluation,
+    dimensions,
+    configured_dimensions,
+    weighted_score: weightedScore(dimensions),
+    hard_requirement_result: evaluateHardRequirements({ ...candidateFields, ...evaluation }, hardRequirements),
+  };
+}
+
 // 构建 AI 初筛 prompt（移植自 zpzt 项目）
 function buildAIScreeningPrompt(resumeText: string, positionReq: any | null, extraContext?: { location?: string, salary?: string, metaInfo?: string }): { systemPrompt: string, userPrompt: string } {
   let positionSections = '';
@@ -591,16 +613,11 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
       flattened[k] = v;
     }
   }
-  const evaluation = { ...parsed, ...flattened };
-  const configuredDimensions = normalizeCapabilityDimensions(positionReq?.capability_dimensions || []);
-  const configuredByName = new Map(configuredDimensions.map(item => [item.name, item]));
-  const dimensions = Array.isArray(evaluation.dimensions) ? evaluation.dimensions.map((item: any) => ({
-    ...item,
-    weight: configuredByName.get(String(item?.name || ''))?.weight,
-  })) : [];
-  const weighted_score = weightedScore(dimensions);
-  const hard_requirement_result = evaluateHardRequirements(evaluation, positionReq?.hard_requirements || []);
-  return { ...evaluation, dimensions, configured_dimensions: configuredDimensions, weighted_score, hard_requirement_result };
+  return enrichScreeningEvaluation(
+    { ...parsed, ...flattened },
+    positionReq?.capability_dimensions || [],
+    positionReq?.hard_requirements || [],
+  );
 }
 
 export function extractJSON(text: string): any {
@@ -4471,26 +4488,28 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
         // 解析（与 ai-screen 路由一致：extractJSON 直接调用，失败用 raw）
         let parsed: any;
         try { parsed = extractJSON(result); } catch { parsed = { raw_response: result, summary: result }; }
+        const positionRequirements = await getPositionRequirements(c.env, row.position_applied || row.mapped_position || '');
+        const enrichedEvaluation = enrichScreeningEvaluation(
+          parsed && typeof parsed === 'object' ? parsed : { summary: String(parsed || '') },
+          positionRequirements?.capability_dimensions || [],
+          positionRequirements?.hard_requirements || [],
+          enrichedParsedData,
+        );
 
-        const matchScore = parsed.match_score ?? 50;
+        const matchScore = enrichedEvaluation.match_score ?? 50;
         const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
 
         // ai_evaluation 与 ai-screen 路由格式一致
-        const aiEvalObj: any = { summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '' };
-        if (Array.isArray(parsed.dimensions) && parsed.dimensions.length) {
-          aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({
-            name: d.name || '', score: typeof d.score === 'number' ? d.score : (parseFloat(d.score) || 0), reason: d.reason || '',
-          }));
-        }
+        const aiEvalObj: any = { summary: enrichedEvaluation.summary || '', match_score: matchScore, weighted_score: enrichedEvaluation.weighted_score, configured_dimensions: enrichedEvaluation.configured_dimensions, recommendation: enrichedEvaluation.recommendation || '', dimensions: enrichedEvaluation.dimensions || [] };
         const aiReviewText = JSON.stringify({
-          summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '',
-          strengths: parsed.strengths || [], risks: parsed.risks || [],
-          suggested_questions: parsed.suggested_questions || [], dimensions: aiEvalObj.dimensions || [],
+          summary: enrichedEvaluation.summary || '', match_score: matchScore, recommendation: enrichedEvaluation.recommendation || '',
+          strengths: enrichedEvaluation.strengths || [], risks: enrichedEvaluation.risks || [],
+          suggested_questions: enrichedEvaluation.suggested_questions || [], dimensions: aiEvalObj.dimensions || [],
         });
 
         await c.env.DB.prepare(
-          `UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status='ai_screened', updated_at=? WHERE id=?`
-        ).bind(aiReviewText, JSON.stringify(aiEvalObj), matchScore, screeningResult, now(), rid).run();
+          `UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, hard_requirement_result=?, parse_status='ai_screened', updated_at=? WHERE id=?`
+        ).bind(aiReviewText, JSON.stringify(aiEvalObj), matchScore, screeningResult, JSON.stringify(enrichedEvaluation.hard_requirement_result), now(), rid).run();
 
         // 写回飞书
         try {
@@ -5213,8 +5232,10 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
 
   // 从已解析的结构化字段构造摘要块（基于解析出的 PDF 字段，而非仅纯文本）
   let structuredBlock = '';
+  let candidateFields: Record<string, any> = {};
   try {
     const pd = typeof resume.parsed_data === 'string' ? JSON.parse(resume.parsed_data || '{}') : (resume.parsed_data || {});
+    candidateFields = pd && typeof pd === 'object' ? pd : {};
     const parts: string[] = [];
     if (pd.name) parts.push(`- 姓名：${pd.name}`);
     if (pd.highest_degree) parts.push(`- 学历：${pd.highest_degree}${pd.school ? `（${pd.school}${pd.major ? ' ' + pd.major : ''}）` : ''}`);
@@ -5238,29 +5259,29 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     let parsed: any;
     try { parsed = extractJSON(result); } catch { parsed = { raw_response: result, summary: result }; }
+    const positionRequirements = await getPositionRequirements(c.env, posTitle);
+    const enrichedEvaluation = enrichScreeningEvaluation(
+      parsed && typeof parsed === 'object' ? parsed : { summary: String(parsed || '') },
+      positionRequirements?.capability_dimensions || position?.capability_dimensions || [],
+      positionRequirements?.hard_requirements || [],
+      candidateFields,
+    );
     // ai_evaluation：写入能力维度评分明细 JSON（格式与前端 parseScoreDetail 兼容：{dimensions:[{name,score,reason}]}）
-    const aiEvalObj: any = { summary: parsed.summary || '', match_score: parsed.match_score ?? null, recommendation: parsed.recommendation || '' };
-    if (Array.isArray(parsed.dimensions) && parsed.dimensions.length) {
-      aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({
-        name: d.name || '',
-        score: typeof d.score === 'number' ? d.score : (parseFloat(d.score) || 0),
-        reason: d.reason || '',
-      }));
-    }
+    const aiEvalObj: any = { summary: enrichedEvaluation.summary || '', match_score: enrichedEvaluation.match_score ?? null, weighted_score: enrichedEvaluation.weighted_score, configured_dimensions: enrichedEvaluation.configured_dimensions, recommendation: enrichedEvaluation.recommendation || '', dimensions: enrichedEvaluation.dimensions || [] };
     const aiEvalText = JSON.stringify(aiEvalObj);
     // ai_review：完整评估 JSON（供详情页展示）
     const aiReviewText = JSON.stringify({
-      summary: parsed.summary || '',
-      match_score: parsed.match_score ?? null,
-      recommendation: parsed.recommendation || '',
-      strengths: parsed.strengths || [],
-      risks: parsed.risks || [],
-      suggested_questions: parsed.suggested_questions || [],
+      summary: enrichedEvaluation.summary || '',
+      match_score: enrichedEvaluation.match_score ?? null,
+      recommendation: enrichedEvaluation.recommendation || '',
+      strengths: enrichedEvaluation.strengths || [],
+      risks: enrichedEvaluation.risks || [],
+      suggested_questions: enrichedEvaluation.suggested_questions || [],
       dimensions: aiEvalObj.dimensions || [],
     });
     await c.env.DB.prepare(
-      'UPDATE resumes SET ai_review = ?, ai_evaluation = ?, match_score = ?, screening_result = ?, parse_status = ?, updated_at = ? WHERE id = ?'
-    ).bind(aiReviewText, aiEvalText, parsed.match_score || null, JSON.stringify(parsed), 'ai_screened', now(), id).run();
+      'UPDATE resumes SET ai_review = ?, ai_evaluation = ?, match_score = ?, screening_result = ?, hard_requirement_result = ?, parse_status = ?, updated_at = ? WHERE id = ?'
+    ).bind(aiReviewText, aiEvalText, enrichedEvaluation.match_score || null, JSON.stringify(parsed), JSON.stringify(enrichedEvaluation.hard_requirement_result), 'ai_screened', now(), id).run();
 
     // 同步写回飞书多维表格（人才库表）
     try {
@@ -6788,38 +6809,26 @@ registerCrud('recruitment-tasks', 'recruitment_tasks', { status: 'eq', position_
 // POST /api/resumes/:id/check-hard-requirements — 硬性要求检查
 app.post('/api/resumes/:id/check-hard-requirements', authMiddleware, async (c) => {
   try {
-    const resume = await c.env.DB.prepare('SELECT id, candidate_name, raw_text, position_id FROM resumes WHERE id = ?')
+    const resume = await c.env.DB.prepare('SELECT id, candidate_name, raw_text, position_id, position_applied, mapped_position, parsed_data FROM resumes WHERE id = ?')
       .bind(c.req.param('id')).first() as any;
     if (!resume) return c.json({ detail: 'Not found' }, 404);
     if (!resume.raw_text) return c.json({ detail: '简历无文本内容' }, 400);
 
     // 获取关联需求的硬性要求
     let hardReqs: any[] = [];
-    const pos = await c.env.DB.prepare('SELECT id FROM positions WHERE id = ?').bind(resume.position_id).first() as any;
-    if (pos) {
-      const req = await c.env.DB.prepare('SELECT hard_requirements FROM job_requisitions WHERE position_id = ? OR title = (SELECT title FROM positions WHERE id = ?) LIMIT 1')
-        .bind(resume.position_id, resume.position_id).first() as any;
-      if (req?.hard_requirements) {
-        try { hardReqs = JSON.parse(req.hard_requirements); } catch { hardReqs = []; }
-      }
+    const req = await c.env.DB.prepare(
+      'SELECT hard_requirements FROM job_requisitions WHERE position_id = ? OR title = ? LIMIT 1'
+    ).bind(resume.position_id || '', resume.position_applied || resume.mapped_position || '').first() as any;
+    if (req?.hard_requirements) {
+      try {
+        const parsed = typeof req.hard_requirements === 'string' ? JSON.parse(req.hard_requirements) : req.hard_requirements;
+        hardReqs = Array.isArray(parsed) ? parsed : [];
+      } catch { hardReqs = []; }
     }
 
-    if (hardReqs.length === 0) {
-      const result = { passed: true, hard_requirements: [], message: '无硬性要求配置' };
-      await c.env.DB.prepare('UPDATE resumes SET hard_requirement_result = ? WHERE id = ?')
-        .bind(JSON.stringify(result), c.req.param('id')).run();
-      return c.json(result);
-    }
-
-    // AI 检查
-    const prompt = await getAIPrompt(c.env, 'analyze_resume', {
-      system: "你是 HR 筛选助手。根据简历文本检查候选人是否满足硬性要求。返回 JSON：{\"passed\":true/false,\"checks\":[{\"field\":\"要求字段\",\"required\":\"要求值\",\"actual\":\"实际值\",\"passed\":true/false}]}",
-      user: ''
-    });
-    const systemPrompt = prompt.system;
-    const userPrompt = `简历：${resume.raw_text.slice(0, 3000)}\n硬性要求：${JSON.stringify(hardReqs)}`;
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
-    const parsed = extractJSON(result);
+    let candidateFields: Record<string, any> = {};
+    try { candidateFields = JSON.parse(resume.parsed_data || '{}'); } catch {}
+    const parsed = evaluateHardRequirements(candidateFields, hardReqs);
 
     await c.env.DB.prepare('UPDATE resumes SET hard_requirement_result = ? WHERE id = ?')
       .bind(JSON.stringify(parsed), c.req.param('id')).run();

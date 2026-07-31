@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approveBatch, evaluateHardRequirements, normalizeCapabilityDimensions, weightedScore } from '../src/index';
+import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, normalizeCapabilityDimensions, weightedScore } from '../src/index';
 import {
   createShareExpiry,
   hashShareToken,
@@ -84,6 +84,19 @@ describe('weighted role rules', () => {
         { field: 'highest_degree', operator: 'in', value: ['本科', '硕士'] },
       ],
     )).toMatchObject({ passed: false, unmet_items: ['age'], unknown_items: ['highest_degree'] });
+  });
+
+  it('enriches an AI result while retaining raw dimension evidence', () => {
+    expect(enrichScreeningEvaluation(
+      { dimensions: [{ name: '沟通', score: 4, reason: '有跨团队经验' }] },
+      [{ name: '沟通', weight: 100 }],
+      [{ field: 'age', operator: 'between', value: [22, 35] }],
+      { age: null },
+    )).toMatchObject({
+      dimensions: [{ name: '沟通', score: 4, reason: '有跨团队经验', weight: 100 }],
+      weighted_score: 4,
+      hard_requirement_result: { passed: true, unknown_items: ['age'] },
+    });
   });
 });
 
