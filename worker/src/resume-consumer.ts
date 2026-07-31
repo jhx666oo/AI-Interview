@@ -1,6 +1,7 @@
 import type { ResumeQueueMessage } from './resume-processing/types';
 import { claimJob } from './resume-processing/job-repository';
 import { processResume } from './resume-processing/processor';
+import { resolveResumeText } from './resume-processing/ocr';
 import { callAI, extractJSON, getPositionContext } from './index';
 
 export class RetryableResumeError extends Error {
@@ -53,6 +54,7 @@ type ConsumerEnv = {
   AI_MODEL?: string;
   AI_DAILY_TOKEN_LIMIT?: string;
   AI: Ai;
+  MINERU_BASE?: string;
 };
 
 async function updateResume(db: D1Database, resumeId: string, update: Record<string, unknown>) {
@@ -66,9 +68,41 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
   await processResume(message, {
     getResume: async (id) => await env.DB.prepare('SELECT * FROM resumes WHERE id=?').bind(id).first() as any,
     getText: async (resume) => {
-      const text = String(resume.ocr_markdown || resume.raw_text || '');
-      if (text.length < 20) throw new RetryableResumeError('OCR_PENDING', '扫描件 OCR 尚未完成');
-      return text.slice(0, 80000);
+      const baseUrl = (env.MINERU_BASE || 'https://mineru.net').replace(/\/$/, '');
+      const resolved = await resolveResumeText(resume as any, {
+        getFile: async (resumeId) => await env.DB.prepare('SELECT content FROM resume_files WHERE id=?').bind(resumeId).first() as any,
+        startOcr: async (content, resumeId) => {
+          const sign = await fetch(`${baseUrl}/api/v1/agent/parse/file`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_name: `${resumeId}.pdf`, language: 'ch', is_ocr: true, enable_table: true, enable_formula: false }),
+          });
+          const data: any = await sign.json().catch(() => ({}));
+          const taskId = data?.data?.task_id;
+          const uploadUrl = data?.data?.file_url;
+          if (!sign.ok || !taskId || !uploadUrl) throw new RetryableResumeError('OCR_SIGN_FAILED', data?.msg || 'MinerU 签名失败');
+          const binary = Uint8Array.from(atob(content), (char) => char.charCodeAt(0));
+          const upload = await fetch(uploadUrl, { method: 'PUT', body: binary });
+          if (!upload.ok) throw new RetryableResumeError('OCR_UPLOAD_FAILED', 'MinerU 文件上传失败');
+          return { taskId };
+        },
+        getOcrStatus: async (taskId) => {
+          const response = await fetch(`${baseUrl}/api/v1/agent/parse/${taskId}`);
+          const data: any = await response.json().catch(() => ({}));
+          const state = data?.data?.state;
+          if (!response.ok || !state) throw new RetryableResumeError('OCR_STATUS_FAILED', data?.msg || 'MinerU 状态查询失败');
+          if (state === 'failed') return { state: 'failed' as const, error: data?.data?.err_msg || 'MinerU OCR 失败' };
+          if (state !== 'done') return { state: 'processing' as const };
+          const markdownUrl = data?.data?.markdown_url;
+          if (!markdownUrl) return { state: 'failed' as const, error: 'MinerU 未返回 markdown' };
+          const markdownResponse = await fetch(markdownUrl);
+          if (!markdownResponse.ok) throw new RetryableResumeError('OCR_DOWNLOAD_FAILED', 'MinerU 结果下载失败');
+          return { state: 'done' as const, markdown: await markdownResponse.text() };
+        },
+        update: (id, update) => updateResume(env.DB, id, update),
+      });
+      if (resolved.state === 'pending') throw new RetryableResumeError('OCR_PENDING', '扫描件 OCR 尚未完成');
+      if (resolved.state === 'failed') throw new Error(resolved.error);
+      return resolved.text.slice(0, 80000);
     },
     extractFields: async (text) => {
       const response = await callAI(env as any, '你是简历字段提取助手，只返回 JSON。', `从以下简历提取姓名、电话、邮箱、学历、学校、专业、工作年限、技能。\n${text}`, 'deepseek-v4-flash');
