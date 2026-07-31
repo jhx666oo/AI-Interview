@@ -295,7 +295,9 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
     const timeoutId = setTimeout(() => controller.abort(), 90000);
     let resp: Response;
     try {
-      resp = await fetch(`${baseUrl}/v1/chat/completions`, {
+      // 兼容 baseUrl 已包含 /v1 的情况（如 https://sublink.daojia-inc.com/v1）
+      const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+      resp = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
