@@ -1143,7 +1143,7 @@ export function getDashboardOwner(c: any): string | null {
   const user = c.get('user');
   // An HR user's owner boundary is server-controlled. Only admins may choose
   // another owner through the query parameter.
-  if (!user || user.role !== 'admin') return user?.full_name || null;
+  if (!user || user.role !== 'admin') return user?.full_name || '__no_dashboard_owner__';
   return c.req.query('responsible_person') || null;
 }
 

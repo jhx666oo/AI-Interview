@@ -134,6 +134,11 @@ describe('recruiting board aggregation', () => {
     expect(getDashboardOwner(hrContext)).toBe('HR A');
     expect(getDashboardOwner(adminContext)).toBe('HR B');
   });
+
+  it('uses an empty owner scope when a non-admin profile has no full name', () => {
+    const incompleteHrContext = { get: () => ({ role: 'hr', full_name: '' }), req: { query: () => undefined } };
+    expect(getDashboardOwner(incompleteHrContext)).toBe('__no_dashboard_owner__');
+  });
 });
 
 function createApprovalDb() {
