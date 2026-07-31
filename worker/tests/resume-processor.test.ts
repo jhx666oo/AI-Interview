@@ -29,4 +29,17 @@ describe('resume processor', () => {
     });
     expect(aiCalls).toBe(0);
   });
+
+  it('extracts fields when upload only stored a candidate-name placeholder', async () => {
+    let fieldCalls = 0;
+    await processResume({ jobId: 'job-1', resumeId: 'resume-1' }, {
+      getResume: async () => ({ id: 'resume-1', raw_text: 'candidate resume text', parsed_data: '{"name":"候选人"}', ai_evaluation: '{"match_score":82}' }),
+      getText: async () => 'candidate resume text',
+      extractFields: async () => { fieldCalls += 1; return { name: '候选人', school: 'A大学' }; },
+      screen: async () => ({}),
+      updateResume: async () => undefined,
+      setJobStep: async () => undefined,
+    });
+    expect(fieldCalls).toBe(1);
+  });
 });

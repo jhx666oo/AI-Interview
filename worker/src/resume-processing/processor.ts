@@ -27,6 +27,12 @@ function jsonObject(value: string | null): Record<string, unknown> | null {
   }
 }
 
+function hasExtractedFields(fields: Record<string, unknown> | null): fields is Record<string, unknown> {
+  if (!fields) return false;
+  // 上传时仅用文件名写入 { name } 以便列表立即展示；这不是字段提取结果。
+  return Object.keys(fields).some((key) => key !== 'name' && fields[key] !== null && fields[key] !== '');
+}
+
 export async function processResume(
   message: ResumeQueueMessage,
   deps: ResumeProcessorDeps,
@@ -40,7 +46,7 @@ export async function processResume(
   await deps.updateResume(message.resumeId, { raw_text: text, parse_status: 'extracting_fields' });
 
   let fields = jsonObject(resume.parsed_data);
-  if (!fields) {
+  if (!hasExtractedFields(fields)) {
     await deps.setJobStep(message.jobId, 'extracting_fields');
     fields = await deps.extractFields(text, resume);
     await deps.updateResume(message.resumeId, { parsed_data: JSON.stringify(fields), parse_status: 'screening' });
