@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, normalizeCapabilityDimensions, weightedScore } from '../src/index';
+import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
 import {
   createShareExpiry,
   hashShareToken,
@@ -97,6 +97,28 @@ describe('weighted role rules', () => {
       weighted_score: 4,
       hard_requirement_result: { passed: true, unknown_items: ['age'] },
     });
+  });
+});
+
+describe('recruiting board aggregation', () => {
+  it('sums position rows into one division total without storing a second total', () => {
+    expect(groupBoardRows([
+      { division: 'A', position: '运营', total_resumes: 2, first_interview: 1, first_pass: 1, second_pass: 0, third_pass: 0, offers: 0, hired: 0 },
+      { division: 'A', position: '销售', total_resumes: 3, first_interview: 2, first_pass: 1, second_pass: 1, third_pass: 0, offers: 1, hired: 0 },
+    ])).toMatchObject([{
+      division: 'A',
+      total_resumes: 5,
+      first_interview: 3,
+      first_pass: 2,
+      pass_rate: 67,
+      positions: expect.any(Array),
+    }]);
+  });
+
+  it('returns a null pass rate when a division has no first interviews', () => {
+    expect(groupBoardRows([
+      { division: 'A', position: '运营', total_resumes: 2, first_interview: 0, first_pass: 0, second_pass: 0, third_pass: 0, offers: 0, hired: 0 },
+    ])[0].pass_rate).toBeNull();
   });
 });
 

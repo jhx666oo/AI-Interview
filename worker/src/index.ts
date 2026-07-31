@@ -1211,7 +1211,97 @@ app.get('/api/dashboard/funnel', authMiddleware, async (c) => {
 app.get('/api/dashboard/positions', authMiddleware, dashboardPositionsHandler);
 app.get('/api/dashboard/positions-detail', authMiddleware, dashboardPositionsHandler);
 
+export type RecruitingBoardPositionRow = {
+  position_id?: string;
+  division: string;
+  hrbp?: string;
+  position: string;
+  priority?: 'P0' | 'P1' | 'P2';
+  headcount?: number;
+  total_resumes: number;
+  first_interview: number;
+  first_pass: number;
+  second_pass: number;
+  third_pass: number;
+  offers: number;
+  hired: number;
+  notes?: string;
+  status?: string;
+  unmatched?: boolean;
+};
+
+export type RecruitingBoardDivisionRow = Omit<RecruitingBoardPositionRow, 'position' | 'position_id' | 'notes' | 'unmatched'> & {
+  positions: RecruitingBoardPositionRow[];
+  pass_rate: number | null;
+};
+
+const boardMetricKeys: Array<keyof Pick<RecruitingBoardPositionRow,
+  'headcount' | 'total_resumes' | 'first_interview' | 'first_pass' | 'second_pass' | 'third_pass' | 'offers' | 'hired'
+>> = ['headcount', 'total_resumes', 'first_interview', 'first_pass', 'second_pass', 'third_pass', 'offers', 'hired'];
+
+/**
+ * A division summary is always derived from its position rows. This avoids a
+ * second, independently maintained source of totals that could drift from D1.
+ */
+export function groupBoardRows(rows: RecruitingBoardPositionRow[]): RecruitingBoardDivisionRow[] {
+  const groups = new Map<string, RecruitingBoardDivisionRow>();
+  for (const row of rows) {
+    const division = row.division || '未分配事业部';
+    let group = groups.get(division);
+    if (!group) {
+      group = {
+        division,
+        hrbp: row.hrbp || '',
+        priority: row.priority || 'P2',
+        headcount: 0,
+        total_resumes: 0,
+        first_interview: 0,
+        first_pass: 0,
+        second_pass: 0,
+        third_pass: 0,
+        offers: 0,
+        hired: 0,
+        status: row.status || '招聘中',
+        positions: [],
+        pass_rate: null,
+      };
+      groups.set(division, group);
+    }
+    group.positions.push(row);
+    for (const key of boardMetricKeys) group[key] = (group[key] || 0) + (row[key] || 0);
+  }
+
+  return [...groups.values()].map((group) => ({
+    ...group,
+    pass_rate: group.first_interview > 0 ? Math.round(group.first_pass / group.first_interview * 100) : null,
+  }));
+}
+
+app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
+  const positions = await getDashboardPositionRows(c);
+  const rows = groupBoardRows(positions);
+  const kpis = positions.reduce((totals, row) => ({
+    active_positions: totals.active_positions + (row.status === '招聘中' ? 1 : 0),
+    total_headcount: totals.total_headcount + (row.headcount || 0),
+    total_resumes: totals.total_resumes + row.total_resumes,
+    first_interview: totals.first_interview + row.first_interview,
+    offers: totals.offers + row.offers,
+    hired: totals.hired + row.hired,
+  }), { active_positions: 0, total_headcount: 0, total_resumes: 0, first_interview: 0, offers: 0, hired: 0 });
+
+  return c.json({
+    version: 'v1',
+    updated_at: now(),
+    kpis,
+    rows,
+  });
+});
+
 async function dashboardPositionsHandler(c: any) {
+  return c.json(await getDashboardPositionRows(c));
+}
+
+async function getDashboardPositionRows(c: any): Promise<RecruitingBoardPositionRow[]> {
   const db = c.env.DB;
   const { where: ow, params: op } = buildOwnerFilter(c);
   const positions = await db.prepare(`SELECT * FROM positions WHERE 1=1 ${ow} ORDER BY created_at DESC`).bind(...op).all();
@@ -1225,11 +1315,10 @@ async function dashboardPositionsHandler(c: any) {
     posParams = pIds;
   } else if (ow) {
     // owner 有选中但无岗位 → 全部返回 0
-    const emptyResult = [];
-    return c.json(emptyResult);
+    return [];
   }
 
-  const bindAll = (sql: string) => db.prepare(sql).bind(...posParams);
+  const bindAll = (sql: string) => db.prepare(sql).bind(...posParams).all();
 
   const [
     resumeCounts, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
@@ -1252,7 +1341,7 @@ async function dashboardPositionsHandler(c: any) {
   const oMap = toMap(offerCounts);
   const hMap = toMap(hiredCounts);
 
-  const result = positions.results.map((pos: any) => {
+  return positions.results.map((pos: any) => {
     const totalResumes = rMap.get(pos.id) || 0;
     const firstInterview = (f1SchedMap.get(pos.id) || 0) + (f1PassMap.get(pos.id) || 0);
     const firstPass = f1PassMap.get(pos.id) || 0;
@@ -1260,31 +1349,30 @@ async function dashboardPositionsHandler(c: any) {
     const thirdPass = f3PassMap.get(pos.id) || 0;
     const offers = oMap.get(pos.id) || 0;
     const hired = hMap.get(pos.id) || 0;
-    const passRate = firstInterview > 0 ? Math.round(firstPass / firstInterview * 100) + '%' : '0%';
     const statusMap: Record<string, string> = {
       'open': '招聘中', 'published': '招聘中', 'closed': '已完成',
       'draft': '草稿', 'paused': '暂停', 'cancelled': '已终止',
     };
     const displayStatus = statusMap[pos.status] || pos.status;
+    const priorityMap: Record<string, 'P0' | 'P1' | 'P2'> = { high: 'P0', medium: 'P1', low: 'P2' };
     return {
+      position_id: pos.id,
       division: pos.department || '',
-      hrbp: '',
+      hrbp: pos.responsible_person || '',
       position: pos.title,
+      priority: priorityMap[pos.urgency] || 'P2',
       headcount: pos.headcount || 1,
       total_resumes: totalResumes,
       first_interview: firstInterview,
       first_pass: firstPass,
       second_pass: secondPass,
       third_pass: thirdPass,
-      pass_rate: passRate,
       offers,
       hired,
       notes: '',
       status: displayStatus,
     };
   });
-
-  return c.json(result);
 }
 
 // AI 每日 token 用量查询
