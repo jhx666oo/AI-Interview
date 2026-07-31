@@ -1,0 +1,14 @@
+name = "ai-interview-resume-consumer"
+main = "src/resume-consumer.ts"
+compatibility_date = "2024-12-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-interview-db"
+database_id = "3f82993e-210d-4b0b-9d83-4ed4be69724f"
+
+[[queues.consumers]]
+queue = "resume-processing"
+max_batch_size = 1
+max_batch_timeout = 5
+max_concurrency = 3

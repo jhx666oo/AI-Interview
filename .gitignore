@@ -123,3 +123,6 @@ worker/src/find_*.py
 
 # Xiaoqi (separate project)
 xiaoqi/
+
+# Local Git worktrees
+.worktrees/

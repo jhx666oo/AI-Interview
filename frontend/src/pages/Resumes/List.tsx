@@ -296,31 +296,9 @@ const ResumesList: React.FC = () => {
       // 后台触发 PDF 缓存（静默执行，不阻塞展示）
       request.post('/resumes/cache-files').catch(() => {});
 
-      // 检查是否有需要自动评估的简历（有 raw_text 但无 ai_evaluation）
-      // 加防重复锁：evaluatingRef 保证同一页面生命周期内只触发一次
-      const noEval = res.filter((r: any) => !r.ai_evaluation && r.raw_text);
-      
-      if (noEval.length > 0 && !silent && !evaluatingRef.current) {
-        evaluatingRef.current = true;
-        console.log(`[AutoEval] 发现 ${noEval.length} 份简历无评估，触发后台评估...`);
-        
-        // 立即开启轮询（后台评估会持续写入数据，轮询会实时显示进度）
-        setPollingEnabled(true);
-        message.info(`正在后台评估 ${noEval.length} 份简历...`);
-        
-        // 触发后台评估（异步，不等待完成）
-        request.post('/resumes/auto-evaluate-all', {}).then((evalRes) => {
-          if (evalRes.task_started) {
-            console.log(`[AutoEval] 后台评估已启动：待评估 ${evalRes.to_evaluate} 份，跳过 ${evalRes.skipped} 份`);
-          } else {
-            // 没有需要评估的，重置锁
-            evaluatingRef.current = false;
-          }
-        }).catch((err) => {
-          console.warn('[AutoEval] 触发评估失败:', err.message);
-          evaluatingRef.current = false;
-        });
-      }
+      // 页面只观察 D1 中的任务状态，绝不因加载/刷新/路由切换而创建 AI 任务。
+      const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
+      setPollingEnabled(res.some((r: any) => activeStatuses.has(r.parse_status)));
 
       return res;
     } catch (error) {
@@ -340,19 +318,13 @@ const ResumesList: React.FC = () => {
             // 更新数据展示（让用户看到实时进度）
             setData(res);
             
-            // 只有 processing 状态才算"处理中"（MinerU 解析）
-            const hasProcessing = res.some((r: any) => r.parse_status === 'processing');
-            
-            // 所有简历都有评估了
-            const allEvaluated = res.length > 0 && res.every((r: any) => r.ai_evaluation);
-            
-            // 停止条件：没有在处理的 或 全部已评估
-            if (!hasProcessing || allEvaluated) {
+            const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
+            const hasProcessing = res.some((r: any) => activeStatuses.has(r.parse_status));
+            if (!hasProcessing) {
               setPollingEnabled(false);
               setLoading(false);
               clearInterval(pollingRef.current!);
               pollingRef.current = null;
-              evaluatingRef.current = false;
               // 延迟 500ms 再刷新一次，确保最后的数据写入完成
               setTimeout(() => fetchResumes(true), 500);
             }
@@ -873,31 +845,19 @@ const ResumesList: React.FC = () => {
       
       // Determine if single or batch upload
       if (fileList.length === 1) {
-        if (rawText) {
-          // 正常文本路径
-          const formData = new FormData();
-          formData.append('position_id', values.position_id);
-          formData.append('file', fileList[0]);
-          formData.append('raw_text', rawText);
-          await request.post('/resumes', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-          });
-          message.success('简历上传成功，AI 初筛将在后台自动进行...');
-          // 清除缓存并刷新列表
-          loadedRef.current = false;
-          dataCache.current = [];
-          fetchResumes();
-        } else {
-          // 扫描件/抽不到文本 → MinerU OCR 流程
-          message.loading({ content: '检测到扫描件，正在 OCR 解析...', key: 'ocr' });
-          try {
-            await mineruFlow(firstFile, values.position_id);
-            message.success({ content: 'OCR 解析完成，字段已提取', key: 'ocr' });
-          } catch (ocrErr: any) {
-            message.error({ content: ocrErr?.message || 'OCR 解析失败', key: 'ocr' });
-            throw ocrErr;
-          }
-        }
+        // 文本和扫描件都只上传一次并入队；MinerU 由 Worker consumer 调用，
+        // 避免浏览器跨域直传 OSS 被 CORS 拦截，也保证离开页面后仍会继续处理。
+        const formData = new FormData();
+        formData.append('position_id', values.position_id);
+        formData.append('file', fileList[0]);
+        if (rawText) formData.append('raw_text', rawText);
+        await request.post('/resumes', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        message.success(rawText ? '简历已入队，AI 初筛将在后台进行...' : '扫描简历已入队，正在后台 OCR 和初筛...');
+        loadedRef.current = false;
+        dataCache.current = [];
+        fetchResumes();
       } else {
         // 批量上传：逐文件异步上传，每个 ~2s 返回不阻塞
         let uploadedCount = 0;
@@ -1078,6 +1038,18 @@ const ResumesList: React.FC = () => {
     // === 格式1：JSON 对象（来自 D1 ai_evaluation） ===
     if (aiEval && typeof aiEval === 'object' && !Array.isArray(aiEval)) {
       if (Array.isArray(aiEval.dimensions)) return aiEval.dimensions;
+      // 部分模型会返回 { "业务运营能力": 45, "协作沟通能力": 70 }。
+      // 卡片统一以 5 分制展示，保留原维度名称。
+      if (aiEval.dimensions && typeof aiEval.dimensions === 'object' && !Array.isArray(aiEval.dimensions)) {
+        const dimensions = Object.entries(aiEval.dimensions)
+          .map(([name, value]) => {
+            const raw = Number(value);
+            const score = Number.isFinite(raw) ? (raw > 5 ? raw / 20 : raw) : 0;
+            return { name, score: Math.round(score * 10) / 10, reason: '' };
+          })
+          .filter(d => d.name);
+        return dimensions.length > 0 ? dimensions : null;
+      }
     }
     if (typeof aiEval !== 'string' || !aiEval) return null;
 

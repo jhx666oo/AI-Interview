@@ -19,3 +19,7 @@ database_id = "3f82993e-210d-4b0b-9d83-4ed4be69724f"
 
 [ai]
 binding = "AI"
+
+[[queues.producers]]
+binding = "RESUME_PROCESSING_QUEUE"
+queue = "resume-processing"

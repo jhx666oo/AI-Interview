@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { createOrGetActiveJob } from './resume-processing/job-repository';
 
 interface Env {
   DB: D1Database;
@@ -18,6 +19,7 @@ interface Env {
   FEISHU_OAUTH_REDIRECT_URI?: string;
   RESUMES_KV?: KVNamespace;
   CRON_SECRET?: string;
+  RESUME_PROCESSING_QUEUE: Queue<{ jobId: string; resumeId: string }>;
 }
 
 // 飞书配置（非敏感 ID 类配置；appSecret 必须通过环境变量 FEISHU_APP_SECRET 提供：
@@ -231,11 +233,15 @@ async function getLLMConfig(env: Env): Promise<{ apiKey: string; baseUrl: string
 }
 
 // ==================== AI 每日 Token 限额（防止调试耗光额度）====================
-const DEFAULT_DAILY_TOKEN_LIMIT = 1_000_000; // 默认每日 100 万 token（≈1 元）
+// 测试阶段不限制 AI 每日 token；正式启用成本治理时改为有限数值。
+const DEFAULT_DAILY_TOKEN_LIMIT: number | null = null;
 
-function getDailyTokenLimit(env: Env): number {
+function getDailyTokenLimit(_env: Env): number | null {
+  return DEFAULT_DAILY_TOKEN_LIMIT;
+  /* 成本治理恢复时启用：
   const v = env.AI_DAILY_TOKEN_LIMIT ? parseInt(env.AI_DAILY_TOKEN_LIMIT, 10) : NaN;
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_DAILY_TOKEN_LIMIT;
+  */
 }
 
 function todayStr(): string {
@@ -276,7 +282,7 @@ async function addTokenUsage(env: Env, tokens: number): Promise<void> {
   }
 }
 
-async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?: string): Promise<string> {
+export async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?: string): Promise<string> {
   // 优先读取网站「AI 模型配置」页存的 system_configs，fallback 到 Worker 环境变量
   const llm = await getLLMConfig(env);
   if (llm.apiKey) {
@@ -284,7 +290,7 @@ async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?
     await ensureAiUsageTable(env);
     const limit = getDailyTokenLimit(env);
     const usedToday = await getTodayTokenUsage(env);
-    if (usedToday >= limit) {
+    if (limit !== null && usedToday >= limit) {
       throw new Error(`AI 已达每日 token 限额（上限 ${limit}，今日已用 ${usedToday}）。为防止额度被耗光已暂停调用，请明日再试，或调高 AI_DAILY_TOKEN_LIMIT。`);
     }
 
@@ -498,7 +504,7 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
   return { ...parsed, ...flattened };
 }
 
-function extractJSON(text: string): any {
+export function extractJSON(text: string): any {
   if (typeof text !== 'string') return text;
   const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
   // 1) 直接解析
@@ -1742,7 +1748,7 @@ function parseAIEvalForFields(rawAiEval: any, aiEvalStr: string, f: any): Record
 }
 
 // getPositionContext: 根据岗位名查询上下文（标准岗位名、能力维度、个性化需求、薪资范围）
-async function getPositionContext(db: any, positionName: string): Promise<{
+export async function getPositionContext(db: any, positionName: string): Promise<{
   standardPosition: string;
   capabilityDimensions: string;
   personalizedRequirements: string;
@@ -3400,7 +3406,8 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     const fileBase64 = bufToB64(fileBuffer);
     const fileId = 'file_' + crypto.randomUUID();
 
-    // 1. 创建 Bitable 记录 - 使用正确的字段名
+    // 上传必须先可用：D1 UUID 是唯一事实来源；飞书回写由后台任务负责。
+    // 不能以飞书网络成功作为简历入库的前置条件。
     const tableId = getBitableTableId(c.env, 'talent');
     const fields: Record<string, any> = {};
 
@@ -3448,10 +3455,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       } catch {}
     }
 
-    const recordId = await bitableCreateRecord(c.env, tableId, fields);
-    if (!recordId) {
-      return c.json({ detail: '创建飞书记录失败' }, 500);
-    }
+    const recordId = crypto.randomUUID();
 
     // 2. 在 D1 保存文件内容（base64）
     try {
@@ -3497,13 +3501,16 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       } catch (dbErr: any) {
         console.error('[Upload] OCR pending D1 写入失败:', dbErr.message);
       }
+      const job = await createOrGetActiveJob(c.env.DB, recordId);
+      await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId: recordId });
       return c.json({
         id: recordId,
+        job_id: job.id,
         candidate_name: displayName,
-        status: 'ocr_processing',
-        ocr_pending: true,
-        detail: '简历已上传，等待 OCR 解析...',
-      });
+        status: 'queued',
+        parse_status: 'queued',
+        detail: '扫描简历已入队，正在后台 OCR 解析...',
+      }, 202);
     }
     let parsedName = fileNameWithoutExt;
     let parsedGender = '';
@@ -3563,7 +3570,18 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       console.error('[Upload] D1 写入失败:', dbErr.message);
     }
 
-    // === 同步 AI 初筛（确保完成后返回，避免 waitUntil 被杀）===
+    // 后台队列是 AI/OCR 的唯一执行入口。前端关闭、刷新或网络波动都不会中断。
+    const job = await createOrGetActiveJob(c.env.DB, recordId);
+    await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId: recordId });
+    return c.json({
+      id: recordId,
+      job_id: job.id,
+      candidate_name: displayName,
+      parse_status: 'queued',
+      detail: '简历已入队，正在后台处理',
+    }, 202);
+
+    // === 旧的同步 AI 初筛路径（不可达，待后续移除）===
     try {
       const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(recordId).first() as any;
       if (resume) {
@@ -4346,8 +4364,25 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
 
 app.get('/api/resumes/:id', authMiddleware, async (c) => {
   try {
+    const resumeId = c.req.param('id');
+    // D1 是新上传与处理状态的事实来源；飞书只作为可选协作镜像。
+    // 不能因飞书暂未回写/网络失败而把已入库的简历误报 404。
+    const d1Row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(resumeId).first() as any;
+    if (d1Row) {
+      const item: any = transformRow(d1Row);
+      for (const key of ['parsed_data', 'ai_review', 'ai_evaluation', 'work_experience', 'education', 'certifications']) {
+        if (typeof item[key] === 'string') item[key] = safeJsonParse(item[key]) || item[key];
+      }
+      try {
+        const map = await buildPositionMapping(c.env.DB);
+        item.standard_position = map.get(item.position_applied) || item.position_applied || item.mapped_position || '';
+      } catch { item.standard_position = item.position_applied || item.mapped_position || ''; }
+      return c.json(item);
+    }
+
+    // 旧飞书记录兼容：仅对历史数据使用飞书作为回退。
     const tableId = getBitableTableId(c.env, 'talent');
-    const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
+    const record = await bitableGetRecord(c.env, tableId, resumeId);
     if (!record) return c.json({ detail: 'Not found' }, 404);
     const item = parseTalentRecord(record);
     // 加载岗位映射
@@ -4711,12 +4746,46 @@ app.post('/api/resumes/clear-all-except', authMiddleware, async (c) => {
 
 app.delete('/api/resumes/:id', authMiddleware, async (c) => {
   try {
+    const resumeId = c.req.param('id');
+    // 先删除计算真相源，避免 UI 显示已删但刷新后 D1 记录复活。
+    await c.env.DB.batch([
+      c.env.DB.prepare('DELETE FROM resume_processing_jobs WHERE resume_id = ?').bind(resumeId),
+      c.env.DB.prepare('DELETE FROM resume_files WHERE id = ?').bind(resumeId),
+      c.env.DB.prepare('DELETE FROM resumes WHERE id = ?').bind(resumeId),
+    ]);
+
+    // 飞书是异步镜像；其网络失败不应回滚已经完成的本地删除。
     const tableId = getBitableTableId(c.env, 'talent');
-    await bitableDeleteRecord(c.env, tableId, c.req.param('id'));
+    try { await bitableDeleteRecord(c.env, tableId, resumeId); } catch {}
     return c.json({ detail: 'Deleted' });
   } catch (e: any) {
     return c.json({ detail: '删除失败: ' + e.message }, 500);
   }
+});
+
+app.post('/api/resumes/:id/retry-processing', authMiddleware, async (c) => {
+  const resumeId = c.req.param('id');
+  const resume = await c.env.DB.prepare('SELECT id FROM resumes WHERE id=?').bind(resumeId).first();
+  if (!resume) return c.json({ detail: 'Resume not found' }, 404);
+
+  const timestamp = new Date().toISOString();
+  let job = await c.env.DB.prepare(
+    "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 1"
+  ).bind(resumeId).first() as any;
+
+  if (job) {
+    await c.env.DB.prepare(
+      "UPDATE resume_processing_jobs SET status='queued', error_code=NULL, error_message=NULL, updated_at=? WHERE id=? AND status='failed'"
+    ).bind(timestamp, job.id).run();
+  } else {
+    job = await createOrGetActiveJob(c.env.DB, resumeId);
+    if (job.status !== 'queued') return c.json({ job_id: job.id, parse_status: 'queued', detail: '任务已在处理中' });
+  }
+
+  await c.env.DB.prepare("UPDATE resumes SET parse_status='queued', parse_error=NULL, updated_at=? WHERE id=?")
+    .bind(timestamp, resumeId).run();
+  await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId });
+  return c.json({ job_id: job.id, parse_status: 'queued', detail: '已重新入队' }, 202);
 });
 
 // 批量清除已淘汰（HR复核结果='未通过'）
