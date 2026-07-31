@@ -1295,6 +1295,11 @@ export function getBoardInterviewPassCondition(round: 1 | 2 | 3): string {
   return `(round = 3 AND result ${passed})`;
 }
 
+/** A passed first interview is already represented by its scheduled interview row. */
+export function getBoardFirstInterviewCount(scheduled: number, _passed: number): number {
+  return scheduled;
+}
+
 function makeRecruitingBoardResponse(positions: RecruitingBoardPositionRow[]) {
   const rows = groupBoardRows(positions);
   const kpis = positions.reduce((totals, row) => ({
@@ -1328,11 +1333,22 @@ const PUBLIC_BOARD_KPI_FIELDS = [
   'offers',
   'hired',
 ] as const;
+const HR_OWNER_SCOPE_PREFIX = '__owner__:';
+type PublicShareScope = { owner: string | null; divisions: string[] };
 
-function toPublicRecruitingBoard(board: Record<string, any>, scopeIds: string[]): Record<string, unknown> {
-  const scopedRows = scopeIds.length
-    ? (board.rows || []).filter((row: any) => scopeIds.includes(row.division))
+function toPublicRecruitingBoard(board: Record<string, any>, scope: PublicShareScope): Record<string, unknown> {
+  const scopedRows = scope.divisions.length
+    ? (board.rows || []).filter((row: any) => scope.divisions.includes(row.division))
     : (board.rows || []);
+  const scopedPositions = scopedRows.flatMap((row: any) => row.positions || []);
+  const scopedKpis = scopedPositions.reduce((totals: Record<string, number>, position: any) => ({
+    active_positions: totals.active_positions + (position.status === '招聘中' ? 1 : 0),
+    total_headcount: totals.total_headcount + (position.headcount || 0),
+    total_resumes: totals.total_resumes + (position.total_resumes || 0),
+    first_interview: totals.first_interview + (position.first_interview || 0),
+    offers: totals.offers + (position.offers || 0),
+    hired: totals.hired + (position.hired || 0),
+  }), { active_positions: 0, total_headcount: 0, total_resumes: 0, first_interview: 0, offers: 0, hired: 0 });
   const publicRows = scopedRows.map((row: any) => ({
     ...toPublicBoardRow({
       division: row.division,
@@ -1372,9 +1388,19 @@ function toPublicRecruitingBoard(board: Record<string, any>, scopeIds: string[])
     version: board.version,
     updated_at: board.updated_at,
     kpis: Object.fromEntries(PUBLIC_BOARD_KPI_FIELDS
-      .filter((field) => field in (board.kpis || {}))
-      .map((field) => [field, board.kpis[field]])),
+      .map((field) => [field, scopedKpis[field]])),
     rows: publicRows,
+  };
+}
+
+function parsePublicShareScope(link: any): PublicShareScope {
+  const values = typeof link.scope_ids === 'string'
+    ? (safeJsonParse(link.scope_ids) || []).filter((value: unknown): value is string => typeof value === 'string')
+    : [];
+  const ownerValue = values.find((value) => value.startsWith(HR_OWNER_SCOPE_PREFIX));
+  return {
+    owner: ownerValue ? ownerValue.slice(HR_OWNER_SCOPE_PREFIX.length) || null : null,
+    divisions: link.scope_type === 'divisions' ? values.filter((value) => !value.startsWith(HR_OWNER_SCOPE_PREFIX)) : [],
   };
 }
 
@@ -1383,7 +1409,7 @@ export async function getSharedBoard(
   db: D1Database,
   token: string,
   at = new Date(),
-  loadBoard?: () => Promise<Record<string, any>>,
+  loadBoard?: (scope: PublicShareScope) => Promise<Record<string, any>>,
 ): Promise<SharedBoardResult> {
   const tokenHash = await hashShareToken(token);
   const link = await db.prepare(
@@ -1391,11 +1417,9 @@ export async function getSharedBoard(
   ).bind(tokenHash).first() as any;
   if (!link || !isShareLinkActive(link, at)) return { status: 404, body: null };
 
-  const scopeIds = link.scope_type === 'divisions' && typeof link.scope_ids === 'string'
-    ? (safeJsonParse(link.scope_ids) || []).filter((value: unknown): value is string => typeof value === 'string')
-    : [];
-  const board = loadBoard ? await loadBoard() : { version: 'v1', updated_at: at.toISOString(), kpis: {}, rows: [] };
-  return { status: 200, body: toPublicRecruitingBoard(board, scopeIds) };
+  const scope = parsePublicShareScope(link);
+  const board = loadBoard ? await loadBoard(scope) : { version: 'v1', updated_at: at.toISOString(), kpis: {}, rows: [] };
+  return { status: 200, body: toPublicRecruitingBoard(board, scope) };
 }
 
 function createShareToken(): string {
@@ -1419,13 +1443,17 @@ app.post('/api/dashboard/share-links', authMiddleware, requireRole(['admin', 'hr
   const body = await c.req.json().catch(() => ({})) as any;
   const expiry = body.expiry as ShareExpiryOption;
   if (!['1d', '7d', '30d', 'permanent'].includes(expiry)) return c.json({ detail: 'Invalid share expiry' }, 400);
-  const scopeType = body.scope_type === 'divisions' ? 'divisions' : 'all';
-  const scopeIds = Array.isArray(body.scope_ids) ? body.scope_ids.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0) : [];
+  const user = c.get('user') as any;
+  const isAdmin = user.role === 'admin';
+  const scopeType = isAdmin && body.scope_type === 'divisions' ? 'divisions' : 'all';
+  const scopeIds = isAdmin
+    ? (Array.isArray(body.scope_ids) ? body.scope_ids.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0) : [])
+    : (user.full_name ? [`${HR_OWNER_SCOPE_PREFIX}${user.full_name}`] : []);
+  if (!isAdmin && scopeIds.length === 0) return c.json({ detail: 'HR profile must include a full name before sharing' }, 400);
   if (scopeType === 'divisions' && scopeIds.length === 0) return c.json({ detail: 'Division scope requires at least one division' }, 400);
 
   const token = createShareToken();
   const expiresAt = createShareExpiry(expiry)?.toISOString() || null;
-  const user = c.get('user');
   const id = uuid();
   const createdAt = now();
   await c.env.DB.prepare(
@@ -1456,8 +1484,8 @@ app.delete('/api/dashboard/share-links/:id', authMiddleware, requireRole(['admin
 });
 
 app.get('/api/shared/dashboard/:token', async (c) => {
-  const result = await getSharedBoard(c.env.DB, c.req.param('token'), new Date(), async () =>
-    makeRecruitingBoardResponse(await getDashboardPositionRowsForOwner(c.env.DB, null)),
+  const result = await getSharedBoard(c.env.DB, c.req.param('token'), new Date(), async (scope) =>
+    makeRecruitingBoardResponse(await getDashboardPositionRowsForOwner(c.env.DB, scope.owner)),
   );
   return result.status === 404 ? c.notFound() : c.json(result.body);
 });
@@ -1512,7 +1540,7 @@ async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | 
 
   return positions.results.map((pos: any) => {
     const totalResumes = rMap.get(pos.id) || 0;
-    const firstInterview = (f1SchedMap.get(pos.id) || 0) + (f1PassMap.get(pos.id) || 0);
+    const firstInterview = getBoardFirstInterviewCount(f1SchedMap.get(pos.id) || 0, f1PassMap.get(pos.id) || 0);
     const firstPass = f1PassMap.get(pos.id) || 0;
     const secondPass = f2PassMap.get(pos.id) || 0;
     const thirdPass = f3PassMap.get(pos.id) || 0;

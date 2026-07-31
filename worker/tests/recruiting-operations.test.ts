@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, getBoardInterviewPassCondition, getDashboardOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
+import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, getBoardFirstInterviewCount, getBoardInterviewPassCondition, getDashboardOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
 import {
   createShareExpiry,
   hashShareToken,
@@ -68,13 +68,38 @@ describe('dashboard share links', () => {
     };
     const response = await getSharedBoard(fakeDb as never, 'live-token', now, async () => ({
       version: 'v1', updated_at: now.toISOString(), kpis: { total_resumes: 2, candidate_name: 'Private KPI', ai_evaluation: { hidden: true } },
-      rows: [{ division: 'A', candidate_name: 'Private', positions: [{ position: '运营', candidate_name: 'Private' }] }],
+      rows: [{ division: 'A', candidate_name: 'Private', positions: [{ position: '运营', total_resumes: 2, candidate_name: 'Private' }] }],
     }));
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ rows: [{ division: 'A', positions: [{ position: '运营' }] }] });
     expect(JSON.stringify(response.body)).not.toContain('Private');
-    expect((response.body.kpis as Record<string, unknown>)).toEqual({ total_resumes: 2 });
+    expect(response.body.kpis).toMatchObject({ total_resumes: 2 });
+    expect(response.body.kpis).not.toHaveProperty('candidate_name');
+  });
+
+  it('recomputes public KPIs from a division-scoped share instead of exposing company totals', async () => {
+    const fakeDb = { prepare: () => ({ bind: () => ({ first: async () => ({ expires_at: null, revoked_at: null, scope_type: 'divisions', scope_ids: '["A"]' }) }) }) };
+    const response = await getSharedBoard(fakeDb as never, 'division-token', now, async () => ({
+      version: 'v1', updated_at: now.toISOString(), kpis: { total_resumes: 99, active_positions: 99 },
+      rows: [
+        { division: 'A', positions: [{ position: '运营', status: '招聘中', headcount: 2, total_resumes: 3, first_interview: 1, offers: 1, hired: 0 }] },
+        { division: 'B', positions: [{ position: '销售', status: '招聘中', headcount: 8, total_resumes: 96, first_interview: 5, offers: 5, hired: 2 }] },
+      ],
+    }));
+
+    expect(response.body).toMatchObject({ kpis: { active_positions: 1, total_headcount: 2, total_resumes: 3, first_interview: 1, offers: 1, hired: 0 } });
+    expect((response.body.rows as Array<{ division: string }>).map((row) => row.division)).toEqual(['A']);
+  });
+
+  it('passes an HR owner marker into public board loading so an HR share cannot read all owners', async () => {
+    const fakeDb = { prepare: () => ({ bind: () => ({ first: async () => ({ expires_at: null, revoked_at: null, scope_type: 'all', scope_ids: '["__owner__:HR A"]' }) }) }) };
+    let receivedScope: unknown;
+    await getSharedBoard(fakeDb as never, 'hr-token', now, async (scope) => {
+      receivedScope = scope;
+      return { version: 'v1', updated_at: now.toISOString(), kpis: {}, rows: [] };
+    });
+    expect(receivedScope).toMatchObject({ owner: 'HR A', divisions: [] });
   });
 });
 
@@ -161,6 +186,10 @@ describe('recruiting board aggregation', () => {
     expect(getBoardInterviewPassCondition(2)).toContain("result2 IN ('pass', 'passed')");
     expect(getBoardInterviewPassCondition(2)).toContain("round = 2 AND result IN ('pass', 'passed')");
     expect(getBoardInterviewPassCondition(3)).toContain("round = 3 AND result IN ('pass', 'passed')");
+  });
+
+  it('counts a first interview only once when it has a pass result', () => {
+    expect(getBoardFirstInterviewCount(3, 2)).toBe(3);
   });
 
   it('does not let an HR user override their dashboard owner scope', () => {
