@@ -8,6 +8,7 @@ import SimplePagination from '../../components/SimplePagination';
 import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -1088,84 +1089,6 @@ const ResumesList: React.FC = () => {
     try { return JSON.parse(value); } catch { return null; }
   };
 
-  /** 从 ai_evaluation 中解析能力维度评分明细 */
-  const parseScoreDetail = (aiEval: any): { name: string; score: number; reason: string }[] | null => {
-    // === 格式1：JSON 对象（来自 D1 ai_evaluation） ===
-    if (aiEval && typeof aiEval === 'object' && !Array.isArray(aiEval)) {
-      if (Array.isArray(aiEval.dimensions)) return aiEval.dimensions;
-      // 部分模型会返回 { "业务运营能力": 45, "协作沟通能力": 70 }。
-      // 卡片统一以 5 分制展示，保留原维度名称。
-      if (aiEval.dimensions && typeof aiEval.dimensions === 'object' && !Array.isArray(aiEval.dimensions)) {
-        const dimensions = Object.entries(aiEval.dimensions)
-          .map(([name, value]) => {
-            const raw = Number(value);
-            const score = Number.isFinite(raw) ? (raw > 5 ? raw / 20 : raw) : 0;
-            return { name, score: Math.round(score * 10) / 10, reason: '' };
-          })
-          .filter(d => d.name);
-        return dimensions.length > 0 ? dimensions : null;
-      }
-    }
-    if (typeof aiEval !== 'string' || !aiEval) return null;
-
-    // === 格式2：JSON 双重转义字符串 ===
-    // 数据库里存的格式：{"summary": "{\\"dimensions\\": [...]}"}
-    // 或者内层 JSON 可能被截断（>500字符），需降级为正则提取
-    if (aiEval.startsWith('{')) {
-      try {
-        const outer = JSON.parse(aiEval);
-        if (outer.summary && typeof outer.summary === 'string') {
-          try {
-            const inner = JSON.parse(outer.summary);
-            if (Array.isArray(inner.dimensions) && inner.dimensions.length > 0) {
-              return inner.dimensions.map((d: any) => ({
-                name: d.name || '',
-                score: d.score ?? 0,
-                reason: d.reason || '',
-              }));
-            }
-          } catch (_innerErr) {
-            // 内层 JSON 被截断，用正则从 summary 字符串中提取维度
-            const dims: { name: string; score: number; reason: string }[] = [];
-            const re = /"name"\s*:\s*"([^"]*?)"\s*,\s*"score"\s*:\s*(\d+(?:\.\d+)?)\s*,/g;
-            let m: RegExpExecArray | null;
-            while ((m = re.exec(outer.summary)) !== null) {
-              dims.push({ name: m[1], score: parseFloat(m[2]), reason: '' });
-            }
-            if (dims.length > 0) return dims;
-          }
-        }
-      } catch (_outerErr) {
-        // 外层 JSON 非标准，看看别的格式
-      }
-    }
-
-    // === 格式3：文本格式（能力维度匹配） ===
-    // 支持各种变体：能力维度匹配：、能力维度匹配**：、能力维度匹配**:
-    // 维度行格式：**名称：X/5分。依据：理由、**名称：X/5分**。依据：理由、**名称：X/5分。依据**：理由
-    if (aiEval.includes('能力维度匹配')) {
-      // 提取维度区块：每个维度行以 "  - **" 开头，下一个章节以 "\n-" 开头（非两个空格后跟短杠）
-      const dimSection = aiEval.match(/能力维度匹配\*{0,2}[：:]\s*([\s\S]*?)(?=\n(?!  - )|$)/);
-      if (!dimSection) return null;
-      const lines = dimSection[1].split('\n').filter(l => l.includes('**'));
-      const results: { name: string; score: number; reason: string }[] = [];
-      for (const line of lines) {
-        // 匹配各种变体：分数可以是整数或小数；** 可能出现在分数后或依据前
-        const m = line.match(/\*\*(.+?)[：:]\s*(\d+(?:\.\d+)?)\/5分\*{0,2}[。.]*\s*依据\*{0,2}[：:](.*)/);
-        if (m) {
-          results.push({
-            name: m[1].trim(),
-            score: parseFloat(m[2]),
-            reason: m[3].replace(/\*\*/g, '').trim(),
-          });
-        }
-      }
-      if (results.length > 0) return results;
-    }
-
-    return null;
-  };
-
   /** 算总分（根据明细） */
   const calcTotalScore = (details: { score: number }[]): number => {
     return details.length > 0 ? Math.round(details.reduce((s, d) => s + d.score, 0) / details.length * 10) / 10 : 0;
@@ -1359,8 +1282,9 @@ const ResumesList: React.FC = () => {
             {pagedData.map((record: any) => {
               const ageText = cleanAge(record.age);
               const genderText = cleanGender(record.gender);
-              const scoreDetails = parseScoreDetail(record.ai_evaluation);
-              const totalScore = scoreDetails ? calcTotalScore(scoreDetails) : null;
+              const normalizedEvaluation = normalizeResumeEvaluation(record);
+              const scoreDetails = normalizedEvaluation.dimensions;
+              const totalScore = scoreDetails.length > 0 ? calcTotalScore(scoreDetails) : null;
               const matchCount = scoreDetails?.filter(d => d.score >= 3).length || 0;
               const totalDims = scoreDetails?.length || 0;
               const hardResult = parseHardRequirementResult(record.hard_requirement_result);
@@ -1447,7 +1371,12 @@ const ResumesList: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  {(!scoreDetails || scoreDetails.length === 0) && (
+                  {scoreDetails.length === 0 && normalizedEvaluation.overallScore != null && (
+                    <div style={{ marginTop: 4 }}>
+                      <span style={{ color: '#1677ff', fontSize: 12 }}>AI 匹配分 {normalizedEvaluation.overallScore}</span>
+                    </div>
+                  )}
+                  {scoreDetails.length === 0 && normalizedEvaluation.overallScore == null && (
                     <div style={{ marginTop: 4 }}>
                       <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无 AI 评估</span>
                     </div>

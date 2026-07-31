@@ -8,6 +8,7 @@ import { DownloadOutlined, FilePdfOutlined, ArrowLeftOutlined, CloseCircleOutlin
 import RejectReasonSelector, { REJECT_REASONS } from '../../components/RejectReasonSelector';
 import { useAuth } from '../../contexts/AuthContext';
 import { getMaximizedPdfPreviewUrl } from '../../utils/pdfPreview';
+import { normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
@@ -150,6 +151,16 @@ const ResumeDetail: React.FC = () => {
   const downloadUrl = id ? `/api/resumes/${id}/file?download=true&token=${encodeURIComponent(token)}` : '';
   const pdfPreviewUrl = fileApiUrl ? getMaximizedPdfPreviewUrl(fileApiUrl) : '';
   const statusInfo = getStatusInfo(resume.status, resume.parse_status);
+  const normalizedEvaluation = normalizeResumeEvaluation(resume);
+  const aiReview = normalizedEvaluation.source || resume.ai_review || resume.ai_evaluation;
+  const aiDimensions = normalizedEvaluation.dimensions;
+  const aiContentStyle: React.CSSProperties = {
+    maxWidth: '100%',
+    minWidth: 0,
+    overflowX: 'auto',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+  };
 
   // AI初筛
   const handleAIScreen = async () => {
@@ -689,81 +700,90 @@ const ResumeDetail: React.FC = () => {
           <div style={{ marginBottom: 8 }}>
             <Text strong style={{ fontSize: 16, color: '#6366F1' }}>AI 智能初筛评价</Text>
           </div>
-          {resume.ai_review ? (
-            typeof resume.ai_review === 'object' ? (
-              <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-                {resume.ai_review.summary && (
-                  <div style={{ marginBottom: 16, padding: '12px 16px', background: '#EEF2FF', borderRadius: '8px', borderLeft: '4px solid #6366F1' }}>
-                    <Text strong style={{ color: '#4338CA' }}>总体评价：</Text>
-                    <Text>{resume.ai_review.summary}</Text>
+          {aiReview ? (
+            typeof aiReview === 'object' ? (
+              <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', ...aiContentStyle }}>
+                {aiDimensions.length > 0 && (
+                  <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {aiDimensions.map((dimension) => (
+                      <Tag key={dimension.name} color={dimension.score >= 4 ? 'green' : dimension.score >= 3 ? 'blue' : dimension.score >= 2 ? 'orange' : 'red'} style={{ margin: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                        {dimension.name} {dimension.score}/5
+                      </Tag>
+                    ))}
                   </div>
                 )}
-                {resume.ai_review.recommendation && (
+                {aiReview.summary && (
+                  <div style={{ marginBottom: 16, padding: '12px 16px', background: '#EEF2FF', borderRadius: '8px', borderLeft: '4px solid #6366F1', ...aiContentStyle }}>
+                    <Text strong style={{ color: '#4338CA' }}>总体评价：</Text>
+                    <Text style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{aiReview.summary}</Text>
+                  </div>
+                )}
+                {aiReview.recommendation && (
                   <div style={{ marginBottom: 16 }}>
-                    <Tag color={resume.ai_review.recommendation.includes('strongly_recommend') ? 'green' : resume.ai_review.recommendation.includes('recommend') && !resume.ai_review.recommendation.includes('not') ? 'blue' : resume.ai_review.recommendation.includes('neutral') ? 'gold' : 'red'} style={{ fontSize: 14, padding: '4px 12px' }}>
-                      {resume.ai_review.recommendation === 'strongly_recommend' ? '强烈推荐' : resume.ai_review.recommendation === 'recommend' ? '推荐' : resume.ai_review.recommendation === 'neutral' ? '中立' : resume.ai_review.recommendation === 'not_recommend' ? '不推荐' : resume.ai_review.recommendation === 'strongly_not_recommend' ? '强烈不推荐' : resume.ai_review.recommendation}
+                    <Tag color={aiReview.recommendation.includes('strongly_recommend') ? 'green' : aiReview.recommendation.includes('recommend') && !aiReview.recommendation.includes('not') ? 'blue' : aiReview.recommendation.includes('neutral') ? 'gold' : 'red'} style={{ fontSize: 14, padding: '4px 12px', whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                      {aiReview.recommendation === 'strongly_recommend' ? '强烈推荐' : aiReview.recommendation === 'recommend' ? '推荐' : aiReview.recommendation === 'neutral' ? '中立' : aiReview.recommendation === 'not_recommend' ? '不推荐' : aiReview.recommendation === 'strongly_not_recommend' ? '强烈不推荐' : aiReview.recommendation}
                     </Tag>
                   </div>
                 )}
-                {resume.ai_review.strengths && resume.ai_review.strengths.length > 0 && (
+                {aiReview.strengths && aiReview.strengths.length > 0 && (
                   <div style={{ marginBottom: 16 }}>
                     <Text strong style={{ color: '#10B981', display: 'block', marginBottom: 8 }}>✓ 核心优势</Text>
                     <div>
-                      {resume.ai_review.strengths.map((s: string, i: number) => (
-                        <Tag key={i} color="green" style={{ marginBottom: 4, padding: '2px 8px' }}>{s}</Tag>
+                      {aiReview.strengths.map((s: string, i: number) => (
+                        <Tag key={i} color="green" style={{ marginBottom: 4, padding: '2px 8px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>
                       ))}
                     </div>
                   </div>
                 )}
-                {resume.ai_review.risks && resume.ai_review.risks.length > 0 && (
+                {aiReview.risks && aiReview.risks.length > 0 && (
                   <div style={{ marginBottom: 16 }}>
                     <Text strong style={{ color: '#EF4444', display: 'block', marginBottom: 8 }}>⚠ 潜在风险</Text>
                     <div>
-                      {resume.ai_review.risks.map((r: string, i: number) => (
-                        <Tag key={i} color="red" style={{ marginBottom: 4, padding: '2px 8px' }}>{r}</Tag>
+                      {aiReview.risks.map((r: string, i: number) => (
+                        <Tag key={i} color="red" style={{ marginBottom: 4, padding: '2px 8px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{r}</Tag>
                       ))}
                     </div>
                   </div>
                 )}
-                {resume.ai_review.skill_match && (resume.ai_review.skill_match.matched?.length > 0 || resume.ai_review.skill_match.gaps?.length > 0) && (
+                {aiReview.skill_match && (aiReview.skill_match.matched?.length > 0 || aiReview.skill_match.gaps?.length > 0) && (
                   <Row gutter={16} style={{ marginBottom: 16 }}>
                     <Col span={12}>
                       <Text strong style={{ color: '#3B82F6', display: 'block', marginBottom: 8 }}>匹配技能</Text>
-                      {(resume.ai_review.skill_match.matched || []).map((s: string, i: number) => (
-                        <Tag key={i} color="blue" style={{ marginBottom: 4, padding: '2px 8px' }}>{s}</Tag>
+                      {(aiReview.skill_match.matched || []).map((s: string, i: number) => (
+                        <Tag key={i} color="blue" style={{ marginBottom: 4, padding: '2px 8px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>
                       ))}
                     </Col>
                     <Col span={12}>
                       <Text strong style={{ color: '#F59E0B', display: 'block', marginBottom: 8 }}>技能差距</Text>
-                      {(resume.ai_review.skill_match.gaps || []).map((s: string, i: number) => (
-                        <Tag key={i} color="orange" style={{ marginBottom: 4, padding: '2px 8px' }}>{s}</Tag>
+                      {(aiReview.skill_match.gaps || []).map((s: string, i: number) => (
+                        <Tag key={i} color="orange" style={{ marginBottom: 4, padding: '2px 8px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>
                       ))}
                     </Col>
                   </Row>
                 )}
-                {resume.ai_review.suggested_questions && resume.ai_review.suggested_questions.length > 0 && (
+                {aiReview.suggested_questions && aiReview.suggested_questions.length > 0 && (
                   <div style={{ marginBottom: 16 }}>
                     <Text strong style={{ display: 'block', marginBottom: 8, color: '#7C3AED' }}>❓ 建议面试问题</Text>
-                    {resume.ai_review.suggested_questions.map((q: string, i: number) => (
-                      <div key={i} style={{ padding: '8px 12px', marginBottom: 4, background: '#FDF4FF', borderRadius: '6px', borderLeft: '3px solid #7C3AED', fontSize: 14 }}>
+                    {aiReview.suggested_questions.map((q: string, i: number) => (
+                      <div key={i} style={{ padding: '8px 12px', marginBottom: 4, background: '#FDF4FF', borderRadius: '6px', borderLeft: '3px solid #7C3AED', fontSize: 14, ...aiContentStyle }}>
                         {i + 1}. {q}
                       </div>
                     ))}
                   </div>
                 )}
-                {resume.ai_review.experience_analysis && (
-                  <div style={{ padding: '12px 16px', background: '#F0FDF4', borderRadius: '8px', borderLeft: '4px solid #10B981' }}>
+                {aiReview.experience_analysis && (
+                  <div style={{ padding: '12px 16px', background: '#F0FDF4', borderRadius: '8px', borderLeft: '4px solid #10B981', ...aiContentStyle }}>
                     <Text strong style={{ color: '#15803D' }}>经验分析：</Text>
-                    <Text>{resume.ai_review.experience_analysis}</Text>
+                    <Text style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{aiReview.experience_analysis}</Text>
                   </div>
                 )}
-                {resume.ai_review.raw_response && (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{resume.ai_review.raw_response}</ReactMarkdown>
+                {aiReview.raw_response && (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiReview.raw_response}</ReactMarkdown>
                 )}
               </div>
             ) : (
-              <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', color: '#334155', fontSize: '15px', lineHeight: 1.8 }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{resume.ai_review}</ReactMarkdown>
+              <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', color: '#334155', fontSize: '15px', lineHeight: 1.8, ...aiContentStyle }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{String(aiReview)}</ReactMarkdown>
               </div>
             )
           ) : (
