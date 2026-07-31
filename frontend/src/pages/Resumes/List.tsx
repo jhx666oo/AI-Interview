@@ -73,6 +73,7 @@ const ResumesList: React.FC = () => {
   // 前端缓存，切页面回来不重新拉飞书
   const dataCache = useRef<any[]>([]);
   const loadedRef = useRef(false);
+  const evaluatingRef = useRef(false); // 防止重复触发 auto-evaluate-all
 
   // 统计卡片（基于筛选后的 data 实时计算）
   const statsOffer = useMemo(() => data.filter((r: any) => r.status === 'offer_pending' || r.status === 'offer_accepted' || r.status === 'offer_rejected').length, [data]);
@@ -269,13 +270,7 @@ const ResumesList: React.FC = () => {
 
       // 不再区分 role，统一显示全部
 
-      // 没有筛选条件且有缓存时直接复用（缓存已排序）—— 但负责人筛选走 API 不做缓存
-      if (!searchName && !searchStatus && !searchPosition && !personFilter && loadedRef.current && dataCache.current.length > 0) {
-        setData(dataCache.current);
-        if (!silent) setLoading(false);
-        return;
-      }
-
+      // 始终从 API 拉取最新数据（避免缓存导致删除/上传后看不到变化）
       const res = await request.get('/resumes', { params });
       let filtered = res;
       // 岗位筛选（客户端过滤，因为 API 不支持岗位参数）
@@ -301,24 +296,31 @@ const ResumesList: React.FC = () => {
       // 后台触发 PDF 缓存（静默执行，不阻塞展示）
       request.post('/resumes/cache-files').catch(() => {});
 
-      // 检查是否有需要自动评估的简历（无 ai_evaluation 且非仅飞书导入时触发）
-      const noEval = res.filter((r: any) => !r.ai_evaluation);
-      if (noEval.length > 0 && !silent) {
-        console.log(`[AutoEval] 发现 ${noEval.length} 份简历无评估，自动触发评估...`);
+      // 检查是否有需要自动评估的简历（有 raw_text 但无 ai_evaluation）
+      // 加防重复锁：evaluatingRef 保证同一页面生命周期内只触发一次
+      const noEval = res.filter((r: any) => !r.ai_evaluation && r.raw_text);
+      
+      if (noEval.length > 0 && !silent && !evaluatingRef.current) {
+        evaluatingRef.current = true;
+        console.log(`[AutoEval] 发现 ${noEval.length} 份简历无评估，触发后台评估...`);
+        
+        // 立即开启轮询（后台评估会持续写入数据，轮询会实时显示进度）
+        setPollingEnabled(true);
+        message.info(`正在后台评估 ${noEval.length} 份简历...`);
+        
+        // 触发后台评估（异步，不等待完成）
         request.post('/resumes/auto-evaluate-all', {}).then((evalRes) => {
-          if (evalRes.evaluated > 0) {
-            message.success(`自动评估完成：成功 ${evalRes.evaluated} 份，跳过 ${evalRes.skipped} 份`);
-            // 重新加载数据
-            fetchResumes(true);
+          if (evalRes.task_started) {
+            console.log(`[AutoEval] 后台评估已启动：待评估 ${evalRes.to_evaluate} 份，跳过 ${evalRes.skipped} 份`);
+          } else {
+            // 没有需要评估的，重置锁
+            evaluatingRef.current = false;
           }
         }).catch((err) => {
-          console.warn('[AutoEval] 自动评估失败:', err.message);
+          console.warn('[AutoEval] 触发评估失败:', err.message);
+          evaluatingRef.current = false;
         });
       }
-
-      // 检查是否有正在解析中的简历
-      const hasProcessing = res.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
-      setPollingEnabled(hasProcessing);
 
       return res;
     } catch (error) {
@@ -328,21 +330,35 @@ const ResumesList: React.FC = () => {
     }
   };
 
-  // 轮询检查解析状态（不触动数据缓存，避免翻页被重置）
+  // 轮询检查解析状态 - 每 5 秒刷新数据，让用户能看到评估进度
   useEffect(() => {
     if (pollingEnabled) {
       pollingRef.current = setInterval(async () => {
         try {
           const res = await request.get('/resumes', { params: {} });
           if (Array.isArray(res)) {
-            const hasProcessing = res.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
-            if (!hasProcessing) {
+            // 更新数据展示（让用户看到实时进度）
+            setData(res);
+            
+            // 只有 processing 状态才算"处理中"（MinerU 解析）
+            const hasProcessing = res.some((r: any) => r.parse_status === 'processing');
+            
+            // 所有简历都有评估了
+            const allEvaluated = res.length > 0 && res.every((r: any) => r.ai_evaluation);
+            
+            // 停止条件：没有在处理的 或 全部已评估
+            if (!hasProcessing || allEvaluated) {
               setPollingEnabled(false);
-              fetchResumes(); // 解析完成，刷新数据
+              setLoading(false);
+              clearInterval(pollingRef.current!);
+              pollingRef.current = null;
+              evaluatingRef.current = false;
+              // 延迟 500ms 再刷新一次，确保最后的数据写入完成
+              setTimeout(() => fetchResumes(true), 500);
             }
           }
         } catch {}
-      }, 3000);
+      }, 5000);
     } else {
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
