@@ -48,6 +48,43 @@ interface BoardResponse {
 
 const priorityColors: Record<Priority, string> = { P0: 'red', P1: 'orange', P2: 'blue' };
 
+function groupFilteredPositions(positions: PositionRow[]): DivisionRow[] {
+  const groups = new Map<string, DivisionRow>();
+  for (const position of positions) {
+    const division = position.division || '未分配事业部';
+    let group = groups.get(division);
+    if (!group) {
+      group = {
+        division,
+        hrbp: position.hrbp,
+        priority: position.priority,
+        headcount: 0,
+        total_resumes: 0,
+        first_interview: 0,
+        first_pass: 0,
+        second_pass: 0,
+        third_pass: 0,
+        offers: 0,
+        hired: 0,
+        status: position.status,
+        pass_rate: null,
+        positions: [],
+      };
+      groups.set(division, group);
+    }
+    group.positions.push(position);
+    group.headcount += position.headcount;
+    group.total_resumes += position.total_resumes;
+    group.first_interview += position.first_interview;
+    group.first_pass += position.first_pass;
+    group.second_pass += position.second_pass;
+    group.third_pass += position.third_pass;
+    group.offers += position.offers;
+    group.hired += position.hired;
+  }
+  return [...groups.values()].map((group) => ({ ...group, pass_rate: group.first_interview ? Math.round(group.first_pass / group.first_interview * 100) : null }));
+}
+
 function PipelineTag({ status }: { status: string }) {
   const color = status === '已完成' ? 'success' : status === '暂停' ? 'warning' : status === '已终止' ? 'default' : 'processing';
   return <Tag color={color}>{status || '招聘中'}</Tag>;
@@ -85,17 +122,14 @@ const Dashboard: React.FC = () => {
   const hrbps = useMemo(() => [...new Set(positions.map((row) => row.hrbp).filter(Boolean))].sort(), [positions]);
   const statuses = useMemo(() => [...new Set(positions.map((row) => row.status).filter(Boolean))].sort(), [positions]);
 
-  const filteredRows = useMemo(() => (board?.rows || []).map((row) => ({
-    ...row,
-    positions: row.positions.filter((position) => {
+  const filteredRows = useMemo(() => groupFilteredPositions(positions.filter((position) => {
       if (division && position.division !== division) return false;
       if (hrbp && position.hrbp !== hrbp) return false;
       if (priority && position.priority !== priority) return false;
       if (status && position.status !== status) return false;
       const search = keyword.trim().toLowerCase();
       return !search || position.position.toLowerCase().includes(search) || position.division.toLowerCase().includes(search);
-    }),
-  })).filter((row) => row.positions.length > 0), [board, division, hrbp, keyword, priority, status]);
+    })), [division, hrbp, keyword, positions, priority, status]);
 
   const columns = [
     { title: '事业部 / 职位', dataIndex: 'position', key: 'position', width: 190, render: (value: string, row: DivisionRow | PositionRow) => value || row.division },

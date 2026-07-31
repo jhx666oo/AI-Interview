@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
+import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, getBoardInterviewPassCondition, getDashboardOwner, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
 import {
   createShareExpiry,
   hashShareToken,
@@ -119,6 +119,20 @@ describe('recruiting board aggregation', () => {
     expect(groupBoardRows([
       { division: 'A', position: '运营', total_resumes: 2, first_interview: 0, first_pass: 0, second_pass: 0, third_pass: 0, offers: 0, hired: 0 },
     ])[0].pass_rate).toBeNull();
+  });
+
+  it('uses the stored second-round result field and legacy round rows for pass counts', () => {
+    expect(getBoardInterviewPassCondition(1)).toContain("result IN ('pass', 'passed')");
+    expect(getBoardInterviewPassCondition(2)).toContain("result2 IN ('pass', 'passed')");
+    expect(getBoardInterviewPassCondition(2)).toContain("round = 2 AND result IN ('pass', 'passed')");
+    expect(getBoardInterviewPassCondition(3)).toContain("round = 3 AND result IN ('pass', 'passed')");
+  });
+
+  it('does not let an HR user override their dashboard owner scope', () => {
+    const hrContext = { get: () => ({ role: 'hr', full_name: 'HR A' }), req: { query: () => 'HR B' } };
+    const adminContext = { get: () => ({ role: 'admin', full_name: 'Admin' }), req: { query: () => 'HR B' } };
+    expect(getDashboardOwner(hrContext)).toBe('HR A');
+    expect(getDashboardOwner(adminContext)).toBe('HR B');
   });
 });
 

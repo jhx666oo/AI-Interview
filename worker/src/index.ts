@@ -1139,15 +1139,23 @@ app.get('/api/question-banks', authMiddleware, async (c) => {
 // ==================== Dashboard Routes ====================
 
 // 构建负责人过滤条件（返回 SQL 片段 + 参数）
+export function getDashboardOwner(c: any): string | null {
+  const user = c.get('user');
+  // An HR user's owner boundary is server-controlled. Only admins may choose
+  // another owner through the query parameter.
+  if (!user || user.role !== 'admin') return user?.full_name || null;
+  return c.req.query('responsible_person') || null;
+}
+
 function buildOwnerFilter(c: any): { where: string; params: any[] } {
-  const owner = c.req.query('responsible_person') || getOwnerName(c);
+  const owner = getDashboardOwner(c);
   if (!owner) return { where: '', params: [] };
   return { where: 'AND responsible_person = ?', params: [owner] };
 }
 
 // 构建基于 positions 表的负责人过滤（用于 resumes/interviews/offers 等关联表）
 function buildOwnerPosFilter(c: any): { wherePos: string; whereResume: string; params: any[] } {
-  const owner = c.req.query('responsible_person') || getOwnerName(c);
+  const owner = getDashboardOwner(c);
   if (!owner) return { wherePos: '', whereResume: '', params: [] };
   const p = [owner];
   return {
@@ -1159,7 +1167,7 @@ function buildOwnerPosFilter(c: any): { wherePos: string; whereResume: string; p
 
 app.get('/api/dashboard/stats', authMiddleware, async (c) => {
   const db = c.env.DB;
-  const owner = c.req.query('responsible_person') || getOwnerName(c);
+  const owner = getDashboardOwner(c);
   const p1 = owner ? [owner] : [];
   const p2 = owner ? [owner, owner, owner] : [];
 
@@ -1277,6 +1285,14 @@ export function groupBoardRows(rows: RecruitingBoardPositionRow[]): RecruitingBo
   }));
 }
 
+/** The live model stores round two on result2/status2 of the first interview row. */
+export function getBoardInterviewPassCondition(round: 1 | 2 | 3): string {
+  const passed = "IN ('pass', 'passed')";
+  if (round === 1) return `(round = 1 AND (result ${passed} OR status2 = 'passed'))`;
+  if (round === 2) return `((round = 1 AND (result2 ${passed} OR status2 = 'passed')) OR (round = 2 AND result ${passed}))`;
+  return `(round = 3 AND result ${passed})`;
+}
+
 app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
   const positions = await getDashboardPositionRows(c);
   const rows = groupBoardRows(positions);
@@ -1324,10 +1340,10 @@ async function getDashboardPositionRows(c: any): Promise<RecruitingBoardPosition
     resumeCounts, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
   ] = await Promise.all([
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM resumes WHERE 1=1 ${posFilter} GROUP BY position_id`),
-    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 AND status = 'scheduled' ${posFilter} GROUP BY position_id`),
-    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 AND (result = 'pass' OR status2 = 'passed') ${posFilter} GROUP BY position_id`),
-    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 2 AND (result = 'pass' OR status2 = 'passed') ${posFilter} GROUP BY position_id`),
-    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 3 AND (result = 'pass' OR status2 = 'passed') ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(1)} ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(2)} ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(3)} ${posFilter} GROUP BY position_id`),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM offers WHERE status NOT IN ('draft','cancelled') ${posFilter} GROUP BY position_id`),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM onboarding_records WHERE status = 'onboarded' ${posFilter} GROUP BY position_id`),
   ]);
@@ -1461,7 +1477,7 @@ app.get('/api/dashboard/interviewers', authMiddleware, async (c) => {
 
 app.get('/api/dashboard/overview', authMiddleware, async (c) => {
   const db = c.env.DB;
-  const owner = c.req.query('responsible_person') || getOwnerName(c);
+  const owner = getDashboardOwner(c);
 
   const posWhere = owner ? 'WHERE responsible_person = ?' : '';
   const posParams = owner ? [owner] : [];
