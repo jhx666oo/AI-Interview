@@ -59,5 +59,8 @@ export async function processResume(
       ai_evaluation: JSON.stringify(result),
       parse_status: 'ai_screened',
     });
+  } else {
+    // 补字段任务不应把已有评估的简历永久留在 screening 状态。
+    await deps.updateResume(message.resumeId, { parse_status: 'ai_screened' });
   }
 }
