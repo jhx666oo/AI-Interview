@@ -9,7 +9,7 @@ import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { getDimensionScoreTotal, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
-import { filterResumesByDemographics } from '../../utils/resumeFilters';
+import { filterResumesByDemographics, filterResumesByMinimumDimensionScore } from '../../utils/resumeFilters';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -53,8 +53,7 @@ const ResumesList: React.FC = () => {
   const [searchPerson, setSearchPerson] = useState<string | undefined>(undefined);
   const [responsiblePersons, setResponsiblePersons] = useState<string[]>([]);
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
-  const [hardConditionFilter, setHardConditionFilter] = useState<'all' | 'passed' | 'unmet' | 'unknown'>('all');
-  const [minimumMatchScore, setMinimumMatchScore] = useState<number | null>(null);
+  const [minimumAiTotalScore, setMinimumAiTotalScore] = useState<number | null>(null);
   const [minimumAge, setMinimumAge] = useState<number | null>(null);
   const [maximumAge, setMaximumAge] = useState<number | null>(null);
   const [genderFilters, setGenderFilters] = useState<string[]>([]);
@@ -286,17 +285,7 @@ const ResumesList: React.FC = () => {
       if (searchPosition) {
         filtered = res.filter((r: any) => r.mapped_position === searchPosition);
       }
-      if (hardConditionFilter !== 'all') {
-        filtered = filtered.filter((r: any) => {
-          const result = parseHardRequirementResult(r.hard_requirement_result);
-          if (hardConditionFilter === 'passed') return result?.passed === true && !(result?.unknown_items || []).length;
-          if (hardConditionFilter === 'unmet') return result?.passed === false;
-          return (result?.unknown_items || []).length > 0;
-        });
-      }
-      if (minimumMatchScore != null) {
-        filtered = filtered.filter((r: any) => Number(r.match_score) >= minimumMatchScore);
-      }
+      filtered = filterResumesByMinimumDimensionScore(filtered, minimumAiTotalScore);
       filtered = filterResumesByDemographics(filtered, {
         minAge: minimumAge,
         maxAge: maximumAge,
@@ -444,8 +433,7 @@ const ResumesList: React.FC = () => {
     setSearchPerson(undefined);
     setSelectedOwner(undefined);
     setSearchPosition(undefined);
-    setHardConditionFilter('all');
-    setMinimumMatchScore(null);
+    setMinimumAiTotalScore(null);
     setMinimumAge(null);
     setMaximumAge(null);
     setGenderFilters([]);
@@ -1240,17 +1228,8 @@ const ResumesList: React.FC = () => {
               </Select>
             </Space>
             <Space size={4}>
-              <Text style={{ fontSize: 13, color: '#333' }}>硬条件：</Text>
-              <Select value={hardConditionFilter} onChange={setHardConditionFilter} style={{ width: 120 }}>
-                <Select.Option value="all">全部</Select.Option>
-                <Select.Option value="passed">已通过</Select.Option>
-                <Select.Option value="unmet">未满足</Select.Option>
-                <Select.Option value="unknown">待复核</Select.Option>
-              </Select>
-            </Space>
-            <Space size={4}>
-              <Text style={{ fontSize: 13, color: '#333' }}>最低匹配：</Text>
-              <InputNumber min={0} max={100} value={minimumMatchScore} onChange={value => setMinimumMatchScore(value == null ? null : Number(value))} placeholder="不限" style={{ width: 88 }} />
+              <Text style={{ fontSize: 13, color: '#333' }}>AI 总分 ≥</Text>
+              <InputNumber min={0} value={minimumAiTotalScore} onChange={value => setMinimumAiTotalScore(value == null ? null : Number(value))} placeholder="不限" style={{ width: 88 }} />
             </Space>
             <Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>年龄：</Text>

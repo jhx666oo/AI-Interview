@@ -1,3 +1,5 @@
+import { getDimensionScoreTotal, normalizeResumeEvaluation } from './resumeEvaluation';
+
 export type DemographicFilter = {
   minAge: number | null;
   maxAge: number | null;
@@ -30,5 +32,17 @@ export function filterResumesByDemographics<T extends { age?: unknown; gender?: 
       if (filter.maxAge !== null && age > filter.maxAge) return false;
     }
     return filter.genders.length === 0 || filter.genders.includes(normalizeGender(row.gender));
+  });
+}
+
+/** Filters against the same cumulative dimension score shown on resume cards. */
+export function filterResumesByMinimumDimensionScore<T extends { ai_evaluation?: unknown; ai_review?: unknown }>(
+  rows: T[],
+  minimumScore: number | null,
+): T[] {
+  if (minimumScore === null) return rows;
+  return rows.filter((row) => {
+    const dimensions = normalizeResumeEvaluation(row).dimensions;
+    return dimensions.length > 0 && getDimensionScoreTotal(dimensions).total >= minimumScore;
   });
 }
