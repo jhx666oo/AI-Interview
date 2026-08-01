@@ -8,7 +8,7 @@ import { DownloadOutlined, FilePdfOutlined, ArrowLeftOutlined, CloseCircleOutlin
 import RejectReasonSelector, { REJECT_REASONS } from '../../components/RejectReasonSelector';
 import { useAuth } from '../../contexts/AuthContext';
 import { getMaximizedPdfPreviewUrl } from '../../utils/pdfPreview';
-import { normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
+import { asDisplayTextList, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
@@ -153,6 +153,12 @@ const ResumeDetail: React.FC = () => {
   const statusInfo = getStatusInfo(resume.status, resume.parse_status);
   const normalizedEvaluation = normalizeResumeEvaluation(resume);
   const aiReview = normalizedEvaluation.source || resume.ai_review || resume.ai_evaluation;
+  const aiReviewObject = aiReview && typeof aiReview === 'object' ? aiReview : {};
+  const strengths = asDisplayTextList(aiReviewObject.strengths);
+  const risks = asDisplayTextList(aiReviewObject.risks);
+  const suggestedQuestions = asDisplayTextList(aiReviewObject.suggested_questions);
+  const matchedSkills = asDisplayTextList(aiReviewObject.skill_match?.matched);
+  const skillGaps = asDisplayTextList(aiReviewObject.skill_match?.gaps);
   const aiDimensions = normalizedEvaluation.dimensions;
   const aiContentStyle: React.CSSProperties = {
     maxWidth: '100%',
@@ -741,46 +747,46 @@ const ResumeDetail: React.FC = () => {
                     </Tag>
                   </div>
                 )}
-                {aiReview.strengths && aiReview.strengths.length > 0 && (
+                {strengths.length > 0 && (
                   <div style={{ marginBottom: 16 }}>
                     <Text strong style={{ color: '#10B981', display: 'block', marginBottom: 8 }}>✓ 核心优势</Text>
                     <div>
-                      {aiReview.strengths.map((s: string, i: number) => (
+                      {strengths.map((s: string, i: number) => (
                         <Tag key={i} color="green" style={{ marginBottom: 4, padding: '2px 8px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>
                       ))}
                     </div>
                   </div>
                 )}
-                {aiReview.risks && aiReview.risks.length > 0 && (
+                {risks.length > 0 && (
                   <div style={{ marginBottom: 16 }}>
                     <Text strong style={{ color: '#EF4444', display: 'block', marginBottom: 8 }}>⚠ 潜在风险</Text>
                     <div>
-                      {aiReview.risks.map((r: string, i: number) => (
+                      {risks.map((r: string, i: number) => (
                         <Tag key={i} color="red" style={{ marginBottom: 4, padding: '2px 8px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{r}</Tag>
                       ))}
                     </div>
                   </div>
                 )}
-                {aiReview.skill_match && (aiReview.skill_match.matched?.length > 0 || aiReview.skill_match.gaps?.length > 0) && (
+                {aiReview.skill_match && (matchedSkills.length > 0 || skillGaps.length > 0) && (
                   <Row gutter={16} style={{ marginBottom: 16 }}>
                     <Col span={12}>
                       <Text strong style={{ color: '#3B82F6', display: 'block', marginBottom: 8 }}>匹配技能</Text>
-                      {(aiReview.skill_match.matched || []).map((s: string, i: number) => (
+                      {matchedSkills.map((s: string, i: number) => (
                         <Tag key={i} color="blue" style={{ marginBottom: 4, padding: '2px 8px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>
                       ))}
                     </Col>
                     <Col span={12}>
                       <Text strong style={{ color: '#F59E0B', display: 'block', marginBottom: 8 }}>技能差距</Text>
-                      {(aiReview.skill_match.gaps || []).map((s: string, i: number) => (
+                      {skillGaps.map((s: string, i: number) => (
                         <Tag key={i} color="orange" style={{ marginBottom: 4, padding: '2px 8px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>
                       ))}
                     </Col>
                   </Row>
                 )}
-                {aiReview.suggested_questions && aiReview.suggested_questions.length > 0 && (
+                {suggestedQuestions.length > 0 && (
                   <div style={{ marginBottom: 16 }}>
                     <Text strong style={{ display: 'block', marginBottom: 8, color: '#7C3AED' }}>❓ 建议面试问题</Text>
-                    {aiReview.suggested_questions.map((q: string, i: number) => (
+                    {suggestedQuestions.map((q: string, i: number) => (
                       <div key={i} style={{ padding: '8px 12px', marginBottom: 4, background: '#FDF4FF', borderRadius: '6px', borderLeft: '3px solid #7C3AED', fontSize: 14, ...aiContentStyle }}>
                         {i + 1}. {q}
                       </div>

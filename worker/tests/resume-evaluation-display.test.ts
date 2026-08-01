@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getDimensionScoreTotal, normalizeResumeEvaluation } from '../../frontend/src/utils/resumeEvaluation';
+import { asDisplayTextList, getDimensionScoreTotal, normalizeResumeEvaluation } from '../../frontend/src/utils/resumeEvaluation';
 
 describe('normalizeResumeEvaluation', () => {
   it('preserves modern dimension arrays for card rendering', () => {
@@ -40,5 +40,11 @@ describe('normalizeResumeEvaluation', () => {
       { name: '协作能力', score: 5, reason: '' },
       { name: '服务意识', score: 2.5, reason: '' },
     ])).toEqual({ total: 15, maximum: 20 });
+  });
+
+  it('turns legacy AI string lists into safe display arrays', () => {
+    expect(asDisplayTextList('优势一\n优势二')).toEqual(['优势一', '优势二']);
+    expect(asDisplayTextList(['优势一'])).toEqual(['优势一']);
+    expect(asDisplayTextList(null)).toEqual([]);
   });
 });

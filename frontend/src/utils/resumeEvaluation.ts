@@ -17,6 +17,13 @@ export function getDimensionScoreTotal(dimensions: ResumeDimensionScore[]): { to
   return { total, maximum: dimensions.length * 5 };
 }
 
+/** Handles both current array values and legacy AI responses that stored list content as text. */
+export function asDisplayTextList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
+  if (typeof value !== 'string') return [];
+  return value.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
+}
+
 function asObject(value: unknown): Record<string, any> | null {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
   if (typeof value !== 'string' || !value.trim()) return null;
