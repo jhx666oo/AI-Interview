@@ -162,6 +162,22 @@ const ResumeDetail: React.FC = () => {
     wordBreak: 'break-word',
   };
 
+  const getParseStatusText = (parseStatus?: string) => {
+    if (parseStatus === 'ai_screened' || parseStatus === 'completed' || parseStatus === 'ocr_done') return 'AI 解析完成';
+    if (parseStatus === 'queued') return '已入队，等待处理';
+    if (parseStatus === 'extracting_text') return '正在提取简历文本';
+    if (parseStatus === 'extracting_fields') return '正在提取字段';
+    if (parseStatus === 'screening') return '正在 AI 初筛';
+    if (parseStatus === 'failed') return '解析失败';
+    return '待解析';
+  };
+
+  const formatExperience = (value: unknown) => {
+    if (!value) return '未识别';
+    const text = String(value);
+    return text.includes('年') ? text : `${text}年`;
+  };
+
   // AI初筛
   const handleAIScreen = async () => {
     setAiScreening(true);
@@ -637,7 +653,7 @@ const ResumeDetail: React.FC = () => {
             <Descriptions.Item label="学历">{parsedData.highest_degree || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="毕业院校">{parsedData.school || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="专业">{parsedData.major || '未识别'}</Descriptions.Item>
-            <Descriptions.Item label="工作年限">{parsedData.years_of_experience || '0'}年</Descriptions.Item>
+            <Descriptions.Item label="工作年限">{formatExperience(parsedData.years_of_experience)}</Descriptions.Item>
             <Descriptions.Item label="最近公司">{parsedData.recent_company || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="性别">{parsedData.gender || resume.gender || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="出生年月">{parsedData.birthday || '未识别'}</Descriptions.Item>
@@ -675,7 +691,7 @@ const ResumeDetail: React.FC = () => {
               </Descriptions.Item>
             )}
             <Descriptions.Item label="电话">{resume.contact || parsedData.phone || '未识别'}</Descriptions.Item>
-            <Descriptions.Item label="解析状态">{statusInfo.text}</Descriptions.Item>
+            <Descriptions.Item label="解析状态">{getParseStatusText(resume.parse_status)}</Descriptions.Item>
             <Descriptions.Item label="失败原因">{resume.parse_status === 'failed' ? (resume.parse_error || '未知') : '-'}</Descriptions.Item>
             {resume.reject_reason_category && (
               <>

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createOrGetActiveJob } from './resume-processing/job-repository';
+import { normalizeResumeFields } from './resume-processing/fields';
 import { createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow } from './recruiting-operations/share-links';
 import type { ShareExpiryOption } from './recruiting-operations/types';
 
@@ -4333,6 +4334,28 @@ app.post('/api/resumes/:id/ocr-parse', authMiddleware, async (c) => {
   return c.json({ detail: 'OCR parse completed', id, parse_status: aiParseFailed ? 'needs_manual' : 'ocr_done' });
 });
 
+function ageFromBirthday(value: unknown): number | undefined {
+  if (!value) return undefined;
+  const birth = new Date(String(value));
+  if (Number.isNaN(birth.getTime())) return undefined;
+  return Math.floor((Date.now() - birth.getTime()) / (365.25 * 24 * 3600 * 1000));
+}
+
+function applyParsedResumeFields(item: Record<string, any>): void {
+  if (!item.parsed_data || typeof item.parsed_data !== 'object') return;
+  const fields = normalizeResumeFields(item.parsed_data);
+  item.parsed_data = fields;
+  if (fields.age) item.age = fields.age;
+  else if (!item.age) item.age = ageFromBirthday(fields.birthday);
+  if (fields.gender && !item.gender) item.gender = fields.gender;
+  if (fields.highest_degree && !item.education) item.education = fields.highest_degree;
+  if (fields.school) item.school = fields.school;
+  if (fields.major) item.major = fields.major;
+  if (fields.phone && !item.phone) item.phone = fields.phone;
+  if (fields.skills) item.skills = fields.skills;
+  if (fields.years_of_experience) item.work_years = fields.years_of_experience;
+}
+
 app.get('/api/resumes', authMiddleware, async (c) => {
   try {
     // 纯 D1 驱动：直接从 resumes 表读取，不依赖飞书
@@ -4356,19 +4379,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
         item.screening_label = sr.includes('通过') ? '通过' : sr.includes('淘汰') ? '淘汰' : sr.includes('存疑') ? '存疑' : sr;
       }
       // 从 parsed_data 提取前端需要的字段
-      if (item.parsed_data && typeof item.parsed_data === 'object') {
-        const pd = item.parsed_data;
-        if (pd.age) item.age = pd.age;
-        if (pd.highest_degree && !item.education) item.education = pd.highest_degree;
-        if (pd.school) item.school = pd.school;
-        if (pd.major) item.major = pd.major;
-        if (pd.city) item.city = pd.city;
-        if (pd.phone) item.phone = pd.phone;
-        if (pd.skills) item.skills = pd.skills;
-        if (pd.work_years) item.work_years = pd.work_years;
-        if (pd.advantage) item.advantage = pd.advantage;
-        if (pd.risk) item.risk = pd.risk;
-      }
+      applyParsedResumeFields(item);
       return item;
     });
 
@@ -4829,6 +4840,7 @@ app.get('/api/resumes/:id', authMiddleware, async (c) => {
       for (const key of ['parsed_data', 'ai_review', 'ai_evaluation', 'work_experience', 'education', 'certifications']) {
         if (typeof item[key] === 'string') item[key] = safeJsonParse(item[key]) || item[key];
       }
+      applyParsedResumeFields(item);
       try {
         const map = await buildPositionMapping(c.env.DB);
         item.standard_position = map.get(item.position_applied) || item.position_applied || item.mapped_position || '';

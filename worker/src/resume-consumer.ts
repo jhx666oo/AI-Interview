@@ -2,6 +2,7 @@ import type { ResumeQueueMessage } from './resume-processing/types';
 import { claimJob } from './resume-processing/job-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
+import { normalizeResumeFields } from './resume-processing/fields';
 import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext } from './index';
 
 export class RetryableResumeError extends Error {
@@ -105,8 +106,8 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       return resolved.text.slice(0, 80000);
     },
     extractFields: async (text) => {
-      const response = await callAI(env as any, '你是简历字段提取助手，只返回 JSON。', `从以下简历提取姓名、电话、邮箱、学历、学校、专业、工作年限、技能。\n${text}`, 'deepseek-v4-flash');
-      return extractJSON(response);
+      const response = await callAI(env as any, '你是简历字段提取助手，只返回 JSON。', `从以下简历提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。找不到填 null；skills、certifications、work_experience、education 使用数组。\n${text}`, 'deepseek-v4-flash');
+      return normalizeResumeFields(extractJSON(response));
     },
     screen: async (text, fields, resume) => {
       const position = String(resume.position_applied || resume.mapped_position || '');
