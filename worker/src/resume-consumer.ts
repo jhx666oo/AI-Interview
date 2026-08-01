@@ -3,7 +3,8 @@ import { claimJob } from './resume-processing/job-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
-import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext } from './index';
+import { missingDimensionNames, normalizeDimensionScores } from './resume-processing/dimension-scores';
+import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext, normalizeCapabilityDimensions } from './index';
 
 export class RetryableResumeError extends Error {
   constructor(public readonly code: string, message?: string) {
@@ -120,6 +121,26 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       const positionRow = await env.DB.prepare(
         'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
       ).bind(context.standardPosition || position).first() as any;
+      const configuredDimensions = normalizeCapabilityDimensions(positionRow?.capability_dimensions || []);
+      const missingDimensions = missingDimensionNames(configuredDimensions.map(item => item.name), evaluation);
+      if (missingDimensions.length > 0) {
+        try {
+          const supplemental = await callAI(
+            env as any,
+            '你是招聘评估专家，只返回 JSON。必须为每个给定能力维度评分，不能返回空数组。',
+            `候选人简历：\n${text}\n\n请只返回 {"dimensions":[{"name":"维度名","score":0-5,"reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：${missingDimensions.join('、')}。`,
+            'deepseek-v4-flash',
+          );
+          const scores = normalizeDimensionScores(extractJSON(supplemental));
+          if (scores.length > 0) {
+            const existing = normalizeDimensionScores(evaluation);
+            const existingNames = new Set(existing.map(item => item.name));
+            evaluation.dimensions = [...existing, ...scores.filter(item => !existingNames.has(item.name))];
+          }
+        } catch (error) {
+          console.error('[ResumeConsumer] supplemental dimension scoring failed:', error);
+        }
+      }
       let hardRequirements: any[] = [];
       try {
         const requisition = await env.DB.prepare(
@@ -131,7 +152,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       } catch {}
       const enrichedEvaluation = enrichScreeningEvaluation(
         evaluation,
-        positionRow?.capability_dimensions || [],
+        configuredDimensions,
         hardRequirements,
         fields,
       );

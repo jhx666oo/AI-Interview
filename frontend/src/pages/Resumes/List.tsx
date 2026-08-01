@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { getDimensionScoreTotal, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 import { filterResumesByDemographics, filterResumesByMinimumDimensionScore } from '../../utils/resumeFilters';
+import { sortResumesNewestFirst } from '../../utils/resumeSort';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -291,20 +292,9 @@ const ResumesList: React.FC = () => {
         maxAge: maximumAge,
         genders: genderFilters,
       });
-      setData(filtered);
-      dataCache.current = res;
-
-      // 按创建时间降序：最新的排最前
-      const sortData = (arr: any[]) => {
-        arr.sort((a, b) => {
-          const ta = a.create_time || a._raw_fields?.['创建时间-测试'] || a._raw_fields?.['创建时间'] || 0;
-          const tb = b.create_time || b._raw_fields?.['创建时间-测试'] || b._raw_fields?.['创建时间'] || 0;
-          return (tb || 0) - (ta || 0);
-        });
-      };
-      sortData(filtered);
-      sortData(res);
-      setData(filtered);
+      const sorted = sortResumesNewestFirst(filtered);
+      setData(sorted);
+      dataCache.current = sortResumesNewestFirst(res);
       loadedRef.current = true;
 
       // 后台触发 PDF 缓存（静默执行，不阻塞展示）
@@ -330,7 +320,7 @@ const ResumesList: React.FC = () => {
           const res = await request.get('/resumes', { params: {} });
           if (Array.isArray(res)) {
             // 更新数据展示（让用户看到实时进度）
-            setData(res);
+            setData(sortResumesNewestFirst(res));
             
             const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
             const hasProcessing = res.some((r: any) => activeStatuses.has(r.parse_status));
