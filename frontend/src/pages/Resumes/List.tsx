@@ -9,6 +9,7 @@ import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
+import { filterResumesByDemographics } from '../../utils/resumeFilters';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -54,6 +55,9 @@ const ResumesList: React.FC = () => {
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
   const [hardConditionFilter, setHardConditionFilter] = useState<'all' | 'passed' | 'unmet' | 'unknown'>('all');
   const [minimumMatchScore, setMinimumMatchScore] = useState<number | null>(null);
+  const [minimumAge, setMinimumAge] = useState<number | null>(null);
+  const [maximumAge, setMaximumAge] = useState<number | null>(null);
+  const [genderFilters, setGenderFilters] = useState<string[]>([]);
   const { selectedOwner, setSelectedOwner } = useOwner();
   
   // 同步：全局筛选变化时同步到本地 searchPerson
@@ -293,6 +297,11 @@ const ResumesList: React.FC = () => {
       if (minimumMatchScore != null) {
         filtered = filtered.filter((r: any) => Number(r.match_score) >= minimumMatchScore);
       }
+      filtered = filterResumesByDemographics(filtered, {
+        minAge: minimumAge,
+        maxAge: maximumAge,
+        genders: genderFilters,
+      });
       setData(filtered);
       dataCache.current = res;
 
@@ -437,6 +446,9 @@ const ResumesList: React.FC = () => {
     setSearchPosition(undefined);
     setHardConditionFilter('all');
     setMinimumMatchScore(null);
+    setMinimumAge(null);
+    setMaximumAge(null);
+    setGenderFilters([]);
     setCardPage(1);
     dataCache.current = [];
     loadedRef.current = false;
@@ -1248,6 +1260,20 @@ const ResumesList: React.FC = () => {
             <Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>最低匹配：</Text>
               <InputNumber min={0} max={100} value={minimumMatchScore} onChange={value => setMinimumMatchScore(value == null ? null : Number(value))} placeholder="不限" style={{ width: 88 }} />
+            </Space>
+            <Space size={4}>
+              <Text style={{ fontSize: 13, color: '#333' }}>年龄：</Text>
+              <InputNumber min={0} max={100} value={minimumAge} onChange={value => setMinimumAge(value == null ? null : Number(value))} placeholder="最小" style={{ width: 70 }} />
+              <span style={{ color: '#94A3B8' }}>—</span>
+              <InputNumber min={0} max={100} value={maximumAge} onChange={value => setMaximumAge(value == null ? null : Number(value))} placeholder="最大" style={{ width: 70 }} />
+            </Space>
+            <Space size={4}>
+              <Text style={{ fontSize: 13, color: '#333' }}>性别：</Text>
+              <Checkbox.Group
+                options={['男', '女', '未识别']}
+                value={genderFilters}
+                onChange={(values) => setGenderFilters(values.map(String))}
+              />
             </Space>
             {selectedRowKeys.length > 0 && (
               <>
