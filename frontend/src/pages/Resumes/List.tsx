@@ -1027,6 +1027,11 @@ const ResumesList: React.FC = () => {
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
         <Tooltip title="硬性要求检查"><Button type="text" size="small" icon={<ThunderboltOutlined style={{ color: '#F59E0B' }} />} onClick={handleCheckHard} /></Tooltip>
         <Tooltip title="能力维度评分"><Button type="text" size="small" icon={<StarOutlined style={{ color: '#8B5CF6' }} />} onClick={handleScoreCap} /></Tooltip>
+        {hardResult && (
+          <Tag color={hardResult.passed ? 'success' : 'error'}>
+            {hardResult.passed ? '✅ 硬性通过' : '❌ 硬性不通过'}
+          </Tag>
+        )}
         {isPending && (
           <>
             <Button type="primary" size="small" icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => handleApproveToTalentPool(record)}>入库</Button>
@@ -1035,11 +1040,6 @@ const ResumesList: React.FC = () => {
         )}
         {isApproved && <Tag color="success">已入库</Tag>}
         {isRejected && <Tag color="error">已淘汰</Tag>}
-        {hardResult && (
-          <Tag color={hardResult.passed ? 'success' : 'error'}>
-            {hardResult.passed ? '✅ 硬性通过' : '❌ 硬性不通过'}
-          </Tag>
-        )}
         {capScores?.scores?.length > 0 && (
           <Tooltip title={capScores.scores.map((s: any) => `${s.dimension}: ${'⭐'.repeat(s.score)}`).join('\n')}>
             <Tag color="purple">能力已评分</Tag>
