@@ -13,12 +13,12 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 
 ---
 
-## 当前开发状态 (2026-07-30)
+## 当前开发状态 (2026-08-01)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | 仪表盘 | ✅ 运行中 | 三大事业部看板、招聘漏斗、KPI、N+1 查询已优化 |
-| 简历管理 | ✅ 运行中 | 飞书导入、AI 解析、BOSS 导入、上传、**AI 自动初筛（能力维度匹配评分）** |
+| 简历管理 | ✅ 运行中 | 飞书导入、BOSS 导入、异步上传、字段提取、AI 初筛与能力维度评分 |
 | 岗位管理 | ✅ 运行中 | 飞书同步、能力维度定义（AI 初筛依据）、AI 生成 JD |
 | 面试管理 | ✅ 运行中 | 飞书同步、一面/二面面试官、提醒、评价流转 |
 | 面试官管理 | ✅ 运行中 | 手动添加 open_id，飞书搜索（待权限审批） |
@@ -36,7 +36,18 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 | 性能优化 | ✅ 已完成 | N+1 修复、静态资源缓存、图片压缩、chunk 拆分、D1 索引 |
 | 日志审计 | ✅ 已完成 | operation_logs 表 8 处核心埋点，上线自检 5 项全绿 |
 
-### 最近更新 (2026-07-29)
+### 最近更新 (2026-08-01)
+
+**简历异步处理与前端展示：**
+
+- 上传后先创建 D1 简历记录，再投递至 Cloudflare Queue；关闭或刷新页面不会中断 OCR、字段提取和 AI 初筛。
+- 队列消费者按 `resumeId` 完成文本/OCR 解析、标准字段提取和人岗初筛；并发上限为 3。
+- 解析字段统一为 `highest_degree`、`school`、`major`、`years_of_experience`、`gender`、`birthday`、`skills` 等标准键，同时兼容历史中文字段。
+- 简历卡片按 D1 `created_at` 倒序，刚上传的简历立即在最前；AI 评分显示为能力维度累计的“总分 X/Y”。
+- 若初筛模型遗漏已配置的能力维度，消费者会自动补做一次仅针对缺失维度的评分，避免卡片没有维度结果。
+- 详情页兼容 AI 将优势、风险、建议问题返回为字符串或数组，避免不规范模型输出造成页面崩溃。
+
+### 历史更新 (2026-07-29)
 
 **AI 能力维度初筛 — 全链路落地：**
 - **`POST /api/resumes/batch-auto-screen`**：批量 AI 初筛，每次处理 5 条 `pending_screening` 简历
@@ -101,7 +112,11 @@ node ../scripts/pre-deploy-check.mjs
 
 # 部署到 Cloudflare Pages
 cd frontend && CLOUDFLARE_ACCOUNT_ID=ed758fc82ca4400593ddb447d3db57a4 \
-  npx wrangler pages deploy dist
+  npx wrangler pages deploy dist --project-name ai-interview --branch main
+
+# 若修改 worker/src/resume-consumer.ts 或 worker/src/resume-processing/，
+# 还必须部署 Queue 消费者（新上传简历的异步解析与评分由它执行）
+cd ../worker && npx wrangler deploy --config wrangler.resume-consumer.toml
 ```
 
 > ⚠️ **部署缓存坑**：若只改源码重新 `wrangler pages deploy` 却提示 `0 files uploaded`，是 Vite 构建缓存（`node_modules/.vite`）导致产物 hash 不变。先 `rm -rf dist node_modules/.vite` 再 `npm run build` 即可强制生成新 hash。
