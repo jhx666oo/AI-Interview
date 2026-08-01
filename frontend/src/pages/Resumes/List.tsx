@@ -8,7 +8,7 @@ import SimplePagination from '../../components/SimplePagination';
 import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
+import { getDimensionScoreTotal, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 import { filterResumesByDemographics } from '../../utils/resumeFilters';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
@@ -1039,11 +1039,7 @@ const ResumesList: React.FC = () => {
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
         <Tooltip title="硬性要求检查"><Button type="text" size="small" icon={<ThunderboltOutlined style={{ color: '#F59E0B' }} />} onClick={handleCheckHard} /></Tooltip>
         <Tooltip title="能力维度评分"><Button type="text" size="small" icon={<StarOutlined style={{ color: '#8B5CF6' }} />} onClick={handleScoreCap} /></Tooltip>
-        {hardResult && (
-          <Tag color={hardResult.passed ? 'success' : 'error'}>
-            {hardResult.passed ? '✅ 硬性通过' : '❌ 硬性不通过'}
-          </Tag>
-        )}
+        {hardResult?.passed === false && <Tag color="error">❌ 硬性不通过</Tag>}
         {isPending && (
           <>
             <Button type="primary" size="small" icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => handleApproveToTalentPool(record)}>入库</Button>
@@ -1099,11 +1095,6 @@ const ResumesList: React.FC = () => {
     if (!value) return null;
     if (typeof value === 'object') return value;
     try { return JSON.parse(value); } catch { return null; }
-  };
-
-  /** 算总分（根据明细） */
-  const calcTotalScore = (details: { score: number }[]): number => {
-    return details.length > 0 ? Math.round(details.reduce((s, d) => s + d.score, 0) / details.length * 10) / 10 : 0;
   };
 
   // 卡片分页
@@ -1310,7 +1301,7 @@ const ResumesList: React.FC = () => {
               const genderText = cleanGender(record.gender);
               const normalizedEvaluation = normalizeResumeEvaluation(record);
               const scoreDetails = normalizedEvaluation.dimensions;
-              const totalScore = scoreDetails.length > 0 ? calcTotalScore(scoreDetails) : null;
+              const scoreTotal = getDimensionScoreTotal(scoreDetails);
               const matchCount = scoreDetails?.filter(d => d.score >= 3).length || 0;
               const totalDims = scoreDetails?.length || 0;
               const hardResult = parseHardRequirementResult(record.hard_requirement_result);
@@ -1375,9 +1366,7 @@ const ResumesList: React.FC = () => {
                         <span style={{ fontSize: 12, color: '#1677ff', fontWeight: 600, background: '#f0f5ff', padding: '1px 8px', borderRadius: 4 }}>
                           AI 评估 {matchCount}/{totalDims} 符合
                         </span>
-                        {totalScore != null && (
-                          <span style={{ fontSize: 12, color: '#8c8c8c' }}>综合分 {totalScore}</span>
-                        )}
+                        <span style={{ fontSize: 12, color: '#8c8c8c' }}>总分：{scoreTotal.total}/{scoreTotal.maximum}</span>
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 4 }}>
                         {scoreDetails.map((d: any, i: number) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeResumeEvaluation } from '../../frontend/src/utils/resumeEvaluation';
+import { getDimensionScoreTotal, normalizeResumeEvaluation } from '../../frontend/src/utils/resumeEvaluation';
 
 describe('normalizeResumeEvaluation', () => {
   it('preserves modern dimension arrays for card rendering', () => {
@@ -31,5 +31,14 @@ describe('normalizeResumeEvaluation', () => {
     expect(normalizeResumeEvaluation({
       ai_evaluation: '能力维度匹配：\n  - **沟通能力：4/5分。依据：表达清晰**',
     }).dimensions).toEqual([{ name: '沟通能力', score: 4, reason: '表达清晰' }]);
+  });
+
+  it('calculates the total score and five-point maximum for card display', () => {
+    expect(getDimensionScoreTotal([
+      { name: '沟通能力', score: 4, reason: '' },
+      { name: '业务能力', score: 3.5, reason: '' },
+      { name: '协作能力', score: 5, reason: '' },
+      { name: '服务意识', score: 2.5, reason: '' },
+    ])).toEqual({ total: 15, maximum: 20 });
   });
 });

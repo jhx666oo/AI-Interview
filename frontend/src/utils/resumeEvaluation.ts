@@ -11,6 +11,12 @@ export type NormalizedResumeEvaluation = {
   source: Record<string, any> | null;
 };
 
+/** Returns card-ready scores on the same five-point scale as each dimension. */
+export function getDimensionScoreTotal(dimensions: ResumeDimensionScore[]): { total: number; maximum: number } {
+  const total = Math.round(dimensions.reduce((sum, dimension) => sum + dimension.score, 0) * 10) / 10;
+  return { total, maximum: dimensions.length * 5 };
+}
+
 function asObject(value: unknown): Record<string, any> | null {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
   if (typeof value !== 'string' || !value.trim()) return null;
