@@ -1,5 +1,23 @@
 export type DashboardDataMode = 'live' | 'snapshot';
 
+export interface DashboardSnapshotMeta {
+  id: string;
+  snapshot_date: string;
+  generated_at: string;
+}
+
+export interface DashboardShareLink {
+  id: string;
+  scope_type: 'all' | 'divisions';
+  scope_ids: string[];
+  expires_at: string | null;
+  revoked_at: string | null;
+  data_mode: DashboardDataMode;
+  snapshot_id: string | null;
+  created_by: string;
+  created_at: string;
+}
+
 export interface DashboardMetric {
   value: number | null;
   available: boolean;

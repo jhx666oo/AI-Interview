@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Card,
@@ -21,11 +21,15 @@ import {
   SearchOutlined,
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import { RecruitingBoardView } from './components/RecruitingBoardView';
 import type {
   BoardPosition,
   BoardTotals,
+  DashboardDataMode,
+  DashboardShareLink,
+  DashboardSnapshotMeta,
   DivisionBoard,
   FunnelStage,
   HrbpBoard,
@@ -35,13 +39,6 @@ import styles from './dashboard.module.css';
 
 type Priority = BoardPosition['priority'];
 type ShareExpiry = '1d' | '7d' | '30d' | 'permanent';
-
-interface ShareLink {
-  id: string;
-  expires_at: string | null;
-  revoked_at: string | null;
-  created_at: string;
-}
 
 const funnelDefinitions: Array<Pick<FunnelStage, 'key' | 'label'>> = [
   { key: 'resumes', label: '已入库简历' },
@@ -181,6 +178,10 @@ const Dashboard: React.FC = () => {
   const [board, setBoard] = useState<RecruitingBoard | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [dataMode, setDataMode] = useState<DashboardDataMode>('live');
+  const [snapshotDate, setSnapshotDate] = useState<string>();
+  const [snapshots, setSnapshots] = useState<DashboardSnapshotMeta[]>([]);
+  const [creatingSnapshot, setCreatingSnapshot] = useState(false);
   const [division, setDivision] = useState<string>();
   const [hrbp, setHrbp] = useState<string>();
   const [priority, setPriority] = useState<Priority>();
@@ -188,16 +189,22 @@ const Dashboard: React.FC = () => {
   const [keyword, setKeyword] = useState('');
   const [shareOpen, setShareOpen] = useState(false);
   const [shareExpiry, setShareExpiry] = useState<ShareExpiry>('7d');
-  const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
+  const [shareMode, setShareMode] = useState<DashboardDataMode>('live');
+  const [shareSnapshotId, setShareSnapshotId] = useState<string>();
+  const [shareLinks, setShareLinks] = useState<DashboardShareLink[]>([]);
   const [creatingShare, setCreatingShare] = useState(false);
   const [newShareUrl, setNewShareUrl] = useState('');
+  const { user } = useAuth();
   const { selectedOwner } = useOwner();
 
-  const fetchBoard = async (showLoading = true) => {
+  const fetchBoard = useCallback(async (showLoading = true) => {
+    if (dataMode === 'snapshot' && !snapshotDate) return;
     if (showLoading) setLoading(true);
     else setRefreshing(true);
     try {
-      const params = selectedOwner ? { mode: 'live', responsible_person: selectedOwner } : { mode: 'live' };
+      const params = dataMode === 'snapshot'
+        ? { mode: 'snapshot', snapshot_date: snapshotDate, ...(selectedOwner ? { responsible_person: selectedOwner } : {}) }
+        : { mode: 'live', ...(selectedOwner ? { responsible_person: selectedOwner } : {}) };
       setBoard(await request.get('/dashboard/recruiting-board', { params }) as RecruitingBoard);
     } catch (error) {
       console.error('Recruiting board error:', error);
@@ -206,15 +213,45 @@ const Dashboard: React.FC = () => {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [dataMode, selectedOwner, snapshotDate]);
 
   useEffect(() => {
     void fetchBoard();
-  }, [selectedOwner]);
+  }, [fetchBoard]);
+
+  const loadSnapshots = async () => {
+    try {
+      const data = await request.get('/dashboard/snapshots') as { snapshots: DashboardSnapshotMeta[] };
+      setSnapshots(data.snapshots || []);
+    } catch {
+      message.error('快照列表加载失败');
+    }
+  };
+
+  useEffect(() => {
+    void loadSnapshots();
+  }, []);
+
+  const createMissingSnapshot = async () => {
+    setCreatingSnapshot(true);
+    try {
+      const snapshot = await request.post('/dashboard/snapshots', {}) as DashboardSnapshotMeta;
+      await loadSnapshots();
+      setSnapshotDate(snapshot.snapshot_date);
+      setDataMode('snapshot');
+      message.success('今日快照已保存');
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      if (status === 409) message.warning('今日快照已存在');
+      else message.error('今日快照保存失败');
+    } finally {
+      setCreatingSnapshot(false);
+    }
+  };
 
   const loadShareLinks = async () => {
     try {
-      const data = await request.get('/dashboard/share-links') as { links: ShareLink[] };
+      const data = await request.get('/dashboard/share-links') as { links: DashboardShareLink[] };
       setShareLinks(data.links || []);
     } catch {
       message.error('分享链接加载失败');
@@ -224,13 +261,17 @@ const Dashboard: React.FC = () => {
   const openShareModal = async () => {
     setShareOpen(true);
     setNewShareUrl('');
-    await loadShareLinks();
+    await Promise.all([loadSnapshots(), loadShareLinks()]);
   };
 
   const createShareLink = async () => {
     setCreatingShare(true);
     try {
-      const data = await request.post('/dashboard/share-links', { expiry: shareExpiry }) as { token: string };
+      const data = await request.post('/dashboard/share-links', {
+        expiry: shareExpiry,
+        data_mode: shareMode,
+        snapshot_id: shareMode === 'snapshot' ? shareSnapshotId : null,
+      }) as { token: string };
       const url = `${window.location.origin}/shared/dashboard/${data.token}`;
       setNewShareUrl(url);
       await navigator.clipboard?.writeText(url);
@@ -310,8 +351,29 @@ const Dashboard: React.FC = () => {
           <p>数据更新时间：{board?.updated_at ? new Date(board.updated_at).toLocaleString('zh-CN') : '—'}</p>
         </div>
         <div className={styles.pageActions}>
+          <Select
+            aria-label="看板数据版本"
+            value={dataMode === 'live' ? 'live' : snapshotDate}
+            onChange={(value) => {
+              if (value === 'live') {
+                setDataMode('live');
+                setSnapshotDate(undefined);
+              } else {
+                setSnapshotDate(value);
+                setDataMode('snapshot');
+              }
+            }}
+            style={{ width: 180 }}
+            options={[
+              { value: 'live', label: '最新实时数据' },
+              ...snapshots.map((item) => ({ value: item.snapshot_date, label: item.snapshot_date })),
+            ]}
+          />
+          {user?.role === 'admin' && (
+            <Button disabled={dataMode !== 'live'} loading={creatingSnapshot} onClick={createMissingSnapshot}>保存今日快照</Button>
+          )}
           <Button icon={<LinkOutlined />} onClick={openShareModal}>分享看板</Button>
-          <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchBoard(false)}>刷新实时数据</Button>
+          <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchBoard(false)}>刷新当前数据</Button>
         </div>
       </section>
 
@@ -338,6 +400,27 @@ const Dashboard: React.FC = () => {
       <Modal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
         <Typography.Paragraph type="secondary">公开链接仅展示聚合招聘数据，不包含候选人或 AI 评估信息。</Typography.Paragraph>
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Radio.Group
+            value={shareMode}
+            onChange={(event) => {
+              setShareMode(event.target.value);
+              setShareSnapshotId(undefined);
+            }}
+          >
+            <Space direction="vertical">
+              <Radio value="live">分享最新实时数据</Radio>
+              <Radio value="snapshot">固定为历史快照</Radio>
+            </Space>
+          </Radio.Group>
+          {shareMode === 'snapshot' && (
+            <Select
+              value={shareSnapshotId}
+              onChange={setShareSnapshotId}
+              placeholder="选择快照日期"
+              style={{ width: '100%' }}
+              options={snapshots.map((item) => ({ value: item.id, label: item.snapshot_date }))}
+            />
+          )}
           <Radio.Group value={shareExpiry} onChange={(event) => setShareExpiry(event.target.value)}>
             <Space direction="vertical">
               <Radio value="1d">1 天有效</Radio>
@@ -346,7 +429,12 @@ const Dashboard: React.FC = () => {
               <Radio value="permanent">长期有效（可随时撤销）</Radio>
             </Space>
           </Radio.Group>
-          <Button type="primary" loading={creatingShare} onClick={createShareLink}>生成并复制链接</Button>
+          <Button
+            type="primary"
+            disabled={shareMode === 'snapshot' && !shareSnapshotId}
+            loading={creatingShare}
+            onClick={createShareLink}
+          >生成并复制链接</Button>
           {newShareUrl && <Input value={newShareUrl} readOnly addonAfter={<Button type="link" size="small" onClick={() => copyShareLink(newShareUrl)}>复制</Button>} />}
           <Typography.Text strong>已创建链接</Typography.Text>
           <List
@@ -359,7 +447,13 @@ const Dashboard: React.FC = () => {
                 ? [<Tag key="revoked">已撤销</Tag>]
                 : [<Button key="revoke" type="link" danger onClick={() => revokeShareLink(link.id)}>撤销</Button>]}
               >
-                <span>{link.expires_at ? `有效至 ${new Date(link.expires_at).toLocaleString('zh-CN')}` : '长期有效'} · 创建于 {new Date(link.created_at).toLocaleString('zh-CN')}</span>
+                <span>
+                  {link.data_mode === 'snapshot'
+                    ? `固定快照：${snapshots.find((item) => item.id === link.snapshot_id)?.snapshot_date || '未知日期'}`
+                    : '实时数据'}
+                  {' · '}{link.expires_at ? `有效至 ${new Date(link.expires_at).toLocaleString('zh-CN')}` : '长期有效'}
+                  {' · '}创建于 {new Date(link.created_at).toLocaleString('zh-CN')}
+                </span>
               </List.Item>
             )}
           />
