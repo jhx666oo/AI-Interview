@@ -33,7 +33,7 @@
 - 选择器首项固定为“最新实时数据”，实时从当前 D1 数据聚合，不写入任何快照。
 - 新表 `dashboard_snapshots` 按北京时间自然日保存日结的完整、脱敏聚合 DTO。字段为：`id`、`snapshot_date`（唯一）、`payload_json`、`generated_at`、`generated_by`（`cron` 或用户邮箱）、`created_at`。
 - Cloudflare Worker 每天北京时间 23:55 自动生成日结快照。已有同日记录时跳过，快照永远不可覆盖。
-- 管理员可手动补存缺失日期；若该日期已有快照，接口返回冲突，不能重写历史。
+- 管理员仅可立即保存“当天”的当前实时数据；不能为过去缺失日期补造快照。若当天已有自动或手动快照，接口返回冲突，不能重写历史。
 - 历史日期只读取 `payload_json`，因此岗位/简历/面试的后续补录、删除或修正不会改变历史看板。
 - 现有 Cron 继续处理提醒；新增快照 Cron。时区转换使用 UTC 触发时间，快照日期统一以 `Asia/Shanghai` 计算。
 
@@ -84,7 +84,7 @@
 - `GET /api/dashboard/recruiting-board?mode=live`：实时 DTO。
 - `GET /api/dashboard/recruiting-board?mode=snapshot&date=YYYY-MM-DD`：历史 DTO。
 - `GET /api/dashboard/snapshots`：可选快照日期列表。
-- `POST /api/dashboard/snapshots`：管理员补存某个尚不存在的日期；默认当天。
+- `POST /api/dashboard/snapshots`：管理员立即保存当天尚不存在的实时快照。
 - 现有分享创建接口接收 `data_mode` 和可选 `snapshot_id`；匿名分享接口按链接模式返回对应 DTO。
 
 ## 前端组件边界

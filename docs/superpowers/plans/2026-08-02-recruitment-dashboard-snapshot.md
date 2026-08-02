@@ -13,7 +13,7 @@
 - Keep D1 as live-data truth; snapshots are write-once aggregate JSON and contain no candidate-level payloads.
 - Snapshot dates use `Asia/Shanghai`; scheduled day-end snapshot runs at `55 15 * * *` UTC.
 - Preserve the existing `0 1 * * *` reminder cron.
-- Historical board and snapshot-share requests read `payload_json`; they never recompute source records.
+- Historical board and snapshot-share requests read `payload_json`; they never recompute source records. Administrators may only manually save today's current state, never fabricate a missing past date.
 - Public responses cannot contain candidate names, contacts, resume/parsed text, or raw AI evaluations.
 - Aggregate with fixed-count SQL queries; no per-position, per-division, or per-HRBP query loops.
 - Use current system tokens: `#0F172A`, `#3B82F6`, `#6366F1`, `#F8FAFC`, current Ant Design cards and Tags. Do not introduce the reference page’s red theme.
@@ -207,7 +207,7 @@ export async function readDashboardSnapshot(db: D1Database, snapshotDate: string
 }
 ```
 
-The board route returns 400 for an invalid mode or missing snapshot date, 404 for unknown snapshot, and applies owner scope after loading either version. `GET /dashboard/snapshots` returns only `id`, `snapshot_date`, `generated_at`. `POST /dashboard/snapshots` accepts optional `date`, permits `admin` only, returns 201 when created, 403 for non-admin, and 409 when it exists. A manual historical snapshot must be labelled with `generated_by=user.email`, because it is a current aggregation saved under that date and is not an invented reconstruction.
+The board route returns 400 for an invalid mode or missing snapshot date, 404 for unknown snapshot, and applies owner scope after loading either version. `GET /dashboard/snapshots` returns only `id`, `snapshot_date`, and `generated_at`. `POST /dashboard/snapshots` accepts no date parameter, permits `admin` only, saves the China-calendar date of the current request, returns 201 when created, 403 for non-admin, and 409 when it exists. It must reject a supplied date parameter with 400 so a user cannot fabricate historical snapshots.
 
 Add this exact trigger list and branch the current `scheduled` handler on the cron string:
 
