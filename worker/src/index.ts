@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createOrGetActiveJob } from './resume-processing/job-repository';
 import { normalizeResumeFields } from './resume-processing/fields';
+import { ensureResumeListSchema, RESUME_LIST_COMPATIBILITY_MIGRATIONS } from './resume-schema';
 import { assertShareDataMode, createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow, toShanghaiSnapshotDate } from './recruiting-operations/share-links';
 import type { ShareExpiryOption } from './recruiting-operations/types';
 import {
@@ -4501,6 +4502,7 @@ function applyParsedResumeFields(item: Record<string, any>): void {
 
 app.get('/api/resumes', authMiddleware, async (c) => {
   try {
+    await ensureResumeListSchema(c.env.DB);
     // 纯 D1 驱动：直接从 resumes 表读取，不依赖飞书
     const d1Rows = await c.env.DB.prepare(
       'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY updated_at DESC'
@@ -6930,6 +6932,7 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE resumes ADD COLUMN three_layer_match TEXT DEFAULT '{}'",
     "ALTER TABLE resumes ADD COLUMN feishu_file_token TEXT DEFAULT ''",
     "ALTER TABLE resumes ADD COLUMN uploaded_at TEXT DEFAULT ''",
+    ...RESUME_LIST_COMPATIBILITY_MIGRATIONS,
     // v2.0 - 入职管理增强
     "ALTER TABLE onboarding_records ADD COLUMN status_transitions TEXT DEFAULT '[]'",
     "ALTER TABLE onboarding_records ADD COLUMN probation_record_id TEXT DEFAULT ''",

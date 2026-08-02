@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS resumes (
   parsed_at TEXT,
   screening_result TEXT DEFAULT 'pending',
   ai_review TEXT,
+  ai_evaluation TEXT,
   hr_review TEXT,
   status TEXT DEFAULT 'pending_screening',
   stage TEXT DEFAULT 'new',
@@ -92,6 +93,13 @@ CREATE TABLE IF NOT EXISTS resumes (
   education TEXT,                         -- JSON 数组
   certifications TEXT,                    -- JSON 数组（证书/资质）
   self_evaluation TEXT,                   -- 候选人自评/总结
+  hard_requirement_result TEXT DEFAULT '',
+  capability_scores TEXT DEFAULT '{}',
+  three_layer_match TEXT DEFAULT '{}',
+  feishu_file_token TEXT DEFAULT '',
+  uploaded_at TEXT DEFAULT '',
+  mineru_task_id TEXT DEFAULT '',
+  mineru_status TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
