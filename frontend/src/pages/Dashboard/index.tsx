@@ -1,12 +1,39 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Col, Input, List, Modal, Radio, Row, Select, Space, Spin, Table, Tag, Typography, message } from 'antd';
-import { ClearOutlined, LinkOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import {
+  Button,
+  Card,
+  Input,
+  List,
+  Modal,
+  Radio,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
+import {
+  AppstoreOutlined,
+  ClearOutlined,
+  LinkOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import request from '../../utils/request';
 import { useOwner } from '../../contexts/OwnerContext';
+import { RecruitingBoardView } from './components/RecruitingBoardView';
+import type {
+  BoardPosition,
+  BoardTotals,
+  DivisionBoard,
+  FunnelStage,
+  HrbpBoard,
+  RecruitingBoard,
+} from './types';
+import styles from './dashboard.module.css';
 
-const { Title, Text } = Typography;
-
-type Priority = 'P0' | 'P1' | 'P2';
+type Priority = BoardPosition['priority'];
 type ShareExpiry = '1d' | '7d' | '30d' | 'permanent';
 
 interface ShareLink {
@@ -16,90 +43,142 @@ interface ShareLink {
   created_at: string;
 }
 
-interface PositionRow {
-  position_id: string;
-  division: string;
-  hrbp: string;
-  position: string;
-  priority: Priority;
-  headcount: number;
-  total_resumes: number;
-  first_interview: number;
-  first_pass: number;
-  second_pass: number;
-  third_pass: number;
-  offers: number;
-  hired: number;
-  notes: string;
-  status: string;
-  unmatched?: boolean;
+const funnelDefinitions: Array<Pick<FunnelStage, 'key' | 'label'>> = [
+  { key: 'resumes', label: '已入库简历' },
+  { key: 'ai_screened', label: 'AI 初筛完成' },
+  { key: 'first_interview', label: '安排面试' },
+  { key: 'first_pass', label: '一面通过' },
+  { key: 'second_pass', label: '二面通过' },
+  { key: 'third_pass', label: '三面通过' },
+  { key: 'offers', label: 'Offer' },
+  { key: 'hired', label: '入职' },
+];
+
+function calculateTotals(positions: BoardPosition[]): BoardTotals {
+  const totals = positions.reduce<Omit<BoardTotals, 'interview_pass_rate'>>((result, position) => {
+    result.active_positions += position.status === '招聘中' ? 1 : 0;
+    result.total_headcount += position.headcount;
+    result.total_resumes += position.total_resumes;
+    result.ai_screened += position.ai_screened;
+    result.first_interview += position.first_interview;
+    result.first_pass += position.first_pass;
+    result.second_pass += position.second_pass;
+    result.third_pass += position.third_pass;
+    result.offers += position.offers;
+    result.hired += position.hired;
+    return result;
+  }, {
+    active_positions: 0,
+    total_headcount: 0,
+    total_resumes: 0,
+    ai_screened: 0,
+    first_interview: 0,
+    first_pass: 0,
+    second_pass: 0,
+    third_pass: 0,
+    offers: 0,
+    hired: 0,
+  });
+  const passRate = totals.first_interview > 0 && totals.third_pass > 0
+    ? Math.round(totals.third_pass / totals.first_interview * 1000) / 10
+    : null;
+  return { ...totals, interview_pass_rate: passRate };
 }
 
-interface DivisionRow extends Omit<PositionRow, 'position_id' | 'position' | 'notes' | 'unmatched'> {
-  pass_rate: number | null;
-  positions: PositionRow[];
-}
-
-interface BoardResponse {
-  version: string;
-  updated_at: string;
-  kpis: {
-    active_positions: number;
-    total_headcount: number;
-    total_resumes: number;
-    first_interview: number;
-    offers: number;
-    hired: number;
-  };
-  rows: DivisionRow[];
-}
-
-const priorityColors: Record<Priority, string> = { P0: 'red', P1: 'orange', P2: 'blue' };
-
-function groupFilteredPositions(positions: PositionRow[]): DivisionRow[] {
-  const groups = new Map<string, DivisionRow>();
-  for (const position of positions) {
+function groupDivisions(positions: BoardPosition[]): DivisionBoard[] {
+  const grouped = new Map<string, BoardPosition[]>();
+  positions.forEach((position) => {
     const division = position.division || '未分配事业部';
-    let group = groups.get(division);
-    if (!group) {
-      group = {
-        division,
-        hrbp: position.hrbp,
-        priority: position.priority,
-        headcount: 0,
-        total_resumes: 0,
-        first_interview: 0,
-        first_pass: 0,
-        second_pass: 0,
-        third_pass: 0,
-        offers: 0,
-        hired: 0,
-        status: position.status,
-        pass_rate: null,
-        positions: [],
-      };
-      groups.set(division, group);
-    }
-    group.positions.push(position);
-    group.headcount += position.headcount;
-    group.total_resumes += position.total_resumes;
-    group.first_interview += position.first_interview;
-    group.first_pass += position.first_pass;
-    group.second_pass += position.second_pass;
-    group.third_pass += position.third_pass;
-    group.offers += position.offers;
-    group.hired += position.hired;
-  }
-  return [...groups.values()].map((group) => ({ ...group, pass_rate: group.first_interview ? Math.round(group.first_pass / group.first_interview * 100) : null }));
+    grouped.set(division, [...(grouped.get(division) || []), { ...position, division }]);
+  });
+  return [...grouped.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'))
+    .map(([division, rows]) => ({
+      division,
+      hrbps: [...new Set(rows.map((row) => row.hrbp).filter(Boolean))].sort((left, right) => left.localeCompare(right, 'zh-Hans-CN')),
+      positions: [...rows].sort((left, right) => left.position.localeCompare(right.position, 'zh-Hans-CN')),
+      ...calculateTotals(rows),
+    }));
 }
 
-function PipelineTag({ status }: { status: string }) {
-  const color = status === '已完成' ? 'success' : status === '暂停' ? 'warning' : status === '已终止' ? 'default' : 'processing';
-  return <Tag color={color}>{status || '招聘中'}</Tag>;
+function groupHrbps(positions: BoardPosition[]): HrbpBoard[] {
+  const grouped = new Map<string, BoardPosition[]>();
+  positions.forEach((position) => {
+    const hrbp = position.hrbp || '未分配HRBP';
+    grouped.set(hrbp, [...(grouped.get(hrbp) || []), { ...position, hrbp }]);
+  });
+  return [...grouped.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, 'zh-Hans-CN'))
+    .map(([hrbp, rows]) => ({
+      hrbp,
+      divisions: [...new Set(rows.map((row) => row.division || '未分配事业部'))].sort((left, right) => left.localeCompare(right, 'zh-Hans-CN')),
+      positions: [...rows].sort((left, right) => left.position.localeCompare(right.position, 'zh-Hans-CN')),
+      p0_positions: rows.filter((row) => row.priority === 'P0').length,
+      average_hiring_days: null,
+      ...calculateTotals(rows),
+    }));
+}
+
+function makeFunnel(totals: BoardTotals): FunnelStage[] {
+  const values: Record<string, number> = {
+    resumes: totals.total_resumes,
+    ai_screened: totals.ai_screened,
+    first_interview: totals.first_interview,
+    first_pass: totals.first_pass,
+    second_pass: totals.second_pass,
+    third_pass: totals.third_pass,
+    offers: totals.offers,
+    hired: totals.hired,
+  };
+  return funnelDefinitions.map((stage) => ({ ...stage, count: values[stage.key] || 0 }));
+}
+
+function makeInsights(totals: BoardTotals, stages: FunnelStage[]): RecruitingBoard['insights'] {
+  const conversions = stages.slice(0, -1).flatMap((stage, index) => stage.count > 0 ? [{
+    from: stage,
+    to: stages[index + 1],
+    rate: Math.round(stages[index + 1].count / stage.count * 1000) / 10,
+  }] : []);
+  if (conversions.length === 0) {
+    return {
+      summary: '暂无足够漏斗数据，暂不生成招聘诊断。',
+      bottlenecks: ['暂无足够漏斗数据'],
+      recommendations: ['暂无足够漏斗数据'],
+    };
+  }
+  const bottleneck = conversions.reduce((lowest, current) => current.rate < lowest.rate ? current : lowest);
+  const transition = `${bottleneck.from.label}至${bottleneck.to.label}`;
+  return {
+    summary: `当前筛选范围有 ${totals.active_positions} 个在招岗位，累计 ${totals.total_resumes} 份简历。`,
+    bottlenecks: [`${transition}转化率最低，为 ${bottleneck.rate}%。`],
+    recommendations: [`建议优先复盘${transition}环节并补充有效候选人来源。`],
+  };
+}
+
+function rebuildBoard(board: RecruitingBoard, positions: BoardPosition[]): RecruitingBoard {
+  const totals = calculateTotals(positions);
+  const funnel = makeFunnel(totals);
+  return {
+    ...board,
+    kpis: {
+      active_positions: { value: totals.active_positions, available: true },
+      total_resumes: { value: totals.total_resumes, available: true },
+      first_interview: { value: totals.first_interview, available: true },
+      interview_pass_rate: { value: totals.interview_pass_rate, available: totals.interview_pass_rate !== null },
+      offers: { value: totals.offers, available: true },
+      hired: { value: totals.hired, available: true },
+      weekly_requirement_completion: { value: null, available: false },
+    },
+    funnel: { stages: funnel },
+    insights: makeInsights(totals, funnel),
+    divisions: groupDivisions(positions),
+    hrbps: groupHrbps(positions),
+    totals,
+  };
 }
 
 const Dashboard: React.FC = () => {
-  const [board, setBoard] = useState<BoardResponse | null>(null);
+  const [board, setBoard] = useState<RecruitingBoard | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [division, setDivision] = useState<string>();
@@ -115,10 +194,11 @@ const Dashboard: React.FC = () => {
   const { selectedOwner } = useOwner();
 
   const fetchBoard = async (showLoading = true) => {
-    if (showLoading) setLoading(true); else setRefreshing(true);
+    if (showLoading) setLoading(true);
+    else setRefreshing(true);
     try {
-      const params = selectedOwner ? { responsible_person: selectedOwner } : {};
-      setBoard(await request.get('/dashboard/recruiting-board', { params }) as BoardResponse);
+      const params = selectedOwner ? { mode: 'live', responsible_person: selectedOwner } : { mode: 'live' };
+      setBoard(await request.get('/dashboard/recruiting-board', { params }) as RecruitingBoard);
     } catch (error) {
       console.error('Recruiting board error:', error);
       message.error('看板数据加载失败，请稍后重试');
@@ -128,7 +208,9 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  useEffect(() => { fetchBoard(); }, [selectedOwner]);
+  useEffect(() => {
+    void fetchBoard();
+  }, [selectedOwner]);
 
   const loadShareLinks = async () => {
     try {
@@ -180,102 +262,111 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const positions = useMemo(() => board?.rows.flatMap((row) => row.positions) || [], [board]);
-  const divisions = useMemo(() => [...new Set(positions.map((row) => row.division).filter(Boolean))].sort(), [positions]);
-  const hrbps = useMemo(() => [...new Set(positions.map((row) => row.hrbp).filter(Boolean))].sort(), [positions]);
-  const statuses = useMemo(() => [...new Set(positions.map((row) => row.status).filter(Boolean))].sort(), [positions]);
+  const positions = useMemo(() => board?.divisions.flatMap((row) => row.positions) || [], [board]);
+  const divisionOptions = useMemo(() => [...new Set(positions.map((row) => row.division).filter(Boolean))].sort(), [positions]);
+  const hrbpOptions = useMemo(() => [...new Set(positions.map((row) => row.hrbp).filter(Boolean))].sort(), [positions]);
+  const statusOptions = useMemo(() => [...new Set(positions.map((row) => row.status).filter(Boolean))].sort(), [positions]);
+  const hasFilters = Boolean(division || hrbp || priority || status || keyword.trim());
 
-  const filteredRows = useMemo(() => groupFilteredPositions(positions.filter((position) => {
+  const filteredBoard = useMemo(() => {
+    if (!board || !hasFilters) return board;
+    const search = keyword.trim().toLocaleLowerCase('zh-CN');
+    const filteredPositions = positions.filter((position) => {
       if (division && position.division !== division) return false;
       if (hrbp && position.hrbp !== hrbp) return false;
       if (priority && position.priority !== priority) return false;
       if (status && position.status !== status) return false;
-      const search = keyword.trim().toLowerCase();
-      return !search || position.position.toLowerCase().includes(search) || position.division.toLowerCase().includes(search);
-    })), [division, hrbp, keyword, positions, priority, status]);
+      if (!search) return true;
+      return [position.position, position.division, position.hrbp]
+        .some((value) => value.toLocaleLowerCase('zh-CN').includes(search));
+    });
+    return rebuildBoard(board, filteredPositions);
+  }, [board, division, hasFilters, hrbp, keyword, positions, priority, status]);
 
-  const columns = [
-    { title: '事业部 / 职位', dataIndex: 'position', key: 'position', width: 190, render: (value: string, row: DivisionRow | PositionRow) => value || row.division },
-    { title: 'HRBP', dataIndex: 'hrbp', key: 'hrbp', width: 100, render: (value: string) => value || '-' },
-    { title: '优先级', dataIndex: 'priority', key: 'priority', width: 78, align: 'center' as const, render: (value: Priority) => <Tag color={priorityColors[value] || 'blue'}>{value || 'P2'}</Tag> },
-    { title: '需求人数', dataIndex: 'headcount', key: 'headcount', width: 85, align: 'center' as const },
-    { title: '简历', dataIndex: 'total_resumes', key: 'total_resumes', width: 65, align: 'center' as const },
-    { title: '1面', dataIndex: 'first_interview', key: 'first_interview', width: 60, align: 'center' as const },
-    { title: '1面通过', dataIndex: 'first_pass', key: 'first_pass', width: 76, align: 'center' as const },
-    { title: '2面通过', dataIndex: 'second_pass', key: 'second_pass', width: 76, align: 'center' as const },
-    { title: '3面通过', dataIndex: 'third_pass', key: 'third_pass', width: 76, align: 'center' as const },
-    { title: '通过率', dataIndex: 'pass_rate', key: 'pass_rate', width: 74, align: 'center' as const, render: (value: number | null) => value == null ? '-' : `${value}%` },
-    { title: 'Offer', dataIndex: 'offers', key: 'offers', width: 64, align: 'center' as const },
-    { title: '入职', dataIndex: 'hired', key: 'hired', width: 60, align: 'center' as const },
-    { title: '备注', dataIndex: 'notes', key: 'notes', width: 130, render: (value: string) => value || '-' },
-    { title: '状态', dataIndex: 'status', key: 'status', width: 82, align: 'center' as const, render: (value: string) => <PipelineTag status={value} /> },
-  ];
+  const clearFilters = () => {
+    setDivision(undefined);
+    setHrbp(undefined);
+    setPriority(undefined);
+    setStatus(undefined);
+    setKeyword('');
+  };
 
-  if (loading) return <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spin size="large" description="加载招聘看板..." /></div>;
+  if (loading) {
+    return <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spin size="large" description="加载招聘看板..." /></div>;
+  }
 
-  const kpis = [
-    ['在招岗位', board?.kpis.active_positions, '#3B82F6'], ['需求人数', board?.kpis.total_headcount, '#6366F1'],
-    ['简历', board?.kpis.total_resumes, '#8B5CF6'], ['面试中', board?.kpis.first_interview, '#EC4899'],
-    ['Offer', board?.kpis.offers, '#F59E0B'], ['已入职', board?.kpis.hired, '#10B981'],
-  ];
+  if (!filteredBoard) {
+    return <Card><div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>看板暂时无法加载，请稍后刷新重试。</div></Card>;
+  }
 
-  return <div>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-      <div><Title level={4} style={{ margin: 0, fontWeight: 700 }}>招聘运营看板</Title><Text type="secondary">数据更新时间：{board?.updated_at ? new Date(board.updated_at).toLocaleString('zh-CN') : '-'}</Text></div>
-      <Space>
-        <Button icon={<LinkOutlined />} onClick={openShareModal}>分享看板</Button>
-        <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchBoard(false)}>刷新</Button>
-      </Space>
+  return (
+    <div className={styles.dashboardPage}>
+      <section className={styles.pageHeader} aria-labelledby="recruiting-dashboard-title">
+        <div>
+          <div className={styles.pageTitleRow}>
+            <span className={styles.pageTitleIcon}><AppstoreOutlined /></span>
+            <h1 id="recruiting-dashboard-title">招聘运营看板</h1>
+          </div>
+          <p>数据更新时间：{board?.updated_at ? new Date(board.updated_at).toLocaleString('zh-CN') : '—'}</p>
+        </div>
+        <div className={styles.pageActions}>
+          <Button icon={<LinkOutlined />} onClick={openShareModal}>分享看板</Button>
+          <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchBoard(false)}>刷新实时数据</Button>
+        </div>
+      </section>
+
+      <Card className={styles.filterCard} size="small">
+        <div className={styles.filterBar}>
+          <Input
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+            prefix={<SearchOutlined />}
+            placeholder="搜索职位 / 事业部 / HRBP"
+            style={{ width: 230 }}
+            allowClear
+          />
+          <Select value={division} onChange={setDivision} placeholder="事业部" allowClear style={{ width: 150 }} options={divisionOptions.map((value) => ({ value }))} />
+          <Select value={hrbp} onChange={setHrbp} placeholder="HRBP" allowClear style={{ width: 140 }} options={hrbpOptions.map((value) => ({ value }))} />
+          <Select value={priority} onChange={setPriority} placeholder="优先级" allowClear style={{ width: 115 }} options={(['P0', 'P1', 'P2'] as Priority[]).map((value) => ({ value }))} />
+          <Select value={status} onChange={setStatus} placeholder="岗位状态" allowClear style={{ width: 130 }} options={statusOptions.map((value) => ({ value }))} />
+          {hasFilters && <Button icon={<ClearOutlined />} onClick={clearFilters}>清除筛选</Button>}
+        </div>
+      </Card>
+
+      <RecruitingBoardView board={filteredBoard} />
+
+      <Modal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
+        <Typography.Paragraph type="secondary">公开链接仅展示聚合招聘数据，不包含候选人或 AI 评估信息。</Typography.Paragraph>
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Radio.Group value={shareExpiry} onChange={(event) => setShareExpiry(event.target.value)}>
+            <Space direction="vertical">
+              <Radio value="1d">1 天有效</Radio>
+              <Radio value="7d">7 天有效</Radio>
+              <Radio value="30d">30 天有效</Radio>
+              <Radio value="permanent">长期有效（可随时撤销）</Radio>
+            </Space>
+          </Radio.Group>
+          <Button type="primary" loading={creatingShare} onClick={createShareLink}>生成并复制链接</Button>
+          {newShareUrl && <Input value={newShareUrl} readOnly addonAfter={<Button type="link" size="small" onClick={() => copyShareLink(newShareUrl)}>复制</Button>} />}
+          <Typography.Text strong>已创建链接</Typography.Text>
+          <List
+            size="small"
+            bordered
+            dataSource={shareLinks}
+            locale={{ emptyText: '暂无分享链接' }}
+            renderItem={(link) => (
+              <List.Item actions={link.revoked_at
+                ? [<Tag key="revoked">已撤销</Tag>]
+                : [<Button key="revoke" type="link" danger onClick={() => revokeShareLink(link.id)}>撤销</Button>]}
+              >
+                <span>{link.expires_at ? `有效至 ${new Date(link.expires_at).toLocaleString('zh-CN')}` : '长期有效'} · 创建于 {new Date(link.created_at).toLocaleString('zh-CN')}</span>
+              </List.Item>
+            )}
+          />
+        </Space>
+      </Modal>
     </div>
-    <Card size="small" style={{ marginBottom: 20, borderRadius: 8 }}>
-      <Row gutter={[16, 12]}>{kpis.map(([label, value, color]) => <Col key={String(label)} xs={12} sm={8} md={4}><div style={{ textAlign: 'center' }}><Text type="secondary">{label}</Text><div style={{ fontSize: 25, fontWeight: 700, color: String(color) }}>{value ?? 0}</div></div></Col>)}</Row>
-    </Card>
-    <Card size="small" title="事业部招聘漏斗" style={{ borderRadius: 8 }}>
-      <Space wrap style={{ marginBottom: 14 }}>
-        <Input value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="搜索职位 / 事业部" style={{ width: 200 }} allowClear />
-        <Select value={division} onChange={setDivision} placeholder="事业部" allowClear style={{ width: 130 }} options={divisions.map((value) => ({ value }))} />
-        <Select value={hrbp} onChange={setHrbp} placeholder="HRBP" allowClear style={{ width: 130 }} options={hrbps.map((value) => ({ value }))} />
-        <Select value={priority} onChange={setPriority} placeholder="优先级" allowClear style={{ width: 110 }} options={(['P0', 'P1', 'P2'] as Priority[]).map((value) => ({ value }))} />
-        <Select value={status} onChange={setStatus} placeholder="岗位状态" allowClear style={{ width: 120 }} options={statuses.map((value) => ({ value }))} />
-        {(division || hrbp || priority || status || keyword) && <Button size="small" icon={<ClearOutlined />} onClick={() => { setDivision(undefined); setHrbp(undefined); setPriority(undefined); setStatus(undefined); setKeyword(''); }}>清除筛选</Button>}
-      </Space>
-      <Table<DivisionRow>
-        rowKey="division"
-        size="small"
-        columns={columns}
-        dataSource={filteredRows}
-        pagination={false}
-        scroll={{ x: 1420 }}
-        expandable={{
-          defaultExpandAllRows: true,
-          rowExpandable: (row) => row.positions.length > 0,
-          expandedRowRender: (row) => <Table<PositionRow> rowKey="position_id" size="small" showHeader={false} columns={columns} dataSource={row.positions.map((position) => ({ ...position, pass_rate: position.first_interview ? Math.round(position.first_pass / position.first_interview * 100) : null }))} pagination={false} />,
-        }}
-        locale={{ emptyText: '暂无匹配岗位数据' }}
-      />
-    </Card>
-    <Modal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
-      <Typography.Paragraph type="secondary">公开链接仅展示聚合招聘数据，不包含候选人或 AI 评估信息。</Typography.Paragraph>
-      <Space direction="vertical" style={{ width: '100%' }} size="middle">
-        <Radio.Group value={shareExpiry} onChange={(event) => setShareExpiry(event.target.value)}>
-          <Space direction="vertical">
-            <Radio value="1d">1 天有效</Radio>
-            <Radio value="7d">7 天有效</Radio>
-            <Radio value="30d">30 天有效</Radio>
-            <Radio value="permanent">长期有效（可随时撤销）</Radio>
-          </Space>
-        </Radio.Group>
-        <Button type="primary" loading={creatingShare} onClick={createShareLink}>生成并复制链接</Button>
-        {newShareUrl && <Input value={newShareUrl} readOnly addonAfter={<Button type="link" size="small" onClick={() => copyShareLink(newShareUrl)}>复制</Button>} />}
-        <Typography.Text strong>已创建链接</Typography.Text>
-        <List size="small" bordered dataSource={shareLinks} locale={{ emptyText: '暂无分享链接' }} renderItem={(link) => (
-          <List.Item actions={link.revoked_at ? [<Tag key="revoked">已撤销</Tag>] : [<Button key="revoke" type="link" danger onClick={() => revokeShareLink(link.id)}>撤销</Button>]}>
-            <span>{link.expires_at ? `有效至 ${new Date(link.expires_at).toLocaleString('zh-CN')}` : '长期有效'} · 创建于 {new Date(link.created_at).toLocaleString('zh-CN')}</span>
-          </List.Item>
-        )} />
-      </Space>
-    </Modal>
-  </div>;
+  );
 };
 
 export default Dashboard;
