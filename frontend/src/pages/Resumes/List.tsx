@@ -298,9 +298,6 @@ const ResumesList: React.FC = () => {
       dataCache.current = sortResumesNewestFirst(res);
       loadedRef.current = true;
 
-      // 后台触发 PDF 缓存（静默执行，不阻塞展示）
-      request.post('/resumes/cache-files').catch(() => {});
-
       // 页面只观察 D1 中的任务状态，绝不因加载/刷新/路由切换而创建 AI 任务。
       const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
       setPollingEnabled(res.some((r: any) => activeStatuses.has(r.parse_status)));
