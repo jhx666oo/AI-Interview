@@ -9,3 +9,13 @@ CREATE TABLE IF NOT EXISTS dashboard_snapshots (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_dashboard_snapshots_date ON dashboard_snapshots(snapshot_date DESC);
+CREATE TRIGGER IF NOT EXISTS prevent_dashboard_snapshot_update
+BEFORE UPDATE ON dashboard_snapshots
+BEGIN
+  SELECT RAISE(ABORT, 'dashboard snapshot is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS prevent_dashboard_snapshot_delete
+BEFORE DELETE ON dashboard_snapshots
+BEGIN
+  SELECT RAISE(ABORT, 'dashboard snapshot is immutable');
+END;

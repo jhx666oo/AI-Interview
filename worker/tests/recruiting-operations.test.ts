@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, getBoardFirstInterviewCount, getBoardInterviewPassCondition, getDashboardOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
 import {
@@ -8,6 +10,21 @@ import {
   toShanghaiSnapshotDate,
   toPublicBoardRow,
 } from '../src/recruiting-operations/share-links';
+
+describe('dashboard snapshot schema', () => {
+  it('makes dashboard snapshots immutable in every bootstrap and migration definition', async () => {
+    const sqlDefinitions = await Promise.all([
+      readFile(resolve(process.cwd(), 'migrations/0010_dashboard_snapshots.sql'), 'utf8'),
+      readFile(resolve(process.cwd(), 'schema.sql'), 'utf8'),
+      readFile(resolve(process.cwd(), '../scripts/migration_dashboard_snapshots.sql'), 'utf8'),
+    ]);
+
+    for (const sql of sqlDefinitions) {
+      expect(sql).toMatch(/CREATE TRIGGER IF NOT EXISTS prevent_dashboard_snapshot_update\s+BEFORE UPDATE ON dashboard_snapshots[\s\S]*?RAISE\(ABORT, 'dashboard snapshot is immutable'\)/);
+      expect(sql).toMatch(/CREATE TRIGGER IF NOT EXISTS prevent_dashboard_snapshot_delete\s+BEFORE DELETE ON dashboard_snapshots[\s\S]*?RAISE\(ABORT, 'dashboard snapshot is immutable'\)/);
+    }
+  });
+});
 
 describe('dashboard share links', () => {
   const now = new Date('2026-07-31T00:00:00.000Z');
