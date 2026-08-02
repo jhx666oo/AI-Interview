@@ -4,6 +4,21 @@ import { createOrGetActiveJob } from './resume-processing/job-repository';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow } from './recruiting-operations/share-links';
 import type { ShareExpiryOption } from './recruiting-operations/types';
+import {
+  buildRecruitingBoard,
+  getBoardFirstInterviewCount,
+  getBoardInterviewPassCondition,
+  groupBoardRows,
+  toPublicRecruitingBoard as toPublicRecruitingBoardV2,
+} from './recruiting-operations/dashboard';
+import type { RecruitingBoard, RecruitingBoardPositionRow } from './recruiting-operations/dashboard';
+
+export {
+  getBoardFirstInterviewCount,
+  getBoardInterviewPassCondition,
+  groupBoardRows,
+} from './recruiting-operations/dashboard';
+export type { RecruitingBoard, RecruitingBoardDivisionRow, RecruitingBoardPositionRow } from './recruiting-operations/dashboard';
 
 interface Env {
   DB: D1Database;
@@ -1222,102 +1237,8 @@ app.get('/api/dashboard/funnel', authMiddleware, async (c) => {
 app.get('/api/dashboard/positions', authMiddleware, dashboardPositionsHandler);
 app.get('/api/dashboard/positions-detail', authMiddleware, dashboardPositionsHandler);
 
-export type RecruitingBoardPositionRow = {
-  position_id?: string;
-  division: string;
-  hrbp?: string;
-  position: string;
-  priority?: 'P0' | 'P1' | 'P2';
-  headcount?: number;
-  total_resumes: number;
-  first_interview: number;
-  first_pass: number;
-  second_pass: number;
-  third_pass: number;
-  offers: number;
-  hired: number;
-  notes?: string;
-  status?: string;
-  unmatched?: boolean;
-};
-
-export type RecruitingBoardDivisionRow = Omit<RecruitingBoardPositionRow, 'position' | 'position_id' | 'notes' | 'unmatched'> & {
-  positions: RecruitingBoardPositionRow[];
-  pass_rate: number | null;
-};
-
-const boardMetricKeys: Array<keyof Pick<RecruitingBoardPositionRow,
-  'headcount' | 'total_resumes' | 'first_interview' | 'first_pass' | 'second_pass' | 'third_pass' | 'offers' | 'hired'
->> = ['headcount', 'total_resumes', 'first_interview', 'first_pass', 'second_pass', 'third_pass', 'offers', 'hired'];
-
-/**
- * A division summary is always derived from its position rows. This avoids a
- * second, independently maintained source of totals that could drift from D1.
- */
-export function groupBoardRows(rows: RecruitingBoardPositionRow[]): RecruitingBoardDivisionRow[] {
-  const groups = new Map<string, RecruitingBoardDivisionRow>();
-  for (const row of rows) {
-    const division = row.division || '未分配事业部';
-    let group = groups.get(division);
-    if (!group) {
-      group = {
-        division,
-        hrbp: row.hrbp || '',
-        priority: row.priority || 'P2',
-        headcount: 0,
-        total_resumes: 0,
-        first_interview: 0,
-        first_pass: 0,
-        second_pass: 0,
-        third_pass: 0,
-        offers: 0,
-        hired: 0,
-        status: row.status || '招聘中',
-        positions: [],
-        pass_rate: null,
-      };
-      groups.set(division, group);
-    }
-    group.positions.push(row);
-    for (const key of boardMetricKeys) group[key] = (group[key] || 0) + (row[key] || 0);
-  }
-
-  return [...groups.values()].map((group) => ({
-    ...group,
-    pass_rate: group.first_interview > 0 ? Math.round(group.first_pass / group.first_interview * 100) : null,
-  }));
-}
-
-/** The live model stores round two on result2/status2 of the first interview row. */
-export function getBoardInterviewPassCondition(round: 1 | 2 | 3): string {
-  const passed = "IN ('pass', 'passed')";
-  if (round === 1) return `(round = 1 AND (result ${passed} OR status2 = 'passed'))`;
-  if (round === 2) return `((round = 1 AND (result2 ${passed} OR status2 = 'passed')) OR (round = 2 AND result ${passed}))`;
-  return `(round = 3 AND result ${passed})`;
-}
-
-/** A passed first interview is already represented by its scheduled interview row. */
-export function getBoardFirstInterviewCount(scheduled: number, _passed: number): number {
-  return scheduled;
-}
-
 function makeRecruitingBoardResponse(positions: RecruitingBoardPositionRow[]) {
-  const rows = groupBoardRows(positions);
-  const kpis = positions.reduce((totals, row) => ({
-    active_positions: totals.active_positions + (row.status === '招聘中' ? 1 : 0),
-    total_headcount: totals.total_headcount + (row.headcount || 0),
-    total_resumes: totals.total_resumes + row.total_resumes,
-    first_interview: totals.first_interview + row.first_interview,
-    offers: totals.offers + row.offers,
-    hired: totals.hired + row.hired,
-  }), { active_positions: 0, total_headcount: 0, total_resumes: 0, first_interview: 0, offers: 0, hired: 0 });
-
-  return {
-    version: 'v1',
-    updated_at: now(),
-    kpis,
-    rows,
-  };
+  return buildRecruitingBoard(positions, { dataMode: 'live', updatedAt: now() });
 }
 
 app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
@@ -1338,6 +1259,7 @@ const HR_OWNER_SCOPE_PREFIX = '__owner__:';
 type PublicShareScope = { owner: string | null; divisions: string[] };
 
 function toPublicRecruitingBoard(board: Record<string, any>, scope: PublicShareScope): Record<string, unknown> {
+  if (board.version === 'v2') return toPublicRecruitingBoardV2(board as RecruitingBoard, scope) as unknown as Record<string, unknown>;
   const scopedRows = scope.divisions.length
     ? (board.rows || []).filter((row: any) => scope.divisions.includes(row.division))
     : (board.rows || []);
@@ -1521,7 +1443,7 @@ async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | 
   const [
     resumeCounts, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
   ] = await Promise.all([
-    bindAll(`SELECT position_id, COUNT(*) as cnt FROM resumes WHERE 1=1 ${posFilter} GROUP BY position_id`),
+    bindAll(`SELECT position_id, COUNT(*) as cnt, SUM(CASE WHEN parse_status = 'ai_screened' THEN 1 ELSE 0 END) AS ai_screened FROM resumes WHERE 1=1 ${posFilter} GROUP BY position_id`),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 ${posFilter} GROUP BY position_id`),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(1)} ${posFilter} GROUP BY position_id`),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(2)} ${posFilter} GROUP BY position_id`),
@@ -1530,8 +1452,9 @@ async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | 
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM onboarding_records WHERE status = 'onboarded' ${posFilter} GROUP BY position_id`),
   ]);
 
-  const toMap = (rows: any[]) => new Map((rows.results || []).map((r: any) => [r.position_id, r.cnt || 0]));
+  const toMap = (result: { results?: any[] }) => new Map((result.results || []).map((row: any) => [row.position_id, row.cnt || 0]));
   const rMap = toMap(resumeCounts);
+  const aiScreenedMap = new Map((resumeCounts.results || []).map((row: any) => [row.position_id, row.ai_screened || 0]));
   const f1SchedMap = toMap(iv1Scheduled);
   const f1PassMap = toMap(iv1Pass);
   const f2PassMap = toMap(iv2Pass);
@@ -1561,6 +1484,7 @@ async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | 
       priority: priorityMap[pos.urgency] || 'P2',
       headcount: pos.headcount || 1,
       total_resumes: totalResumes,
+      ai_screened: aiScreenedMap.get(pos.id) || 0,
       first_interview: firstInterview,
       first_pass: firstPass,
       second_pass: secondPass,

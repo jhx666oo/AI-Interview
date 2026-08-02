@@ -10,6 +10,7 @@ import {
   toShanghaiSnapshotDate,
   toPublicBoardRow,
 } from '../src/recruiting-operations/share-links';
+import { buildRecruitingBoard } from '../src/recruiting-operations/dashboard';
 
 describe('dashboard snapshot schema', () => {
   it('makes dashboard snapshots immutable in every bootstrap and migration definition', async () => {
@@ -190,6 +191,42 @@ describe('weighted role rules', () => {
 });
 
 describe('recruiting board aggregation', () => {
+  it('builds all dashboard levels and marks weekly completion unavailable', () => {
+    const board = buildRecruitingBoard([{
+      position_id: 'p1', division: '职培', hrbp: '王凯月', position: '销售', priority: 'P0', headcount: 2,
+      total_resumes: 8, ai_screened: 6, first_interview: 4, first_pass: 3, second_pass: 2, third_pass: 1,
+      offers: 1, hired: 1, notes: '', status: '招聘中',
+    }], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
+
+    expect(board.funnel.stages.map((item) => item.key)).toEqual([
+      'resumes', 'ai_screened', 'first_interview', 'first_pass', 'second_pass', 'third_pass', 'offers', 'hired',
+    ]);
+    expect(board.divisions[0]).toMatchObject({ division: '职培', hrbps: ['王凯月'] });
+    expect(board.hrbps[0]).toMatchObject({ hrbp: '王凯月', average_hiring_days: null });
+    expect(board.kpis.weekly_requirement_completion).toEqual({ value: null, available: false });
+  });
+
+  it('uses third-pass divided by scheduled first interviews for the published pass rate', () => {
+    const board = buildRecruitingBoard([{
+      position_id: 'p1', division: 'A', hrbp: '', position: '运营', priority: 'P1', headcount: 1,
+      total_resumes: 10, ai_screened: 8, first_interview: 8, first_pass: 5, second_pass: 3, third_pass: 2,
+      offers: 1, hired: 1, notes: '', status: '招聘中',
+    }], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
+
+    expect(board.kpis.interview_pass_rate).toEqual({ value: 25, available: true });
+  });
+
+  it('uses a neutral deterministic insight when no funnel conversion can be calculated', () => {
+    const board = buildRecruitingBoard([{
+      position_id: 'p1', division: 'A', hrbp: '', position: '运营', priority: 'P1', headcount: 1,
+      total_resumes: 0, ai_screened: 0, first_interview: 0, first_pass: 0, second_pass: 0, third_pass: 0,
+      offers: 0, hired: 0, notes: '', status: '招聘中',
+    }], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
+
+    expect(board.insights.summary).toContain('暂无足够漏斗数据');
+    expect(board.insights.bottlenecks).toContain('暂无足够漏斗数据');
+  });
+
   it('sums position rows into one division total without storing a second total', () => {
     expect(groupBoardRows([
       { division: 'A', position: '运营', total_resumes: 2, first_interview: 1, first_pass: 1, second_pass: 0, third_pass: 0, offers: 0, hired: 0 },
