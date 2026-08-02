@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, getBoardFirstInterviewCount, getBoardInterviewPassCondition, getDashboardOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
 import {
+  assertShareDataMode,
   createShareExpiry,
   hashShareToken,
   isShareLinkActive,
+  toShanghaiSnapshotDate,
   toPublicBoardRow,
 } from '../src/recruiting-operations/share-links';
 
@@ -21,6 +23,16 @@ describe('dashboard share links', () => {
     expect(createShareExpiry('7d', now)?.toISOString()).toBe('2026-08-07T00:00:00.000Z');
     expect(createShareExpiry('30d', now)?.toISOString()).toBe('2026-08-30T00:00:00.000Z');
     expect(createShareExpiry('permanent', now)).toBeNull();
+  });
+
+  it('requires a snapshot id only for snapshot links', () => {
+    expect(() => assertShareDataMode('live', null)).not.toThrow();
+    expect(() => assertShareDataMode('snapshot', 'snapshot-1')).not.toThrow();
+    expect(() => assertShareDataMode('snapshot', null)).toThrow('snapshot_id is required');
+  });
+
+  it('uses the China calendar date for a snapshot', () => {
+    expect(toShanghaiSnapshotDate(new Date('2026-08-02T15:55:00.000Z'))).toBe('2026-08-02');
   });
 
   it('hashes a token before it can be persisted', async () => {

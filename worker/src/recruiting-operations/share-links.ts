@@ -1,5 +1,16 @@
 import type { PublicBoardRow, ShareExpiryOption, ShareLinkActivity } from './types';
 
+export type DashboardDataMode = 'live' | 'snapshot';
+
+export interface DashboardSnapshotRow {
+  id: string;
+  snapshot_date: string;
+  payload_json: string;
+  generated_at: string;
+  generated_by: string;
+  created_at: string;
+}
+
 const PUBLIC_BOARD_FIELDS = [
   'division',
   'department',
@@ -24,6 +35,18 @@ const EXPIRY_DAYS: Record<Exclude<ShareExpiryOption, 'permanent'>, number> = {
   '7d': 7,
   '30d': 30,
 };
+
+export function assertShareDataMode(mode: unknown, snapshotId: unknown): asserts mode is DashboardDataMode {
+  if (mode !== 'live' && mode !== 'snapshot') throw new Error('invalid dashboard data mode');
+  if (mode === 'snapshot' && (typeof snapshotId !== 'string' || snapshotId.length === 0)) {
+    throw new Error('snapshot_id is required');
+  }
+  if (mode === 'live' && snapshotId != null) throw new Error('live links cannot include snapshot_id');
+}
+
+export function toShanghaiSnapshotDate(value: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(value);
+}
 
 export async function hashShareToken(token: string): Promise<string> {
   const encoded = new TextEncoder().encode(token);

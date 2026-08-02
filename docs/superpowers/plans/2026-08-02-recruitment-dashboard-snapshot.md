@@ -24,7 +24,8 @@
 
 ## File Structure
 
-- Create `scripts/migration_dashboard_snapshots.sql` — production D1 migration.
+- Create `worker/migrations/0010_dashboard_snapshots.sql` — tracked production D1 migration; Wrangler applies it once and records completion.
+- Create `scripts/migration_dashboard_snapshots.sql` — idempotent local-schema bootstrap for snapshot table and indexes.
 - Create `worker/src/recruiting-operations/dashboard.ts` — DTOs, aggregation, insight and public-filter helpers.
 - Modify `worker/schema.sql`, `worker/src/index.ts`, `worker/src/recruiting-operations/share-links.ts`, `worker/wrangler.toml`, `worker/tests/recruiting-operations.test.ts`.
 - Create `frontend/src/pages/Dashboard/types.ts`, `frontend/src/pages/Dashboard/components/RecruitingBoardView.tsx`, `frontend/src/pages/Dashboard/components/PositionSummaryTable.tsx`, `frontend/src/pages/Dashboard/dashboard.module.css`.
@@ -34,6 +35,7 @@
 
 **Files:**
 - Create: `scripts/migration_dashboard_snapshots.sql`
+- Create: `worker/migrations/0010_dashboard_snapshots.sql`
 - Modify: `worker/schema.sql:749-761`
 - Modify: `worker/src/recruiting-operations/share-links.ts`
 - Test: `worker/tests/recruiting-operations.test.ts`
@@ -79,7 +81,7 @@ ALTER TABLE dashboard_share_links ADD COLUMN snapshot_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_dashboard_share_links_snapshot ON dashboard_share_links(snapshot_id);
 ```
 
-Put the table and share columns into the fresh-install definitions in `worker/schema.sql`. Production deployment must inspect `PRAGMA table_info(dashboard_share_links)` and run each `ALTER TABLE` only if that column is absent.
+Put the table and share columns into the fresh-install definitions in `worker/schema.sql`. Production deployment uses the tracked Wrangler migration in `worker/migrations/0010_dashboard_snapshots.sql`; `wrangler d1 migrations apply` records it after its first successful application, so later deployments do not re-run its `ALTER TABLE` statements. Keep `scripts/migration_dashboard_snapshots.sql` limited to idempotent table/index bootstrap statements.
 
 ```ts
 export type DashboardDataMode = 'live' | 'snapshot';
@@ -101,7 +103,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
-Run: `git add scripts/migration_dashboard_snapshots.sql worker/schema.sql worker/src/recruiting-operations/share-links.ts worker/tests/recruiting-operations.test.ts && git commit -m "feat: add immutable dashboard snapshot storage"`
+Run: `git add scripts/migration_dashboard_snapshots.sql worker/migrations/0010_dashboard_snapshots.sql worker/schema.sql worker/src/recruiting-operations/share-links.ts worker/tests/recruiting-operations.test.ts && git commit -m "feat: add immutable dashboard snapshot storage"`
 
 ## Task 2: Define a v2 board DTO and deterministic board aggregation
 
@@ -232,9 +234,9 @@ Extend `POST /dashboard/share-links` to accept `{ data_mode, snapshot_id }`, val
 
 - [ ] **Step 4: Run test and local D1 migration checks**
 
-Run: `cd worker && npm test -- recruiting-operations.test.ts && npx tsc --noEmit && npx wrangler d1 execute ai-interview-db --local --file ../scripts/migration_dashboard_snapshots.sql`
+Run: `cd worker && npm test -- recruiting-operations.test.ts && npx tsc --noEmit && npx wrangler d1 migrations apply ai-interview-db --local`
 
-Expected: Tests PASS; D1 creates the snapshot table. If local share columns already exist, run only the `CREATE TABLE`/index statements and retain the production `PRAGMA` guarded migration procedure.
+Expected: Tests PASS; the tracked D1 migration creates the snapshot table and records its one-time column changes.
 
 - [ ] **Step 5: Commit**
 

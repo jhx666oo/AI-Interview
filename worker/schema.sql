@@ -747,6 +747,16 @@ CREATE INDEX IF NOT EXISTS idx_oplogs_entity ON operation_logs(entity_type, enti
 CREATE INDEX IF NOT EXISTS idx_oplogs_created ON operation_logs(created_at);
 
 -- Shareable recruiting dashboard links. Tokens are stored as SHA-256 hashes only.
+CREATE TABLE IF NOT EXISTS dashboard_snapshots (
+  id TEXT PRIMARY KEY,
+  snapshot_date TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  generated_by TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_snapshots_date ON dashboard_snapshots(snapshot_date DESC);
+
 CREATE TABLE IF NOT EXISTS dashboard_share_links (
   id TEXT PRIMARY KEY,
   token_hash TEXT NOT NULL UNIQUE,
@@ -754,8 +764,11 @@ CREATE TABLE IF NOT EXISTS dashboard_share_links (
   scope_ids TEXT NOT NULL DEFAULT '[]',
   expires_at TEXT,
   revoked_at TEXT,
+  data_mode TEXT NOT NULL DEFAULT 'live',
+  snapshot_id TEXT,
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_dashboard_share_links_active
   ON dashboard_share_links(revoked_at, expires_at);
+CREATE INDEX IF NOT EXISTS idx_dashboard_share_links_snapshot ON dashboard_share_links(snapshot_id);
