@@ -1439,8 +1439,20 @@ export async function getSharedBoard(
   if (!link || !isShareLinkActive(link, at)) return { status: 404, body: null };
 
   const scope = parsePublicShareScope(link);
-  const board = loadBoard ? await loadBoard(scope, link) : { version: 'v1', updated_at: at.toISOString(), kpis: {}, rows: [] };
+  const dataMode = link.data_mode || 'live';
+  let board: Record<string, any> | null;
+  if (dataMode === 'snapshot') {
+    if (typeof link.snapshot_id !== 'string' || !link.snapshot_id) return { status: 404, body: null };
+    board = await readDashboardSnapshotById(db, link.snapshot_id);
+  } else if (dataMode === 'live') {
+    board = loadBoard ? await loadBoard(scope, link) : { version: 'v1', updated_at: at.toISOString(), kpis: {}, rows: [] };
+  } else {
+    return { status: 404, body: null };
+  }
   if (!board) return { status: 404, body: null };
+  if (board.version === 'v2' && scope.owner) {
+    board = applyRecruitingBoardOwnerScope(board as RecruitingBoard, scope.owner);
+  }
   return { status: 200, body: toPublicRecruitingBoard(board, scope) };
 }
 
@@ -1519,16 +1531,12 @@ app.delete('/api/dashboard/share-links/:id', authMiddleware, requireRole(['admin
 });
 
 app.get('/api/shared/dashboard/:token', async (c) => {
-  const result = await getSharedBoard(c.env.DB, c.req.param('token'), new Date(), async (scope, link) => {
-    const dataMode = link.data_mode || 'live';
-    if (dataMode === 'snapshot') {
-      if (typeof link.snapshot_id !== 'string') return null;
-      const board = await readDashboardSnapshotById(c.env.DB, link.snapshot_id);
-      return board ? applyRecruitingBoardOwnerScope(board, scope.owner) : null;
-    }
-    if (dataMode !== 'live') return null;
-    return loadLiveRecruitingBoard(c.env.DB, scope.owner);
-  });
+  const result = await getSharedBoard(
+    c.env.DB,
+    c.req.param('token'),
+    new Date(),
+    async (scope) => loadLiveRecruitingBoard(c.env.DB, scope.owner),
+  );
   return result.status === 404 ? c.notFound() : c.json(result.body);
 });
 

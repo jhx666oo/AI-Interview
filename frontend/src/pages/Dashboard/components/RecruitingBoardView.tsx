@@ -69,7 +69,11 @@ function SectionTitle({
   );
 }
 
-function KpiGrid({ kpis }: { kpis: RecruitingBoard['kpis'] }) {
+function KpiGrid({ board }: { board: RecruitingBoard }) {
+  const dataCaption = board.data_mode === 'snapshot'
+    ? `快照 · ${board.snapshot_date || '历史数据'}`
+    : '实时汇总';
+
   return (
     <section className={styles.boardSection} aria-labelledby="dashboard-overview-title">
       <SectionTitle eyebrow="Overview" description="聚焦招聘进程中的核心经营指标">
@@ -77,7 +81,7 @@ function KpiGrid({ kpis }: { kpis: RecruitingBoard['kpis'] }) {
       </SectionTitle>
       <div className={styles.kpiGrid}>
         {kpiDefinitions.map((item) => {
-          const metric = kpis[item.key];
+          const metric = board.kpis[item.key];
           const unavailable = !metric?.available || metric.value == null;
           return (
             <Card
@@ -95,7 +99,7 @@ function KpiGrid({ kpis }: { kpis: RecruitingBoard['kpis'] }) {
               </div>
               {item.key === 'weekly_requirement_completion' && unavailable
                 ? <div className={styles.kpiUnavailable}>暂未采集</div>
-                : <div className={styles.kpiCaption}>实时汇总</div>}
+                : <div className={styles.kpiCaption}>{dataCaption}</div>}
             </Card>
           );
         })}
@@ -280,7 +284,7 @@ function HrbpEfficiencyGrid({ cards }: { cards: RecruitingBoard['hrbps'] }) {
 export function RecruitingBoardView({ board }: { board: RecruitingBoard }) {
   return (
     <div className={styles.board}>
-      <KpiGrid kpis={board.kpis} />
+      <KpiGrid board={board} />
       <InsightCard insights={board.insights} />
       <RecruitingFunnel stages={board.funnel.stages} />
       <DivisionBoardGrid divisions={board.divisions} />

@@ -41,6 +41,15 @@ describe('dashboard snapshots', () => {
 describe('dashboard share links', () => {
   const now = new Date('2026-07-31T00:00:00.000Z');
 
+  const liveBoardWith = (
+    values: { total_resumes: number },
+    mode: { dataMode: 'live' | 'snapshot'; snapshotDate?: string } = { dataMode: 'live' },
+  ) => buildRecruitingBoard([{
+    position_id: 'p1', division: 'A', hrbp: 'HR A', position: '运营', priority: 'P1', headcount: 1,
+    total_resumes: values.total_resumes, ai_screened: 1, first_interview: 1, first_pass: 1, second_pass: 0, third_pass: 0,
+    offers: 0, hired: 0, notes: '', status: '招聘中',
+  }], { ...mode, updatedAt: now.toISOString() });
+
   it('accepts a live link and rejects expired or revoked links', () => {
     expect(isShareLinkActive({ expires_at: '2026-08-01T00:00:00.000Z', revoked_at: null }, now)).toBe(true);
     expect(isShareLinkActive({ expires_at: '2026-07-30T00:00:00.000Z', revoked_at: null }, now)).toBe(false);
@@ -117,6 +126,45 @@ describe('dashboard share links', () => {
     expect(JSON.stringify(response.body)).not.toContain('Private');
     expect(response.body.kpis).toMatchObject({ total_resumes: 2 });
     expect(response.body.kpis).not.toHaveProperty('candidate_name');
+  });
+
+  it('returns stored aggregate JSON instead of fresh data for a snapshot link', async () => {
+    const storedBoard = liveBoardWith(
+      { total_resumes: 2 },
+      { dataMode: 'snapshot', snapshotDate: '2026-08-01' },
+    );
+    Object.assign(storedBoard.divisions[0].positions[0], { email: 'candidate@example.com' });
+    const fakeSnapshotDb = {
+      prepare: (sql: string) => ({
+        bind: () => ({
+          first: async () => {
+            if (sql.includes('FROM dashboard_share_links')) {
+              return {
+                expires_at: null,
+                revoked_at: null,
+                scope_type: 'all',
+                scope_ids: '[]',
+                data_mode: 'snapshot',
+                snapshot_id: 'snapshot-1',
+              };
+            }
+            if (sql.includes('FROM dashboard_snapshots')) return { payload_json: JSON.stringify(storedBoard) };
+            throw new Error(`Unexpected SQL: ${sql}`);
+          },
+        }),
+      }),
+    };
+
+    const response = await getSharedBoard(
+      fakeSnapshotDb as never,
+      'snapshot-token',
+      now,
+      async () => liveBoardWith({ total_resumes: 999 }),
+    );
+
+    expect(response.body).toMatchObject({ data_mode: 'snapshot', snapshot_date: '2026-08-01' });
+    expect(response.body).toMatchObject({ totals: { total_resumes: 2 } });
+    expect(JSON.stringify(response.body)).not.toContain('candidate@example.com');
   });
 
   it('recomputes public KPIs from a division-scoped share instead of exposing company totals', async () => {
