@@ -53,8 +53,9 @@ const funnelDefinitions: Array<Pick<FunnelStage, 'key' | 'label'>> = [
 
 function calculateTotals(positions: BoardPosition[]): BoardTotals {
   const totals = positions.reduce<Omit<BoardTotals, 'interview_pass_rate'>>((result, position) => {
-    result.active_positions += position.status === '招聘中' ? 1 : 0;
-    result.total_headcount += position.headcount;
+    const active = position.status === '招聘中';
+    result.active_positions += active ? 1 : 0;
+    result.total_headcount += active ? position.headcount : 0;
     result.total_resumes += position.total_resumes;
     result.ai_screened += position.ai_screened;
     result.first_interview += position.first_interview;
@@ -76,7 +77,7 @@ function calculateTotals(positions: BoardPosition[]): BoardTotals {
     offers: 0,
     hired: 0,
   });
-  const passRate = totals.first_interview > 0 && totals.third_pass > 0
+  const passRate = totals.first_interview > 0
     ? Math.round(totals.third_pass / totals.first_interview * 1000) / 10
     : null;
   return { ...totals, interview_pass_rate: passRate };
@@ -159,6 +160,7 @@ function rebuildBoard(board: RecruitingBoard, positions: BoardPosition[]): Recru
     ...board,
     kpis: {
       active_positions: { value: totals.active_positions, available: true },
+      total_headcount: { value: totals.total_headcount, available: true },
       total_resumes: { value: totals.total_resumes, available: true },
       first_interview: { value: totals.first_interview, available: true },
       interview_pass_rate: { value: totals.interview_pass_rate, available: totals.interview_pass_rate !== null },

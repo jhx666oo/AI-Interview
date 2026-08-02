@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { approveBatch, createDashboardSnapshot, enrichScreeningEvaluation, evaluateHardRequirements, getBoardFirstInterviewCount, getBoardInterviewPassCondition, getDashboardOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, readDashboardSnapshot, weightedScore } from '../src/index';
+import { approveBatch, createDashboardSnapshot, enrichScreeningEvaluation, evaluateHardRequirements, getBoardFirstInterviewCount, getBoardInterviewPassCondition, getDashboardOwner, getDashboardPositionRowsForOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, readDashboardSnapshot, weightedScore } from '../src/index';
 import {
   assertShareDataMode,
   createShareExpiry,
@@ -11,6 +11,63 @@ import {
   toPublicBoardRow,
 } from '../src/recruiting-operations/share-links';
 import { buildRecruitingBoard, toPublicRecruitingBoard } from '../src/recruiting-operations/dashboard';
+
+function createDashboardRowsDb() {
+  const positions = [
+    { id: 'p1', title: '标准运营', department: '职培', responsible_person: 'HR A', status: 'open', urgency: 'medium', headcount: 2, created_at: '2026-08-02' },
+    { id: 'p2', title: '销售', department: '到家', responsible_person: 'HR B', status: 'draft', urgency: 'low', headcount: 5, created_at: '2026-08-01' },
+  ];
+  const mappings = [
+    { raw_name: '旧运营', raw_names: '["运营专员"]', mapped_name: '标准运营', responsible_person: 'HR A' },
+    { raw_name: '待建岗位', raw_names: '[]', mapped_name: '尚未建档', responsible_person: 'HR A' },
+    { raw_name: '神秘岗位', raw_names: '[]', mapped_name: '无法匹配', responsible_person: 'HR B' },
+  ];
+  const resumes = [
+    { id: 'r1', position_id: 'p1', position_applied: '', mapped_position: '', parse_status: 'ai_screened' },
+    { id: 'r2', position_id: '', position_applied: '旧运营', mapped_position: '', parse_status: 'ai_screened' },
+    { id: 'r3', position_id: null, position_applied: '', mapped_position: '标准运营', parse_status: 'pending' },
+    { id: 'r4', position_id: '', position_applied: '神秘岗位', mapped_position: '', parse_status: 'pending' },
+    { id: 'r5', position_id: '', position_applied: '待建岗位', mapped_position: '', parse_status: 'pending' },
+  ];
+
+  return {
+    prepare(sql: string) {
+      return {
+        bind(...values: unknown[]) {
+          return {
+            async all() {
+              if (sql.includes('FROM positions')) {
+                const owner = sql.includes('responsible_person = ?') ? values[0] : null;
+                return { results: owner ? positions.filter((position) => position.responsible_person === owner) : positions };
+              }
+              if (sql.includes('FROM position_mappings')) {
+                const owner = sql.includes('responsible_person = ?') ? values[0] : null;
+                return { results: owner ? mappings.filter((mapping) => mapping.responsible_person === owner) : mappings };
+              }
+              if (sql.includes('FROM resumes')) {
+                if (sql.includes('COUNT(*)')) {
+                  const allowedIds = new Set(values.filter((value): value is string => typeof value === 'string'));
+                  const direct = resumes.filter((resume) => resume.position_id && (!allowedIds.size || allowedIds.has(resume.position_id)));
+                  const counts = new Map<string, { position_id: string; cnt: number; ai_screened: number }>();
+                  for (const resume of direct) {
+                    const row = counts.get(resume.position_id!) || { position_id: resume.position_id!, cnt: 0, ai_screened: 0 };
+                    row.cnt += 1;
+                    row.ai_screened += resume.parse_status === 'ai_screened' ? 1 : 0;
+                    counts.set(resume.position_id!, row);
+                  }
+                  return { results: [...counts.values()] };
+                }
+                return { results: resumes };
+              }
+              if (/FROM (interviews|offers|onboarding_records)/.test(sql)) return { results: [] };
+              throw new Error(`Unexpected SQL: ${sql}`);
+            },
+          };
+        },
+      };
+    },
+  };
+}
 
 describe('dashboard snapshot schema', () => {
   it('makes dashboard snapshots immutable in every bootstrap and migration definition', async () => {
@@ -250,6 +307,30 @@ describe('weighted role rules', () => {
 });
 
 describe('recruiting board aggregation', () => {
+  it('maps id-less resumes by position names and keeps unresolved records visible', async () => {
+    const rows = await getDashboardPositionRowsForOwner(createDashboardRowsDb() as never, null);
+
+    expect(rows.find((row) => row.position_id === 'p1')).toMatchObject({
+      position: '标准运营',
+      total_resumes: 3,
+      ai_screened: 2,
+    });
+    expect(rows).toContainEqual(expect.objectContaining({
+      position: '神秘岗位',
+      total_resumes: 1,
+      unmatched: true,
+    }));
+  });
+
+  it('keeps id-less fallback and unmatched resume rows within the requested owner scope', async () => {
+    const rows = await getDashboardPositionRowsForOwner(createDashboardRowsDb() as never, 'HR A');
+
+    expect(rows.find((row) => row.position_id === 'p1')).toMatchObject({ total_resumes: 3 });
+    expect(rows).toContainEqual(expect.objectContaining({ position: '待建岗位', unmatched: true, hrbp: 'HR A' }));
+    expect(rows.some((row) => row.position === '神秘岗位')).toBe(false);
+    expect(rows.some((row) => row.hrbp === 'HR B')).toBe(false);
+  });
+
   it('builds all dashboard levels and marks weekly completion unavailable', () => {
     const board = buildRecruitingBoard([{
       position_id: 'p1', division: '职培', hrbp: '王凯月', position: '销售', priority: 'P0', headcount: 2,
@@ -275,7 +356,38 @@ describe('recruiting board aggregation', () => {
     expect(board.kpis.interview_pass_rate).toEqual({ value: 25, available: true });
   });
 
-  it('exposes exactly the seven displayed KPI cards', () => {
+  it('publishes a zero pass rate when first interviews exist but none pass round three', () => {
+    const board = buildRecruitingBoard([{
+      position_id: 'p1', division: 'A', hrbp: 'HR A', position: '运营', priority: 'P1', headcount: 1,
+      total_resumes: 10, ai_screened: 8, first_interview: 4, first_pass: 2, second_pass: 1, third_pass: 0,
+      offers: 0, hired: 0, notes: '', status: '招聘中',
+    }], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
+
+    expect(board.totals.interview_pass_rate).toBe(0);
+    expect(board.kpis.interview_pass_rate).toEqual({ value: 0, available: true });
+    expect(board.divisions[0].interview_pass_rate).toBe(0);
+    expect(board.hrbps[0].interview_pass_rate).toBe(0);
+  });
+
+  it('counts headcount only for active positions and exposes it as KPI auxiliary data', () => {
+    const position = (position_id: string, status: string, headcount: number) => ({
+      position_id, division: 'A', hrbp: 'HR A', position: position_id, priority: 'P1' as const, headcount,
+      total_resumes: 0, ai_screened: 0, first_interview: 0, first_pass: 0, second_pass: 0, third_pass: 0,
+      offers: 0, hired: 0, notes: '', status,
+    });
+    const board = buildRecruitingBoard([
+      position('open', '招聘中', 2),
+      position('draft', '草稿', 7),
+      position('closed', '已完成', 11),
+    ], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
+
+    expect(board.totals).toMatchObject({ active_positions: 1, total_headcount: 2 });
+    expect(board.divisions[0]).toMatchObject({ active_positions: 1, total_headcount: 2 });
+    expect(board.hrbps[0]).toMatchObject({ active_positions: 1, total_headcount: 2 });
+    expect(board.kpis.total_headcount).toEqual({ value: 2, available: true });
+  });
+
+  it('exposes seven displayed KPI cards plus auxiliary active-position headcount', () => {
     const board = buildRecruitingBoard([], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
 
     expect(Object.keys(board.kpis).sort()).toEqual([
@@ -284,6 +396,7 @@ describe('recruiting board aggregation', () => {
       'hired',
       'interview_pass_rate',
       'offers',
+      'total_headcount',
       'total_resumes',
       'weekly_requirement_completion',
     ]);

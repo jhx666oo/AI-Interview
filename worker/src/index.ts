@@ -1290,12 +1290,13 @@ function applyRecruitingBoardOwnerScope(board: RecruitingBoard, owner: string | 
 }
 
 async function loadLiveRecruitingBoard(db: D1Database, owner: string | null): Promise<RecruitingBoard> {
-  return applyRecruitingBoardOwnerScope(makeRecruitingBoardResponse(await getDashboardPositionRowsForOwner(db, null)), owner);
+  return makeRecruitingBoardResponse(await getDashboardPositionRowsForOwner(db, owner));
 }
 
 app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
   const mode = c.req.query('mode') || 'live';
   if (mode !== 'live' && mode !== 'snapshot') return c.json({ detail: 'Invalid dashboard data mode' }, 400);
+  const owner = getDashboardOwner(c);
 
   let board: RecruitingBoard | null;
   if (mode === 'snapshot') {
@@ -1304,9 +1305,9 @@ app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
     board = await readDashboardSnapshot(c.env.DB, snapshotDate);
     if (!board) return c.json({ detail: 'Snapshot not found' }, 404);
   } else {
-    board = await loadLiveRecruitingBoard(c.env.DB, null);
+    board = await loadLiveRecruitingBoard(c.env.DB, owner);
   }
-  return c.json(applyRecruitingBoardOwnerScope(board, getDashboardOwner(c)));
+  return c.json(mode === 'snapshot' ? applyRecruitingBoardOwnerScope(board, owner) : board);
 });
 
 app.get('/api/dashboard/snapshots', authMiddleware, async (c) => {
@@ -1363,7 +1364,7 @@ function toPublicRecruitingBoard(board: Record<string, any>, scope: PublicShareS
   const scopedPositions = scopedRows.flatMap((row: any) => row.positions || []);
   const scopedKpis = scopedPositions.reduce((totals: Record<string, number>, position: any) => ({
     active_positions: totals.active_positions + (position.status === '招聘中' ? 1 : 0),
-    total_headcount: totals.total_headcount + (position.headcount || 0),
+    total_headcount: totals.total_headcount + (position.status === '招聘中' ? position.headcount || 0 : 0),
     total_resumes: totals.total_resumes + (position.total_resumes || 0),
     first_interview: totals.first_interview + (position.first_interview || 0),
     offers: totals.offers + (position.offers || 0),
@@ -1548,12 +1549,13 @@ async function getDashboardPositionRows(c: any): Promise<RecruitingBoardPosition
   return getDashboardPositionRowsForOwner(c.env.DB, getDashboardOwner(c));
 }
 
-async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | null): Promise<RecruitingBoardPositionRow[]> {
+export async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | null): Promise<RecruitingBoardPositionRow[]> {
   const ow = owner ? 'AND responsible_person = ?' : '';
   const op = owner ? [owner] : [];
   const positions = await db.prepare(`SELECT * FROM positions WHERE 1=1 ${ow} ORDER BY created_at DESC`).bind(...op).all();
+  const positionRows = positions.results || [];
 
-  const pIds = (positions.results || []).map((p: any) => p.id);
+  const pIds = positionRows.map((p: any) => p.id);
   let posFilter = '';
   let posParams: any[] = [];
   if (pIds.length > 0) {
@@ -1568,9 +1570,10 @@ async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | 
   const bindAll = (sql: string) => db.prepare(sql).bind(...posParams).all();
 
   const [
-    resumeCounts, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
+    mappings, resumes, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
   ] = await Promise.all([
-    bindAll(`SELECT position_id, COUNT(*) as cnt, SUM(CASE WHEN parse_status = 'ai_screened' THEN 1 ELSE 0 END) AS ai_screened FROM resumes WHERE 1=1 ${posFilter} GROUP BY position_id`),
+    db.prepare(`SELECT raw_name, raw_names, mapped_name, responsible_person FROM position_mappings ${owner ? 'WHERE responsible_person = ?' : ''}`).bind(...op).all(),
+    db.prepare('SELECT id, position_id, position_applied, mapped_position, parse_status FROM resumes').bind().all(),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 ${posFilter} GROUP BY position_id`),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(1)} ${posFilter} GROUP BY position_id`),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(2)} ${posFilter} GROUP BY position_id`),
@@ -1580,8 +1583,84 @@ async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | 
   ]);
 
   const toMap = (result: { results?: any[] }) => new Map((result.results || []).map((row: any) => [row.position_id, row.cnt || 0]));
-  const rMap = toMap(resumeCounts);
-  const aiScreenedMap = new Map((resumeCounts.results || []).map((row: any) => [row.position_id, row.ai_screened || 0]));
+  const normalizePositionName = (value: unknown) => typeof value === 'string' ? value.trim().toLocaleLowerCase('zh-CN') : '';
+  const positionById = new Map(positionRows.map((position: any) => [position.id, position]));
+  const positionByTitle = new Map<string, any | null>();
+  for (const position of positionRows) {
+    const title = normalizePositionName(position.title);
+    if (!title) continue;
+    const current = positionByTitle.get(title);
+    positionByTitle.set(title, current && current.id !== position.id ? null : position);
+  }
+
+  const mappedTitleByAlias = new Map<string, string | null>();
+  const addMappingAlias = (alias: unknown, mappedName: unknown) => {
+    const key = normalizePositionName(alias);
+    const target = normalizePositionName(mappedName);
+    if (!key || !target) return;
+    const current = mappedTitleByAlias.get(key);
+    mappedTitleByAlias.set(key, current && current !== target ? null : target);
+  };
+  for (const mapping of mappings.results || []) {
+    addMappingAlias(mapping.raw_name, mapping.mapped_name);
+    addMappingAlias(mapping.mapped_name, mapping.mapped_name);
+    if (typeof mapping.raw_names === 'string' && mapping.raw_names) {
+      try {
+        const aliases = JSON.parse(mapping.raw_names);
+        if (Array.isArray(aliases)) for (const alias of aliases) addMappingAlias(alias, mapping.mapped_name);
+      } catch { /* malformed legacy aliases are ignored */ }
+    }
+  }
+
+  const resolvePosition = (name: unknown) => {
+    const normalized = normalizePositionName(name);
+    if (!normalized) return null;
+    const direct = positionByTitle.get(normalized);
+    if (direct) return direct;
+    const mappedTitle = mappedTitleByAlias.get(normalized);
+    return mappedTitle ? positionByTitle.get(mappedTitle) || null : null;
+  };
+  const rMap = new Map<string, number>();
+  const aiScreenedMap = new Map<string, number>();
+  const unmatchedRows = new Map<string, RecruitingBoardPositionRow>();
+  for (const resume of resumes.results || []) {
+    const directPosition = typeof resume.position_id === 'string' ? positionById.get(resume.position_id) : null;
+    const candidates = [resume.mapped_position, resume.position_applied];
+    const fallbackPosition = candidates.map(resolvePosition).find(Boolean);
+    const position = directPosition || fallbackPosition;
+    if (position) {
+      rMap.set(position.id, (rMap.get(position.id) || 0) + 1);
+      if (resume.parse_status === 'ai_screened') aiScreenedMap.set(position.id, (aiScreenedMap.get(position.id) || 0) + 1);
+      continue;
+    }
+
+    const ownerRelated = !owner || candidates.some((name) => mappedTitleByAlias.has(normalizePositionName(name)));
+    if (!ownerRelated) continue;
+    const label = candidates.find((name) => typeof name === 'string' && name.trim())?.trim() || '未知岗位';
+    const unmatchedId = `unmatched:${normalizePositionName(label) || resume.id}`;
+    const unmatched = unmatchedRows.get(unmatchedId) || {
+      position_id: unmatchedId,
+      division: '',
+      hrbp: owner || '',
+      position: label,
+      priority: 'P2' as const,
+      headcount: 0,
+      total_resumes: 0,
+      ai_screened: 0,
+      first_interview: 0,
+      first_pass: 0,
+      second_pass: 0,
+      third_pass: 0,
+      offers: 0,
+      hired: 0,
+      notes: '未匹配到岗位档案',
+      status: '未匹配',
+      unmatched: true,
+    };
+    unmatched.total_resumes += 1;
+    unmatched.ai_screened += resume.parse_status === 'ai_screened' ? 1 : 0;
+    unmatchedRows.set(unmatchedId, unmatched);
+  }
   const f1SchedMap = toMap(iv1Scheduled);
   const f1PassMap = toMap(iv1Pass);
   const f2PassMap = toMap(iv2Pass);
@@ -1589,7 +1668,7 @@ async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | 
   const oMap = toMap(offerCounts);
   const hMap = toMap(hiredCounts);
 
-  return positions.results.map((pos: any) => {
+  const matchedRows = positionRows.map((pos: any) => {
     const totalResumes = rMap.get(pos.id) || 0;
     const firstInterview = getBoardFirstInterviewCount(f1SchedMap.get(pos.id) || 0, f1PassMap.get(pos.id) || 0);
     const firstPass = f1PassMap.get(pos.id) || 0;
@@ -1622,6 +1701,7 @@ async function getDashboardPositionRowsForOwner(db: D1Database, owner: string | 
       status: displayStatus,
     };
   });
+  return [...matchedRows, ...unmatchedRows.values()];
 }
 
 // AI 每日 token 用量查询

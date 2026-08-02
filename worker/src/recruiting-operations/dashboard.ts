@@ -114,14 +114,15 @@ function numberOrZero(value: unknown): number {
 }
 
 function interviewPassRate(totals: Pick<BoardTotals, 'first_interview' | 'third_pass'>): number | null {
-  if (totals.first_interview <= 0 || totals.third_pass <= 0) return null;
+  if (totals.first_interview <= 0) return null;
   return Math.round(totals.third_pass / totals.first_interview * 1000) / 10;
 }
 
 function sumRows(rows: Array<Partial<RecruitingBoardPositionRow>>): Omit<BoardTotals, 'interview_pass_rate'> {
   return rows.reduce((totals, row) => {
-    totals.active_positions += row.status === '招聘中' ? 1 : 0;
-    totals.total_headcount += numberOrZero(row.headcount);
+    const active = row.status === '招聘中';
+    totals.active_positions += active ? 1 : 0;
+    totals.total_headcount += active ? numberOrZero(row.headcount) : 0;
     for (const key of boardMetricKeys) totals[key] += numberOrZero(row[key]);
     return totals;
   }, emptyTotals());
@@ -179,6 +180,7 @@ function groupHrbpCards(rows: RecruitingBoardPositionRow[]): HrbpBoard[] {
 function makeKpis(totals: BoardTotals): Record<string, Metric> {
   return {
     active_positions: { value: totals.active_positions, available: true },
+    total_headcount: { value: totals.total_headcount, available: true },
     total_resumes: { value: totals.total_resumes, available: true },
     first_interview: { value: totals.first_interview, available: true },
     interview_pass_rate: { value: totals.interview_pass_rate, available: totals.interview_pass_rate !== null },

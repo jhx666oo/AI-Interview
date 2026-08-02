@@ -33,7 +33,7 @@ function PipelineTag({ status }: { status: string }) {
 }
 
 function getPassRate(firstInterview: number, thirdPass: number): number | null {
-  if (firstInterview <= 0 || thirdPass <= 0) return null;
+  if (firstInterview <= 0) return null;
   return Math.round(thirdPass / firstInterview * 1000) / 10;
 }
 

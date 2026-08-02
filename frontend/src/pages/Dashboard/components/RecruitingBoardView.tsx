@@ -99,7 +99,11 @@ function KpiGrid({ board }: { board: RecruitingBoard }) {
               </div>
               {item.key === 'weekly_requirement_completion' && unavailable
                 ? <div className={styles.kpiUnavailable}>暂未采集</div>
-                : <div className={styles.kpiCaption}>{dataCaption}</div>}
+                : <div className={styles.kpiCaption}>
+                  {item.key === 'active_positions'
+                    ? `在招人数 ${metricValue(board.kpis.total_headcount)} 人 · ${dataCaption}`
+                    : dataCaption}
+                </div>}
             </Card>
           );
         })}
