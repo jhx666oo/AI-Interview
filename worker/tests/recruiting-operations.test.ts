@@ -10,7 +10,7 @@ import {
   toShanghaiSnapshotDate,
   toPublicBoardRow,
 } from '../src/recruiting-operations/share-links';
-import { buildRecruitingBoard } from '../src/recruiting-operations/dashboard';
+import { buildRecruitingBoard, toPublicRecruitingBoard } from '../src/recruiting-operations/dashboard';
 
 describe('dashboard snapshot schema', () => {
   it('makes dashboard snapshots immutable in every bootstrap and migration definition', async () => {
@@ -214,6 +214,37 @@ describe('recruiting board aggregation', () => {
     }], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
 
     expect(board.kpis.interview_pass_rate).toEqual({ value: 25, available: true });
+  });
+
+  it('exposes exactly the seven displayed KPI cards', () => {
+    const board = buildRecruitingBoard([], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
+
+    expect(Object.keys(board.kpis).sort()).toEqual([
+      'active_positions',
+      'first_interview',
+      'hired',
+      'interview_pass_rate',
+      'offers',
+      'total_resumes',
+      'weekly_requirement_completion',
+    ]);
+  });
+
+  it('whitelists public v2 position fields before rebuilding scoped cards', () => {
+    const board = buildRecruitingBoard([{
+      position_id: 'p1', division: 'A', hrbp: 'HR A', position: '运营', priority: 'P1', headcount: 1,
+      total_resumes: 10, ai_screened: 8, first_interview: 6, first_pass: 4, second_pass: 3, third_pass: 2,
+      offers: 1, hired: 1, notes: 'public note', status: '招聘中',
+      candidate_name: 'Private Candidate', contact: '13800000000', email: 'candidate@example.com',
+      raw_text: 'private resume text', parsed_data: { age: 30 }, ai_evaluation: { hidden: true }, unknown_property: 'secret',
+    } as unknown as Parameters<typeof buildRecruitingBoard>[0][number]], { dataMode: 'live', updatedAt: '2026-08-02T15:00:00.000Z' });
+
+    const publicBoard = toPublicRecruitingBoard(board, { divisions: ['A'] });
+    const serialized = JSON.stringify(publicBoard);
+
+    for (const privateField of ['candidate_name', 'contact', 'email', 'raw_text', 'parsed_data', 'ai_evaluation', 'unknown_property']) {
+      expect(serialized).not.toContain(privateField);
+    }
   });
 
   it('uses a neutral deterministic insight when no funnel conversion can be calculated', () => {

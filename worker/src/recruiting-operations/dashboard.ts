@@ -179,7 +179,6 @@ function groupHrbpCards(rows: RecruitingBoardPositionRow[]): HrbpBoard[] {
 function makeKpis(totals: BoardTotals): Record<string, Metric> {
   return {
     active_positions: { value: totals.active_positions, available: true },
-    total_headcount: { value: totals.total_headcount, available: true },
     total_resumes: { value: totals.total_resumes, available: true },
     first_interview: { value: totals.first_interview, available: true },
     interview_pass_rate: { value: totals.interview_pass_rate, available: totals.interview_pass_rate !== null },
@@ -296,7 +295,26 @@ export function toPublicRecruitingBoard(
   scope: { divisions: string[] },
 ): RecruitingBoard {
   const positions = board.divisions.flatMap((division) => division.positions)
-    .filter((position) => scope.divisions.length === 0 || scope.divisions.includes(position.division));
+    .filter((position) => scope.divisions.length === 0 || scope.divisions.includes(position.division))
+    .map((position): RecruitingBoardPositionRow => ({
+      position_id: position.position_id,
+      division: position.division,
+      hrbp: position.hrbp,
+      position: position.position,
+      priority: position.priority,
+      headcount: position.headcount,
+      total_resumes: position.total_resumes,
+      ai_screened: position.ai_screened,
+      first_interview: position.first_interview,
+      first_pass: position.first_pass,
+      second_pass: position.second_pass,
+      third_pass: position.third_pass,
+      offers: position.offers,
+      hired: position.hired,
+      notes: position.notes,
+      status: position.status,
+      unmatched: position.unmatched,
+    }));
   return buildRecruitingBoard(positions, {
     dataMode: board.data_mode,
     updatedAt: board.updated_at,
