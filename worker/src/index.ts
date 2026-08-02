@@ -1570,8 +1570,9 @@ export async function getDashboardPositionRowsForOwner(db: D1Database, owner: st
   const bindAll = (sql: string) => db.prepare(sql).bind(...posParams).all();
 
   const [
-    mappings, resumes, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
+    knownPositions, mappings, resumes, iv1Scheduled, iv1Pass, iv2Pass, iv3Pass, offerCounts, hiredCounts
   ] = await Promise.all([
+    owner ? db.prepare('SELECT id FROM positions').bind().all() : Promise.resolve(positions),
     db.prepare(`SELECT raw_name, raw_names, mapped_name, responsible_person FROM position_mappings ${owner ? 'WHERE responsible_person = ?' : ''}`).bind(...op).all(),
     db.prepare('SELECT id, position_id, position_applied, mapped_position, parse_status FROM resumes').bind().all(),
     bindAll(`SELECT position_id, COUNT(*) as cnt FROM interviews WHERE round = 1 ${posFilter} GROUP BY position_id`),
@@ -1585,12 +1586,17 @@ export async function getDashboardPositionRowsForOwner(db: D1Database, owner: st
   const toMap = (result: { results?: any[] }) => new Map((result.results || []).map((row: any) => [row.position_id, row.cnt || 0]));
   const normalizePositionName = (value: unknown) => typeof value === 'string' ? value.trim().toLocaleLowerCase('zh-CN') : '';
   const positionById = new Map(positionRows.map((position: any) => [position.id, position]));
+  const knownPositionIds = new Set((knownPositions.results || []).map((position: any) => position.id));
   const positionByTitle = new Map<string, any | null>();
   for (const position of positionRows) {
     const title = normalizePositionName(position.title);
     if (!title) continue;
+    if (!positionByTitle.has(title)) {
+      positionByTitle.set(title, position);
+      continue;
+    }
     const current = positionByTitle.get(title);
-    positionByTitle.set(title, current && current.id !== position.id ? null : position);
+    if (current && current.id !== position.id) positionByTitle.set(title, null);
   }
 
   const mappedTitleByAlias = new Map<string, string | null>();
@@ -1598,8 +1604,12 @@ export async function getDashboardPositionRowsForOwner(db: D1Database, owner: st
     const key = normalizePositionName(alias);
     const target = normalizePositionName(mappedName);
     if (!key || !target) return;
+    if (!mappedTitleByAlias.has(key)) {
+      mappedTitleByAlias.set(key, target);
+      return;
+    }
     const current = mappedTitleByAlias.get(key);
-    mappedTitleByAlias.set(key, current && current !== target ? null : target);
+    if (current !== target) mappedTitleByAlias.set(key, null);
   };
   for (const mapping of mappings.results || []) {
     addMappingAlias(mapping.raw_name, mapping.mapped_name);
@@ -1624,7 +1634,9 @@ export async function getDashboardPositionRowsForOwner(db: D1Database, owner: st
   const aiScreenedMap = new Map<string, number>();
   const unmatchedRows = new Map<string, RecruitingBoardPositionRow>();
   for (const resume of resumes.results || []) {
-    const directPosition = typeof resume.position_id === 'string' ? positionById.get(resume.position_id) : null;
+    const positionId = typeof resume.position_id === 'string' ? resume.position_id.trim() : '';
+    const directPosition = positionId ? positionById.get(positionId) : null;
+    if (positionId && !directPosition && knownPositionIds.has(positionId)) continue;
     const candidates = [resume.mapped_position, resume.position_applied];
     const fallbackPosition = candidates.map(resolvePosition).find(Boolean);
     const position = directPosition || fallbackPosition;

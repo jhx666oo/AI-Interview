@@ -12,22 +12,23 @@ import {
 } from '../src/recruiting-operations/share-links';
 import { buildRecruitingBoard, toPublicRecruitingBoard } from '../src/recruiting-operations/dashboard';
 
-function createDashboardRowsDb() {
-  const positions = [
+function createDashboardRowsDb(overrides: { positions?: any[]; mappings?: any[]; resumes?: any[] } = {}) {
+  const positions = overrides.positions || [
     { id: 'p1', title: '标准运营', department: '职培', responsible_person: 'HR A', status: 'open', urgency: 'medium', headcount: 2, created_at: '2026-08-02' },
     { id: 'p2', title: '销售', department: '到家', responsible_person: 'HR B', status: 'draft', urgency: 'low', headcount: 5, created_at: '2026-08-01' },
   ];
-  const mappings = [
+  const mappings = overrides.mappings || [
     { raw_name: '旧运营', raw_names: '["运营专员"]', mapped_name: '标准运营', responsible_person: 'HR A' },
     { raw_name: '待建岗位', raw_names: '[]', mapped_name: '尚未建档', responsible_person: 'HR A' },
     { raw_name: '神秘岗位', raw_names: '[]', mapped_name: '无法匹配', responsible_person: 'HR B' },
   ];
-  const resumes = [
+  const resumes = overrides.resumes || [
     { id: 'r1', position_id: 'p1', position_applied: '', mapped_position: '', parse_status: 'ai_screened' },
     { id: 'r2', position_id: '', position_applied: '旧运营', mapped_position: '', parse_status: 'ai_screened' },
     { id: 'r3', position_id: null, position_applied: '', mapped_position: '标准运营', parse_status: 'pending' },
     { id: 'r4', position_id: '', position_applied: '神秘岗位', mapped_position: '', parse_status: 'pending' },
     { id: 'r5', position_id: '', position_applied: '待建岗位', mapped_position: '', parse_status: 'pending' },
+    { id: 'r6', position_id: 'p2', position_applied: '旧运营', mapped_position: '标准运营', parse_status: 'ai_screened' },
   ];
 
   return {
@@ -329,6 +330,46 @@ describe('recruiting board aggregation', () => {
     expect(rows).toContainEqual(expect.objectContaining({ position: '待建岗位', unmatched: true, hrbp: 'HR A' }));
     expect(rows.some((row) => row.position === '神秘岗位')).toBe(false);
     expect(rows.some((row) => row.hrbp === 'HR B')).toBe(false);
+  });
+
+  it('excludes another owner\'s valid position id even when its names alias to the requested owner', async () => {
+    const rows = await getDashboardPositionRowsForOwner(createDashboardRowsDb() as never, 'HR A');
+
+    expect(rows.find((row) => row.position_id === 'p1')).toMatchObject({ total_resumes: 3, ai_screened: 2 });
+    expect(rows.reduce((total, row) => total + row.total_resumes, 0)).toBe(4);
+    expect(rows.some((row) => row.position_id === 'p2' || row.hrbp === 'HR B')).toBe(false);
+  });
+
+  it('keeps title and alias lookups ambiguous after three conflicting entries', async () => {
+    const position = (id: string, title: string) => ({
+      id, title, department: '职培', responsible_person: 'HR A', status: 'open', urgency: 'medium', headcount: 1, created_at: '2026-08-02',
+    });
+    const rows = await getDashboardPositionRowsForOwner(createDashboardRowsDb({
+      positions: [
+        position('duplicate-1', '重复岗位'),
+        position('duplicate-2', '重复岗位'),
+        position('duplicate-3', '重复岗位'),
+        position('target-1', '目标一'),
+        position('target-2', '目标二'),
+        position('target-3', '目标三'),
+      ],
+      mappings: [
+        { raw_name: '共享别名', raw_names: '[]', mapped_name: '目标一', responsible_person: 'HR A' },
+        { raw_name: '共享别名', raw_names: '[]', mapped_name: '目标二', responsible_person: 'HR A' },
+        { raw_name: '共享别名', raw_names: '[]', mapped_name: '目标三', responsible_person: 'HR A' },
+      ],
+      resumes: [
+        { id: 'title-resume', position_id: '', position_applied: '重复岗位', mapped_position: '', parse_status: 'pending' },
+        { id: 'alias-resume', position_id: '', position_applied: '共享别名', mapped_position: '', parse_status: 'pending' },
+      ],
+    }) as never, 'HR A');
+
+    expect(rows.filter((row) => !row.unmatched).every((row) => row.total_resumes === 0)).toBe(true);
+    expect(rows).toContainEqual(expect.objectContaining({
+      position: '共享别名',
+      total_resumes: 1,
+      unmatched: true,
+    }));
   });
 
   it('builds all dashboard levels and marks weekly completion unavailable', () => {
