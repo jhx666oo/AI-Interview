@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createOrGetActiveJob } from './resume-processing/job-repository';
 import { normalizeResumeFields } from './resume-processing/fields';
-import { createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow } from './recruiting-operations/share-links';
+import { assertShareDataMode, createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow, toShanghaiSnapshotDate } from './recruiting-operations/share-links';
 import type { ShareExpiryOption } from './recruiting-operations/types';
 import {
   buildRecruitingBoard,
@@ -1241,8 +1241,105 @@ function makeRecruitingBoardResponse(positions: RecruitingBoardPositionRow[]) {
   return buildRecruitingBoard(positions, { dataMode: 'live', updatedAt: now() });
 }
 
+export async function createDashboardSnapshot(
+  db: D1Database,
+  snapshotDate: string,
+  board: RecruitingBoard,
+  generatedBy: string,
+  generatedAt: string,
+) {
+  const present = await db.prepare('SELECT id FROM dashboard_snapshots WHERE snapshot_date = ?').bind(snapshotDate).first();
+  if (present) throw new Error('snapshot already exists');
+  const row = {
+    id: uuid(),
+    snapshot_date: snapshotDate,
+    payload_json: JSON.stringify({ ...board, data_mode: 'snapshot', snapshot_date: snapshotDate }),
+    generated_at: generatedAt,
+    generated_by: generatedBy,
+    created_at: generatedAt,
+  };
+  try {
+    await db.prepare(
+      'INSERT INTO dashboard_snapshots (id, snapshot_date, payload_json, generated_at, generated_by, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(row.id, row.snapshot_date, row.payload_json, row.generated_at, row.generated_by, row.created_at).run();
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('UNIQUE constraint failed: dashboard_snapshots.snapshot_date')) {
+      throw new Error('snapshot already exists');
+    }
+    throw error;
+  }
+  return row;
+}
+
+export async function readDashboardSnapshot(db: D1Database, snapshotDate: string): Promise<RecruitingBoard | null> {
+  const row = await db.prepare('SELECT payload_json FROM dashboard_snapshots WHERE snapshot_date = ?').bind(snapshotDate).first<{ payload_json: string }>();
+  return row ? JSON.parse(row.payload_json) as RecruitingBoard : null;
+}
+
+async function readDashboardSnapshotById(db: D1Database, snapshotId: string): Promise<RecruitingBoard | null> {
+  const row = await db.prepare('SELECT payload_json FROM dashboard_snapshots WHERE id = ?').bind(snapshotId).first<{ payload_json: string }>();
+  return row ? JSON.parse(row.payload_json) as RecruitingBoard : null;
+}
+
+function applyRecruitingBoardOwnerScope(board: RecruitingBoard, owner: string | null): RecruitingBoard {
+  if (!owner) return board;
+  return buildRecruitingBoard(
+    board.divisions.flatMap((division) => division.positions).filter((position) => position.hrbp === owner),
+    { dataMode: board.data_mode, updatedAt: board.updated_at, snapshotDate: board.snapshot_date },
+  );
+}
+
+async function loadLiveRecruitingBoard(db: D1Database, owner: string | null): Promise<RecruitingBoard> {
+  return applyRecruitingBoardOwnerScope(makeRecruitingBoardResponse(await getDashboardPositionRowsForOwner(db, null)), owner);
+}
+
 app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
-  return c.json(makeRecruitingBoardResponse(await getDashboardPositionRows(c)));
+  const mode = c.req.query('mode') || 'live';
+  if (mode !== 'live' && mode !== 'snapshot') return c.json({ detail: 'Invalid dashboard data mode' }, 400);
+
+  let board: RecruitingBoard | null;
+  if (mode === 'snapshot') {
+    const snapshotDate = c.req.query('snapshot_date');
+    if (!snapshotDate) return c.json({ detail: 'snapshot_date is required' }, 400);
+    board = await readDashboardSnapshot(c.env.DB, snapshotDate);
+    if (!board) return c.json({ detail: 'Snapshot not found' }, 404);
+  } else {
+    board = await loadLiveRecruitingBoard(c.env.DB, null);
+  }
+  return c.json(applyRecruitingBoardOwnerScope(board, getDashboardOwner(c)));
+});
+
+app.get('/api/dashboard/snapshots', authMiddleware, async (c) => {
+  const result = await c.env.DB.prepare(
+    'SELECT id, snapshot_date, generated_at FROM dashboard_snapshots ORDER BY snapshot_date DESC',
+  ).all();
+  return c.json({ snapshots: result.results || [] });
+});
+
+app.post('/api/dashboard/snapshots', authMiddleware, requireRole(['admin']), async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const hasSuppliedDate = body !== null && typeof body === 'object'
+    && (Object.hasOwn(body, 'date') || Object.hasOwn(body, 'snapshot_date'));
+  if (c.req.query('date') !== undefined || c.req.query('snapshot_date') !== undefined || hasSuppliedDate) {
+    return c.json({ detail: 'Snapshots can only be created for today' }, 400);
+  }
+
+  const generatedAt = now();
+  const snapshotDate = toShanghaiSnapshotDate(new Date(generatedAt));
+  const user = (c as any).get('user') as any;
+  try {
+    const snapshot = await createDashboardSnapshot(
+      c.env.DB,
+      snapshotDate,
+      await loadLiveRecruitingBoard(c.env.DB, null),
+      user.email,
+      generatedAt,
+    );
+    return c.json({ id: snapshot.id, snapshot_date: snapshot.snapshot_date, generated_at: snapshot.generated_at }, 201);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'snapshot already exists') return c.json({ detail: error.message }, 409);
+    throw error;
+  }
 });
 
 type SharedBoardResult = { status: 200; body: Record<string, unknown> } | { status: 404; body: null };
@@ -1317,8 +1414,9 @@ function toPublicRecruitingBoard(board: Record<string, any>, scope: PublicShareS
 }
 
 function parsePublicShareScope(link: any): PublicShareScope {
-  const values = typeof link.scope_ids === 'string'
-    ? (safeJsonParse(link.scope_ids) || []).filter((value: unknown): value is string => typeof value === 'string')
+  const parsedValues = typeof link.scope_ids === 'string' ? safeJsonParse(link.scope_ids) : [];
+  const values: string[] = Array.isArray(parsedValues)
+    ? parsedValues.filter((value: unknown): value is string => typeof value === 'string')
     : [];
   const ownerValue = values.find((value) => value.startsWith(HR_OWNER_SCOPE_PREFIX));
   return {
@@ -1332,16 +1430,17 @@ export async function getSharedBoard(
   db: D1Database,
   token: string,
   at = new Date(),
-  loadBoard?: (scope: PublicShareScope) => Promise<Record<string, any>>,
+  loadBoard?: (scope: PublicShareScope, link: Record<string, any>) => Promise<Record<string, any> | null>,
 ): Promise<SharedBoardResult> {
   const tokenHash = await hashShareToken(token);
   const link = await db.prepare(
-    'SELECT scope_type, scope_ids, expires_at, revoked_at FROM dashboard_share_links WHERE token_hash = ?'
+    'SELECT scope_type, scope_ids, expires_at, revoked_at, data_mode, snapshot_id FROM dashboard_share_links WHERE token_hash = ?'
   ).bind(tokenHash).first() as any;
   if (!link || !isShareLinkActive(link, at)) return { status: 404, body: null };
 
   const scope = parsePublicShareScope(link);
-  const board = loadBoard ? await loadBoard(scope) : { version: 'v1', updated_at: at.toISOString(), kpis: {}, rows: [] };
+  const board = loadBoard ? await loadBoard(scope, link) : { version: 'v1', updated_at: at.toISOString(), kpis: {}, rows: [] };
+  if (!board) return { status: 404, body: null };
   return { status: 200, body: toPublicRecruitingBoard(board, scope) };
 }
 
@@ -1357,6 +1456,8 @@ function serializeShareLink(link: any) {
     scope_ids: safeJsonParse(link.scope_ids) || [],
     expires_at: link.expires_at,
     revoked_at: link.revoked_at,
+    data_mode: link.data_mode || 'live',
+    snapshot_id: link.snapshot_id || null,
     created_by: link.created_by,
     created_at: link.created_at,
   };
@@ -1366,6 +1467,17 @@ app.post('/api/dashboard/share-links', authMiddleware, requireRole(['admin', 'hr
   const body = await c.req.json().catch(() => ({})) as any;
   const expiry = body.expiry as ShareExpiryOption;
   if (!['1d', '7d', '30d', 'permanent'].includes(expiry)) return c.json({ detail: 'Invalid share expiry' }, 400);
+  const dataMode = body.data_mode ?? 'live';
+  const snapshotId = body.snapshot_id ?? null;
+  try {
+    assertShareDataMode(dataMode, snapshotId);
+  } catch (error) {
+    return c.json({ detail: error instanceof Error ? error.message : 'Invalid dashboard data mode' }, 400);
+  }
+  if (dataMode === 'snapshot') {
+    const snapshot = await c.env.DB.prepare('SELECT id FROM dashboard_snapshots WHERE id = ?').bind(snapshotId).first();
+    if (!snapshot) return c.json({ detail: 'Snapshot not found' }, 404);
+  }
   const user = c.get('user') as any;
   const isAdmin = user.role === 'admin';
   const scopeType = isAdmin && body.scope_type === 'divisions' ? 'divisions' : 'all';
@@ -1380,9 +1492,9 @@ app.post('/api/dashboard/share-links', authMiddleware, requireRole(['admin', 'hr
   const id = uuid();
   const createdAt = now();
   await c.env.DB.prepare(
-    'INSERT INTO dashboard_share_links (id, token_hash, scope_type, scope_ids, expires_at, revoked_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)'
-  ).bind(id, await hashShareToken(token), scopeType, JSON.stringify(scopeIds), expiresAt, user.email, createdAt).run();
-  return c.json({ link: { id, scope_type: scopeType, scope_ids: scopeIds, expires_at: expiresAt, revoked_at: null, created_by: user.email, created_at: createdAt }, token }, 201);
+    'INSERT INTO dashboard_share_links (id, token_hash, scope_type, scope_ids, expires_at, revoked_at, data_mode, snapshot_id, created_by, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)'
+  ).bind(id, await hashShareToken(token), scopeType, JSON.stringify(scopeIds), expiresAt, dataMode, snapshotId, user.email, createdAt).run();
+  return c.json({ link: { id, scope_type: scopeType, scope_ids: scopeIds, expires_at: expiresAt, revoked_at: null, data_mode: dataMode, snapshot_id: snapshotId, created_by: user.email, created_at: createdAt }, token }, 201);
 });
 
 app.get('/api/dashboard/share-links', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
@@ -1407,9 +1519,16 @@ app.delete('/api/dashboard/share-links/:id', authMiddleware, requireRole(['admin
 });
 
 app.get('/api/shared/dashboard/:token', async (c) => {
-  const result = await getSharedBoard(c.env.DB, c.req.param('token'), new Date(), async (scope) =>
-    makeRecruitingBoardResponse(await getDashboardPositionRowsForOwner(c.env.DB, scope.owner)),
-  );
+  const result = await getSharedBoard(c.env.DB, c.req.param('token'), new Date(), async (scope, link) => {
+    const dataMode = link.data_mode || 'live';
+    if (dataMode === 'snapshot') {
+      if (typeof link.snapshot_id !== 'string') return null;
+      const board = await readDashboardSnapshotById(c.env.DB, link.snapshot_id);
+      return board ? applyRecruitingBoardOwnerScope(board, scope.owner) : null;
+    }
+    if (dataMode !== 'live') return null;
+    return loadLiveRecruitingBoard(c.env.DB, scope.owner);
+  });
   return result.status === 404 ? c.notFound() : c.json(result.body);
 });
 
@@ -9704,6 +9823,16 @@ app.notFound(async (c) => {
 export default {
   fetch: app.fetch,
   async scheduled(event: any, env: any, ctx: any) {
+    if (event.cron === '55 15 * * *') {
+      ctx.waitUntil((async () => {
+        const at = new Date(event.scheduledTime);
+        const board = await loadLiveRecruitingBoard(env.DB, null);
+        try { await createDashboardSnapshot(env.DB, toShanghaiSnapshotDate(at), board, 'cron', at.toISOString()); }
+        catch (error) { if (!(error instanceof Error && error.message === 'snapshot already exists')) throw error; }
+      })());
+      return;
+    }
+
     // 1. 清除内存 bitableCache（原有逻辑）
     let beforeSize = bitableCache.size;
     for (const [key, entry] of bitableCache) {

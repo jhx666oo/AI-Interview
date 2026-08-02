@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { approveBatch, enrichScreeningEvaluation, evaluateHardRequirements, getBoardFirstInterviewCount, getBoardInterviewPassCondition, getDashboardOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, weightedScore } from '../src/index';
+import { approveBatch, createDashboardSnapshot, enrichScreeningEvaluation, evaluateHardRequirements, getBoardFirstInterviewCount, getBoardInterviewPassCondition, getDashboardOwner, getSharedBoard, groupBoardRows, normalizeCapabilityDimensions, readDashboardSnapshot, weightedScore } from '../src/index';
 import {
   assertShareDataMode,
   createShareExpiry,
@@ -24,6 +24,17 @@ describe('dashboard snapshot schema', () => {
       expect(sql).toMatch(/CREATE TRIGGER IF NOT EXISTS prevent_dashboard_snapshot_update\s+BEFORE UPDATE ON dashboard_snapshots[\s\S]*?RAISE\(ABORT, 'dashboard snapshot is immutable'\)/);
       expect(sql).toMatch(/CREATE TRIGGER IF NOT EXISTS prevent_dashboard_snapshot_delete\s+BEFORE DELETE ON dashboard_snapshots[\s\S]*?RAISE\(ABORT, 'dashboard snapshot is immutable'\)/);
     }
+  });
+});
+
+describe('dashboard snapshots', () => {
+  it('writes only the first snapshot for a date', async () => {
+    const db = createSnapshotDb();
+    await expect(createDashboardSnapshot(db as never, '2026-08-02', { version: 'v2' } as never, 'cron', '2026-08-02T15:55:00.000Z'))
+      .resolves.toMatchObject({ snapshot_date: '2026-08-02' });
+    await expect(createDashboardSnapshot(db as never, '2026-08-02', { version: 'v2' } as never, 'cron', '2026-08-02T15:56:00.000Z'))
+      .rejects.toThrow('snapshot already exists');
+    await expect(readDashboardSnapshot(db as never, '2026-08-02')).resolves.toMatchObject({ version: 'v2' });
   });
 });
 
@@ -301,6 +312,34 @@ describe('recruiting board aggregation', () => {
     expect(getDashboardOwner(incompleteHrContext)).toBe('__no_dashboard_owner__');
   });
 });
+
+function createSnapshotDb() {
+  const snapshots = new Map<string, { id: string; payload_json: string }>();
+
+  return {
+    prepare(sql: string) {
+      return {
+        bind(...values: unknown[]) {
+          return {
+            async first() {
+              const snapshotDate = values[0] as string;
+              const row = snapshots.get(snapshotDate);
+              if (sql.includes('SELECT id FROM dashboard_snapshots')) return row ? { id: row.id } : null;
+              if (sql.includes('SELECT payload_json FROM dashboard_snapshots')) return row ? { payload_json: row.payload_json } : null;
+              throw new Error(`Unexpected SQL: ${sql}`);
+            },
+            async run() {
+              if (!sql.includes('INSERT INTO dashboard_snapshots')) throw new Error(`Unexpected SQL: ${sql}`);
+              const [id, snapshotDate, payloadJson] = values as [string, string, string];
+              snapshots.set(snapshotDate, { id, payload_json: payloadJson });
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+}
 
 function createApprovalDb() {
   const rows: Record<string, { id: string; status: string; stage: string }> = {
