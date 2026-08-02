@@ -11,6 +11,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getDimensionScoreTotal, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 import { filterResumesByDemographics, filterResumesByMinimumDimensionScore } from '../../utils/resumeFilters';
 import { sortResumesNewestFirst } from '../../utils/resumeSort';
+import { getCurrentPageSelectionState, toggleCurrentPageSelection } from '../../utils/resumeSelection';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -1079,6 +1080,11 @@ const ResumesList: React.FC = () => {
   const pageSize = 20;
   const [cardPage, setCardPage] = useState(1);
   const pagedData = useMemo(() => data.slice((cardPage - 1) * pageSize, cardPage * pageSize), [data, cardPage, pageSize]);
+  const currentPageIds = useMemo(() => pagedData.map((record: any) => record.id).filter(Boolean), [pagedData]);
+  const currentPageSelection = useMemo(
+    () => getCurrentPageSelectionState(selectedRowKeys, currentPageIds),
+    [selectedRowKeys, currentPageIds],
+  );
 
   return (
     <div style={{ maxWidth: '100%' }}>
@@ -1246,6 +1252,14 @@ const ResumesList: React.FC = () => {
                 <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
               </>
             )}
+            <Checkbox
+              checked={currentPageSelection.checked}
+              indeterminate={currentPageSelection.indeterminate}
+              disabled={currentPageIds.length === 0}
+              onChange={(event) => setSelectedRowKeys((previous) => toggleCurrentPageSelection(previous, currentPageIds, event.target.checked))}
+            >
+              全选本页
+            </Checkbox>
             <div style={{ marginLeft: 24, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ width: 1, height: 20, background: '#E2E8F0' }} />
               <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
