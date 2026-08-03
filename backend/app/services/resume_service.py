@@ -105,37 +105,31 @@ def process_resume_task(payload: Dict[str, Any]):
         # 用 Markdown（如有）作为 AI 分析输入，质量更高
         content = resume_md or raw_text
 
-        position = db.query(Position).filter(Position.id == position_id).first()
-        if not position:
-            resume.parse_status = "failed"
-            resume.parse_error = "未找到对应岗位"
-            db.commit()
-            return
+        position = None
+        if position_id:
+            position = db.query(Position).filter(Position.id == position_id).first()
 
-        position_desc = f"{position.title}\n{position.description}\n{position.requirements}"
-
-        # 获取其他相近岗位（状态为 OPEN 或 PUBLISHED，排除当前岗位）
-        other_positions = db.query(Position).filter(
-            Position.id != position_id,
-            Position.status.in_([PositionStatus.OPEN, PositionStatus.PUBLISHED])
-        ).limit(5).all()
-
-        # 构建其他岗位信息字符串
-        other_positions_info = ""
-        if other_positions:
-            positions_list = []
-            for pos in other_positions:
-                pos_info = {
-                    "position_id": str(pos.id),
-                    "position_title": pos.title,
-                    "description": pos.description[:500] if pos.description else "",
-                    "requirements": pos.requirements[:300] if pos.requirements else "",
-                    "department": pos.department or "",
-                }
-                positions_list.append(pos_info)
-            other_positions_info = json.dumps(positions_list, ensure_ascii=False)
-        else:
-            other_positions_info = "暂无其他相近岗位"
+        position_desc = ""
+        other_positions_info = "暂无其他相近岗位"
+        if position:
+            position_desc = f"{position.title}\n{position.description}\n{position.requirements}"
+            # 获取其他相近岗位（状态为 OPEN 或 PUBLISHED，排除当前岗位）
+            other_positions = db.query(Position).filter(
+                Position.id != position_id,
+                Position.status.in_([PositionStatus.OPEN, PositionStatus.PUBLISHED])
+            ).limit(5).all()
+            if other_positions:
+                positions_list = []
+                for pos in other_positions:
+                    pos_info = {
+                        "position_id": str(pos.id),
+                        "position_title": pos.title,
+                        "description": pos.description[:500] if pos.description else "",
+                        "requirements": pos.requirements[:300] if pos.requirements else "",
+                        "department": pos.department or "",
+                    }
+                    positions_list.append(pos_info)
+                other_positions_info = json.dumps(positions_list, ensure_ascii=False)
 
         parsed_data = analyze_resume(content, position_desc, other_positions_info)
 
@@ -262,7 +256,7 @@ def on_resume_parse_failure(payload: Dict[str, Any], error: str):
         db.close()
 
 
-def process_resume_background(resume_id: UUID, position_id: UUID, use_user_info: bool = False):
+def process_resume_background(resume_id: UUID, position_id: Optional[UUID], use_user_info: bool = False):
     queue = get_task_queue()
     queue.submit(
         task_id=str(resume_id),
@@ -276,7 +270,7 @@ def process_resume_background(resume_id: UUID, position_id: UUID, use_user_info:
         on_failure=on_resume_parse_failure,
     )
 
-def upload_resume(db: Session, file: UploadFile, position_id: UUID, background_tasks: BackgroundTasks,
+def upload_resume(db: Session, file: UploadFile, position_id: Optional[UUID], background_tasks: BackgroundTasks,
                   candidate_name: str = None, email: str = None, contact: str = None):
     """
     上传简历
@@ -308,7 +302,7 @@ def upload_resume(db: Session, file: UploadFile, position_id: UUID, background_t
 
     return db_resume
 
-def batch_upload_resumes(db: Session, files: List[UploadFile], position_id: UUID, background_tasks: BackgroundTasks):
+def batch_upload_resumes(db: Session, files: List[UploadFile], position_id: Optional[UUID], background_tasks: BackgroundTasks):
     uploaded_resumes = []
     for file in files:
         resume = upload_resume(db, file, position_id, background_tasks)

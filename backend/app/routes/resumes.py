@@ -84,7 +84,7 @@ def validate_pdf_file(file: UploadFile):
 @router.post("", response_model=ResumeResponse)
 def create_resume_route(
     background_tasks: BackgroundTasks,
-    position_id: UUID = Form(...),
+    position_id: Optional[UUID] = Form(None),
     file: UploadFile = File(...),
     candidate_name: str = Form(None),  # 公开链接上传时由应聘者填写
     email: str = Form(None),
@@ -97,7 +97,7 @@ def create_resume_route(
 @router.post("/batch", response_model=List[ResumeResponse])
 def batch_upload_resumes_route(
     background_tasks: BackgroundTasks,
-    position_id: UUID = Form(...),
+    position_id: Optional[UUID] = Form(None),
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(check_roles([UserRole.ADMIN, UserRole.HR]))

@@ -38,7 +38,7 @@ const ResumeUpload: React.FC = () => {
     }
 
     const formData = new FormData();
-    formData.append('position_id', values.position_id);
+    if (values.position_id) formData.append('position_id', values.position_id);
     formData.append('file', fileList[0]);
 
     setLoading(true);
@@ -84,7 +84,6 @@ const ResumeUpload: React.FC = () => {
         <Form.Item
           name="position_id"
           label="应聘岗位"
-          rules={[{ required: true, message: '请选择应聘岗位' }]}
         >
           <Select placeholder="请选择岗位" showSearch loading={posLoading}
             filterOption={(input, option) =>

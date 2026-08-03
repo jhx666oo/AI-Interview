@@ -850,7 +850,7 @@ const ResumesList: React.FC = () => {
 
     // ④ 先建空记录（ocr_pending）拿 id，再 ocr-parse 落库
     const fd = new FormData();
-    fd.append('position_id', positionId);
+    if (positionId) fd.append('position_id', positionId);
     fd.append('file', file);
     fd.append('ocr_pending', 'true');
     const created = await request.post('/resumes', fd, {
@@ -886,7 +886,7 @@ const ResumesList: React.FC = () => {
         // 文本和扫描件都只上传一次并入队；MinerU 由 Worker consumer 调用，
         // 避免浏览器跨域直传 OSS 被 CORS 拦截，也保证离开页面后仍会继续处理。
         const formData = new FormData();
-        formData.append('position_id', values.position_id);
+        if (values.position_id) formData.append('position_id', values.position_id);
         formData.append('file', fileList[0]);
         if (rawText) formData.append('raw_text', rawText);
         await request.post('/resumes', formData, {
@@ -902,7 +902,7 @@ const ResumesList: React.FC = () => {
         for (const file of fileList) {
           try {
             const formData = new FormData();
-            formData.append('position_id', values.position_id);
+            if (values.position_id) formData.append('position_id', values.position_id);
             formData.append('file', file);
             // 尝试用 pdfjs 提取文本
             let fileRawText = '';
@@ -1405,7 +1405,6 @@ const ResumesList: React.FC = () => {
           <Form.Item
             name="position_id"
             label="应聘岗位"
-            rules={[{ required: true, message: '请选择应聘岗位' }]}
           >
             <Select placeholder="请选择应聘岗位" size="large" showSearch
               filterOption={(input, option) =>

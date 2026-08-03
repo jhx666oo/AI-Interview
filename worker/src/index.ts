@@ -314,9 +314,10 @@ export async function callAI(env: Env, systemPrompt: string, userPrompt: string,
     }
 
     const baseUrl = llm.baseUrl.replace(/\/+$/, '');
-    // 模型映射：deepseek-v4-flash 是内部别名，DeepSeek 官方只认 deepseek-chat
+    // 模型映射：deepseek-v4-flash 是内部别名，仅 DeepSeek 官方 API 需要映射为 deepseek-chat；
+    // 其他网关（如公司代理 sublink.daojia-inc.com）按配置模型名原样使用
     let aiModel = llm.model || model || 'deepseek-chat';
-    if (aiModel === 'deepseek-v4-flash') aiModel = 'deepseek-chat';
+    if (aiModel === 'deepseek-v4-flash' && baseUrl.includes('api.deepseek.com')) aiModel = 'deepseek-chat';
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 90000);
     let resp: Response;
@@ -2345,6 +2346,28 @@ function parseAIEvalForFields(rawAiEval: any, aiEvalStr: string, f: any): Record
   };
 }
 
+// resolvePositionTitle: 将用户/文件名解析出的岗位名匹配到系统标准岗位名
+// 依次尝试：精确匹配 → 去掉括号后缀匹配（产品运营经理（双休）→ 产品运营经理）→ 包含匹配
+export async function resolvePositionTitle(db: any, positionName: string): Promise<string> {
+  if (!positionName) return positionName;
+  const trimmed = String(positionName).trim();
+  if (!trimmed) return positionName;
+  try {
+    const exact = await db.prepare('SELECT title FROM positions WHERE title = ? LIMIT 1').bind(trimmed).first();
+    if (exact?.title) return exact.title;
+    // 去掉括号内容（全角/半角/书名号）后匹配
+    const stripped = trimmed.replace(/[（(【\[][^）)】\]]*[）)】\]]/g, '').trim();
+    if (stripped && stripped !== trimmed) {
+      const byStripped = await db.prepare('SELECT title FROM positions WHERE title = ? LIMIT 1').bind(stripped).first();
+      if (byStripped?.title) return byStripped.title;
+    }
+    // 包含匹配：岗位名包含库中标题，或库中标题包含岗位名
+    const like = await db.prepare("SELECT title FROM positions WHERE ? LIKE '%' || title || '%' OR title LIKE '%' || ? || '%' LIMIT 1").bind(trimmed, trimmed).first();
+    if (like?.title) return like.title;
+  } catch {}
+  return positionName;
+}
+
 // getPositionContext: 根据岗位名查询上下文（标准岗位名、能力维度、个性化需求、薪资范围）
 export async function getPositionContext(db: any, positionName: string): Promise<{
   standardPosition: string;
@@ -2365,7 +2388,13 @@ export async function getPositionContext(db: any, positionName: string): Promise
     }
   } catch {}
 
-  const lookupName = result.standardPosition || positionName;
+  let lookupName = result.standardPosition || positionName;
+  // 若精确岗位名匹配不到，尝试模糊匹配标准岗位名（去掉括号后缀等）
+  const resolvedTitle = await resolvePositionTitle(db, lookupName);
+  if (resolvedTitle !== lookupName) {
+    result.standardPosition = resolvedTitle;
+    lookupName = resolvedTitle;
+  }
 
   // 2. 能力维度：从 positions 表读取
   try {
@@ -3990,7 +4019,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
   try {
     const formData = await c.req.formData();
     const file = formData.get('file') as File | null;
-    const positionId = formData.get('position_id') as string;
+    let positionId = formData.get('position_id') as string;
 
     if (!file || !file.name) {
       return c.json({ detail: '请上传简历文件' }, 400);
@@ -4034,6 +4063,19 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     // 如果有解析出的岗位名，直接写入
     if (parsedPositionName) {
       fields['招聘岗位匹配'] = parsedPositionName;
+    }
+
+    // 如果没有传入 position_id，但从文件名解析出了岗位名，尝试自动匹配
+    if (!positionId && parsedPositionName) {
+      try {
+        const matchedPos = await c.env.DB.prepare(
+          'SELECT id, title FROM positions WHERE title = ? LIMIT 1'
+        ).bind(parsedPositionName).first<any>();
+        if (matchedPos) {
+          positionId = matchedPos.id;
+          fields['面试岗位'] = matchedPos.title;
+        }
+      } catch {}
     }
 
     // 如果有 position_id，尝试匹配岗位
@@ -5430,7 +5472,7 @@ app.post('/api/resumes/batch', authMiddleware, async (c) => {
     // 前端 FormData → 按单文件循环处理
     const formData = await c.req.formData();
     const files = formData.getAll('files');
-    const positionId = formData.get('position_id') as string;
+    let positionId = formData.get('position_id') as string;
     const results: any[] = [];
     for (const f of files) {
       try {

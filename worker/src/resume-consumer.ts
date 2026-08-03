@@ -4,7 +4,7 @@ import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { missingDimensionNames, normalizeDimensionScores } from './resume-processing/dimension-scores';
-import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext, normalizeCapabilityDimensions } from './index';
+import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
 
 export class RetryableResumeError extends Error {
   constructor(public readonly code: string, message?: string) {
@@ -118,9 +118,10 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? parsed as Record<string, unknown>
         : { summary: String(parsed || '') };
+      const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
       const positionRow = await env.DB.prepare(
         'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
-      ).bind(context.standardPosition || position).first() as any;
+      ).bind(resolvedTitle).first() as any;
       const configuredDimensions = normalizeCapabilityDimensions(positionRow?.capability_dimensions || []);
       const missingDimensions = missingDimensionNames(configuredDimensions.map(item => item.name), evaluation);
       if (missingDimensions.length > 0) {
