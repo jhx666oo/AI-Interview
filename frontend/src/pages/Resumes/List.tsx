@@ -55,6 +55,7 @@ const ResumesList: React.FC = () => {
   const [searchPerson, setSearchPerson] = useState<string | undefined>(undefined);
   const [responsiblePersons, setResponsiblePersons] = useState<string[]>([]);
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
+  const [searchMajor, setSearchMajor] = useState<string | undefined>(undefined);
   const [minimumAiTotalScore, setMinimumAiTotalScore] = useState<number | null>(null);
   const [minimumAge, setMinimumAge] = useState<number | null>(null);
   const [maximumAge, setMaximumAge] = useState<number | null>(null);
@@ -286,6 +287,10 @@ const ResumesList: React.FC = () => {
       // 岗位筛选（客户端过滤，因为 API 不支持岗位参数）
       if (searchPosition) {
         filtered = res.filter((r: any) => r.mapped_position === searchPosition);
+      }
+      // 专业筛选（客户端过滤，专业字段来自 parsed_data 提取）
+      if (searchMajor) {
+        filtered = filtered.filter((r: any) => (r.major || '').includes(searchMajor));
       }
       filtered = filterResumesByMinimumDimensionScore(filtered, minimumAiTotalScore);
       filtered = filterResumesByDemographics(filtered, {
@@ -1083,6 +1088,9 @@ const ResumesList: React.FC = () => {
     [selectedRowKeys, currentPageIds],
   );
 
+  // 专业筛选选项：从全部加载数据中提取去重
+  const majorOptions = Array.from(new Set((dataCache.current || []).map((r: any) => (r.major || '').trim()).filter(Boolean)));
+
   return (
     <div style={{ maxWidth: '100%' }}>
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
@@ -1221,6 +1229,22 @@ const ResumesList: React.FC = () => {
               </Select>
             </Space>
             <Space size={4}>
+              <Text style={{ fontSize: 13, color: '#333' }}>专业：</Text>
+              <Select
+                placeholder="全部"
+                value={searchMajor}
+                onChange={val => setSearchMajor(val)}
+                style={{ width: 130 }}
+                allowClear
+                showSearch
+                optionFilterProp="children"
+              >
+                {majorOptions.map((m: string) => (
+                  <Select.Option key={m} value={m}>{m}</Select.Option>
+                ))}
+              </Select>
+            </Space>
+            <Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>AI 总分 ≥</Text>
               <InputNumber min={0} value={minimumAiTotalScore} onChange={value => setMinimumAiTotalScore(value == null ? null : Number(value))} placeholder="不限" style={{ width: 88 }} />
             </Space>
@@ -1311,7 +1335,7 @@ const ResumesList: React.FC = () => {
                     <span style={{ fontWeight: 600, fontSize: 15 }}>{record.candidate_name || '未知'}</span>
                     <Tooltip title={[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '暂无信息'}>
                       <span style={{ color: '#bfbfbf', fontSize: 12, cursor: 'default', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {[genderText, ageText, record.education].filter(Boolean).join(' · ') || '—'}
+                        {[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '—'}
                       </span>
                     </Tooltip>
                     {record.position_applied && (
