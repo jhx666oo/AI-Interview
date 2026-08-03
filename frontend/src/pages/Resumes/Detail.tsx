@@ -708,7 +708,28 @@ const ResumeDetail: React.FC = () => {
               </>
             )}
           </Descriptions>
+                {/* 简历文本识别 */}
+        <Card bordered={false} style={{ borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', border: '1px solid #E2E8F0', marginTop: 16 }}>
+          <div style={{ marginBottom: 8 }}>
+            <Text strong style={{ fontSize: 16, color: '#6366F1' }}>简历文本识别</Text>
+            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>MinerU OCR 结构化文本</Text>
+          </div>
+          {(resume.ocr_markdown || resume.raw_text) ? (
+            <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', maxHeight: 500, overflow: 'auto' }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {(resume.ocr_markdown || resume.raw_text || '').substring(0, 100000)}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <div style={{ background: '#F8FAFC', padding: '32px 20px', borderRadius: '12px', border: '1px dashed #CBD5E1', textAlign: 'center', color: '#94A3B8' }}>
+              <FilePdfOutlined style={{ fontSize: 40, marginBottom: 12, color: '#CBD5E1' }} />
+              <div style={{ fontSize: 14 }}>暂无简历文本识别结果</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>简历上传后系统会自动进行 OCR 文本识别，识别结果将在此显示</div>
+            </div>
+          )}
         </Card>
+
+</Card>
 
         <Tabs
           style={{ marginTop: 16 }}

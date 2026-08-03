@@ -50,15 +50,56 @@ const JDGeneratorModal: React.FC<JDGeneratorModalProps> = ({
   }, [streamContent, chatMessages]);
 
   const parseJDContent = (content: string) => {
+    // 1) 优先解析严格 JSON
     try {
       const parsed = JSON.parse(content);
-      return {
-        description: parsed.description || '',
-        requirements: parsed.requirements || '',
-      };
-    } catch {
-      return { description: '', requirements: '' };
+      if (parsed && (parsed.description || parsed.requirements)) {
+        return {
+          description: typeof parsed.description === 'string' ? parsed.description : '',
+          requirements: typeof parsed.requirements === 'string' ? parsed.requirements : '',
+        };
+      }
+    } catch { /* fallthrough */ }
+    // 2) Markdown 兜底：按小节标题切分
+    const sectionRegex = /^#{1,4}\s*(岗位职责|工作职责|职责描述|职位描述|岗位描述|岗位要求|任职要求|职位要求|任职资格|招聘要求|加分项|我们提供|福利待遇)[^\n]*$/gm;
+    const headings: { title: string; index: number }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = sectionRegex.exec(content)) !== null) {
+      headings.push({ title: m[1], index: m.index });
     }
+    const isDescTitle = (t: string) => /职责|描述/.test(t) && !/要求|资格/.test(t);
+    const isReqTitle = (t: string) => /要求|资格|条件/.test(t);
+    const descIdx = headings.findIndex((h) => isDescTitle(h.title));
+    const reqIdx = headings.findIndex((h) => isReqTitle(h.title));
+    const extractSection = (start: number, end: number): string => {
+      const text = content.slice(start, end).replace(/^#{1,4}\s*[^\n]*\n+/gm, '').trim();
+      return text.replace(/^[-*]\s+/gm, '').trim();
+    };
+    let description = '';
+    let requirements = '';
+    if (descIdx >= 0) {
+      const start = headings[descIdx].index;
+      let end = content.length;
+      const next = headings.find((h) => h.index > start && h !== headings[descIdx]);
+      if (next && reqIdx >= 0 && headings[reqIdx].index > start) {
+        end = headings[reqIdx].index;
+      } else if (next) {
+        end = next.index;
+      }
+      description = extractSection(start, end);
+    }
+    if (reqIdx >= 0) {
+      const start = headings[reqIdx].index;
+      let end = content.length;
+      const next = headings.find((h) => h.index > start && h !== headings[reqIdx]);
+      if (next) end = next.index;
+      requirements = extractSection(start, end);
+    }
+    if (description || requirements) {
+      return { description, requirements };
+    }
+    // 3) 兜底：整体作为描述
+    return { description: content.trim(), requirements: '' };
   };
 
   const handleGenerate = async () => {

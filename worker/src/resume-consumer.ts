@@ -22,6 +22,7 @@ type ResumeConsumerDeps = {
   claim(jobId: string): Promise<unknown | null>;
   process(message: ResumeQueueMessage): Promise<void>;
   complete(jobId: string): Promise<void>;
+  resetJob(jobId: string): Promise<void>;
   fail(jobId: string, error: Error): Promise<void>;
 };
 
@@ -41,6 +42,7 @@ export async function handleResumeQueueMessage(
     message.ack();
   } catch (error) {
     if (error instanceof RetryableResumeError) {
+      await deps.resetJob(message.body.jobId);
       message.retry({ delaySeconds: 30 });
       return;
     }
@@ -83,7 +85,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
           const uploadUrl = data?.data?.file_url;
           if (!sign.ok || !taskId || !uploadUrl) throw new RetryableResumeError('OCR_SIGN_FAILED', data?.msg || 'MinerU 签名失败');
           const binary = Uint8Array.from(atob(content), (char) => char.charCodeAt(0));
-          const upload = await fetch(uploadUrl, { method: 'PUT', body: binary });
+          const upload = await fetch(uploadUrl, { method: 'PUT', body: binary, headers: { 'Content-Type': '' } });
           if (!upload.ok) throw new RetryableResumeError('OCR_UPLOAD_FAILED', 'MinerU 文件上传失败');
           return { taskId };
         },
@@ -178,7 +180,11 @@ export default {
       await handleResumeQueueMessage(message, {
         claim: (jobId) => claimJob(env.DB, jobId),
         process: (payload) => processWithD1(env, payload),
-        complete: async (jobId) => {
+        resetJob: async (jobId) => {
+        const timestamp = new Date().toISOString();
+        await env.DB.prepare("UPDATE resume_processing_jobs SET status='queued', updated_at=? WHERE id=? AND status='running'").bind(timestamp, jobId).run();
+      },
+      complete: async (jobId) => {
           const timestamp = new Date().toISOString();
           await env.DB.prepare("UPDATE resume_processing_jobs SET status='completed', completed_at=?, updated_at=? WHERE id=? AND status='running'")
             .bind(timestamp, timestamp, jobId).run();

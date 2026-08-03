@@ -38,6 +38,7 @@ interface Env {
   FEISHU_OAUTH_REDIRECT_URI?: string;
   RESUMES_KV?: KVNamespace;
   CRON_SECRET?: string;
+  RESUME_UPLOAD_API_KEY?: string; // 对外简历上传接口的 API Key（x-api-key header）
   RESUME_PROCESSING_QUEUE: Queue<{ jobId: string; resumeId: string }>;
 }
 
@@ -672,6 +673,75 @@ export function extractJSON(text: string): any {
   }
   // 4) 实在解析不出，返回原始文本（避免直接抛错导致整个 AI 功能崩溃）
   return cleaned;
+}
+
+// 解析 AI 生成的 JD 结果：优先取严格 JSON；模型返回 Markdown 时自动提取「岗位职责」与「任职要求」小节
+export function parseJDResult(result: string): { description: string; requirements: string } {
+  if (typeof result !== 'string' || !result.trim()) {
+    return { description: '', requirements: '' };
+  }
+  // 1) 尝试 JSON（兼容 extractJSON 的容错）
+  let parsed: any = null;
+  try {
+    const extracted = extractJSON(result);
+    if (extracted && typeof extracted === 'object' && !Array.isArray(extracted)) {
+      parsed = extracted;
+    }
+  } catch { /* ignore */ }
+  if (parsed && (parsed.description || parsed.requirements)) {
+    return {
+      description: typeof parsed.description === 'string' ? parsed.description : '',
+      requirements: typeof parsed.requirements === 'string' ? parsed.requirements : '',
+    };
+  }
+  // 2) Markdown 兜底：按常见小节标题切分
+  const sectionRegex = /^#{1,4}\s*(岗位职责|工作职责|职责描述|职位描述|岗位描述|岗位要求|任职要求|职位要求|任职资格|招聘要求|加分项|我们提供|福利待遇)[^\n]*$/gm;
+  const headings: { title: string; index: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = sectionRegex.exec(result)) !== null) {
+    headings.push({ title: m[1], index: m.index });
+  }
+  const isDescTitle = (t: string) => /职责|描述/.test(t) && !/要求|资格/.test(t);
+  const isReqTitle = (t: string) => /要求|资格|条件/.test(t);
+  const descIdx = headings.findIndex((h) => isDescTitle(h.title));
+  const reqIdx = headings.findIndex((h) => isReqTitle(h.title));
+  const extractSection = (start: number, end: number): string => {
+    const text = result.slice(start, end).replace(/^#{1,4}\s*[^\n]*\n+/gm, '').trim();
+    return text.replace(/^[-*]\s+/gm, '').trim();
+  };
+  let description = '';
+  let requirements = '';
+  if (descIdx >= 0) {
+    const start = headings[descIdx].index;
+    // 取下一个标题作为结束；若下一个就是任职要求，则职责段截止到它之前
+    let end = result.length;
+    const next = headings.find((h) => h.index > start && h !== headings[descIdx]);
+    if (next && reqIdx >= 0 && headings[reqIdx].index > start) {
+      end = headings[reqIdx].index;
+    } else if (next) {
+      end = next.index;
+    }
+    description = extractSection(start, end);
+  }
+  if (reqIdx >= 0) {
+    const start = headings[reqIdx].index;
+    let end = result.length;
+    const next = headings.find((h) => h.index > start && h !== headings[reqIdx]);
+    if (next) end = next.index;
+    requirements = extractSection(start, end);
+  }
+  if (description || requirements) {
+    return { description, requirements };
+  }
+  // 3) 完全无法解析时整体作为描述返回
+  return { description: result.trim(), requirements: '' };
+}
+
+// 将 AI 原始结果规范化为 SSE 输出（兼容 JDGeneratorModal 的 JSON 结构）
+function jdSSEBody(result: string): string {
+  const { description, requirements } = parseJDResult(result);
+  const payload = JSON.stringify({ description, requirements });
+  return sseBody(payload);
 }
 
 // ==================== D1 Helpers ====================
@@ -2926,6 +2996,7 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
         ).run();
         created++;
       }
+
     }
     
     return c.json({
@@ -4230,6 +4301,177 @@ app.post('/api/resumes', authMiddleware, async (c) => {
   }
 });
 
+// ==================== 对外简历上传接口（供外部系统调用，走与手动上传一致的异步处理链路）====================
+// 认证：x-api-key: <RESUME_UPLOAD_API_KEY>（推荐），也兼容现有 Bearer JWT。
+// 请求（multipart/form-data）：
+//   file            必填，PDF 简历文件
+//   position_applied 可选，岗位名（不传则尝试从文件名解析）
+//   candidate_name   可选，候选人姓名（不传则尝试从文件名解析）
+//   raw_text         可选，调用方已提取的简历文本（提供后跳过 MinerU OCR）
+//   source           可选，来源标识（默认 external）
+// 处理：保存文件 → 建 D1 记录 → 入队（OCR/字段提取/AI 初筛由后台消费者完成）→ 返回 202
+app.post('/api/resumes/external', async (c) => {
+  // —— 认证：x-api-key 或 Bearer JWT ——
+  let actor = 'external-api';
+  const apiKey = c.req.header('x-api-key') || '';
+  const auth = c.req.header('Authorization') || '';
+  const authMatch = auth.match(/^Bearer\s+(.+)$/i);
+  if (apiKey && c.env.RESUME_UPLOAD_API_KEY && apiKey === c.env.RESUME_UPLOAD_API_KEY) {
+    // 有效 API Key
+  } else if (authMatch) {
+    const payload = await verifyJwt(c.env.SECRET_KEY, authMatch[1]);
+    if (!payload) return c.json({ detail: 'Invalid token' }, 401);
+    const user = await getUser(c.env.DB, payload.sub);
+    if (!user || !user.is_active) return c.json({ detail: 'Not authorized' }, 401);
+    actor = user.email;
+  } else {
+    return c.json({ detail: 'Missing API key or token' }, 401);
+  }
+
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('file') as File | null;
+    const positionApplied = (formData.get('position_applied') as string) || '';
+    const candidateName = (formData.get('candidate_name') as string) || '';
+    const rawText = (formData.get('raw_text') as string) || '';
+    const source = (formData.get('source') as string) || 'external';
+
+    if (!file || !file.name) {
+      return c.json({ detail: '请上传简历文件（file 字段）' }, 400);
+    }
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      return c.json({ detail: '仅支持 PDF 格式' }, 400);
+    }
+
+    const fileBuffer = await file.arrayBuffer();
+    const fileBase64 = bufToB64(fileBuffer);
+    const fileId = 'file_' + crypto.randomUUID();
+    const recordId = crypto.randomUUID();
+
+    // 从文件名解析姓名和岗位（与手动上传一致）
+    let parsedPositionName = '';
+    let parsedCandidateName = '';
+    const bracketMatch = file.name.match(/^【(.+?)】(.+?)\.pdf$/i);
+    if (bracketMatch) {
+      parsedPositionName = bracketMatch[1].split('_')[0] || '';
+      parsedCandidateName = bracketMatch[2].split('_')[0] || '';
+    } else {
+      const parts = file.name.replace(/\.pdf$/i, '').split('_');
+      if (parts.length >= 2) {
+        parsedCandidateName = parts[0] || '';
+        parsedPositionName = parts[1] || '';
+      }
+    }
+
+    const displayName = candidateName || parsedCandidateName || file.name.replace(/\.pdf$/i, '');
+    const positionName = positionApplied || parsedPositionName || '';
+
+    // 保存文件内容（D1 base64）
+    try {
+      await c.env.DB.prepare(
+        `INSERT OR REPLACE INTO resume_files (id, kv_key, file_name, file_size, content, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))`
+      ).bind(recordId, fileId, file.name, file.size, fileBase64).run();
+    } catch (e: any) {
+      return c.json({ detail: '保存文件失败: ' + e.message }, 500);
+    }
+
+    // 建简历记录（有 raw_text 则直接可用，否则等后台 OCR）
+    const hasRawText = rawText && rawText.trim().length >= 20;
+    let ocrMarkdown = '';
+    // 如果没有 raw_text，由 Pages Worker 直接调用 MinerU OCR（消费者 Worker 的 OCR 链路不可靠）
+    if (!hasRawText) {
+      try {
+        const mineruBase = (c.env.MINERU_BASE || 'https://mineru.net').replace(/\/+$/, '');
+        // ① 获取签名上传 URL
+        const signResp = await fetch(`${mineruBase}/api/v1/agent/parse/file`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file_name: `${recordId}.pdf`,
+            language: 'ch',
+            is_ocr: true,
+            enable_table: true,
+            enable_formula: false,
+          }),
+        });
+        const signData: any = await signResp.json().catch(() => ({}));
+        const taskId = signData?.data?.task_id;
+        const uploadUrl = signData?.data?.file_url;
+        if (taskId && uploadUrl) {
+          // ② 上传文件到 MinerU
+          const binary = new Uint8Array(fileBuffer);
+          await fetch(uploadUrl, { method: 'PUT', body: binary, headers: { 'Content-Type': '' } });
+          // ③ 轮询 MinerU 结果（最多等 60 秒）
+          for (let i = 0; i < 12; i++) {
+            await new Promise((r) => setTimeout(r, 5000));
+            const statusResp = await fetch(`${mineruBase}/api/v1/agent/parse/${taskId}`);
+            const statusData: any = await statusResp.json().catch(() => ({}));
+            const state = statusData?.data?.state;
+            if (state === 'done') {
+              const mdUrl = statusData.data.markdown_url;
+              if (mdUrl) {
+                const mdResp = await fetch(mdUrl);
+                if (mdResp.ok) ocrMarkdown = await mdResp.text();
+              }
+              break;
+            }
+            if (state === 'failed') break;
+          }
+          // 即使 OCR 没完成，简历也先入队（消费者会重试处理）
+        }
+      } catch (e) {
+        console.error('[ExternalUpload] OCR 失败（不影响入队）:', e);
+      }
+    }
+    try {
+      await c.env.DB.prepare(
+        'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, ocr_markdown, parse_status, ocr_status, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(
+        recordId,
+        displayName,
+        positionName,
+        positionName,
+        JSON.stringify({ name: displayName, source }),
+        hasRawText ? rawText.substring(0, 200000) : (ocrMarkdown || ''),
+        ocrMarkdown || '',
+        (hasRawText || ocrMarkdown) ? 'pending_screening' : 'ocr_processing',
+        (hasRawText || ocrMarkdown) ? 'none' : 'ocr_processing',
+        'pending_screening',
+        now(),
+        now()
+      ).run();
+    } catch (dbErr: any) {
+      console.error('[ExternalUpload] D1 写入失败:', dbErr.message);
+      return c.json({ detail: '创建简历记录失败: ' + dbErr.message }, 500);
+    }
+
+    // 埋点
+    await logOperation(c.env, {
+      action: 'resume.create',
+      entityType: 'resume',
+      entityId: recordId,
+      actor,
+      detail: JSON.stringify({ file: file.name, size: file.size, candidate: displayName, source: 'external-api:' + source }),
+    });
+
+    // 入队：后台消费者负责 OCR（如需）→ 字段提取 → AI 初筛 → 更新 D1（前端列表自动可见）
+    const job = await createOrGetActiveJob(c.env.DB, recordId);
+    await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId: recordId });
+
+    return c.json({
+      id: recordId,
+      job_id: job.id,
+      candidate_name: displayName,
+      position_applied: positionName,
+      status: 'queued',
+      parse_status: hasRawText ? 'queued' : 'ocr_queued',
+      detail: '简历已接收，正在后台解析（字段提取 + AI 初筛）...',
+    }, 202);
+  } catch (e: any) {
+    return c.json({ detail: '上传简历失败: ' + e.message }, 500);
+  }
+});
+
 // ==================== MinerU 文档解析代理（Agent 轻量 API，免登录）====================
 // 背景：扫描件/图片型简历用 pdfjs 抽不到文本，需经 MinerU 转成 Markdown 后再走现有 callAI 结构化抽取。
 // 模式：前端签名上传（文件不经过 D1，避免 Pages 无 R2 的限制）。
@@ -4676,6 +4918,16 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
         ).run();
         created++;
       }
+
+      // 需要 AI 初筛/字段补全的简历，自动入队让后台消费者处理（OCR → 字段提取 → AI 初筛）
+      if (needsAutoScreen) {
+        try {
+          const job = await createOrGetActiveJob(c.env.DB, id);
+          await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId: id });
+        } catch (e) {
+          console.error(`[ResumeSyncFeishu] Failed to queue resume ${id}:`, e);
+        }
+      }
     }
 
     // 统计需要 OCR 兜底的简历数
@@ -4747,7 +4999,7 @@ app.post('/api/resumes/batch-ocr-mineru', authMiddleware, async (c) => {
         const { file_url, task_id } = signData.data;
 
         // 4. PUT 上传（空 Content-Type，兼容 MinerU 签名）
-        const putResp = await fetch(file_url, { method: 'PUT', body: pdfBytes });
+        const putResp = await fetch(file_url, { method: 'PUT', body: pdfBytes, headers: { 'Content-Type': '' } });
         if (!putResp.ok) { results.push({ id: row.id, status: 'upload_failed' }); continue; }
 
         // 5. 轮询等待 done
@@ -6151,7 +6403,7 @@ app.post('/api/positions/generate-jd-stream', authMiddleware, async (c) => {
   const userPrompt = `职位名称: ${title}\n部门: ${department || '未指定'}\n工作地点: ${location || '未指定'}\n薪资范围: ${salary_range || '面议'}\n\n请生成该职位的详细职责描述和任职要求。`;
   try {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
-    return new Response(sseBody(result), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
+    return new Response(jdSSEBody(result), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
   } catch (err: any) {
     return new Response(`data: ${JSON.stringify({ error: err.message })}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
   }
@@ -6172,7 +6424,7 @@ app.post('/api/positions/chat-jd-stream', authMiddleware, async (c) => {
   const userPrompt = `当前职位描述:\n${currentDesc}\n\n当前任职要求:\n${currentReq}\n\n用户修改意见:\n${userMsgs || '请优化完善'}\n\n请据此修改 JD 并返回完整 JSON。`;
   try {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
-    return new Response(sseBody(result), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
+    return new Response(jdSSEBody(result), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
   } catch (err: any) {
     return new Response(`data: ${JSON.stringify({ error: err.message })}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
   }
@@ -6288,13 +6540,12 @@ app.post('/api/requisitions/:id/ai-jd', authMiddleware, async (c) => {
     if (!result || !result.trim()) {
       return c.json({ detail: 'AI 未返回有效内容，请检查「AI 模型配置」中的 API Key 是否有效（DeepSeek key 失效或额度不足会导致此问题）' }, 500);
     }
-    let parsed: any;
-    try { parsed = extractJSON(result); } catch { parsed = { description: result, requirements: '' }; }
+    const parsed = parseJDResult(result);
     if (!parsed.description && !parsed.requirements) {
       return c.json({ detail: 'AI 返回内容无法解析为 JD 结构，请检查模型配置或稍后重试' }, 500);
     }
     await c.env.DB.prepare('UPDATE job_requisitions SET description = ?, requirements = ?, updated_at = ? WHERE id = ? OR feishu_record_id = ?')
-      .bind(parsed.description || '', parsed.requirements || '', now(), id, id).run();
+      .bind(parsed.description, parsed.requirements, now(), id, id).run();
     const row = await c.env.DB.prepare('SELECT * FROM job_requisitions WHERE id = ? OR feishu_record_id = ?').bind(id, id).first();
     return c.json(transformRow(row));
   } catch (err: any) {
