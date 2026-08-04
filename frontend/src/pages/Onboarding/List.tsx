@@ -49,7 +49,7 @@ const OnboardingList: React.FC = () => {
   }, []);
 
   const fetchResumes = useCallback(async () => {
-    try { const res = await request.get('/resumes', { params: { limit: 200 } }); setResumes(res || []); }
+    try { const res = await request.get('/resumes', { params: { limit: 200 } }); const items = Array.isArray(res) ? res : (res.items || []); setResumes(items); }
     catch (e) { }
   }, []);
 

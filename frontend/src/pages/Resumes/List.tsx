@@ -284,7 +284,8 @@ const ResumesList: React.FC = () => {
 
       // 始终从 API 拉取最新数据（避免缓存导致删除/上传后看不到变化）
       const res = await request.get('/resumes', { params });
-      let filtered = res;
+      const items = Array.isArray(res) ? res : (res.items || []);
+      let filtered = items;
       // 岗位筛选（客户端过滤，因为 API 不支持岗位参数）
       if (searchPosition) {
         filtered = res.filter((r: any) => r.mapped_position === searchPosition);
@@ -301,7 +302,7 @@ const ResumesList: React.FC = () => {
       });
       const sorted = sortResumesNewestFirst(filtered);
       setData(sorted);
-      dataCache.current = sortResumesNewestFirst(res);
+      dataCache.current = sortResumesNewestFirst(items);
       loadedRef.current = true;
 
       // 页面只观察 D1 中的任务状态，绝不因加载/刷新/路由切换而创建 AI 任务。
@@ -322,12 +323,13 @@ const ResumesList: React.FC = () => {
       pollingRef.current = setInterval(async () => {
         try {
           const res = await request.get('/resumes', { params: {} });
-          if (Array.isArray(res)) {
+          const pollItems = Array.isArray(res) ? res : (res.items || []);
+          if (pollItems.length > 0 || Array.isArray(res)) {
             // 更新数据展示（让用户看到实时进度）
-            setData(sortResumesNewestFirst(res));
+            setData(sortResumesNewestFirst(pollItems));
             
             const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
-            const hasProcessing = res.some((r: any) => activeStatuses.has(r.parse_status));
+            const hasProcessing = pollItems.some((r: any) => activeStatuses.has(r.parse_status));
             if (!hasProcessing) {
               setPollingEnabled(false);
               setLoading(false);
@@ -437,8 +439,9 @@ const ResumesList: React.FC = () => {
     setLoading(true);
     request.get('/resumes')
       .then(res => {
-        setData(res);
-        const hasProcessing = res.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
+        const items = Array.isArray(res) ? res : (res.items || []);
+        setData(items);
+        const hasProcessing = items.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
         setPollingEnabled(hasProcessing);
       })
       .catch(() => message.error('获取简历列表失败'))
