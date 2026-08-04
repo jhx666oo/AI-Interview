@@ -448,17 +448,6 @@ const PositionsList: React.FC = () => {
       // 查询该岗位已有的能力维度配置
       const res = await request.get('/capability-dimensions', { params: { position_name: record.title } });
       const existingRecord = Array.isArray(res) && res.length > 0 ? res[0] : null;
-      // 同时同步到 positions 表的 capability_dimensions 字段
-      try {
-        const dimNames = dims.map((d: any) => d.name).filter(Boolean);
-        const posRes = await request.get('/positions', { params: { title: dimPositionName } });
-        if (Array.isArray(posRes)) {
-          for (const pos of posRes) {
-            await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(dimNames) });
-          }
-        }
-      } catch { /* 同步失败不影响主流程 */ }
-
       if (existingRecord) {
         const dims = existingRecord.dimensions_json
           ? JSON.parse(existingRecord.dimensions_json)
@@ -466,6 +455,16 @@ const PositionsList: React.FC = () => {
         dimForm.setFieldsValue({
           dimensions: dims.length > 0 ? dims : [{ name: '', definition: '', behavior: '' }],
         });
+        // 同时同步到 positions 表的 capability_dimensions 字段
+        try {
+          const dimNames = dims.map((d: any) => d.name).filter(Boolean);
+          const posRes = await request.get('/positions', { params: { title: dimPositionName } });
+          if (Array.isArray(posRes)) {
+            for (const pos of posRes) {
+              await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(dimNames) });
+            }
+          }
+        } catch { /* 同步失败不影响主流程 */ }
       } else {
         dimForm.setFieldsValue({ dimensions: [{ name: '', definition: '', behavior: '' }] });
       }

@@ -68,4 +68,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ed758fc82ca4400593ddb447d3db57a4
+          workingDirectory: worker
           command: deploy --config wrangler.resume-consumer.toml
