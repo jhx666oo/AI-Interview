@@ -353,6 +353,7 @@ const InterviewsList: React.FC = () => {
         interview_time: interviewTime,
         interview_location: values.interview_location || '',
         interviewer_name: values.interviewer_name || '',
+        secondary_interviewer: values.secondary_interviewer || '',
       });
       message.success(`已安排面试：${name}`);
       setScheduleModalVisible(false);

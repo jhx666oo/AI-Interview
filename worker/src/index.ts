@@ -4052,11 +4052,26 @@ app.post('/api/interviews/:id/evaluate', authMiddleware, async (c) => {
   }
 });
 
+export function resolveInterviewAssignments(body: any, position: any): {
+  interviewer: string;
+  primaryInterviewer: string;
+  secondaryInterviewer: string;
+} {
+  const clean = (value: any) => value === undefined || value === null ? '' : String(value).trim();
+  const primaryInterviewer = clean(body?.interviewer_name || body?.primary_interviewer || position?.primary_interviewer);
+  const secondaryInterviewer = clean(body?.secondary_interviewer || position?.secondary_interviewer);
+  return {
+    interviewer: primaryInterviewer || '待分配',
+    primaryInterviewer,
+    secondaryInterviewer,
+  };
+}
+
 // 从人才库创建面试（人才库"面试"按钮调用）
 app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
-    const { candidate_name, position_applied, city, feishu_record_id, interviewer_name } = body;
+    const { candidate_name, position_applied, city, feishu_record_id, interviewer_name, secondary_interviewer } = body;
     const currentUser = c.get('user');
 
     if (!candidate_name) {
@@ -4165,31 +4180,24 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
 
     // 创建面试记录
     const interviewId = crypto.randomUUID();
-    const interviewerStr = interviewerNames.length > 0 ? interviewerNames.join(', ') : '待分配';
 
     // 从 positions 表同步面试官信息（一面/二面）
     // 只在用户没有手动指定面试官时补充
-    let primaryInterviewer = '';
-    let secondaryInterviewer = '';
+    let positionInterviewers: any = null;
     if (!interviewer_name && position_applied) {
       try {
-        const posRow = await c.env.DB.prepare(
+        positionInterviewers = await c.env.DB.prepare(
           "SELECT primary_interviewer, secondary_interviewer FROM positions WHERE title = ? LIMIT 1"
         ).bind(position_applied).first() as any;
-        if (posRow) {
-          primaryInterviewer = posRow.primary_interviewer || '';
-          secondaryInterviewer = posRow.secondary_interviewer || '';
-        }
       } catch {}
     }
-    if (interviewer_name && interviewerNames.length === 1) {
-      primaryInterviewer = interviewerNames[0];
-    }
+    const assignment = resolveInterviewAssignments({ interviewer_name, secondary_interviewer }, positionInterviewers);
+    const interviewerStr = interviewerNames.length > 0 ? interviewerNames.join(', ') : assignment.interviewer;
 
     await c.env.DB.prepare(
       `INSERT INTO interviews (id, resume_id, interviewer, position_id, status, created_at, comments, primary_interviewer, secondary_interviewer)
        VALUES (?, ?, ?, ?, 'scheduled', datetime('now'), ?, ?, ?)`
-    ).bind(interviewId, feishu_record_id || '', candidate_name, position_applied || '', interviewerStr, primaryInterviewer, secondaryInterviewer).run();
+    ).bind(interviewId, feishu_record_id || '', candidate_name, position_applied || '', interviewerStr, assignment.primaryInterviewer, assignment.secondaryInterviewer).run();
 
     // == 给面试官发飞书私信 ==
     const notificationResults: string[] = [];
