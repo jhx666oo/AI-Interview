@@ -34,9 +34,55 @@ const loadPdfjs = () => {
 const { Title, Text } = Typography;
 const RESUME_LIST_PAGE_SIZE = 200;
 
+type ResumeListStats = {
+  total: number;
+  pending_screening: number;
+  approved: number;
+  rejected: number;
+  offer_pending: number;
+  offer_accepted: number;
+  offer_rejected: number;
+  onboarding: number;
+  completed: number;
+};
+
+const EMPTY_RESUME_LIST_STATS: ResumeListStats = {
+  total: 0,
+  pending_screening: 0,
+  approved: 0,
+  rejected: 0,
+  offer_pending: 0,
+  offer_accepted: 0,
+  offer_rejected: 0,
+  onboarding: 0,
+  completed: 0,
+};
+
+function getResumeListStats(response: any, items: any[]): ResumeListStats {
+  const supplied = !Array.isArray(response) && response?.stats && typeof response.stats === 'object'
+    ? response.stats
+    : {};
+  const countStatus = (status: string) => items.filter((item) => item?.status === status).length;
+  const value = (key: keyof ResumeListStats, fallback: number) => Number.isFinite(Number(supplied[key]))
+    ? Number(supplied[key])
+    : fallback;
+  return {
+    total: value('total', Number(response?.total) || items.length),
+    pending_screening: value('pending_screening', countStatus('pending_screening')),
+    approved: value('approved', countStatus('approved')),
+    rejected: value('rejected', countStatus('rejected')),
+    offer_pending: value('offer_pending', countStatus('offer_pending')),
+    offer_accepted: value('offer_accepted', countStatus('offer_accepted')),
+    offer_rejected: value('offer_rejected', countStatus('offer_rejected')),
+    onboarding: value('onboarding', countStatus('onboarding')),
+    completed: value('completed', countStatus('completed')),
+  };
+}
+
 const ResumesList: React.FC = () => {
   const { user } = useAuth();
   const [data, setData] = useState([]);
+  const [listStats, setListStats] = useState<ResumeListStats>(EMPTY_RESUME_LIST_STATS);
   const [loading, setLoading] = useState(false);
   const [positions, setPositions] = useState([]);
   const [questionBanks, setQuestionBanks] = useState([]);
@@ -90,11 +136,6 @@ const ResumesList: React.FC = () => {
   const loadedRef = useRef(false);
   const resumeRefreshVersion = useRef(createRefreshVersion());
   const evaluatingRef = useRef(false); // 防止重复触发 auto-evaluate-all
-
-  // 统计卡片（基于筛选后的 data 实时计算）
-  const statsOffer = useMemo(() => data.filter((r: any) => r.status === 'offer_pending' || r.status === 'offer_accepted' || r.status === 'offer_rejected').length, [data]);
-  const statsPendingOnboard = useMemo(() => data.filter((r: any) => r.status === 'onboarding').length, [data]);
-  const statsCompletedOnboard = useMemo(() => data.filter((r: any) => r.status === 'completed' || r.status === 'offer_accepted').length, [data]);
 
   // 能力维度（评估依据）
   const [capDims, setCapDims] = useState<Record<string, any>>({});
@@ -308,6 +349,7 @@ const ResumesList: React.FC = () => {
       });
       const sorted = sortResumesNewestFirst(filtered);
       setData(sorted);
+      setListStats(getResumeListStats(res, items));
       dataCache.current = sortResumesNewestFirst(items);
       loadedRef.current = true;
 
@@ -335,6 +377,7 @@ const ResumesList: React.FC = () => {
           if (pollItems.length > 0 || Array.isArray(res)) {
             // 更新数据展示（让用户看到实时进度）
             setData(sortResumesNewestFirst(pollItems));
+            setListStats(getResumeListStats(res, pollItems));
             
             const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
             const hasProcessing = pollItems.some((r: any) => activeStatuses.has(r.parse_status));
@@ -458,6 +501,7 @@ const ResumesList: React.FC = () => {
       .then(res => {
         const items = Array.isArray(res) ? res : (res.items || []);
         setData(items);
+        setListStats(getResumeListStats(res, items));
         const hasProcessing = items.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
         setPollingEnabled(hasProcessing);
       })
@@ -1176,7 +1220,7 @@ const handleUploadClick = () => {
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>总简历数</span>}
-              value={data.length}
+              value={listStats.total}
               suffix="份"
               styles={{ content: { color: '#1677ff', fontSize: 22, fontWeight: 600 } }}
             />
@@ -1186,7 +1230,7 @@ const handleUploadClick = () => {
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>待处理</span>}
-              value={data.filter((r: any) => r.status === 'pending_screening').length}
+              value={listStats.pending_screening}
               suffix="人"
               styles={{ content: { color: '#fa8c16', fontSize: 22, fontWeight: 600 } }}
             />
@@ -1196,7 +1240,7 @@ const handleUploadClick = () => {
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>已入库</span>}
-              value={data.filter((r: any) => r.status === 'approved').length}
+              value={listStats.approved}
               suffix="人"
               styles={{ content: { color: '#52c41a', fontSize: 22, fontWeight: 600 } }}
             />
@@ -1206,7 +1250,7 @@ const handleUploadClick = () => {
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>已入职</span>}
-              value={statsCompletedOnboard}
+              value={listStats.completed + listStats.offer_accepted}
               suffix="人"
               styles={{ content: { color: '#722ed1', fontSize: 22, fontWeight: 600 } }}
             />
