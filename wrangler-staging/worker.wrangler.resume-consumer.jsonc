@@ -1,0 +1,34 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ai-interview-resume-consumer-staging",
+  "main": "src/resume-consumer.ts",
+  "compatibility_date": "2026-08-03",
+  "vars": {
+    "R2_ARTIFACT_WRITE": "true",
+    "R2_ARTIFACT_READ": "true",
+    "DIRECT_R2_UPLOAD": "true",
+    "RESUME_SQL_LIST": "true",
+    "RESUME_HYBRID_SEARCH": "true",
+    "RECRUITMENT_EVENTS": "true",
+    "RECRUITMENT_EVENT_METRICS": "true"
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "ai-interview-db-staging",
+    "database_id": "YOUR_STAGING_D1_ID",
+    "migrations_dir": "migrations"
+  }],
+  "r2_buckets": [{
+    "binding": "RESUME_ARTIFACTS",
+    "bucket_name": "ai-interview-resume-artifacts-staging",
+    "preview_bucket_name": "ai-interview-resume-artifacts-staging"
+  }],
+  "queues": {
+    "consumers": [{
+      "queue": "resume-processing-staging",
+      "max_batch_size": 1,
+      "max_batch_timeout": 5,
+      "max_concurrency": 3
+    }]
+  }
+}
