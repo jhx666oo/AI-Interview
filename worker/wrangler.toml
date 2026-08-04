@@ -25,3 +25,8 @@ queue = "resume-processing"
 # Cron triggers - 每天北京时间 9:00（UTC 1:00）检查待审核候选人并发飞书提醒；23:55 生成招聘看板快照
 [triggers]
 crons = ["0 1 * * *", "55 15 * * *"]
+
+# 简历 PDF 存储（KV，替代 D1 base64，避免 SQLITE_TOOBIG）
+[[kv_namespaces]]
+binding = "RESUMES_KV"
+id = "5da86e31124d49909ef2e5adfcd3f0d1"

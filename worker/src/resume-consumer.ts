@@ -64,6 +64,7 @@ type ConsumerEnv = {
   AI_DAILY_TOKEN_LIMIT?: string;
   AI: Ai;
   MINERU_BASE?: string;
+  RESUMES_KV?: KVNamespace;
   RESUME_ARTIFACTS?: R2Bucket;
   R2_ARTIFACT_READ?: string;
   R2_ARTIFACT_WRITE?: string;
@@ -76,13 +77,31 @@ async function updateResume(db: D1Database, resumeId: string, update: Record<str
     .bind(...keys.map((key) => update[key]), new Date().toISOString(), resumeId).run();
 }
 
+
+// 简历 PDF 读取：KV 优先（新数据），D1 content 兜底（旧数据）
+async function getResumeFileContent(env: ConsumerEnv, resumeId: string): Promise<{ content: string } | null> {
+  const row: any = await env.DB.prepare('SELECT content, kv_key FROM resume_files WHERE id=?').bind(resumeId).first();
+  if (row?.content) return { content: row.content };
+  const kv = env.RESUMES_KV;
+  if (kv) {
+    const value = await kv.get(row?.kv_key || 'kv_' + resumeId, 'arrayBuffer');
+    if (value) {
+      const bytes = new Uint8Array(value);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return { content: btoa(binary) };
+    }
+  }
+  return null;
+}
+
 async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Promise<void> {
   await processResume(message, {
     getResume: async (id) => await env.DB.prepare('SELECT * FROM resumes WHERE id=?').bind(id).first() as any,
     getText: async (resume) => {
       const baseUrl = (env.MINERU_BASE || 'https://mineru.net').replace(/\/$/, '');
       const resolved = await resolveResumeText(resume as any, {
-        getFile: async (resumeId) => await env.DB.prepare('SELECT content FROM resume_files WHERE id=?').bind(resumeId).first() as any,
+        getFile: (resumeId) => getResumeFileContent(env, resumeId),
         startOcr: async (content, resumeId) => {
           const sign = await fetch(`${baseUrl}/api/v1/agent/parse/file`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -238,8 +257,8 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
               return { content: btoa(binaryStr) };
             }
           }
-          // Fallback to D1
-          return await env.DB.prepare('SELECT content FROM resume_files WHERE id=?').bind(resumeId).first() as any;
+          // Fallback to KV / D1
+          return getResumeFileContent(env, resumeId);
         },
         startOcr: async (content, resumeId) => {
           const sign = await fetch(`\${baseUrl}/api/v1/agent/parse/file`, {

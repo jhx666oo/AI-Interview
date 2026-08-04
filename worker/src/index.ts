@@ -153,6 +153,60 @@ function b64ToBuf(s: string): Uint8Array {
   return bytes;
 }
 
+
+// ==================== Resume File Storage（KV 优先，D1 兜底）====================
+// 简历 PDF 不存 D1（SQLITE_TOOBIG ~1.6MB 限制），优先存 KV（25MB 限制）；
+// D1 resume_files 只留元数据，旧数据（content 列有 base64）继续兼容。
+async function storeResumeFile(
+  env: Env,
+  id: string,
+  fileName: string,
+  fileSize: number,
+  bytes: ArrayBuffer | Uint8Array,
+): Promise<void> {
+  const key = 'kv_' + id;
+  const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const kv = env.RESUMES_KV;
+  if (kv) {
+    await kv.put(key, body, { metadata: { fileName, fileSize } });
+    await env.DB.prepare(
+      "INSERT OR REPLACE INTO resume_files (id, kv_key, file_name, file_size, content, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))"
+    ).bind(id, key, fileName, fileSize, '').run();
+    return;
+  }
+  const b64 = bufToB64(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer);
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO resume_files (id, kv_key, file_name, file_size, content, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))"
+  ).bind(id, key, fileName, fileSize, b64).run();
+}
+
+async function getResumeFileBytes(
+  env: Env,
+  id: string,
+): Promise<{ bytes: Uint8Array | null; fileName: string }> {
+  const row: any = await env.DB.prepare('SELECT content, kv_key, file_name FROM resume_files WHERE id = ?').bind(id).first();
+  if (row?.content) {
+    return { bytes: b64ToBuf(row.content), fileName: row.file_name || 'resume.pdf' };
+  }
+  const kv = env.RESUMES_KV;
+  if (kv) {
+    const value = await kv.get(row?.kv_key || 'kv_' + id, 'arrayBuffer');
+    if (value) return { bytes: new Uint8Array(value), fileName: row?.file_name || 'resume.pdf' };
+  }
+  return { bytes: null, fileName: row?.file_name || 'resume.pdf' };
+}
+
+async function deleteResumeFile(env: Env, id: string): Promise<void> {
+  try {
+    const row: any = await env.DB.prepare('SELECT kv_key FROM resume_files WHERE id = ?').bind(id).first();
+    const kv = env.RESUMES_KV;
+    if (kv) {
+      const keys = row?.kv_key ? [row.kv_key, 'kv_' + id] : ['kv_' + id];
+      await Promise.all(keys.map((key) => kv.delete(key).catch(() => {})));
+    }
+  } catch {}
+}
+
 function b64url(s: string): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -4134,8 +4188,6 @@ app.post('/api/resumes', authMiddleware, async (c) => {
 
     const fileBuffer = await file.arrayBuffer();
     const fileSize = file.size;
-    const fileBase64 = bufToB64(fileBuffer);
-    const fileId = 'file_' + crypto.randomUUID();
 
     // 上传必须先可用：D1 UUID 是唯一事实来源；飞书回写由后台任务负责。
     // 不能以飞书网络成功作为简历入库的前置条件。
@@ -4201,11 +4253,9 @@ app.post('/api/resumes', authMiddleware, async (c) => {
 
     const recordId = crypto.randomUUID();
 
-    // 2. 在 D1 保存文件内容（base64）
+    // 2. 保存 PDF：优先 KV（大文件），D1 只留元数据
     try {
-      await c.env.DB.prepare(
-        `INSERT OR REPLACE INTO resume_files (id, kv_key, file_name, file_size, content, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))`
-      ).bind(recordId, fileId, file.name, fileSize, fileBase64).run();
+      await storeResumeFile(c.env, recordId, file.name, fileSize, fileBuffer);
     } catch (e: any) {
       return c.json({ detail: '保存文件失败: ' + e.message }, 500);
     }
@@ -4419,8 +4469,6 @@ app.post('/api/resumes/external', async (c) => {
     }
 
     const fileBuffer = await file.arrayBuffer();
-    const fileBase64 = bufToB64(fileBuffer);
-    const fileId = 'file_' + crypto.randomUUID();
     const recordId = crypto.randomUUID();
 
     // 从文件名解析姓名和岗位（与手动上传一致）
@@ -4441,11 +4489,9 @@ app.post('/api/resumes/external', async (c) => {
     const displayName = candidateName || parsedCandidateName || file.name.replace(/\.pdf$/i, '');
     const positionName = positionApplied || parsedPositionName || '';
 
-    // 保存文件内容（D1 base64）
+    // 保存 PDF：优先 KV（大文件），D1 只留元数据
     try {
-      await c.env.DB.prepare(
-        `INSERT OR REPLACE INTO resume_files (id, kv_key, file_name, file_size, content, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))`
-      ).bind(recordId, fileId, file.name, file.size, fileBase64).run();
+      await storeResumeFile(c.env, recordId, file.name, file.size, fileBuffer);
     } catch (e: any) {
       return c.json({ detail: '保存文件失败: ' + e.message }, 500);
     }
@@ -5061,10 +5107,10 @@ app.post('/api/resumes/batch-ocr-mineru', authMiddleware, async (c) => {
             }
           }
         }
-        // 2. 尝试从 D1 本地缓存获取
+        // 2. 尝试从本地缓存获取（KV 新数据 + D1 旧数据）
         if (!pdfBytes) {
-          const fileRow = await c.env.DB.prepare('SELECT content FROM resume_files WHERE id = ?').bind(row.id).first() as any;
-          if (fileRow?.content) pdfBytes = b64ToBuf(fileRow.content);
+          const file = await getResumeFileBytes(c.env, row.id);
+          if (file.bytes) pdfBytes = file.bytes;
         }
         if (!pdfBytes) { results.push({ id: row.id, status: 'no_pdf' }); continue; }
 
@@ -5399,15 +5445,14 @@ app.get('/api/resumes/:id/file', async (c) => {
 
     const recordId = c.req.param('id');
 
-    // 1. 【优先】D1 本地缓存 — 不依赖飞书 API，本地上传的 PDF 直接返回
+    // 1. 【优先】本地文件缓存（KV 新数据 + D1 旧数据）— 不依赖飞书 API，本地上传的 PDF 直接返回
     try {
-      const fileRow: any = await c.env.DB.prepare('SELECT content, file_name FROM resume_files WHERE id = ?').bind(recordId).first();
-      if (fileRow && fileRow.content) {
-        const pdfBytes = b64ToBuf(fileRow.content);
+      const file = await getResumeFileBytes(c.env, recordId);
+      if (file.bytes) {
         const disposition = isDownload ? 'attachment' : 'inline';
-        return new Response(pdfBytes, { status: 200, headers: {
+        return new Response(file.bytes, { status: 200, headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `${disposition}; filename="${fileRow.file_name || 'resume.pdf'}"`,
+          'Content-Disposition': `${disposition}; filename="${file.fileName || 'resume.pdf'}"`,
           'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
         }});
       }
@@ -5456,10 +5501,8 @@ app.get('/api/resumes/:id/file', async (c) => {
           const ct = dlResp.headers.get('Content-Type') || 'application/pdf';
           try {
             const arrBuf = await dlResp.clone().arrayBuffer();
-            const b64 = bufToB64(new Uint8Array(arrBuf));
             await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS resume_files (id TEXT PRIMARY KEY, content TEXT, file_name TEXT, created_at TEXT)').run();
-            await c.env.DB.prepare('INSERT OR REPLACE INTO resume_files (id, content, file_name, created_at) VALUES (?, ?, ?, ?)')
-              .bind(recordId, b64, attachmentFileName, new Date().toISOString()).run();
+            await storeResumeFile(c.env, recordId, attachmentFileName, arrBuf.byteLength, arrBuf);
           } catch {}
           const disposition = isDownload ? 'attachment' : 'inline';
           return new Response(dlResp.body, { status: 200, headers: {
@@ -5550,11 +5593,8 @@ app.post('/api/resumes/cache-files', authMiddleware, async (c) => {
       const resp = await downloadFeishuAttachment(c.env, fileToken, downloadUrl);
       if (resp) {
         const blob = await resp.clone().arrayBuffer();
-        const b64 = bufToB64(blob);
         const candidateName = f['姓名'] || 'resume';
-        await c.env.DB.prepare(
-          'INSERT OR REPLACE INTO resume_files (id, kv_key, file_name, file_size, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(rid, 'cache_' + fileToken, candidateName + '.pdf', blob.byteLength, b64, new Date().toISOString()).run();
+        await storeResumeFile(c.env, rid, candidateName + '.pdf', blob.byteLength, blob);
         cached++;
       } else {
         failed++;
@@ -5618,10 +5658,7 @@ app.post('/api/resumes/:id/cache-file', async (c) => {
     if (pdfHeader !== '%PDF-') {
       return c.json({ detail: '不是有效的 PDF 文件' }, 400);
     }
-    const b64 = bufToB64(ab);
-    await c.env.DB.prepare(
-      'INSERT OR REPLACE INTO resume_files (id, kv_key, file_name, file_size, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).bind(id, 'browser_cache_' + id, candidateName + '.pdf', ab.byteLength, b64, new Date().toISOString()).run();
+    await storeResumeFile(c.env, id, candidateName + '.pdf', ab.byteLength, ab);
     return c.json({ success: true, file_size: ab.byteLength });
   } catch (e) {
     return c.json({ detail: '缓存失败: ' + ((e as any).message || e) }, 500);
@@ -5693,6 +5730,7 @@ app.delete('/api/resumes/:id', authMiddleware, async (c) => {
   try {
     const resumeId = c.req.param('id');
     // 先删除计算真相源，避免 UI 显示已删但刷新后 D1 记录复活。
+    await deleteResumeFile(c.env, resumeId);
     await c.env.DB.batch([
       c.env.DB.prepare('DELETE FROM resume_processing_jobs WHERE resume_id = ?').bind(resumeId),
       c.env.DB.prepare('DELETE FROM resume_files WHERE id = ?').bind(resumeId),
@@ -6102,10 +6140,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
                   const dlResp = await downloadFeishuAttachment(c.env, fileToken, dlUrl);
                   if (dlResp) {
                     const blob = await dlResp.arrayBuffer();
-                    const b64 = bufToB64(blob);
-                    await c.env.DB.prepare(
-                      'INSERT OR REPLACE INTO resume_files (id, kv_key, file_name, file_size, content, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-                    ).bind(id, 'aiscreen_' + (fileToken || 'tmp'), (f['姓名'] || 'resume') + '.pdf', blob.byteLength, b64, new Date().toISOString()).run();
+                    await storeResumeFile(c.env, id, (f['姓名'] || 'resume') + '.pdf', blob.byteLength, blob);
                   }
                 }
                 break;
@@ -9420,15 +9455,13 @@ async function getResumeText(env: Env, candidateName: string): Promise<string> {
     if (d1Row?.resume_markdown) return d1Row.resume_markdown;
     if (d1Row?.raw_text) return d1Row.raw_text;
     if (d1Row?.id) {
-      const fileRow = await env.DB.prepare(
-        'SELECT content, file_name FROM resume_files WHERE id = ? LIMIT 1'
-      ).bind(d1Row.id).first() as any;
-      if (fileRow?.content) {
-        const base64Content = fileRow.content; // 不截断，确保完整 PDF 被解析
+      const file = await getResumeFileBytes(env, d1Row.id);
+      if (file.bytes) {
+        const base64Content = bufToB64(file.bytes.buffer.slice(file.bytes.byteOffset, file.bytes.byteOffset + file.bytes.byteLength) as ArrayBuffer);
         try {
           const extraction = await callAI(env,
             'You are a PDF text extractor. Extract ALL readable text from this base64 PDF content. Return ONLY the extracted text, no explanations.',
-            'Extract resume text from this base64 PDF (' + (fileRow.file_name || 'resume.pdf') + '):\n\n' + base64Content,
+            'Extract resume text from this base64 PDF (' + (file.fileName || 'resume.pdf') + '):\n\n' + base64Content,
             'deepseek-v4-flash'
           );
           if (extraction && extraction.length > 50) {

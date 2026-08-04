@@ -12,3 +12,8 @@ queue = "resume-processing"
 max_batch_size = 1
 max_batch_timeout = 5
 max_concurrency = 3
+
+# 简历 PDF 存储（KV，consumer OCR 读取用）
+[[kv_namespaces]]
+binding = "RESUMES_KV"
+id = "5da86e31124d49909ef2e5adfcd3f0d1"

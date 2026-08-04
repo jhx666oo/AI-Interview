@@ -23,3 +23,8 @@ binding = "AI"
 [[queues.producers]]
 binding = "RESUME_PROCESSING_QUEUE"
 queue = "resume-processing"
+
+# 简历 PDF 存储（KV，替代 D1 base64，避免 SQLITE_TOOBIG）
+[[kv_namespaces]]
+binding = "RESUMES_KV"
+id = "5da86e31124d49909ef2e5adfcd3f0d1"
