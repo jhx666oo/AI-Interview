@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Pages
+name: Deploy to Cloudflare
 
 on:
   push:
@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  frontend:
+    name: Deploy Frontend (Pages)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,12 +41,31 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: 66ff602626d5f02e290d70c920955171
+          accountId: ed758fc82ca4400593ddb447d3db57a4
           command: pages deploy frontend/dist --project-name ai-interview --branch main
 
-      - name: Deploy to hiring-platform
+  worker-resume-consumer:
+    name: Deploy Resume Consumer Worker
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy resume-consumer
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: 66ff602626d5f02e290d70c920955171
-          command: pages deploy frontend/dist --project-name hiring-platform --branch main
+          accountId: ed758fc82ca4400593ddb447d3db57a4
+          command: deploy --config wrangler.resume-consumer.toml
