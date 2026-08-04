@@ -8,6 +8,7 @@ const LIST_COLUMNS = `
   r.id, r.candidate_name, r.position_applied, r.mapped_position,
   r.status, r.stage, r.match_score, r.screening_result,
   r.gender, r.birthday, r.education, r.work_experience,
+  r.ai_review, r.ai_evaluation,
   r.parsed_data, r.capability_scores, r.hard_requirement_result,
   r.parse_status, r.ocr_status,
   r.email, r.contact,
@@ -52,9 +53,30 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     }
   }
 
-  const countSql = `SELECT COUNT(*) as total FROM resumes r ${whereClause}`;
+  const countSql = `SELECT
+    COUNT(*) as total,
+    SUM(CASE WHEN r.status = 'pending_screening' THEN 1 ELSE 0 END) as pending_screening,
+    SUM(CASE WHEN r.status = 'approved' THEN 1 ELSE 0 END) as approved,
+    SUM(CASE WHEN r.status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+    SUM(CASE WHEN r.status = 'offer_pending' THEN 1 ELSE 0 END) as offer_pending,
+    SUM(CASE WHEN r.status = 'offer_accepted' THEN 1 ELSE 0 END) as offer_accepted,
+    SUM(CASE WHEN r.status = 'offer_rejected' THEN 1 ELSE 0 END) as offer_rejected,
+    SUM(CASE WHEN r.status = 'onboarding' THEN 1 ELSE 0 END) as onboarding,
+    SUM(CASE WHEN r.status = 'completed' THEN 1 ELSE 0 END) as completed
+    FROM resumes r ${whereClause}`;
   const countResult = await c.env.DB.prepare(countSql).bind(...params).first<{ total: number }>();
   const total = countResult?.total ?? 0;
+  const stats = {
+    total: Number(countResult?.total || 0),
+    pending_screening: Number((countResult as any)?.pending_screening || 0),
+    approved: Number((countResult as any)?.approved || 0),
+    rejected: Number((countResult as any)?.rejected || 0),
+    offer_pending: Number((countResult as any)?.offer_pending || 0),
+    offer_accepted: Number((countResult as any)?.offer_accepted || 0),
+    offer_rejected: Number((countResult as any)?.offer_rejected || 0),
+    onboarding: Number((countResult as any)?.onboarding || 0),
+    completed: Number((countResult as any)?.completed || 0),
+  };
 
   const offset = (page - 1) * pageSize;
   const dataSql = `SELECT ${LIST_COLUMNS} FROM resumes r ${whereClause} ORDER BY r.updated_at DESC LIMIT ? OFFSET ?`;
@@ -69,6 +91,8 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     if (r.parsed_data) { try { item.parsed_data = JSON.parse(r.parsed_data); } catch {} }
     if (r.capability_scores) { try { item.capability_scores = JSON.parse(r.capability_scores); } catch {} }
     if (r.hard_requirement_result) { try { item.hard_requirement_result = JSON.parse(r.hard_requirement_result); } catch {} }
+    if (r.ai_evaluation) { try { item.ai_evaluation = JSON.parse(r.ai_evaluation); } catch {} }
+    if (r.ai_review) { try { item.ai_review = JSON.parse(r.ai_review); } catch {} }
     if (r.screening_result) {
       const sr = r.screening_result;
       item.screening_label = sr.includes('通过') ? '通过' : sr.includes('淘汰') ? '淘汰' : sr.includes('存疑') ? '存疑' : sr;
@@ -77,7 +101,7 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     return item;
   });
 
-  return c.json({ items, total, page, page_size: pageSize });
+  return c.json({ items, total, stats, page, page_size: pageSize });
 }
 
 function getOwnerName(c: any): string | null {
