@@ -18,11 +18,6 @@
     "database_id": "3f82993e-210d-4b0b-9d83-4ed4be69724f",
     "migrations_dir": "migrations"
   }],
-  "r2_buckets": [{
-    "binding": "RESUME_ARTIFACTS",
-    "bucket_name": "ai-interview-resume-artifacts",
-    "preview_bucket_name": "ai-interview-resume-artifacts-staging"
-  }],
   "queues": {
     "producers": [{
       "binding": "RESUME_PROCESSING_QUEUE",
