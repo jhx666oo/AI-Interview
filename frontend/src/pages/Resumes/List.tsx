@@ -288,7 +288,7 @@ const ResumesList: React.FC = () => {
       let filtered = items;
       // 岗位筛选（客户端过滤，因为 API 不支持岗位参数）
       if (searchPosition) {
-        filtered = res.filter((r: any) => r.mapped_position === searchPosition);
+        filtered = items.filter((r: any) => r.mapped_position === searchPosition);
       }
       // 专业筛选（客户端过滤，专业字段来自 parsed_data 提取）
       if (searchMajor) {
@@ -307,7 +307,7 @@ const ResumesList: React.FC = () => {
 
       // 页面只观察 D1 中的任务状态，绝不因加载/刷新/路由切换而创建 AI 任务。
       const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
-      setPollingEnabled(res.some((r: any) => activeStatuses.has(r.parse_status)));
+      setPollingEnabled(items.some((r: any) => activeStatuses.has(r.parse_status)));
 
       return res;
     } catch (error) {
