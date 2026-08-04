@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress } from 'antd';
 import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, ThunderboltOutlined, CloudUploadOutlined } from '@ant-design/icons';
-import * as pdfjsLib from 'pdfjs-dist';
 import DOMPurify from 'dompurify';
 import request from '../../utils/request';
 import { downloadExcel } from '../../utils/exportExcel';
@@ -17,8 +16,23 @@ import { createRefreshVersion } from '../../utils/resumeRefresh';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
+let pdfjsModulePromise: Promise<typeof import('pdfjs-dist')> | null = null;
+
+const loadPdfjs = () => {
+  if (!pdfjsModulePromise) {
+    pdfjsModulePromise = import('pdfjs-dist').then((pdfjsLib) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.min.js',
+        import.meta.url,
+      ).toString();
+      return pdfjsLib;
+    });
+  }
+  return pdfjsModulePromise;
+};
 
 const { Title, Text } = Typography;
+const RESUME_LIST_PAGE_SIZE = 200;
 
 const ResumesList: React.FC = () => {
   const { user } = useAuth();
@@ -68,18 +82,6 @@ const ResumesList: React.FC = () => {
   useEffect(() => {
     setSearchPerson(selectedOwner);
   }, [selectedOwner]);
-  const fetchResponsiblePersons = async () => {
-    try {
-      const res = await request.get('/positions');
-      // 从岗位列表收集所有非空责任人
-      const names: string[] = [];
-      (res || []).forEach((p: any) => {
-        if (p.responsible_person) names.push(p.responsible_person);
-      });
-      // 去重排序
-      setResponsiblePersons([...new Set(names)].sort());
-    } catch { /* ignore */ }
-  };
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewRecord, setPreviewRecord] = useState<any>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('');
@@ -277,7 +279,7 @@ const ResumesList: React.FC = () => {
     const requestVersion = resumeRefreshVersion.current.capture();
     if (!silent) setLoading(true);
     try {
-      const params: any = {};
+      const params: any = { page: 1, page_size: RESUME_LIST_PAGE_SIZE };
       if (searchName) params.candidate_name = searchName;
       if (searchStatus) params.status = searchStatus;
       const personFilter = searchPerson || selectedOwner;
@@ -327,7 +329,7 @@ const ResumesList: React.FC = () => {
       pollingRef.current = setInterval(async () => {
         const requestVersion = resumeRefreshVersion.current.capture();
         try {
-          const res = await request.get('/resumes', { params: {} });
+          const res = await request.get('/resumes', { params: { page: 1, page_size: RESUME_LIST_PAGE_SIZE } });
           if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return;
           const pollItems = Array.isArray(res) ? res : (res.items || []);
           if (pollItems.length > 0 || Array.isArray(res)) {
@@ -369,6 +371,8 @@ const ResumesList: React.FC = () => {
       const list = Array.isArray(res) ? res : (res?.positions || []);
       if (list && list.length > 0) {
         setPositions(list.map((r: any) => ({ id: r.id, title: r.title })));
+        const names: string[] = list.map((r: any) => r.responsible_person).filter(Boolean) as string[];
+        setResponsiblePersons([...new Set(names)].sort());
         return;
       }
       // 回退：从岗位映射表获取
@@ -410,13 +414,20 @@ const ResumesList: React.FC = () => {
 
 
   useEffect(() => {
-    fetchResumes();
     fetchPositions();
-    fetchResponsiblePersons();
-    fetchQuestionBanks();
-    fetchInterviewers();
-    fetchCapDims();
-    fetchEvalDims();
+    const loadDeferredConfig = () => {
+      fetchQuestionBanks();
+      fetchInterviewers();
+      fetchCapDims();
+      fetchEvalDims();
+    };
+    const idle = (window as any).requestIdleCallback;
+    if (typeof idle === 'function') {
+      const idleId = idle(loadDeferredConfig, { timeout: 1500 });
+      return () => (window as any).cancelIdleCallback?.(idleId);
+    }
+    const timer = window.setTimeout(loadDeferredConfig, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   // 全局负责人筛选变化时自动刷新
@@ -443,7 +454,7 @@ const ResumesList: React.FC = () => {
     dataCache.current = [];
     loadedRef.current = false;
     setLoading(true);
-    request.get('/resumes')
+    request.get('/resumes', { params: { page: 1, page_size: RESUME_LIST_PAGE_SIZE } })
       .then(res => {
         const items = Array.isArray(res) ? res : (res.items || []);
         setData(items);
@@ -783,15 +794,10 @@ const ResumesList: React.FC = () => {
     }
   };
 
-  // pdf.js worker — 使用本地打包的 worker，不走 CDN（避免国内网络问题）
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.js',
-    import.meta.url,
-  ).toString();
-
   // 从 PDF 文件提取纯文本（零 Token，带超时保护）
   const extractPdfText = async (file: File): Promise<string> => {
     try {
+      const pdfjsLib = await loadPdfjs();
       const arrayBuffer = await file.arrayBuffer();
       // 10 秒超时：大 PDF 或扫描件可能在本地提取太慢，直接走服务端 AI
       const pdf = await Promise.race([
