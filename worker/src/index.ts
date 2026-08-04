@@ -959,6 +959,21 @@ export async function approveBatch(db: D1Database, resumeIds: string[], actor = 
   return result;
 }
 
+/**
+ * Approves one resume through the D1 source of truth and returns its updated
+ * row. Newly uploaded resumes use a D1 UUID and may not have a Feishu record,
+ * so callers must not require a Feishu lookup for this operation to succeed.
+ */
+export async function approveSingleResume(db: D1Database, resumeId: string, actor = 'system'): Promise<Record<string, any> | null> {
+  const result = await approveBatch(db, [resumeId], actor);
+  const accepted = result.approved.includes(resumeId)
+    || result.skipped.some((item) => item.id === resumeId && item.reason === 'already_approved');
+  if (!accepted) return null;
+
+  const row = await db.prepare('SELECT * FROM resumes WHERE id = ?').bind(resumeId).first<Record<string, any>>();
+  return row ? transformRow(row) : null;
+}
+
 // ==================== Auth Middleware ====================
 
 async function getUser(db: D1Database, email: string): Promise<any | null> {
@@ -6173,16 +6188,26 @@ app.post('/api/resumes/:id/override-rejection', authMiddleware, async (c) => {
   return c.json(transformRow(row));
 });
 
-// 简历管理页面：入库 → 创建人才库记录 + 写入飞书多维表格
+// 简历管理页面：入库 → 先更新 D1，再尽力回写飞书多维表格
 app.post('/api/resumes/:id/approve-to-talent-pool', authMiddleware, async (c) => {
   const id = c.req.param('id');
+  const actor = c.get('user')?.email || 'system';
+  const d1Resume = await approveSingleResume(c.env.DB, id, actor);
   const talentTableId = getBitableTableId(c.env, 'talent');
-  let record = await bitableGetRecord(c.env, talentTableId, id);
-  if (!record) return c.json({ detail: 'Candidate not found in Bitable' }, 404);
+  try {
+    let record = await bitableGetRecord(c.env, talentTableId, id);
+    if (record) {
+      await bitableUpdateRecord(c.env, talentTableId, id, { 'HR复核结果': '通过' });
+      record = await bitableGetRecord(c.env, talentTableId, id);
+      if (record) return c.json(parseTalentRecord(record));
+    }
+  } catch (error: any) {
+    // D1 入库已经完成；飞书回写失败不应把新上传的简历误报成 404。
+    console.error(`[approve-to-talent-pool] 飞书回写失败(${id}): ${error?.message || error}`);
+  }
 
-  await bitableUpdateRecord(c.env, talentTableId, id, { 'HR复核结果': '通过' });
-  record = await bitableGetRecord(c.env, talentTableId, id);
-  return c.json(parseTalentRecord(record));
+  if (d1Resume) return c.json(d1Resume);
+  return c.json({ detail: 'Candidate not found' }, 404);
 });
 
 app.post('/api/resumes/batch-approve-to-talent-pool', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
