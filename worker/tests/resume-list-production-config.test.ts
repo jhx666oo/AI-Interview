@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('production resume list configuration', () => {
-  it('enables the lightweight SQL resume list on Pages', () => {
+  it('does not redeclare the Pages-managed lightweight list variable', () => {
     const config = readFileSync(resolve(process.cwd(), '../frontend/wrangler.toml'), 'utf8');
-    expect(config).toMatch(/RESUME_SQL_LIST\s*=\s*"true"/);
+    expect(config).not.toMatch(/^\s*RESUME_SQL_LIST\s*=/m);
   });
 });
