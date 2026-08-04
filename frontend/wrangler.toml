@@ -7,8 +7,6 @@ pages_build_output_dir = "dist"
 #   本地开发：frontend/.dev.vars（已 gitignore）
 [vars]
 AI_BASE_URL = "https://api.deepseek.com"
-# 简历列表走轻量分页查询，避免首屏读取 raw_text / resume_markdown 等长文本列
-RESUME_SQL_LIST = "true"
 
 [[d1_databases]]
 binding = "DB"
