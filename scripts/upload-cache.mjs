@@ -19,8 +19,6 @@ const WORKER_DIR = join(__dirname, '..', 'worker');
 const BASE = 'https://ai-interview-88r.pages.dev';
 const SECRET_KEY = process.env.SECRET_KEY || '';
 
-// hiring-platform: https://hiring-platform-ex4.pages.dev
-
 const FEISHU_CONFIG = {
   appId: process.env.FEISHU_APP_ID || '',
   appSecret: process.env.FEISHU_APP_SECRET || '',
