@@ -8,6 +8,7 @@ describe('resume queue consumer', () => {
       claim: async () => ({ id: 'job-1' }),
       process: async () => undefined,
       complete: async () => undefined,
+      resetJob: async () => undefined,
       fail: async () => undefined,
     });
     expect(message.ack).toHaveBeenCalledOnce();
@@ -19,6 +20,7 @@ describe('resume queue consumer', () => {
       claim: async () => ({ id: 'job-1' }),
       process: async () => { throw new RetryableResumeError('AI_TIMEOUT'); },
       complete: async () => undefined,
+      resetJob: async () => undefined,
       fail: async () => undefined,
     });
     expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 30 });

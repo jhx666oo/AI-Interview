@@ -112,6 +112,19 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 
 ## 部署
 
+### GitHub Actions 自动部署
+
+推送到 `main` 会自动运行 `.github/workflows/deploy.yml`：先构建并自检前端，再部署 `ai-interview` Pages 和 `resume-consumer` Queue Worker，最后请求生产 `/health` 做冒烟检查。Pull Request 和其他分支只运行 CI，不会发布生产。
+
+本仓库不再部署旧的 `hiring-platform` Pages 项目；该同构项目已迁移到 [AI-interview-plus](https://github.com/jhx666oo/AI-interview-plus)。
+
+仓库需要配置以下 GitHub Actions 配置：
+
+- Secret：`CLOUDFLARE_API_TOKEN`
+- Repository Variable：`CLOUDFLARE_ACCOUNT_ID`
+
+定时任务（日报、面试提醒、邮箱同步、飞书 token 刷新）仍由各自的 schedule workflow 独立运行。
+
 ```bash
 # 构建（tsc + vite + esbuild Worker 编译，一步到位）
 cd frontend && rm -rf dist node_modules/.vite && npm run build

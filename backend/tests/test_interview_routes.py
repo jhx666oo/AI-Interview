@@ -45,7 +45,7 @@ class TestCreateInterviewRoute:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["resume_id"] == str(test_resume.id)
-        assert data["status"] == "scheduled"
+        assert data["status"] == InterviewStatus.SCHEDULED.value
 
     def test_create_interview_unauthorized(self, client: TestClient,
                                             test_resume, test_position):
@@ -182,7 +182,7 @@ class TestStartInterviewRoute:
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data["status"] == "in_progress"
+        assert data["status"] == InterviewStatus.IN_PROGRESS.value
 
     def test_start_interview_not_found(self, client: TestClient, auth_headers: dict):
         """测试开始不存在的面试"""
@@ -218,7 +218,7 @@ class TestCancelInterviewRoute:
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data["status"] == "cancelled"
+        assert data["status"] == InterviewStatus.CANCELLED.value
 
     def test_cancel_interview_with_reason(self, client: TestClient, auth_headers: dict,
                                           test_interview: Interview):
@@ -259,7 +259,7 @@ class TestConfirmInterviewRoute:
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data["result"] == "passed"
+        assert data["result"] == InterviewResult.PASSED.value
 
     def test_confirm_interview_rejected(self, client: TestClient, auth_headers: dict,
                                         test_interview: Interview, db: Session):
@@ -275,7 +275,7 @@ class TestConfirmInterviewRoute:
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        assert data["result"] == "rejected"
+        assert data["result"] == InterviewResult.REJECTED.value
 
     def test_confirm_interview_not_found(self, client: TestClient, auth_headers: dict):
         """测试确认不存在面试的结果"""

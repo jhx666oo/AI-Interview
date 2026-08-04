@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: production-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   frontend:
     name: Deploy Frontend (Pages)
@@ -37,13 +41,19 @@ jobs:
         run: npm run build
         working-directory: frontend
 
+      - name: Run pre-deploy checks
+        run: node scripts/pre-deploy-check.mjs
+
       - name: Deploy to ai-interview
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ed758fc82ca4400593ddb447d3db57a4
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
           command: pages deploy dist --project-name ai-interview --branch main
+
+      - name: Verify production health
+        run: curl --fail --retry 3 --retry-delay 5 https://ai-interview-88r.pages.dev/health
 
   worker-resume-consumer:
     name: Deploy Resume Consumer Worker
@@ -68,6 +78,6 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ed758fc82ca4400593ddb447d3db57a4
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: worker
           command: deploy --config wrangler.resume-consumer.toml
