@@ -154,7 +154,7 @@ function RecruitingFunnel({ stages }: { stages: FunnelStage[] }) {
       <Card className={styles.funnelCard}>
         {stages.length === 0 ? <div className={styles.emptyState}>暂无漏斗数据</div> : (
           <div className={styles.funnelChart}>
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height={320}>
               <BarChart data={stages} layout="vertical" margin={{ top: 4, right: 44, bottom: 4, left: 4 }}>
                 <CartesianGrid stroke="#E2E8F0" strokeDasharray="4 4" horizontal={false} />
                 <XAxis type="number" hide domain={[0, 'dataMax']} />

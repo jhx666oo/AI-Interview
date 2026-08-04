@@ -15,12 +15,14 @@ import {
 } from 'antd';
 import {
   AppstoreOutlined,
+  DownloadOutlined,
   ClearOutlined,
   LinkOutlined,
   ReloadOutlined,
   SearchOutlined,
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { downloadExcel } from '../../utils/exportExcel';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import { RecruitingBoardView } from './components/RecruitingBoardView';
@@ -334,6 +336,52 @@ const Dashboard: React.FC = () => {
     setKeyword('');
   };
 
+
+  const handleExportExcel = () => {
+    if (!board) return;
+    const now = new Date();
+    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const periodEnd = now.toISOString().slice(0, 10);
+    const rows = board.divisions.flatMap((div) => {
+      return div.positions.map((pos) => {
+        const passRate = pos.first_interview > 0
+          ? Math.round(pos.third_pass / pos.first_interview * 1000) / 10
+          : 0;
+        const startDate = (pos as any).created_at ? (pos as any).created_at.slice(0, 10) : "";
+        const endDate = pos.status === "已完成" || pos.status === "已终止" ? periodEnd : "";
+        const daysElapsed = startDate
+          ? Math.floor((now.getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24))
+          : 0;
+        return {
+          "所属事业部": div.division || "",
+          "负责HRBP": pos.hrbp || "",
+          "岗位名称": pos.position || "",
+          "城市": (pos as any).location || "",
+          "优先级": pos.priority || "",
+          "在招人数": pos.headcount || 0,
+          "简历推送": pos.total_resumes || 0,
+          "安排 1 面": pos.first_interview || 0,
+          "1 面通过": pos.first_pass || 0,
+          "2 面通过": pos.second_pass || 0,
+          "3 面通过": pos.third_pass || 0,
+          "面试通过率": passRate ? `${passRate}%` : "0%",
+          "发放 Offer数": pos.offers || 0,
+          "入职数": pos.hired || 0,
+          "开始周期": startDate,
+          "结束周期": endDate,
+          "已耗时天数": daysElapsed,
+          "备注": pos.notes || "",
+          "招聘状态": pos.status || "",
+          "统计周期-开始": periodStart,
+          "统计周期-截止": periodEnd,
+        };
+      });
+    });
+    if (rows.length === 0) { message.warning("暂无数据可导出"); return; }
+    downloadExcel(rows, `招聘看板_${periodEnd}`);
+    message.success("导出成功");
+  };
+
   if (loading) {
     return <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spin size="large" description="加载招聘看板..." /></div>;
   }
@@ -375,6 +423,7 @@ const Dashboard: React.FC = () => {
             <Button disabled={dataMode !== 'live'} loading={creatingSnapshot} onClick={createMissingSnapshot}>保存今日快照</Button>
           )}
           <Button icon={<LinkOutlined />} onClick={openShareModal}>分享看板</Button>
+          <Button icon={<DownloadOutlined />} onClick={handleExportExcel}>导出 Excel</Button>
           <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchBoard(false)}>刷新当前数据</Button>
         </div>
       </section>

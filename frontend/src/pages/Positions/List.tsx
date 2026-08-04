@@ -266,7 +266,24 @@ const PositionsList: React.FC = () => {
           try { formVals.capability_dimensions = JSON.parse(res.capability_dimensions); } catch { formVals.capability_dimensions = []; }
         }
       } else {
-        formVals.capability_dimensions = [];
+        // 如果岗位自身没有能力维度，从 capability_dimensions 表查找
+        try {
+          const dimRes = await request.get('/capability-dimensions', {
+            params: { position_name: res.title }
+          });
+          if (Array.isArray(dimRes) && dimRes.length > 0) {
+            const dimRecord = dimRes[0];
+            let dims: any[] = [];
+            if (dimRecord.dimensions_json) {
+              try { dims = JSON.parse(dimRecord.dimensions_json); } catch {}
+            }
+            if (dims.length > 0) {
+              formVals.capability_dimensions = dims.map((d: any) =>
+                typeof d === 'string' ? d : (d.name || '')
+              ).filter(Boolean);
+            }
+          }
+        } catch {}
       }
       // 任职要求 JSON 字符串 → 多选数组
       if (res.requirements) {
@@ -431,6 +448,17 @@ const PositionsList: React.FC = () => {
       // 查询该岗位已有的能力维度配置
       const res = await request.get('/capability-dimensions', { params: { position_name: record.title } });
       const existingRecord = Array.isArray(res) && res.length > 0 ? res[0] : null;
+      // 同时同步到 positions 表的 capability_dimensions 字段
+      try {
+        const dimNames = dims.map((d: any) => d.name).filter(Boolean);
+        const posRes = await request.get('/positions', { params: { title: dimPositionName } });
+        if (Array.isArray(posRes)) {
+          for (const pos of posRes) {
+            await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(dimNames) });
+          }
+        }
+      } catch { /* 同步失败不影响主流程 */ }
+
       if (existingRecord) {
         const dims = existingRecord.dimensions_json
           ? JSON.parse(existingRecord.dimensions_json)
@@ -464,6 +492,17 @@ const PositionsList: React.FC = () => {
       // 检查是否已有记录（通过查询现有记录确定是新增还是更新）
       const res = await request.get('/capability-dimensions', { params: { position_name: dimPositionName } });
       const existingRecord = Array.isArray(res) && res.length > 0 ? res[0] : null;
+
+      // 同时同步到 positions 表的 capability_dimensions 字段
+      try {
+        const dimNames = dims.map((d: any) => d.name).filter(Boolean);
+        const posRes = await request.get('/positions', { params: { title: dimPositionName } });
+        if (Array.isArray(posRes)) {
+          for (const pos of posRes) {
+            await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(dimNames) });
+          }
+        }
+      } catch { /* 同步失败不影响主流程 */ }
 
       if (existingRecord) {
         await request.put(`/capability-dimensions/${existingRecord.id}`, payload);
@@ -1341,8 +1380,8 @@ const CapabilityDimensionEditor: React.FC<{
 
   return (
     <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, padding: '12px 16px', background: '#fafafa', maxHeight: 360, overflow: 'auto' }}>
-      {allDimNames.length === 0 && <Text type="secondary" style={{ fontSize: 12 }}>暂无预设维度，请在下方添加</Text>}
-      {allDimNames.map(name => (
+      {allDimNames.length === 0 && checkedNames.size === 0 && <Text type="secondary" style={{ fontSize: 12 }}>暂无预设维度，请在下方添加</Text>}
+      {[...new Set([...allDimNames, ...dims.map(d => d.name)])].map(name => (
         <div key={name} style={{ marginBottom: 4 }}>
           <Checkbox checked={checkedNames.has(name)} onChange={e => handleToggle(name, e.target.checked)} style={{ fontWeight: 500, marginBottom: 2 }}>{name}</Checkbox>
           {checkedNames.has(name) && (<>

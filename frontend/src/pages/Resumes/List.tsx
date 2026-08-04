@@ -4,6 +4,7 @@ import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlin
 import * as pdfjsLib from 'pdfjs-dist';
 import DOMPurify from 'dompurify';
 import request from '../../utils/request';
+import { downloadExcel } from '../../utils/exportExcel';
 import SimplePagination from '../../components/SimplePagination';
 import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
@@ -803,7 +804,43 @@ const ResumesList: React.FC = () => {
     }
   };
 
-  const handleUploadClick = () => {
+  
+  const handleExportExcel = () => {
+    if (data.length === 0) { message.warning('暂无数据可导出'); return; }
+    const rows = data.map((r: any) => {
+      const pd = (() => { try { return JSON.parse(r.parsed_data || '{}'); } catch { return {}; } })();
+      const aiReview = (() => { try { return JSON.parse(r.ai_review || '{}'); } catch { return {}; } })();
+      const matchScore = r.match_score ?? aiReview.match_score ?? 0;
+      const aiResult = matchScore >= 75 ? '通过' : '不通过';
+      let hrResult = '0';
+      if (r.hr_review === '通过') hrResult = '通过';
+      else if (r.hr_review === '未通过' || r.status === 'rejected') hrResult = '不通过';
+      return {
+        '姓名': pd.name || r.candidate_name || '',
+        '性别': pd.gender || '',
+        '年龄': pd.age ?? '',
+        '学历': pd.highest_degree || '',
+        '学校': pd.school || '',
+        '专业': pd.major || '',
+        '工作年限': pd.years_of_experience ?? '',
+        '最近公司': pd.recent_company || '',
+        '当前职位': pd.current_position || '',
+        '电话': pd.phone || r.contact || '',
+        '邮箱': pd.email || r.email || '',
+        '技能': Array.isArray(pd.skills) ? pd.skills.join('、') : (pd.skills || ''),
+        '证书/资质': Array.isArray(pd.certifications) ? pd.certifications.join('、') : (pd.certifications || ''),
+        '自我评价': pd.self_evaluation || '',
+        '教育经历': Array.isArray(pd.education) ? pd.education.map((e: any) => `${e.school||''} ${e.degree||''} ${e.major||''}`).join('；') : '',
+        '工作经验': Array.isArray(pd.work_experience) ? pd.work_experience.map((e: any) => `${e.company||''} ${e.position||''}`).join('；') : '',
+        'AI 分析结果': aiResult,
+        'HR 复合结果': hrResult,
+      };
+    });
+    downloadExcel(rows, `简历导出_${new Date().toISOString().slice(0, 10)}`);
+    message.success('导出成功');
+  };
+
+const handleUploadClick = () => {
     form.resetFields();
     setFileList([]);
     setIsModalVisible(true);
@@ -1100,6 +1137,7 @@ const ResumesList: React.FC = () => {
         </div>
         <Space size="small" wrap>
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
+          <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={handleExportExcel}>导出 Excel</Button>
           <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
           <Button type="primary" size="small" icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
           <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
