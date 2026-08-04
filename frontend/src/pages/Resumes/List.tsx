@@ -13,6 +13,7 @@ import { getDimensionScoreTotal, normalizeResumeEvaluation } from '../../utils/r
 import { filterResumesByDemographics, filterResumesByMinimumDimensionScore } from '../../utils/resumeFilters';
 import { sortResumesNewestFirst } from '../../utils/resumeSort';
 import { getCurrentPageSelectionState, toggleCurrentPageSelection } from '../../utils/resumeSelection';
+import { createRefreshVersion } from '../../utils/resumeRefresh';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -85,6 +86,7 @@ const ResumesList: React.FC = () => {
   // 前端缓存，切页面回来不重新拉飞书
   const dataCache = useRef<any[]>([]);
   const loadedRef = useRef(false);
+  const resumeRefreshVersion = useRef(createRefreshVersion());
   const evaluatingRef = useRef(false); // 防止重复触发 auto-evaluate-all
 
   // 统计卡片（基于筛选后的 data 实时计算）
@@ -272,6 +274,7 @@ const ResumesList: React.FC = () => {
   };
 
   const fetchResumes = async (silent = false) => {
+    const requestVersion = resumeRefreshVersion.current.capture();
     if (!silent) setLoading(true);
     try {
       const params: any = {};
@@ -284,6 +287,7 @@ const ResumesList: React.FC = () => {
 
       // 始终从 API 拉取最新数据（避免缓存导致删除/上传后看不到变化）
       const res = await request.get('/resumes', { params });
+      if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return res;
       const items = Array.isArray(res) ? res : (res.items || []);
       let filtered = items;
       // 岗位筛选（客户端过滤，因为 API 不支持岗位参数）
@@ -321,8 +325,10 @@ const ResumesList: React.FC = () => {
   useEffect(() => {
     if (pollingEnabled) {
       pollingRef.current = setInterval(async () => {
+        const requestVersion = resumeRefreshVersion.current.capture();
         try {
           const res = await request.get('/resumes', { params: {} });
+          if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return;
           const pollItems = Array.isArray(res) ? res : (res.items || []);
           if (pollItems.length > 0 || Array.isArray(res)) {
             // 更新数据展示（让用户看到实时进度）
@@ -763,19 +769,17 @@ const ResumesList: React.FC = () => {
   };
 
   const handleApproveToTalentPool = async (record: any) => {
-    // 乐观更新：立即更新本地状态
-    setData(prev => prev.map(item =>
-      item.id === record.id ? { ...item, status: 'approved' } : item
-    ));
+    // 让已经发出的轮询请求失效，避免旧的 pending 状态覆盖入库结果。
+    resumeRefreshVersion.current.invalidate();
     try {
       await request.post(`/resumes/${record.id}/approve-to-talent-pool`);
       message.success(`${record.candidate_name} 已入库`);
+      dataCache.current = [];
+      loadedRef.current = false;
+      await fetchResumes(true);
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '入库失败');
-      // 回滚
-      setData(prev => prev.map(item =>
-        item.id === record.id ? { ...item, status: record.status } : item
-      ));
+      await fetchResumes(true);
     }
   };
 

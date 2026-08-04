@@ -2398,6 +2398,78 @@ function parseTalentRecord(record: any): any {
   };
 }
 
+function parseD1TalentRow(row: any): Record<string, any> {
+  let parsed: Record<string, any> = {};
+  if (typeof row?.parsed_data === 'string') {
+    try {
+      const value = JSON.parse(row.parsed_data);
+      if (value && typeof value === 'object' && !Array.isArray(value)) parsed = value;
+    } catch {}
+  } else if (row?.parsed_data && typeof row.parsed_data === 'object') {
+    parsed = row.parsed_data;
+  }
+
+  const first = (...values: any[]) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '') || '';
+  const createdAt = row?.created_at ? Date.parse(String(row.created_at)) : NaN;
+  const item: Record<string, any> = {
+    id: row?.id || '',
+    candidate_name: first(row?.candidate_name, parsed.name, parsed.candidate_name),
+    position_applied: first(row?.position_applied, parsed.position_applied),
+    mapped_position: first(row?.mapped_position, parsed.mapped_position, parsed.standard_position),
+    gender: first(row?.gender, parsed.gender),
+    city: first(row?.city, parsed.city),
+    age: first(row?.age, parsed.age),
+    education: first(row?.education, parsed.highest_degree, parsed.education),
+    hr_review: first(row?.hr_review),
+    status: first(row?.status),
+    stage: first(row?.stage),
+    create_time: Number.isFinite(createdAt) ? createdAt : null,
+    feishu_record_id: '',
+    parsed_data: parsed,
+  };
+
+  return item;
+}
+
+/**
+ * Talent-pool data is historically stored in Feishu, while newer uploads are
+ * stored only in D1. Merge both projections so approved D1-only resumes are
+ * visible to the talent-pool and interview-management screens.
+ */
+export function mergeTalentPoolItems(feishuItems: any[], d1Rows: any[]): any[] {
+  const merged = (feishuItems || []).map((item) => ({ ...item }));
+  const byId = new Map<string, any>();
+
+  for (const item of merged) {
+    const key = String(item.feishu_record_id || item.id || '');
+    if (key) byId.set(key, item);
+  }
+
+  for (const row of d1Rows || []) {
+    const d1Item = parseD1TalentRow(row);
+    const key = String(d1Item.id || '');
+    if (!key) continue;
+
+    const existing = byId.get(key);
+    if (!existing) {
+      merged.push(d1Item);
+      byId.set(key, d1Item);
+      continue;
+    }
+
+    // Keep Feishu's richer fields, but let D1's approval/status win because
+    // the approval endpoint writes D1 before attempting Feishu write-back.
+    for (const [field, value] of Object.entries(d1Item)) {
+      if (field === 'status' || field === 'stage' || field === 'hr_review' || (value !== '' && value !== null && value !== undefined)) {
+        existing[field] = value;
+      }
+    }
+    existing.feishu_record_id = existing.feishu_record_id || key;
+  }
+
+  return merged;
+}
+
 // 从 AI 评估纯文本中提取字段 + 飞书目字列 → 拼成右侧面板所需的完整 parsed_data
 // 飞书 AI 评估格式示例：性别：男\n学历：本科\n学校：XX大学\n专业：计算机科学\n年龄：25岁
 function parseAIEvalForFields(rawAiEval: any, aiEvalStr: string, f: any): Record<string, any> {
@@ -3770,7 +3842,19 @@ app.get('/api/talent-pool', authMiddleware, async (c) => {
   try {
     const tableId = getBitableTableId(c.env, 'talent');
     const records = await bitableListRecords(c.env, tableId);
-    let items = records.map(parseTalentRecord);
+    const feishuItems = records.map(parseTalentRecord);
+    let d1Rows: any[] = [];
+    try {
+      // Only approved D1 resumes belong in the talent-pool projection. This
+      // preserves the legacy endpoint's behavior of hiding pending uploads.
+      const result = await c.env.DB.prepare("SELECT * FROM resumes WHERE status = 'approved'").all();
+      d1Rows = result.results || [];
+    } catch (error: any) {
+      // Keep the legacy Feishu-only view available if an older D1 schema is
+      // temporarily unavailable during rollout.
+      console.error(`[TalentPool] D1 projection unavailable: ${error?.message || error}`);
+    }
+    let items = mergeTalentPoolItems(feishuItems, d1Rows);
 
     const nameFilter = c.req.query('candidate_name');
     const statusFilter = c.req.query('status');
