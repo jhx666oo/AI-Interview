@@ -32,7 +32,8 @@ const loadPdfjs = () => {
 };
 
 const { Title, Text } = Typography;
-const RESUME_LIST_PAGE_SIZE = 200;
+const RESUME_PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
+const DEFAULT_RESUME_PAGE_SIZE = 20;
 
 type ResumeListStats = {
   total: number;
@@ -83,6 +84,10 @@ const ResumesList: React.FC = () => {
   const { user } = useAuth();
   const [data, setData] = useState([]);
   const [listStats, setListStats] = useState<ResumeListStats>(EMPTY_RESUME_LIST_STATS);
+  const [cardPage, setCardPage] = useState(1);
+  const [cardPageSize, setCardPageSize] = useState(DEFAULT_RESUME_PAGE_SIZE);
+  const cardPageRef = useRef(1);
+  const cardPageSizeRef = useRef(DEFAULT_RESUME_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const [positions, setPositions] = useState([]);
   const [questionBanks, setQuestionBanks] = useState([]);
@@ -316,11 +321,15 @@ const ResumesList: React.FC = () => {
     });
   };
 
-  const fetchResumes = async (silent = false) => {
+  const fetchResumes = async (
+    silent = false,
+    requestedPage = cardPageRef.current,
+    requestedPageSize = cardPageSizeRef.current,
+  ) => {
     const requestVersion = resumeRefreshVersion.current.capture();
     if (!silent) setLoading(true);
     try {
-      const params: any = { page: 1, page_size: RESUME_LIST_PAGE_SIZE };
+      const params: any = { page: requestedPage, page_size: requestedPageSize };
       if (searchName) params.candidate_name = searchName;
       if (searchStatus) params.status = searchStatus;
       const personFilter = searchPerson || selectedOwner;
@@ -349,7 +358,14 @@ const ResumesList: React.FC = () => {
       });
       const sorted = sortResumesNewestFirst(filtered);
       setData(sorted);
-      setListStats(getResumeListStats(res, items));
+      const nextStats = getResumeListStats(res, items);
+      const lastPage = Math.max(1, Math.ceil(nextStats.total / requestedPageSize));
+      if (requestedPage > lastPage) {
+        cardPageRef.current = lastPage;
+        setCardPage(lastPage);
+        return fetchResumes(silent, lastPage, requestedPageSize);
+      }
+      setListStats(nextStats);
       dataCache.current = sortResumesNewestFirst(items);
       loadedRef.current = true;
 
@@ -371,7 +387,9 @@ const ResumesList: React.FC = () => {
       pollingRef.current = setInterval(async () => {
         const requestVersion = resumeRefreshVersion.current.capture();
         try {
-          const res = await request.get('/resumes', { params: { page: 1, page_size: RESUME_LIST_PAGE_SIZE } });
+          const res = await request.get('/resumes', {
+            params: { page: cardPageRef.current, page_size: cardPageSizeRef.current },
+          });
           if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return;
           const pollItems = Array.isArray(res) ? res : (res.items || []);
           if (pollItems.length > 0 || Array.isArray(res)) {
@@ -475,12 +493,15 @@ const ResumesList: React.FC = () => {
 
   // 全局负责人筛选变化时自动刷新
   useEffect(() => {
-    fetchResumes();
+    cardPageRef.current = 1;
+    setCardPage(1);
+    fetchResumes(false, 1, cardPageSizeRef.current);
   }, [selectedOwner]);
 
   const handleSearch = () => {
+    cardPageRef.current = 1;
     setCardPage(1);
-    fetchResumes();
+    fetchResumes(false, 1, cardPageSizeRef.current);
   };
 
   const handleReset = () => {
@@ -496,8 +517,9 @@ const ResumesList: React.FC = () => {
     setCardPage(1);
     dataCache.current = [];
     loadedRef.current = false;
+    cardPageRef.current = 1;
     setLoading(true);
-    request.get('/resumes', { params: { page: 1, page_size: RESUME_LIST_PAGE_SIZE } })
+    request.get('/resumes', { params: { page: 1, page_size: cardPageSizeRef.current } })
       .then(res => {
         const items = Array.isArray(res) ? res : (res.items || []);
         setData(items);
@@ -1172,10 +1194,20 @@ const handleUploadClick = () => {
     try { return JSON.parse(value); } catch { return null; }
   };
 
-  // 卡片分页
-  const pageSize = 20;
-  const [cardPage, setCardPage] = useState(1);
-  const pagedData = useMemo(() => data.slice((cardPage - 1) * pageSize, cardPage * pageSize), [data, cardPage, pageSize]);
+  // 服务端分页：data 只包含当前页，total 来自后端统计。
+  const pagedData = data;
+  const handleCardPageChange = (page: number) => {
+    cardPageRef.current = page;
+    setCardPage(page);
+    fetchResumes(false, page, cardPageSizeRef.current);
+  };
+  const handleCardPageSizeChange = (nextPageSize: number) => {
+    cardPageSizeRef.current = nextPageSize;
+    cardPageRef.current = 1;
+    setCardPageSize(nextPageSize);
+    setCardPage(1);
+    fetchResumes(false, 1, nextPageSize);
+  };
   const currentPageIds = useMemo(() => pagedData.map((record: any) => record.id).filter(Boolean), [pagedData]);
   const currentPageSelection = useMemo(
     () => getCurrentPageSelectionState(selectedRowKeys, currentPageIds),
@@ -1292,10 +1324,11 @@ const handleUploadClick = () => {
                 onChange={val => {
                   setSearchPerson(val);
                   setSelectedOwner(val);
+                  cardPageRef.current = 1;
                   setCardPage(1);
                   dataCache.current = [];
                   loadedRef.current = false;
-                  fetchResumes();
+                  fetchResumes(false, 1, cardPageSizeRef.current);
                 }}
                 style={{ width: 120 }}
                 allowClear
@@ -1499,7 +1532,16 @@ const handleUploadClick = () => {
               );
             })}
           </div>
-          <SimplePagination current={cardPage} pageSize={pageSize} total={data.length} onChange={setCardPage} />
+          <SimplePagination
+            current={cardPage}
+            pageSize={cardPageSize}
+            total={listStats.total}
+            onChange={handleCardPageChange}
+            pageSizeOptions={RESUME_PAGE_SIZE_OPTIONS}
+            onPageSizeChange={handleCardPageSizeChange}
+            showQuickJumper
+            showLastPage
+          />
         </>
       )}
 
