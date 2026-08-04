@@ -1,0 +1,69 @@
+<style>
+  .board { background:#f4f6f9; border:1px solid #e3e8ef; border-radius:18px; padding:18px; color:#162033; }
+  .top { display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid #e2e8f0; padding-bottom:14px; }
+  .top h3 { margin:0; font-size:20px; }
+  .control { border:1px solid #cbd5e1; background:white; border-radius:8px; padding:8px 12px; font-size:12px; }
+  .section-title { margin:20px 0 10px; font-weight:800; font-size:15px; border-left:5px solid #e60012; padding-left:9px; }
+  .kpis { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:9px; }
+  .kpi,.division,.hrbp,.chart,.ai { background:white; border:1px solid #e2e8f0; border-radius:10px; }
+  .kpi { border-top:4px solid #e60012; padding:11px; min-height:72px; }
+  .kpi small,.metric small { display:block; color:#7b8798; font-size:10px; }
+  .kpi strong { font-size:25px; display:block; margin-top:6px; }
+  .ai { background:#eef1f5; border-left:5px solid #e60012; padding:12px 15px; font-size:12px; line-height:1.75; }
+  .ai b { color:#d90012; }
+  .chart { padding:14px; }
+  .bars { display:grid; gap:7px; margin-top:12px; }
+  .barrow { display:flex; align-items:center; gap:10px; font-size:11px; }
+  .barrow label { width:64px; color:#4b5563; }
+  .bar { height:16px; background:#d9dee7; border-radius:0 5px 5px 0; min-width:10px; }
+  .division-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .division,.hrbp { padding:13px; }
+  .badge { display:inline-block; color:white; background:#e60012; border-radius:5px; padding:4px 7px; font-weight:700; font-size:11px; }
+  .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin:10px 0; }
+  .metric { text-align:center; border:1px solid #e5e7eb; border-radius:7px; padding:7px; font-size:15px; font-weight:750; }
+  .pipeline { display:flex; gap:6px; align-items:end; margin-top:8px; height:53px; }
+  .pipe { flex:1; background:#e4e8ef; border-radius:4px 4px 0 0; display:flex; align-items:start; justify-content:center; padding-top:4px; font-size:10px; font-weight:700; }
+  .hrbp-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+  .table { overflow:hidden; border:1px solid #e1e6ed; border-radius:9px; background:white; font-size:10px; }
+  .tr { display:grid; grid-template-columns:1.15fr .75fr 1.35fr .75fr repeat(8,.55fr) 1fr 1fr; gap:5px; padding:8px 10px; border-bottom:1px solid #edf0f4; align-items:center; }
+  .tr.header { background:#f1f3f6; font-weight:800; border-bottom:2px solid #e60012; }
+  .tr.group { background:#f8fafc; font-weight:800; }
+  .tag { background:#ffe5e7; color:#d60012; border-radius:4px; padding:2px 4px; width:max-content; }
+  @media(max-width:900px){.kpis{grid-template-columns:repeat(3,1fr)}.division-grid,.hrbp-grid{grid-template-columns:1fr}.tr{min-width:900px}}
+</style>
+
+<h2>招聘运营看板：单页改造草图</h2>
+<p class="subtitle">参考页面的层级完整保留；实时数据与历史快照并存，分享页复用同一信息结构。</p>
+
+<div class="board">
+  <div class="top"><h3>招聘运营看板 · 2026 年 8 月</h3><div><span style="font-size:12px;color:#6b7280;margin-right:12px">数据截止：实时</span><span class="control">📅 最新实时数据　⌄</span><span class="control">分享看板</span></div></div>
+
+  <div class="section-title">总体概览</div>
+  <div class="kpis">
+    <div class="kpi"><small>在招岗位</small><strong>45</strong><small>在招人数 63 人</small></div><div class="kpi"><small>已入库简历</small><strong>1,024</strong><small>本月累计</small></div><div class="kpi"><small>安排面试</small><strong>320</strong><small>简历→面试 31.2%</small></div><div class="kpi"><small>面试通过率</small><strong>6.9%</strong><small>终面通过 22 人</small></div><div class="kpi"><small>发放 Offer</small><strong>13</strong><small>Offer 转化率 59.1%</small></div><div class="kpi"><small>已入职</small><strong>7</strong><small>入职转化率 53.8%</small></div><div class="kpi"><small>本周需求完成</small><strong>9</strong><small>需求完成 9 人</small></div>
+  </div>
+
+  <div class="section-title">AI 智能总结 · 全局诊断</div>
+  <div class="ai">1. 当前在招岗位 <b>45 个</b>，简历→面试转化 <b>31.2%</b>。<br>2. 漏斗短板：<b>AI 初筛完成 → 安排面试</b>；建议优先关注 P0 岗位和等待处理超过 48 小时的简历。<br>3. 文字由确定性指标模板生成；后续可选接入 AI 深度解读，失败时不影响看板展示。</div>
+
+  <div class="section-title">招聘漏斗（全事业部汇总）</div>
+  <div class="chart"><div class="bars"><div class="barrow"><label>已入库简历</label><div class="bar" style="width:92%">1,024</div></div><div class="barrow"><label>AI 初筛完成</label><div class="bar" style="width:70%">780</div></div><div class="barrow"><label>安排面试</label><div class="bar" style="width:38%">320</div></div><div class="barrow"><label>面试通过</label><div class="bar" style="width:15%">68</div></div><div class="barrow"><label>发放 Offer</label><div class="bar" style="width:6%">13</div></div><div class="barrow"><label>已入职</label><div class="bar" style="width:4%">7</div></div></div></div>
+
+  <div class="section-title">事业部分部看板</div>
+  <div class="division-grid">
+    <div class="division"><span class="badge">养老及商业事业部</span><span style="font-size:11px;color:#6b7280;margin-left:8px">HRBP：何雨蔓 / 杜雁玲</span><div class="metrics"><div class="metric">10<small>在招岗位</small></div><div class="metric">15<small>在招人数</small></div><div class="metric" style="color:#df0012">7<small>P0 岗位</small></div><div class="metric">49<small>安排面试</small></div></div><small>招聘漏斗</small><div class="pipeline"><div class="pipe" style="height:25%">0</div><div class="pipe" style="height:95%">49</div><div class="pipe" style="height:55%">24</div><div class="pipe" style="height:20%">0</div><div class="pipe" style="height:18%">0</div></div></div>
+    <div class="division"><span class="badge">职培事业部</span><span style="font-size:11px;color:#6b7280;margin-left:8px">HRBP：王凯月 / 徐睿</span><div class="metrics"><div class="metric">32<small>在招岗位</small></div><div class="metric">45<small>在招人数</small></div><div class="metric" style="color:#df0012">9<small>P0 岗位</small></div><div class="metric">270<small>安排面试</small></div></div><small>招聘漏斗</small><div class="pipeline"><div class="pipe" style="height:100%">1023</div><div class="pipe" style="height:45%">270</div><div class="pipe" style="height:32%">95</div><div class="pipe" style="height:16%">13</div><div class="pipe" style="height:12%">7</div></div></div>
+  </div>
+
+  <div class="section-title">招聘效能（按 HRBP）</div>
+  <div class="hrbp-grid">
+    <div class="hrbp"><b>王凯月</b>　<small>职培事业部</small><div class="metrics" style="grid-template-columns:repeat(5,1fr)"><div class="metric">9<small>岗位</small></div><div class="metric">13<small>人数</small></div><div class="metric">17.5 天<small>平均周期</small></div><div class="metric" style="color:#df0012">3<small>P0</small></div><div class="metric">6<small>P0 人数</small></div></div><small>简历 411　→　1 面 96　→　终面 11　→　Offer 6　→　入职 3</small></div>
+    <div class="hrbp"><b>徐睿</b>　<small>职培事业部</small><div class="metrics" style="grid-template-columns:repeat(5,1fr)"><div class="metric">12<small>岗位</small></div><div class="metric">18<small>人数</small></div><div class="metric">15.9 天<small>平均周期</small></div><div class="metric" style="color:#df0012">2<small>P0</small></div><div class="metric">5<small>P0 人数</small></div></div><small>简历 529　→　1 面 143　→　终面 8　→　Offer 4　→　入职 2</small></div>
+    <div class="hrbp"><b>杜雁玲</b>　<small>养老及商业事业部</small><div class="metrics" style="grid-template-columns:repeat(5,1fr)"><div class="metric">6<small>岗位</small></div><div class="metric">7<small>人数</small></div><div class="metric">6.7 天<small>平均周期</small></div><div class="metric" style="color:#df0012">3<small>P0</small></div><div class="metric">4<small>P0 人数</small></div></div><small>简历 1　→　1 面 14　→　终面 1　→　Offer 0　→　入职 0</small></div>
+  </div>
+
+  <div class="section-title">全量岗位明细汇总</div>
+  <div class="table"><div class="tr header"><span>事业部</span><span>HRBP</span><span>在招职位</span><span>优先级</span><span>人数</span><span>简历</span><span>1 面</span><span>1 面过</span><span>终面过</span><span>Offer</span><span>入职</span><span>状态</span></div><div class="tr group"><span>▼ 职培事业部</span><span></span><span>32 个岗位</span><span></span><span>45</span><span>1,023</span><span>270</span><span>95</span><span>21</span><span>13</span><span>7</span><span></span></div><div class="tr"><span>职培事业部</span><span>王凯月</span><span>招生销售 · 北京</span><span><i class="tag">P0 紧急</i></span><span>4</span><span>28</span><span>8</span><span>6</span><span>3</span><span>2</span><span>1</span><span><i class="tag">复试中</i></span></div></div>
+</div>
+
+<div class="section" style="margin-top:18px"><p><b>关键规则：</b>快照列表只展示日结记录；“最新实时数据”永远通过当前 D1 数据计算。分享时可选实时或某一快照，匿名页面与内部页面均复用上述层级，但不展示筛选、刷新和候选人信息。</p></div>

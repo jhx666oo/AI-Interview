@@ -790,3 +790,146 @@ CREATE TABLE IF NOT EXISTS dashboard_share_links (
 CREATE INDEX IF NOT EXISTS idx_dashboard_share_links_active
   ON dashboard_share_links(revoked_at, expires_at);
 CREATE INDEX IF NOT EXISTS idx_dashboard_share_links_snapshot ON dashboard_share_links(snapshot_id);
+
+-- 0011_resume_artifacts
+CREATE TABLE IF NOT EXISTS resume_artifacts (
+  id TEXT PRIMARY KEY,
+  resume_id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('pdf','ocr','ai_analysis','interview_report','search_document')),
+  object_key TEXT NOT NULL,
+  bucket TEXT NOT NULL DEFAULT 'ai-interview-resume-artifacts',
+  content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  content_sha256 TEXT,
+  byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+  version INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','available','expired','deleted','failed')),
+  expires_at TEXT,
+  is_current INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_resume_artifacts_resume_id ON resume_artifacts(resume_id);
+CREATE INDEX IF NOT EXISTS idx_resume_artifacts_type_status ON resume_artifacts(type, status);
+CREATE INDEX IF NOT EXISTS idx_resume_artifacts_object_key ON resume_artifacts(object_key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_artifacts_resume_type_version ON resume_artifacts(resume_id, type, version);
+CREATE INDEX IF NOT EXISTS idx_resume_artifacts_current ON resume_artifacts(resume_id, type, is_current) WHERE is_current = 1;
+
+-- 0012_resume_upload_sessions
+CREATE TABLE IF NOT EXISTS resume_upload_sessions (
+  id TEXT PRIMARY KEY,
+  resume_id TEXT NOT NULL UNIQUE,
+  pdf_artifact_id TEXT NOT NULL,
+  text_artifact_id TEXT,
+  created_by TEXT NOT NULL,
+  original_filename TEXT NOT NULL,
+  expected_pdf_size INTEGER NOT NULL CHECK (expected_pdf_size > 0),
+  expected_pdf_sha256 TEXT NOT NULL,
+  expected_text_size INTEGER,
+  expected_text_sha256 TEXT,
+  status TEXT NOT NULL CHECK (status IN ('initiated','completed','expired','failed')),
+  error_code TEXT,
+  job_id TEXT,
+  completed_at TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_resume_upload_sessions_status ON resume_upload_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_resume_upload_sessions_expiry ON resume_upload_sessions(expires_at) WHERE status = 'initiated';
+
+-- 0013_resume_text_state
+CREATE TABLE IF NOT EXISTS resume_text_state (
+  resume_id TEXT PRIMARY KEY,
+  raw_text_source TEXT CHECK (raw_text_source IN ('r2','legacy_d1','none')),
+  ocr_text_source TEXT CHECK (ocr_text_source IN ('r2','legacy_d1','none')),
+  analysis_source TEXT CHECK (analysis_source IN ('r2','legacy_d1','none')),
+  raw_text_artifact_id TEXT,
+  ocr_artifact_id TEXT,
+  analysis_artifact_id TEXT,
+  migration_status TEXT DEFAULT 'pending' CHECK (migration_status IN ('pending','migrated','verified','cleaned')),
+  migrated_at TEXT,
+  verified_at TEXT,
+  FOREIGN KEY (resume_id) REFERENCES resumes(id)
+);
+
+-- 0015_resume_search_state
+CREATE TABLE IF NOT EXISTS resume_search_state (
+  resume_id TEXT PRIMARY KEY,
+  search_doc_version INTEGER NOT NULL DEFAULT 0,
+  search_doc_artifact_id TEXT,
+  index_status TEXT NOT NULL DEFAULT 'pending' CHECK (index_status IN ('pending','indexed','failed','deleted')),
+  last_indexed_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (resume_id) REFERENCES resumes(id)
+);
+
+-- 0017_candidate_stage_events
+CREATE TABLE IF NOT EXISTS candidate_stage_events (
+  id TEXT PRIMARY KEY,
+  resume_id TEXT NOT NULL,
+  position_id TEXT,
+  stage TEXT NOT NULL CHECK (stage IN (
+    'resume_received','ai_screened','hr_approved','hr_rejected',
+    'interview_scheduled','interview_completed','interview_passed','interview_failed',
+    'offer_sent','offer_accepted','offer_rejected','hired','candidate_withdrawn'
+  )),
+  action TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  actor_user_id TEXT,
+  source TEXT NOT NULL DEFAULT 'manual',
+  dedupe_key TEXT NOT NULL UNIQUE,
+  metadata_json TEXT DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_candidate_stage_events_resume ON candidate_stage_events(resume_id, stage);
+CREATE INDEX IF NOT EXISTS idx_candidate_stage_events_occurred ON candidate_stage_events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_candidate_stage_events_position ON candidate_stage_events(position_id, occurred_at);
+
+CREATE TABLE IF NOT EXISTS recruitment_event_outbox (
+  id TEXT PRIMARY KEY,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  event_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','sent','failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed_at TEXT
+);
+
+-- 0018_resume_migration_state
+CREATE TABLE IF NOT EXISTS resume_migration_state (
+  resume_id TEXT PRIMARY KEY,
+  source_columns TEXT NOT NULL DEFAULT '{}',
+  source_sha256 TEXT,
+  target_artifact_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','migrating','verified','failed','cleaned')),
+  failure_reason TEXT,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at TEXT,
+  verified_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (resume_id) REFERENCES resumes(id)
+);
+CREATE INDEX IF NOT EXISTS idx_resume_migration_status ON resume_migration_state(status);
+
+-- 0020_resume_purge_jobs
+CREATE TABLE IF NOT EXISTS resume_purge_jobs (
+  id TEXT PRIMARY KEY,
+  resume_id TEXT NOT NULL UNIQUE,
+  purge_type TEXT NOT NULL DEFAULT 'normal' CHECK (purge_type IN ('normal','privacy')),
+  actor_user_id TEXT NOT NULL,
+  reason TEXT,
+  not_before TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  error_code TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (resume_id) REFERENCES resumes(id)
+);
+CREATE INDEX IF NOT EXISTS idx_resume_purge_jobs_status ON resume_purge_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_resume_purge_jobs_not_before ON resume_purge_jobs(not_before) WHERE status = 'pending';

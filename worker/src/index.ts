@@ -4,6 +4,12 @@ import { createOrGetActiveJob } from './resume-processing/job-repository';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { ensureResumeListSchema, RESUME_LIST_COMPATIBILITY_MIGRATIONS } from './resume-schema';
 import { assertShareDataMode, createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow, toShanghaiSnapshotDate } from './recruiting-operations/share-links';
+import { createUploadRoutes } from './resume-uploads/routes';
+import { createMaintenanceRoutes } from './resume-maintenance/routes';
+import { handleR2Upload } from './resume-uploads/refactored-upload';
+import { handleOptimizedResumeList } from './resume-list/optimized-handler';
+
+
 import type { ShareExpiryOption } from './recruiting-operations/types';
 import {
   buildRecruitingBoard,
@@ -319,38 +325,56 @@ export async function callAI(env: Env, systemPrompt: string, userPrompt: string,
     // 其他网关（如公司代理 sublink.daojia-inc.com）按配置模型名原样使用
     let aiModel = llm.model || model || 'deepseek-chat';
     if (aiModel === 'deepseek-v4-flash' && baseUrl.includes('api.deepseek.com')) aiModel = 'deepseek-chat';
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    // 503 自动重试（DeepSeek 繁忙时自动恢复，最多重试 3 次）
+    const MAX_RETRIES = 3;
+    const RETRY_DELAYS = [5_000, 15_000, 30_000];
+    let lastError: Error | null = null;
     let resp: Response;
-    try {
-      // 兼容 baseUrl 已包含 /v1 的情况（如 https://sublink.daojia-inc.com/v1）
-      const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-      resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${llm.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: aiModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          max_tokens: 4096,
-        }),
-        signal: controller.signal,
-      });
-    } catch (e: any) {
-      if (e.name === 'AbortError') throw new Error('AI API 调用超时（30s），请稍后重试');
-      throw e;
-    } finally {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const delay = RETRY_DELAYS[attempt - 1];
+        console.log(`[AI] 503 重试 ${attempt}/${MAX_RETRIES}，等待 ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90000);
+      try {
+        const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+        resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${llm.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: aiModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            max_tokens: 4096,
+          }),
+          signal: controller.signal,
+        });
+      } catch (e: any) {
+        clearTimeout(timeoutId);
+        if (e.name === 'AbortError') throw new Error('AI API 调用超时（90s），请稍后重试');
+        throw e;
+      }
       clearTimeout(timeoutId);
+      if (!resp.ok) {
+        const errText = await resp.text();
+        if (resp.status === 503 && attempt < MAX_RETRIES) {
+          console.warn(`[AI] DeepSeek 503 繁忙，${MAX_RETRIES - attempt} 次重试机会: ${errText.slice(0, 100)}`);
+          lastError = new Error(`DeepSeek API error ${resp.status}: ${errText}`);
+          continue;
+        }
+        throw new Error(`DeepSeek API error ${resp.status}: ${errText}`);
+      }
+      break;  // 成功则跳出重试循环
     }
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error(`[AI] DeepSeek API error ${resp.status}: ${errText}`);
-      throw new Error(`DeepSeek API error ${resp.status}: ${errText}`);
+    if (lastError && !resp?.ok) {
+      throw lastError;
     }
     const data: any = await resp.json();
     // —— 记录本次 token 用量 ——
@@ -4099,6 +4123,15 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       return c.json({ detail: '仅支持 PDF 格式' }, 400);
     }
 
+    // Feature Flag: 开启 R2 直传时走新路径，替代 Base64 存 D1
+    const r2UploadEnabled = (c.env.DIRECT_R2_UPLOAD || '').toLowerCase() === 'true';
+    if (r2UploadEnabled && c.env.RESUME_ARTIFACTS) {
+      const now = () => new Date().toISOString();
+      const result = await handleR2Upload(c, formData, parsedCandidateName, parsedPositionName, positionId, now);
+      return result;
+    }
+
+
     const fileBuffer = await file.arrayBuffer();
     const fileSize = file.size;
     const fileBase64 = bufToB64(fileBuffer);
@@ -4442,7 +4475,7 @@ app.post('/api/resumes/external', async (c) => {
         if (taskId && uploadUrl) {
           // ② 上传文件到 MinerU
           const binary = new Uint8Array(fileBuffer);
-          await fetch(uploadUrl, { method: 'PUT', body: binary, headers: { 'Content-Type': '' } });
+          await fetch(uploadUrl, { method: 'PUT', body: binary });
           // ③ 轮询 MinerU 结果（最多等 60 秒）
           for (let i = 0; i < 12; i++) {
             await new Promise((r) => setTimeout(r, 5000));
@@ -4786,6 +4819,11 @@ function applyParsedResumeFields(item: Record<string, any>): void {
 
 app.get('/api/resumes', authMiddleware, async (c) => {
   try {
+    // Feature Flag: 开启 SQL 分页查询时走优化路径，不 select 长文本列
+    const sqlListEnabled = (c.env.RESUME_SQL_LIST || '').toLowerCase() === 'true';
+    if (sqlListEnabled) {
+      return await handleOptimizedResumeList(c);
+    }
     await ensureResumeListSchema(c.env.DB);
     // 纯 D1 驱动：直接从 resumes 表读取，不依赖飞书
     const d1Rows = await c.env.DB.prepare(
@@ -10208,6 +10246,10 @@ app.delete('/api/resumes/cleanup-pdfs', authMiddleware, async (c) => {
 });
 
 // SPA fallback
+// 简历存储架构 - 新路由注册（默认 Feature Flag 关闭）
+createUploadRoutes(app);
+createMaintenanceRoutes(app);
+
 app.notFound(async (c) => {
   if (c.req.path.startsWith('/api/')) return c.json({ detail: 'Not found' }, 404);
   if (c.env.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
