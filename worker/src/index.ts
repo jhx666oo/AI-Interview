@@ -12,6 +12,7 @@ import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './r
 import { enqueueResumeReprocess, ResumeNotFoundError } from './resume-processing/reprocess';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
+import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -2453,7 +2454,7 @@ function parseTalentRecord(record: any): any {
     education: getFirstValue(f['学历']) || '',
     ai_evaluation: aiEvalStr,
     ai_review: aiEvalStr, // 兼容前端两个字段名
-    screening_result: getFirstValue(f['AI简历初筛结果']) || '',
+    screening_result: normalizeAiScreeningResult(getFirstValue(f['AI简历初筛结果'])),
     advantage: advantageStr,
     risk: riskStr,
     hr_review: getFirstValue(f['HR复核结果']) || '',
@@ -2843,9 +2844,8 @@ async function getResumeTextForScreening(env: Env, row: any): Promise<{ text: st
 // 将 AI 初筛结果 + 评估文本映射为匹配度分数
 function mapAIResultToScore(screeningResult: string, aiEvalText: string): number {
   const r = (screeningResult || '').trim();
-  if (r.includes('通过')) return 85;
-  if (r.includes('淘汰')) return 30;
-  if (r.includes('存疑')) return 67;
+  if (r.includes('不通过') || r.includes('淘汰') || r.includes('存疑') || r.includes('不推荐')) return 30;
+  if (r.includes('通过') || r.includes('推荐')) return 85;
   // 从文本中尝试提取分数
   const extracted = extractScoreFromEval(aiEvalText);
   if (extracted !== null && extracted >= 0 && extracted <= 100) return extracted;
@@ -4591,7 +4591,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
             let parsed: any;
             try { parsed = extractJSON(aiResp); } catch { parsed = { summary: aiResp }; }
             const matchScore = parsed.match_score ?? 50;
-            const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
+            const screeningResult = aiScreeningResultFromScore(matchScore);
             const aiEvalObj: any = { summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '' };
             if (Array.isArray(parsed.dimensions)) {
               aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({ name: d.name || '', score: d.score ?? 0, reason: d.reason || '' }));
@@ -5089,7 +5089,8 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       if (r.hard_requirement_result) { try { item.hard_requirement_result = JSON.parse(r.hard_requirement_result); } catch {} }
       if (r.screening_result) {
         const sr = r.screening_result;
-        item.screening_label = sr.includes('通过') ? '通过' : sr.includes('淘汰') ? '淘汰' : sr.includes('存疑') ? '存疑' : sr;
+        item.screening_result = normalizeAiScreeningResult(sr);
+        item.screening_label = item.screening_result;
       }
       // 从 parsed_data 提取前端需要的字段
       applyParsedResumeFields(item);
@@ -5527,7 +5528,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
         );
 
         const matchScore = enrichedEvaluation.match_score ?? 50;
-        const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
+        const screeningResult = aiScreeningResultFromScore(matchScore);
 
         // ai_evaluation 与 ai-screen 路由格式一致
         const aiEvalObj: any = { summary: enrichedEvaluation.summary || '', match_score: matchScore, weighted_score: enrichedEvaluation.weighted_score, configured_dimensions: enrichedEvaluation.configured_dimensions, recommendation: enrichedEvaluation.recommendation || '', dimensions: enrichedEvaluation.dimensions || [] };
@@ -6254,7 +6255,7 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
       JSON.stringify(normalized),
       JSON.stringify(aiReview || normalized),
       enrichedScore,
-      enrichedScore !== null ? (enrichedScore >= 75 ? '通过' : enrichedScore >= 60 ? '存疑' : '淘汰') : 'pending',
+      enrichedScore !== null ? aiScreeningResultFromScore(enrichedScore) : '',
       'reparsed',
       id
     ).run();
@@ -8069,7 +8070,7 @@ app.post('/api/resume-screening/:id/ai-analyze', authMiddleware, async (c) => {
   const systemPrompt = `你是一个专业的人力资源简历初筛专家（AI简历分析引擎）。你的任务是分析候选人简历，评估其与目标岗位的匹配度。
 
 分析要求：
-1. 初筛结果：通过/不通过/待定
+1. 初筛结果：只能是通过或不通过，禁止返回待定、存疑等第三种结果
 2. 优势分析：候选人的核心优势（2-3条）
 3. 风险点：潜在风险或不足（1-2条）
 4. 能力维度匹配：按岗位能力维度逐项评分（0-5分），并给出匹配依据
@@ -8078,7 +8079,7 @@ app.post('/api/resume-screening/:id/ai-analyze', authMiddleware, async (c) => {
 
 请用以下格式输出（中文）：
 
-初筛结果：[通过/不通过/待定]
+初筛结果：[通过/不通过]
 匹配分数：[0-5的数字]
 
 优势分析：
@@ -8128,7 +8129,7 @@ ${resumeText}`;
   const scoreMatch = aiAnalysis.match(/匹配分数[：:]\s*(\d+(\.\d+)?)/);
   const matchScore = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
   const resultMatch = aiAnalysis.match(/初筛结果[：:]\s*(通过|不通过|待定)/);
-  const aiResult = resultMatch ? resultMatch[1] : 'pending';
+  const aiResult = resultMatch ? normalizeAiScreeningResult(resultMatch[1]) : '不通过';
 
   // Update the screening record
   await c.env.DB.prepare(
@@ -8233,13 +8234,13 @@ app.post('/api/resume-screening/batch-analyze', authMiddleware, async (c) => {
       let mappedPosition = rec.mapped_position || rec.position_applied?.split('_')[0] || '未知岗位';
       const dimsResult = await c.env.DB.prepare('SELECT full_text FROM capability_dimensions WHERE position_name = ? LIMIT 3').bind(mappedPosition).all();
       const dimensionsText = dimsResult.results?.map((r: any) => r.full_text || '').filter(Boolean).join('\n') || '';
-      const systemPrompt = `你是简历初筛专家。分析简历并输出：初筛结果（通过/不通过/待定）、匹配分数（0-5）、优势分析、风险点、能力维度匹配（每项0-5分）、面试问题建议（3个）、互动引导语。用中文输出。`;
+      const systemPrompt = `你是简历初筛专家。分析简历并输出：初筛结果（只能通过或不通过，不得返回待定/存疑）、匹配分数（0-5）、优势分析、风险点、能力维度匹配（每项0-5分）、面试问题建议（3个）、互动引导语。用中文输出。`;
       const userPrompt = `岗位：${mappedPosition}\n能力维度要求：${dimensionsText || '(无)'}\n候选人：${rec.candidate_name} ${rec.age || ''}岁 ${rec.gender || ''} ${rec.education || ''}\n简历：${resumeText}`;
       const aiAnalysis = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
       const scoreMatch = aiAnalysis.match(/匹配分数[：:]\s*(\d+(\.\d+)?)/);
       const matchScore = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
       const resultMatch = aiAnalysis.match(/初筛结果[：:]\s*(通过|不通过|待定)/);
-      const aiResult = resultMatch ? resultMatch[1] : 'pending';
+      const aiResult = resultMatch ? normalizeAiScreeningResult(resultMatch[1]) : '不通过';
       await c.env.DB.prepare('UPDATE resume_screening_queue SET ai_analysis = ?, ai_result = ?, match_score = ?, mapped_position = ?, updated_at = ? WHERE id = ?').bind(aiAnalysis, aiResult, matchScore, mappedPosition, now(), rid).run();
       processed++;
     } catch (e) { /* skip on error */ }
@@ -10286,7 +10287,7 @@ app.post('/api/resumes/auto-evaluate', authMiddleware, async (c) => {
     if (!evalResult) return c.json({ detail: 'AI评估失败' }, 500);
     // 写全字段
     const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
-    const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
+    const screeningResult = aiScreeningResultFromScore(matchScore);
     const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '', personalized_match_score: evalResult.personalized_match_score, personalized_met_items: evalResult.personalized_met_items, personalized_unmet_items: evalResult.personalized_unmet_items };
     const toArray = (v: any): string[] => { if (Array.isArray(v)) return v; if (typeof v === 'string' && v.trim()) return v.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean); return []; };
     const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: toArray(evalResult.advantage), risks: toArray(evalResult.risk), suggested_questions: toArray(evalResult.suggested_questions), dimensions: evalResult.dimensions || [] });
@@ -10358,7 +10359,7 @@ app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
         const evalResult = await callAIScreening(c.env, limitedText, positionReq);
         if (!evalResult) return { name: candidateName, status: 'fail', reason: 'AI返回空' };
         const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
-        const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
+        const screeningResult = aiScreeningResultFromScore(matchScore);
         const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
         const toArray = (v: any): string[] => { if (Array.isArray(v)) return v; if (typeof v === 'string' && v.trim()) return v.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean); return []; };
         const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: toArray(evalResult.advantage), risks: toArray(evalResult.risk), suggested_questions: toArray(evalResult.suggested_questions), dimensions: evalResult.dimensions || [] });
@@ -10438,7 +10439,7 @@ app.post('/api/resumes/batch-ai-evaluate', authMiddleware, async (c) => {
         const evalResult = await callAIScreening(c.env, resumeText, positionReq);
         if (!evalResult) { failed++; continue; }
         const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
-        const screeningResult = matchScore >= 75 ? '通过' : matchScore >= 60 ? '存疑' : '淘汰';
+        const screeningResult = aiScreeningResultFromScore(matchScore);
         const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
         const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: (Array.isArray(evalResult.advantage) ? evalResult.advantage : (typeof evalResult.advantage === 'string' ? evalResult.advantage.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), risks: (Array.isArray(evalResult.risk) ? evalResult.risk : (typeof evalResult.risk === 'string' ? evalResult.risk.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), suggested_questions: (Array.isArray(evalResult.suggested_questions) ? evalResult.suggested_questions : (typeof evalResult.suggested_questions === 'string' ? evalResult.suggested_questions.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), dimensions: evalResult.dimensions || [] });
         await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, hard_requirement_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')

@@ -11,6 +11,7 @@ import { EventRepository } from './recruitment-events/repository';
 import { ResumeSearchDocumentGenerator } from './resume-search/document-generator';
 import { ResumeSearchServiceImpl } from './resume-search/search-service';
 import { R2ArtifactStore } from './resume-storage/r2-artifact-store';
+import { aiScreeningResultFromScore } from './ai-screening-result';
 
 export class RetryableResumeError extends Error {
   constructor(public readonly code: string, message?: string) {
@@ -308,7 +309,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       await updateResume(env.DB, message.resumeId, {
         ai_review: JSON.stringify(enrichedEvaluation),
         match_score: Number.isFinite(score) ? score : null,
-        screening_result: score >= 75 ? '通过' : score >= 60 ? '存疑' : '淘汰',
+        screening_result: aiScreeningResultFromScore(score),
       });
       return enrichedEvaluation;
     },
@@ -435,7 +436,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       await updateResume(env.DB, message.resumeId, {
         ai_review: JSON.stringify(enrichedEvaluation),
         match_score: Number.isFinite(score) ? score : null,
-        screening_result: score >= 75 ? '通过' : score >= 60 ? '存疑' : '淘汰',
+        screening_result: aiScreeningResultFromScore(score),
       });
 
       // 搜索文档生成（当 RESUME_HYBRID_SEARCH=true 时）
@@ -463,7 +464,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             action: 'ai_complete',
             source: 'system',
             dedupeKey: `system:${message.resumeId}:ai_screened:ai_complete`,
-            metadata: { matchScore: score, screeningResult: score >= 75 ? '通过' : score >= 60 ? '存疑' : '淘汰' },
+            metadata: { matchScore: score, screeningResult: aiScreeningResultFromScore(score) },
           });
         } catch (e) {
           console.error('[Event] ai_screened recording failed:', e);

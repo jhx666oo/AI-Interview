@@ -1410,7 +1410,7 @@ const handleUploadClick = () => {
                     )}
                     {statusTag(record.status)}
                     {record.screening_label && (
-                      <Tag color={record.screening_label === '通过' ? 'green' : record.screening_label === '存疑' ? 'orange' : 'red'} style={{ margin: 0 }}>
+                      <Tag color={record.screening_label === '通过' ? 'green' : 'red'} style={{ margin: 0 }}>
                         AI{record.screening_label}
                       </Tag>
                     )}

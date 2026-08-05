@@ -122,10 +122,15 @@ const TalentPoolList: React.FC = () => {
       title: 'AI初筛结果', dataIndex: 'screening_result', key: 'screening_result', width: 100,
       render: (v: string) => {
         const map: Record<string, {color: string, text: string}> = {
-          '强烈推荐': { color: 'success', text: '强烈推荐' },
-          '推荐': { color: 'cyan', text: '推荐' },
-          '待定': { color: 'warning', text: '待定' },
-          '不推荐': { color: 'error', text: '不推荐' },
+          '通过': { color: 'success', text: '通过' },
+          '不通过': { color: 'error', text: '不通过' },
+          '存疑': { color: 'error', text: '不通过' },
+          '淘汰': { color: 'error', text: '不通过' },
+          '强烈推荐': { color: 'success', text: '通过' },
+          '推荐': { color: 'success', text: '通过' },
+          '待定': { color: 'error', text: '不通过' },
+          '不推荐': { color: 'error', text: '不通过' },
+          '强烈不推荐': { color: 'error', text: '不通过' },
         };
         const c = map[v] || { color: 'default', text: v || '-' };
         return <Tag color={c.color}>{c.text}</Tag>;

@@ -325,8 +325,8 @@ const InterviewResultPage: React.FC = () => {
                 </Tag>
              </Descriptions.Item>
              <Descriptions.Item label="初审结果">
-                <Tag color={interview.resume.screening_result === 'passed' ? 'success' : interview.resume.screening_result === 'rejected' ? 'error' : 'warning'}>
-                   {interview.resume.screening_result === 'passed' ? '通过' : interview.resume.screening_result === 'rejected' ? '淘汰' : '待定'}
+                <Tag color={!interview.resume.screening_result ? 'default' : interview.resume.screening_result === 'passed' || interview.resume.screening_result === '通过' ? 'success' : 'error'}>
+                  {!interview.resume.screening_result ? '待初筛' : interview.resume.screening_result === 'passed' || interview.resume.screening_result === '通过' ? '通过' : '不通过'}
                 </Tag>
              </Descriptions.Item>
              <Descriptions.Item label="AI 评价">

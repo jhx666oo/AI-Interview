@@ -4,6 +4,8 @@
  * 通过 RESUME_SQL_LIST=true 开启
  */
 
+import { normalizeAiScreeningResult } from '../ai-screening-result';
+
 const LIST_COLUMNS = `
   r.id, r.candidate_name, r.position_applied, r.mapped_position,
   r.status, r.stage, r.match_score, r.screening_result,
@@ -95,7 +97,8 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     if (r.ai_review) { try { item.ai_review = JSON.parse(r.ai_review); } catch {} }
     if (r.screening_result) {
       const sr = r.screening_result;
-      item.screening_label = sr.includes('通过') ? '通过' : sr.includes('淘汰') ? '淘汰' : sr.includes('存疑') ? '存疑' : sr;
+      item.screening_result = normalizeAiScreeningResult(sr);
+      item.screening_label = item.screening_result;
     }
     applyParsedResumeFields(item);
     return item;
