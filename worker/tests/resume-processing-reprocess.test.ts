@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { enqueueResumeReprocess, ResumeNotFoundError } from '../src/resume-processing/reprocess';
 
 describe('resume reprocess enqueue', () => {
-  it('clears only parsing and AI fields while preserving human workflow fields', async () => {
+  it('clears only AI fields while preserving source and human workflow fields', async () => {
     const db = createReprocessDb({ failedJob: { id: 'job-failed', status: 'failed' } });
     const queue = createQueue();
 
@@ -20,6 +20,7 @@ describe('resume reprocess enqueue', () => {
     expect(resetSql).not.toContain('hr_review=');
     expect(resetSql).not.toContain('stage=');
     expect(resetSql).not.toContain('raw_text=NULL');
+    expect(resetSql).not.toContain('parsed_data=NULL');
     expect(resetSql).not.toContain('ocr_markdown=NULL');
     expect(resetSql).not.toContain('file_path=NULL');
     expect(queue.messages).toEqual([{ jobId: 'job-failed', resumeId: 'resume-1', reprocess: true }]);

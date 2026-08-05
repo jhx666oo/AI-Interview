@@ -44,7 +44,6 @@ export async function resetResumeForReprocess(db: ReprocessDb, resumeId: string)
   const timestamp = new Date().toISOString();
   await db.prepare(
     `UPDATE resumes SET
-       parsed_data=NULL,
        ai_review=NULL,
        ai_evaluation=NULL,
        match_score=NULL,
