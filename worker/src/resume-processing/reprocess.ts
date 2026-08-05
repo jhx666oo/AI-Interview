@@ -1,4 +1,4 @@
-import { ensureResumeProcessingJobsSchema } from './job-repository';
+import { ensureResumeProcessingJobsSchema, isMissingResumeProcessingJobsError } from './job-repository';
 import type { ResumeQueueMessage } from './types';
 
 type ReprocessDb = Pick<D1Database, 'prepare'>;
@@ -32,14 +32,21 @@ export async function enqueueResumeReprocess(
   queue: ReprocessQueue,
   resumeId: string,
 ): Promise<{ jobId: string; status: 'queued' | 'running'; queued: boolean }> {
-  // 兼容早期生产数据库：队列表曾通过一次性脚本创建，未执行脚本的旧环境也能安全重评估。
-  await ensureResumeProcessingJobsSchema(db);
   const resume = await db.prepare('SELECT id FROM resumes WHERE id=?').bind(resumeId).first();
   if (!resume) throw new ResumeNotFoundError(resumeId);
 
-  const activeJob = await db.prepare(
+  const findActiveJob = () => db.prepare(
     "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
-  ).bind(resumeId).first() as any;
+  ).bind(resumeId).first();
+  let activeJob: any;
+  try {
+    activeJob = await findActiveJob() as any;
+  } catch (error) {
+    // 兼容早期生产数据库：只在明确缺表时执行一次性建表，不拖慢正常请求。
+    if (!isMissingResumeProcessingJobsError(error)) throw error;
+    await ensureResumeProcessingJobsSchema(db);
+    activeJob = await findActiveJob() as any;
+  }
   if (activeJob) {
     return { jobId: activeJob.id, status: activeJob.status, queued: false };
   }

@@ -29,13 +29,16 @@ export async function ensureResumeProcessingJobsSchema(db: Pick<D1Database, 'pre
   `).bind().run();
 }
 
+export function isMissingResumeProcessingJobsError(error: unknown): boolean {
+  return /no such table|does not exist|resume_processing_jobs/i.test(String((error as any)?.message || error));
+}
+
 export async function createOrGetActiveJob(
   db: D1Database,
   resumeId: string,
 ): Promise<ResumeProcessingJob> {
-  await ensureResumeProcessingJobsSchema(db);
   const timestamp = new Date().toISOString();
-  await db
+  const insertJob = () => db
     .prepare(
       `INSERT OR IGNORE INTO resume_processing_jobs
          (id, resume_id, status, step, created_at, updated_at)
@@ -43,6 +46,13 @@ export async function createOrGetActiveJob(
     )
     .bind(crypto.randomUUID(), resumeId, timestamp, timestamp)
     .run();
+  try {
+    await insertJob();
+  } catch (error) {
+    if (!isMissingResumeProcessingJobsError(error)) throw error;
+    await ensureResumeProcessingJobsSchema(db);
+    await insertJob();
+  }
 
   const job = await db
     .prepare(

@@ -33,7 +33,7 @@ describe('resume reprocess enqueue', () => {
   });
 
   it('creates one queued job and sends one message for a fresh resume', async () => {
-    const db = createReprocessDb({});
+    const db = createReprocessDb({ jobsTableMissing: true });
     const queue = createQueue();
 
     const result = await enqueueResumeReprocess(db as never, queue, 'resume-1');
@@ -67,9 +67,11 @@ function createReprocessDb(options: {
   resumeExists?: boolean;
   activeJob?: { id: string; status: 'queued' | 'running' } | null;
   failedJob?: { id: string; status: 'failed' } | null;
+  jobsTableMissing?: boolean;
 }) {
   const calls: string[] = [];
   let createdJob: { id: string; status: 'queued' } | null = null;
+  let schemaReady = !options.jobsTableMissing;
   return {
     calls,
     prepare(sql: string) {
@@ -79,11 +81,13 @@ function createReprocessDb(options: {
           return {
             async first() {
               if (sql.includes('SELECT id FROM resumes')) return options.resumeExists === false ? null : { id: values[0] };
+              if (!schemaReady && sql.includes('resume_processing_jobs')) throw new Error('no such table: resume_processing_jobs');
               if (sql.includes("status IN ('queued', 'running')")) return options.activeJob || createdJob;
               if (sql.includes("status='failed'")) return options.failedJob || null;
               return null;
             },
             async run() {
+              if (sql.includes('CREATE TABLE IF NOT EXISTS resume_processing_jobs')) schemaReady = true;
               if (sql.includes('INSERT OR IGNORE')) {
                 createdJob = { id: 'job-new', status: 'queued' };
               }
