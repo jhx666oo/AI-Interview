@@ -39,6 +39,7 @@ describe('resume reprocess enqueue', () => {
     const result = await enqueueResumeReprocess(db as never, queue, 'resume-1');
     expect(result).toMatchObject({ status: 'queued', queued: true });
     expect(queue.messages).toEqual([{ jobId: result.jobId, resumeId: 'resume-1' }]);
+    expect(db.calls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS resume_processing_jobs'))).toBe(true);
     expect(db.calls.some((sql) => sql.includes('INSERT OR IGNORE INTO resume_processing_jobs'))).toBe(true);
   });
 

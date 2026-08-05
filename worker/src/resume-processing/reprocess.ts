@@ -1,3 +1,4 @@
+import { ensureResumeProcessingJobsSchema } from './job-repository';
 import type { ResumeQueueMessage } from './types';
 
 type ReprocessDb = Pick<D1Database, 'prepare'>;
@@ -31,6 +32,8 @@ export async function enqueueResumeReprocess(
   queue: ReprocessQueue,
   resumeId: string,
 ): Promise<{ jobId: string; status: 'queued' | 'running'; queued: boolean }> {
+  // 兼容早期生产数据库：队列表曾通过一次性脚本创建，未执行脚本的旧环境也能安全重评估。
+  await ensureResumeProcessingJobsSchema(db);
   const resume = await db.prepare('SELECT id FROM resumes WHERE id=?').bind(resumeId).first();
   if (!resume) throw new ResumeNotFoundError(resumeId);
 

@@ -195,7 +195,8 @@ const ResumeDetail: React.FC = () => {
           message.success('已提交重新评估任务');
           fetchResume(id!);
         } catch (error) {
-          message.error((error as any)?.response?.data?.detail || '重新评估失败');
+          const detail = (error as any)?.response?.data?.detail || (error as any)?.message || '未知错误';
+          message.error(`重新评估失败：${detail}`);
         }
       },
     });
