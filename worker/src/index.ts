@@ -4197,7 +4197,7 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
     await c.env.DB.prepare(
       `INSERT INTO interviews (id, resume_id, candidate_name, interviewer, position_id, status, created_at, comments, primary_interviewer, secondary_interviewer)
        VALUES (?, ?, ?, ?, ?, 'scheduled', datetime('now'), ?, ?, ?)`
-    ).bind(interviewId, feishu_record_id || '', candidate_name, interviewerStr, position_applied || '', assignment.primaryInterviewer, assignment.secondaryInterviewer).run();
+    ).bind(interviewId, feishu_record_id || '', candidate_name, interviewerStr, position_applied || '', '', assignment.primaryInterviewer, assignment.secondaryInterviewer).run();
 
     // == 给面试官发飞书私信 ==
     const notificationResults: string[] = [];
