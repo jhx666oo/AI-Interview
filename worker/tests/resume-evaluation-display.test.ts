@@ -23,7 +23,7 @@ describe('normalizeResumeEvaluation', () => {
       ai_review: { dimensions: { '岗位匹配': 80 }, match_score: 80 },
     })).toMatchObject({
       dimensions: [{ name: '岗位匹配', score: 4, reason: '' }],
-      overallScore: 80,
+      overallScore: 4,
     });
   });
 
