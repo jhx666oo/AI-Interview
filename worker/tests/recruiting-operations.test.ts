@@ -305,6 +305,33 @@ describe('weighted role rules', () => {
       hard_requirement_result: { passed: true, unknown_items: ['age'] },
     });
   });
+
+  it('filters model dimensions to the configured role dimensions before weighting', () => {
+    expect(enrichScreeningEvaluation(
+      {
+        dimensions: [
+          { name: '额外维度', score: 5, reason: '模型自行扩展' },
+          { name: '沟通', score: 4, reason: '有跨团队经验' },
+          { name: '沟通', score: 2, reason: '重复结果' },
+          { name: '业务', score: 3, reason: '有相关项目' },
+        ],
+      },
+      [
+        { name: '业务', weight: 60, description: '业务理解' },
+        { name: '沟通', weight: 40, description: '协作表达' },
+      ],
+    )).toMatchObject({
+      dimensions: [
+        { name: '业务', score: 3, weight: 60 },
+        { name: '沟通', score: 4, weight: 40 },
+      ],
+      configured_dimensions: [
+        { name: '业务', weight: 60, description: '业务理解' },
+        { name: '沟通', weight: 40, description: '协作表达' },
+      ],
+      weighted_score: 3.4,
+    });
+  });
 });
 
 describe('recruiting board aggregation', () => {

@@ -140,7 +140,6 @@ const ResumesList: React.FC = () => {
   const dataCache = useRef<any[]>([]);
   const loadedRef = useRef(false);
   const resumeRefreshVersion = useRef(createRefreshVersion());
-  const evaluatingRef = useRef(false); // 防止重复触发 auto-evaluate-all
 
   // 能力维度（评估依据）
   const [capDims, setCapDims] = useState<Record<string, any>>({});
@@ -258,66 +257,29 @@ const ResumesList: React.FC = () => {
     }
   };
 
-  const handleBatchAIEvaluate = async () => {
-    const hide = message.loading('正在批量AI评估简历...', 0);
-    try {
-      const res = await request.post('/resumes/batch-ai-evaluate');
-      hide();
-      message.success(`评估完成：成功 ${res.evaluated} 份，跳过 ${res.skipped} 份，失败 ${res.failed} 份`);
-      if (res.errors?.length > 0) {
-        console.warn('AI评估失败详情:', res.errors);
-      }
-      fetchResumes();
-    } catch (err: any) {
-      hide();
-      message.error('批量AI评估失败: ' + (err.response?.data?.detail || err.message));
-    }
-  };
-
   const handleBatchReparse = async () => {
     Modal.confirm({
-      title: '批量重新解析所有简历',
-      content: '将通过 MinerU 重新解析所有简历的 PDF 文件，然后重新运行 AI 分析（评分+匹配）。\n\n此操作会覆盖现有解析结果。',
-      okText: '确认重解析',
+      title: selectedRowKeys.length > 0 ? `批量重新评估 ${selectedRowKeys.length} 份简历` : '批量重新评估全部简历',
+      content: selectedRowKeys.length > 0
+        ? '将重新提取选中简历的字段，并根据当前岗位能力维度重新进行 AI 评分。人工复核状态和面试记录不会被修改。'
+        : '将重新提取当前用户可见简历的字段，并根据当前岗位能力维度重新进行 AI 评分。人工复核状态和面试记录不会被修改。',
+      okText: '确认重新评估',
       cancelText: '取消',
       okType: 'primary',
       onOk: async () => {
-        const hide = message.loading('正在提交批量重新解析...', 0);
+        const hide = message.loading('正在提交批量重新评估...', 0);
         try {
-          const res = await request.post('/resumes/batch-reparse');
+          const ids = selectedRowKeys.map(String);
+          const res = await request.post('/resumes/batch-reprocess', ids.length > 0 ? { ids } : {});
           hide();
-          message.success(res.message || `已提交 ${res.count} 个简历重新解析`);
-          setTimeout(() => fetchResumes(), 3000);
+          message.success(`已提交 ${res.queued || 0} 份重新评估任务${res.already_processing ? `，${res.already_processing} 份正在处理中` : ''}`);
+          setSelectedRowKeys([]);
+          fetchResumes();
         } catch (error: any) {
           hide();
-          message.error(error?.response?.data?.detail || '批量重新解析失败');
+          message.error(error?.response?.data?.detail || '批量重新评估失败');
         }
       },
-    });
-  };
-
-  const handleAutoEvaluateAll = async () => {
-    Modal.confirm({
-      title: '自动AI评估',
-      content: '将对所有尚无评估的简历进行：\n1. 从PDF源文件提取简历文本\n2. AI根据评估维度评分\n3. 保存评估结果到页面显示\n\n已有评估的简历将被跳过。',
-      okText: '开始评估',
-      cancelText: '取消',
-      onOk: async () => {
-        const hide = message.loading('正在自动评估简历（从PDF提取文本 + AI评分）...', 0);
-        try {
-          const res = await request.post('/resumes/auto-evaluate-all', {});
-          hide();
-          message.success(`自动评估完成：成功 ${res.evaluated} 份，跳过 ${res.skipped} 份，失败 ${res.failed} 份`);
-          if (res.errors?.length > 0) {
-            console.warn('自动评估失败详情:', res.errors);
-            message.warning(`${res.failed} 份评估失败，查看控制台了解详情`);
-          }
-          fetchResumes();
-        } catch (err: any) {
-          hide();
-          message.error('自动评估失败: ' + (err.response?.data?.detail || err.message));
-        }
-      }
     });
   };
 
@@ -824,27 +786,6 @@ const ResumesList: React.FC = () => {
     });
   };
 
-  const handleReparse = (record: any) => {
-    Modal.confirm({
-      title: '重新解析简历',
-      content: '将重新调用 AI 解析该简历，并覆盖现有解析结果。',
-      okText: '确认',
-      cancelText: '取消',
-      onOk: async () => {
-        const hide = message.loading('正在重新解析...', 0);
-        try {
-          const res = await request.post(`/resumes/${record.id}/reparse`);
-          hide();
-          message.success('重新解析完成');
-          fetchResumes();
-        } catch (error: any) {
-          hide();
-          message.error(error?.response?.data?.detail || '重新解析失败');
-        }
-      },
-    });
-  };
-
   const handleApproveToTalentPool = async (record: any) => {
     // 让已经发出的轮询请求失效，避免旧的 pending 状态覆盖入库结果。
     resumeRefreshVersion.current.invalidate();
@@ -1234,9 +1175,7 @@ const handleUploadClick = () => {
           </Button>
           <Dropdown menu={{
             items: [
-              { key: 'auto', label: 'AI 自动评估', icon: <RobotOutlined />, onClick: handleAutoEvaluateAll },
-              { key: 'batch', label: 'AI 批量评估', icon: <RobotOutlined />, onClick: handleBatchAIEvaluate },
-              { key: 'reparse', label: '全部重解析', icon: <SyncOutlined />, onClick: handleBatchReparse },
+              { key: 'reparse', label: selectedRowKeys.length > 0 ? `批量重新评估（${selectedRowKeys.length}）` : '批量重新评估全部', icon: <SyncOutlined />, onClick: handleBatchReparse },
               { type: 'divider' },
               { key: 'clear', label: '清除已淘汰', icon: <CloseCircleOutlined />, danger: true, onClick: handleClearRejected },
             ]

@@ -8,6 +8,8 @@ import { createUploadRoutes } from './resume-uploads/routes';
 import { createMaintenanceRoutes } from './resume-maintenance/routes';
 import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
+import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
+import { enqueueResumeReprocess, ResumeNotFoundError } from './resume-processing/reprocess';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -491,19 +493,28 @@ async function getPositionRequirements(env: Env, positionName: string): Promise<
     const posRow = await env.DB.prepare(
       'SELECT title, description, requirements, personalized_requirements, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
     ).bind(mappedName).first() as any;
-    if (!posRow) return null;
-    let dimensions: any[] = [];
+    const positionTitle = posRow?.title || mappedName;
+    let dimensions = normalizeCapabilityDimensions(posRow?.capability_dimensions || []);
+    let personalizedRequirements = posRow?.personalized_requirements || '';
+
+    // 岗位管理的新数据写入独立能力维度表，优先使用其中的名称、描述和权重。
     try {
-      const rawDims = typeof posRow.capability_dimensions === 'string'
-        ? JSON.parse(posRow.capability_dimensions)
-        : (posRow.capability_dimensions || []);
-      dimensions = normalizeCapabilityDimensions(rawDims);
+      const dimRow = await env.DB.prepare(
+        'SELECT dimensions_json, personalized_requirements FROM capability_dimensions WHERE position_name = ? LIMIT 1'
+      ).bind(positionTitle).first() as any;
+      if (dimRow?.dimensions_json) {
+        const configured = normalizeCapabilityDimensions(dimRow.dimensions_json);
+        if (configured.length > 0) dimensions = configured;
+      }
+      if (dimRow?.personalized_requirements) personalizedRequirements = dimRow.personalized_requirements;
     } catch {}
+
+    if (!posRow && dimensions.length === 0) return null;
     let hardRequirements: any[] = [];
     try {
       const requisition = await env.DB.prepare(
         'SELECT hard_requirements FROM job_requisitions WHERE title = ? LIMIT 1'
-      ).bind(posRow.title).first() as any;
+      ).bind(positionTitle).first() as any;
       if (requisition?.hard_requirements) {
         const parsed = typeof requisition.hard_requirements === 'string'
           ? JSON.parse(requisition.hard_requirements)
@@ -512,10 +523,10 @@ async function getPositionRequirements(env: Env, positionName: string): Promise<
       }
     } catch {}
     return {
-      positionTitle: posRow.title,
-      description: posRow.description || '',
-      requirements: posRow.requirements || '',
-      personalized_requirements: posRow.personalized_requirements || '',
+      positionTitle,
+      description: posRow?.description || '',
+      requirements: posRow?.requirements || '',
+      personalized_requirements: personalizedRequirements,
       capability_dimensions: dimensions,
       hard_requirements: hardRequirements,
     };
@@ -612,10 +623,13 @@ export function enrichScreeningEvaluation(
 ) {
   const configured_dimensions = normalizeCapabilityDimensions(configuredDimensionInput);
   const configuredByName = new Map(configured_dimensions.map(item => [item.name, item]));
-  const dimensions = Array.isArray(evaluation.dimensions) ? evaluation.dimensions.map((item: any) => ({
+  const dimensions = filterDimensionScoresToConfigured(
+    normalizeDimensionScores(evaluation),
+    configured_dimensions.map(item => item.name),
+  ).map((item: any) => ({
     ...item,
-    weight: configuredByName.get(String(item?.name || ''))?.weight,
-  })) : [];
+    weight: configuredByName.get(item.name)?.weight,
+  }));
   return {
     ...evaluation,
     dimensions,
@@ -1020,6 +1034,36 @@ function getOwnerName(c: any): string | null {
   if (!user || user.role === 'admin') return null;
   // HR 用户：用 full_name 作为 responsible_person 过滤条件
   return user.full_name || null;
+}
+
+async function enqueueResumeReprocessBatchForIds(c: any, ids: string[]) {
+  const queued: string[] = [];
+  const alreadyProcessing: string[] = [];
+  const failed: Array<{ id: string; detail: string }> = [];
+  for (let start = 0; start < ids.length; start += 10) {
+    const chunk = ids.slice(start, start + 10);
+    const results = await Promise.all(chunk.map(async (resumeId) => {
+      try {
+        return { resumeId, result: await enqueueResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, resumeId) };
+      } catch (error: any) {
+        return { resumeId, error: error instanceof ResumeNotFoundError ? 'Resume not found' : (error?.message || '重新入队失败') };
+      }
+    }));
+    for (const item of results) {
+      if (item.error) failed.push({ id: item.resumeId, detail: item.error });
+      else if (item.result?.queued) queued.push(item.resumeId);
+      else alreadyProcessing.push(item.resumeId);
+    }
+  }
+  return {
+    requested: ids.length,
+    matched: ids.length,
+    queued: queued.length,
+    already_processing: alreadyProcessing.length,
+    failed: failed.length,
+    failed_items: failed.slice(0, 20),
+    job_ids: queued,
+  };
 }
 
 // ==================== Health Check ====================
@@ -5307,6 +5351,17 @@ app.post('/api/resumes/batch-ocr-mineru', authMiddleware, async (c) => {
 // 分两步调 callAI：①字段解析更新 parsed_data ②AI 初筛评分更新 ai_evaluation/screening_result
 // 批量 AI 初筛：完全复用 ai-screen 路由的 prompt 和解析逻辑
 app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
+  // 兼容旧客户端：统一委托到批量队列入口。
+  const owner = getOwnerName(c);
+  const ownerWhere = owner
+    ? ` AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))`
+    : '';
+  const ownerParams = owner ? [owner, owner, owner] : [];
+  const rows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE 1=1${ownerWhere}`).bind(...ownerParams).all();
+  const result = await enqueueResumeReprocessBatchForIds(c, (rows.results || []).map((row: any) => row.id));
+  return c.json({ ok: true, ...result }, 202);
+
+  /* Legacy synchronous implementation retained below for source compatibility only. */
   const results: any[] = [];
   try {
     const rows = await c.env.DB.prepare(
@@ -5754,27 +5809,81 @@ app.delete('/api/resumes/:id', authMiddleware, async (c) => {
 
 app.post('/api/resumes/:id/retry-processing', authMiddleware, async (c) => {
   const resumeId = c.req.param('id');
-  const resume = await c.env.DB.prepare('SELECT id FROM resumes WHERE id=?').bind(resumeId).first();
-  if (!resume) return c.json({ detail: 'Resume not found' }, 404);
-
-  const timestamp = new Date().toISOString();
-  let job = await c.env.DB.prepare(
-    "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 1"
-  ).bind(resumeId).first() as any;
-
-  if (job) {
-    await c.env.DB.prepare(
-      "UPDATE resume_processing_jobs SET status='queued', error_code=NULL, error_message=NULL, updated_at=? WHERE id=? AND status='failed'"
-    ).bind(timestamp, job.id).run();
-  } else {
-    job = await createOrGetActiveJob(c.env.DB, resumeId);
-    if (job.status !== 'queued') return c.json({ job_id: job.id, parse_status: 'queued', detail: '任务已在处理中' });
+  try {
+    const result = await enqueueResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, resumeId);
+    return c.json({ job_id: result.jobId, parse_status: result.status === 'running' ? 'processing' : 'queued', queued: result.queued, detail: result.queued ? '已重新入队' : '任务已在处理中' }, 202);
+  } catch (error) {
+    if (error instanceof ResumeNotFoundError) return c.json({ detail: 'Resume not found' }, 404);
+    console.error(`[retry-processing] ${resumeId} failed`, error);
+    return c.json({ detail: '重新入队失败' }, 500);
   }
+});
 
-  await c.env.DB.prepare("UPDATE resumes SET parse_status='queued', parse_error=NULL, updated_at=? WHERE id=?")
-    .bind(timestamp, resumeId).run();
-  await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId });
-  return c.json({ job_id: job.id, parse_status: 'queued', detail: '已重新入队' }, 202);
+// 统一的批量重新评估入口：选中简历时只处理选中项，否则处理当前用户可见的全部简历。
+app.post('/api/resumes/batch-reprocess', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const requestedIds = Array.isArray(body?.ids) ? body.ids : [];
+    if (requestedIds.some((id: unknown) => typeof id !== 'string' || id.trim() === '')) {
+      return c.json({ detail: 'ids must only contain resume ids' }, 400);
+    }
+
+    const owner = getOwnerName(c);
+    const ownerWhere = owner
+      ? ` AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))`
+      : '';
+    const ownerParams = owner ? [owner, owner, owner] : [];
+    let ids: string[] = [];
+
+    if (requestedIds.length > 0) {
+      // 分块避免 SQLite/D1 的变量数量限制，同时仍按责任人过滤。
+      for (let start = 0; start < requestedIds.length; start += 200) {
+        const chunk = requestedIds.slice(start, start + 200);
+        const placeholders = chunk.map(() => '?').join(', ');
+        const rows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE id IN (${placeholders})${ownerWhere}`)
+          .bind(...chunk, ...ownerParams).all();
+        ids.push(...(rows.results || []).map((row: any) => row.id));
+      }
+    } else {
+      const rows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE 1=1${ownerWhere} ORDER BY created_at DESC`)
+        .bind(...ownerParams).all();
+      ids = (rows.results || []).map((row: any) => row.id);
+    }
+
+    const queued: string[] = [];
+    const alreadyProcessing: string[] = [];
+    const failed: Array<{ id: string; detail: string }> = [];
+    // 限制并发，避免一次请求占满 D1/Queue 子请求额度。
+    for (let start = 0; start < ids.length; start += 10) {
+      const chunk = ids.slice(start, start + 10);
+      const results = await Promise.all(chunk.map(async (resumeId) => {
+        try {
+          return { resumeId, result: await enqueueResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, resumeId) };
+        } catch (error: any) {
+          return { resumeId, error: error instanceof ResumeNotFoundError ? 'Resume not found' : (error?.message || '重新入队失败') };
+        }
+      }));
+      for (const item of results) {
+        if (item.error) failed.push({ id: item.resumeId, detail: item.error });
+        else if (item.result?.queued) queued.push(item.resumeId);
+        else alreadyProcessing.push(item.resumeId);
+      }
+    }
+
+    return c.json({
+      ok: true,
+      requested: requestedIds.length > 0 ? requestedIds.length : ids.length,
+      matched: ids.length,
+      queued: queued.length,
+      already_processing: alreadyProcessing.length,
+      failed: failed.length,
+      failed_items: failed.slice(0, 20),
+      job_ids: queued,
+    }, 202);
+  } catch (error: any) {
+    console.error('[batch-reprocess] failed', error);
+    return c.json({ detail: '批量重新评估失败: ' + (error?.message || error) }, 500);
+  }
 });
 
 // 批量清除已淘汰（HR复核结果='未通过'）
@@ -5851,6 +5960,17 @@ app.post('/api/resumes/batch', authMiddleware, async (c) => {
 
 app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
   const id = c.req.param('id');
+  // 兼容旧客户端：重新解析统一走队列消费者，确保字段提取、能力维度评分和初筛使用同一套流程。
+  try {
+    const result = await enqueueResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, id);
+    return c.json({ id, job_id: result.jobId, parse_status: result.status === 'running' ? 'processing' : 'queued', queued: result.queued, detail: result.queued ? '已提交重新评估任务' : '任务已在处理中' }, 202);
+  } catch (error) {
+    if (error instanceof ResumeNotFoundError) return c.json({ detail: 'Resume not found' }, 404);
+    console.error(`[reparse] ${id} failed`, error);
+    return c.json({ detail: '重新评估失败' }, 500);
+  }
+
+  /* Legacy synchronous implementation retained below for source compatibility only. */
   const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first() as any;
   if (!resume) return c.json({ detail: 'Resume not found' }, 404);
   let rawText = resume.ocr_markdown || resume.raw_text || resume.resume_markdown || '';
@@ -6109,6 +6229,17 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
 
 app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
   const id = c.req.param('id');
+  // 兼容旧客户端：AI 初筛与重新解析共用同一个队列处理流程。
+  try {
+    const result = await enqueueResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, id);
+    return c.json({ id, job_id: result.jobId, parse_status: result.status === 'running' ? 'processing' : 'queued', queued: result.queued, detail: result.queued ? '已提交重新评估任务' : '任务已在处理中' }, 202);
+  } catch (error) {
+    if (error instanceof ResumeNotFoundError) return c.json({ detail: 'Resume not found' }, 404);
+    console.error(`[ai-screen] ${id} failed`, error);
+    return c.json({ detail: '重新评估失败' }, 500);
+  }
+
+  /* Legacy synchronous implementation retained below for source compatibility only. */
   const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first() as any;
   if (!resume) return c.json({ detail: 'Resume not found' }, 404);
   let position: any = null;
@@ -10102,6 +10233,19 @@ app.post('/api/resumes/auto-evaluate', authMiddleware, async (c) => {
 });
 
 app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
+  // 兼容旧客户端：自动评估不再直接调用 AI，统一提交队列任务。
+  const body = await c.req.json().catch(() => ({}));
+  const owner = getOwnerName(c);
+  const ownerWhere = owner
+    ? ` AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))`
+    : '';
+  const ownerParams = owner ? [owner, owner, owner] : [];
+  const visibleRows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE 1=1${ownerWhere}`).bind(...ownerParams).all();
+  const ids = (visibleRows.results || []).map((row: any) => row.id);
+  const result = await enqueueResumeReprocessBatchForIds(c, ids);
+  return c.json({ ok: true, ...result, force: body?.force === true }, 202);
+
+  /* Legacy synchronous implementation retained below for source compatibility only. */
   try {
     const user = c.get('user');
     const body = await c.req.json().catch(() => ({}));
@@ -10196,6 +10340,21 @@ app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
 
 // 批量 AI 评估（前端按钮直接调用，复用 auto-evaluate-all 逻辑）
 app.post('/api/resumes/batch-ai-evaluate', authMiddleware, async (c) => {
+  // 兼容旧客户端：批量 AI 评估统一委托到同一队列。
+  const body = await c.req.json().catch(() => ({}));
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0) : [];
+  const owner = getOwnerName(c);
+  const ownerWhere = owner
+    ? ` AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))`
+    : '';
+  const ownerParams = owner ? [owner, owner, owner] : [];
+  const placeholders = ids.length > 0 ? ids.map(() => '?').join(', ') : '';
+  const sql = ids.length > 0 ? `SELECT id FROM resumes WHERE id IN (${placeholders})${ownerWhere}` : `SELECT id FROM resumes WHERE 1=1${ownerWhere}`;
+  const rows = await c.env.DB.prepare(sql).bind(...(ids.length > 0 ? ids : []), ...ownerParams).all();
+  const result = await enqueueResumeReprocessBatchForIds(c, (rows.results || []).map((row: any) => row.id));
+  return c.json({ ok: true, ...result }, 202);
+
+  /* Legacy synchronous implementation retained below for source compatibility only. */
   try {
     // 纯 D1 驱动
     const rows = await c.env.DB.prepare("SELECT id, candidate_name, position_applied, mapped_position, raw_text, ai_review, ai_evaluation FROM resumes WHERE raw_text IS NOT NULL AND raw_text != '' AND (ai_review IS NULL OR ai_review = '') ORDER BY updated_at DESC LIMIT 50").all();
