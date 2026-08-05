@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { DownloadOutlined, FilePdfOutlined, ArrowLeftOutlined, CloseCircleOutlined, EditOutlined, SaveOutlined, ReloadOutlined, UserOutlined, CheckCircleOutlined, TeamOutlined, SolutionOutlined, ClockCircleOutlined, RobotOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { DownloadOutlined, FilePdfOutlined, ArrowLeftOutlined, CloseCircleOutlined, EditOutlined, SaveOutlined, ReloadOutlined, UserOutlined, CheckCircleOutlined, TeamOutlined, SolutionOutlined, ClockCircleOutlined, RobotOutlined } from '@ant-design/icons';
 import RejectReasonSelector, { REJECT_REASONS } from '../../components/RejectReasonSelector';
 import { useAuth } from '../../contexts/AuthContext';
 import { getMaximizedPdfPreviewUrl } from '../../utils/pdfPreview';
@@ -58,7 +58,6 @@ const ResumeDetail: React.FC = () => {
   const [isSubmitReviewModalVisible, setIsSubmitReviewModalVisible] = useState(false);
   const [myReview, setMyReview] = useState<any>(null);
   const [submitReviewForm] = Form.useForm();
-  const [aiScreening, setAiScreening] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [updating, setUpdating] = useState(false);
 
@@ -184,33 +183,19 @@ const ResumeDetail: React.FC = () => {
     return text.includes('年') ? text : `${text}年`;
   };
 
-  // AI初筛
-  const handleAIScreen = async () => {
-    setAiScreening(true);
-    try {
-      const res = await request.post(`/resumes/${id}/ai-screen`);
-      message.success('AI初筛完成');
-      fetchResume(id!);
-    } catch (error) {
-      message.error((error as any)?.response?.data?.detail || 'AI初筛失败，请检查AI服务配置');
-    } finally {
-      setAiScreening(false);
-    }
-  };
-
   const handleReparse = () => {
     Modal.confirm({
-      title: '重新解析简历',
-      content: '将重新调用 AI 解析该简历，并覆盖现有解析结果。',
-      okText: '确认',
+      title: '重新评估简历',
+      content: '将重新提取简历字段，并根据当前岗位的能力维度与个性化要求重新进行 AI 评分。人工复核状态和面试记录不会被修改。',
+      okText: '确认重新评估',
       cancelText: '取消',
       onOk: async () => {
         try {
           await request.post(`/resumes/${id}/reparse`);
-          message.success('已开始重新解析');
+          message.success('已提交重新评估任务');
           fetchResume(id!);
         } catch (error) {
-          message.error((error as any)?.response?.data?.detail || '重新解析失败');
+          message.error((error as any)?.response?.data?.detail || '重新评估失败');
         }
       },
     });
@@ -416,8 +401,7 @@ const ResumeDetail: React.FC = () => {
     // 基础操作
     if (!isEditing) {
       buttons.push(
-        <Button size="small" key="ai-screen" type="primary" loading={aiScreening} icon={<ThunderboltOutlined />} onClick={handleAIScreen} style={{background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)', border: 'none'}}>AI初筛</Button>,
-        <Button size="small" key="reparse" icon={<ReloadOutlined />} onClick={handleReparse} disabled={resume?.parse_status === 'processing'}>重新解析</Button>,
+        <Button size="small" key="reparse" icon={<ReloadOutlined />} onClick={handleReparse} disabled={['queued', 'extracting_text', 'extracting_fields', 'screening'].includes(resume?.parse_status)}>重新评估</Button>,
         <Button size="small" key="edit" icon={<EditOutlined />} onClick={() => {
           form.setFieldsValue({
             candidate_name: resume.candidate_name,
