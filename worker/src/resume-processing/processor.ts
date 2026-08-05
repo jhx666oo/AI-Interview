@@ -64,11 +64,14 @@ export async function processResume(
     await deps.updateResume(message.resumeId, { parsed_data: JSON.stringify(mergedFields), parse_status: 'screening' });
   }
 
-  if (!jsonObject(resume.ai_evaluation)) {
+  if (message.reprocess || !jsonObject(resume.ai_evaluation)) {
     await deps.setJobStep(message.jobId, 'screening');
     const result = await deps.screen(text, fields, resume);
     await deps.updateResume(message.resumeId, {
+      ai_review: JSON.stringify(result),
       ai_evaluation: JSON.stringify(result),
+      match_score: result.weighted_score ?? null,
+      screening_result: result.screening_result ?? '不通过',
       hard_requirement_result: JSON.stringify(result.hard_requirement_result || {
         passed: true,
         unmet_items: [],

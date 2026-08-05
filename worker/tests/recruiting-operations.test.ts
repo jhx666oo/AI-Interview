@@ -293,27 +293,35 @@ describe('weighted role rules', () => {
     )).toMatchObject({ passed: false, unmet_items: ['age'], unknown_items: ['highest_degree'] });
   });
 
-  it('enriches an AI result while retaining raw dimension evidence', () => {
+  it('normalizes an AI result to the seven weighted screening dimensions', () => {
+    const dimensions = ['核心画像', '核心职责', '任职要求', '企业背景', '加分项', '关键词匹配', '避坑雷区']
+      .map((name) => ({ name, score: 5, reason: '有跨团队经验' }));
     expect(enrichScreeningEvaluation(
-      { dimensions: [{ name: '沟通', score: 4, reason: '有跨团队经验' }] },
-      [{ name: '沟通', weight: 100 }],
+      { dimensions },
+      [],
       [{ field: 'age', operator: 'between', value: [22, 35] }],
       { age: null },
     )).toMatchObject({
-      dimensions: [{ name: '沟通', score: 4, reason: '有跨团队经验', weight: 100 }],
-      weighted_score: 4,
+      dimensions,
+      weighted_score: 5,
+      match_score: 5,
+      screening_result: '通过',
       hard_requirement_result: { passed: true, unknown_items: ['age'] },
     });
   });
 
-  it('filters model dimensions to the configured role dimensions before weighting', () => {
+  it('drops non-screening model dimensions before applying gate rules', () => {
     expect(enrichScreeningEvaluation(
       {
         dimensions: [
           { name: '额外维度', score: 5, reason: '模型自行扩展' },
-          { name: '沟通', score: 4, reason: '有跨团队经验' },
-          { name: '沟通', score: 2, reason: '重复结果' },
-          { name: '业务', score: 3, reason: '有相关项目' },
+          { name: '核心画像', score: 4, reason: '符合画像' },
+          { name: '核心职责', score: 4, reason: '履历符合' },
+          { name: '任职要求', score: 4, reason: '具备条件' },
+          { name: '企业背景', score: 4, reason: '背景匹配' },
+          { name: '加分项', score: 4, reason: '有加分项' },
+          { name: '关键词匹配', score: 5, reason: '关键词齐全' },
+          { name: '避坑雷区', score: 5, reason: '无红旗' },
         ],
       },
       [
@@ -322,14 +330,20 @@ describe('weighted role rules', () => {
       ],
     )).toMatchObject({
       dimensions: [
-        { name: '业务', score: 3, weight: 60 },
-        { name: '沟通', score: 4, weight: 40 },
+        { name: '核心画像', score: 4 },
+        { name: '核心职责', score: 4 },
+        { name: '任职要求', score: 4 },
+        { name: '企业背景', score: 4 },
+        { name: '加分项', score: 4 },
+        { name: '关键词匹配', score: 5 },
+        { name: '避坑雷区', score: 5 },
       ],
       configured_dimensions: [
         { name: '业务', weight: 60, description: '业务理解' },
         { name: '沟通', weight: 40, description: '协作表达' },
       ],
-      weighted_score: 3.4,
+      weighted_score: 4,
+      screening_result: '通过',
     });
   });
 });

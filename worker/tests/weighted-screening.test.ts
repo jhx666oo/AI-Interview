@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateWeightedScreening } from '../src/resume-processing/weighted-screening';
+import { enrichScreeningEvaluation } from '../src/index';
 
 const config = [
   { name: '核心画像', weight: 25 }, { name: '核心职责', weight: 22 },
@@ -35,5 +36,22 @@ describe('evaluateWeightedScreening', () => {
     expect(result.weighted_score).toBe(4);
     expect(result.screening_result).toBe('通过');
     expect(evaluateWeightedScreening({ dimensions: [] }, config).screening_reason).toContain('关键词');
+  });
+
+  it('makes the compatibility evaluator persist the five-point weighted result instead of AI match_score', () => {
+    const result = enrichScreeningEvaluation({
+      match_score: 62,
+      dimensions: config.map(({ name }) => ({ name, score: 5, reason: '满足要求' })),
+    }, config);
+
+    expect(result.dimensions).toHaveLength(7);
+    expect(result.weighted_score).toBe(5);
+    expect(result.match_score).toBe(5);
+    expect(result.screening_result).toBe('通过');
+    expect(result.screening_reason).toBe('五项能力加权分达到 4 分');
+    expect(result.gate_results).toEqual({
+      keyword_match: { score: 5, passed: true },
+      red_flag: { score: 5, passed: true },
+    });
   });
 });

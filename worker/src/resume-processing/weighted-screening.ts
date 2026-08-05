@@ -1,5 +1,6 @@
 const SCORING_DIMENSIONS = ['核心画像', '核心职责', '任职要求', '企业背景', '加分项'] as const;
 const GATE_DIMENSIONS = ['关键词匹配', '避坑雷区'] as const;
+export const WEIGHTED_SCREENING_DIMENSION_NAMES = [...SCORING_DIMENSIONS, ...GATE_DIMENSIONS] as const;
 
 const DEFAULT_WEIGHTS: Record<(typeof SCORING_DIMENSIONS)[number], number> = {
   核心画像: 25,
@@ -36,7 +37,7 @@ function normalizedDimensions(evaluation: { dimensions?: unknown } | null | unde
     if (name && !byName.has(name)) byName.set(name, item);
   }
 
-  return [...SCORING_DIMENSIONS, ...GATE_DIMENSIONS].map((name) => {
+  return WEIGHTED_SCREENING_DIMENSION_NAMES.map((name) => {
     const source = byName.get(name);
     return {
       name,

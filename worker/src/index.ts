@@ -9,7 +9,8 @@ import { createMaintenanceRoutes } from './resume-maintenance/routes';
 import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
-export { evaluateWeightedScreening } from './resume-processing/weighted-screening';
+import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES } from './resume-processing/weighted-screening';
+export { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES } from './resume-processing/weighted-screening';
 import { enqueueResumeReprocess, ResumeNotFoundError } from './resume-processing/reprocess';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
@@ -624,24 +625,27 @@ export function enrichScreeningEvaluation(
   configuredDimensionInput: unknown,
   hardRequirements: HardRequirement[] = [],
   candidateFields: Record<string, any> = {},
-) {
+): any {
   const configured_dimensions = normalizeCapabilityDimensions(configuredDimensionInput);
   const configuredByName = new Map(configured_dimensions.map(item => [item.name, item]));
   const dimensions = filterDimensionScoresToConfigured(
     normalizeDimensionScores(evaluation),
-    configured_dimensions.map(item => item.name),
+    [...configured_dimensions.map(item => item.name), ...WEIGHTED_SCREENING_DIMENSION_NAMES],
   ).map((item: any) => ({
     ...item,
     weight: configuredByName.get(item.name)?.weight,
   }));
+  const weightedScreening = evaluateWeightedScreening({ ...evaluation, dimensions }, configured_dimensions);
   return {
     ...evaluation,
-    dimensions,
+    ...weightedScreening,
+    match_score: weightedScreening.weighted_score,
     configured_dimensions,
-    weighted_score: weightedScore(dimensions),
     hard_requirement_result: evaluateHardRequirements({ ...candidateFields, ...evaluation }, hardRequirements),
   };
 }
+
+export const WEIGHTED_SCREENING_PROMPT = `初筛必须且只能返回以下七个能力维度，每项 score 为 0-5 整数并提供中文依据：${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}。其中「关键词匹配」与「避坑雷区」是硬门槛，只有各自为 5 分才通过；其余五项用于计算加权分。match_score 不具权威性，仅可作为非决策参考；最终结果由服务端按七维评分计算。`;
 
 // 构建 AI 初筛 prompt（移植自 zpzt 项目）
 function buildAIScreeningPrompt(resumeText: string, positionReq: any | null, extraContext?: { location?: string, salary?: string, metaInfo?: string }): { systemPrompt: string, userPrompt: string } {
@@ -694,11 +698,13 @@ function buildAIScreeningPrompt(resumeText: string, positionReq: any | null, ext
 - position: 应聘岗位
 - advantage (优势分析): 用中文描述3-5个核心优势
 - risk (风险点/劣势分析): 用中文描述2-4个劣势或风险
-- match_score: 人岗匹配度（0-100的整数）
+- match_score: 非权威参考值（不要据此决定是否通过）
 - recommendation: 推荐建议（"strongly_recommend"/"recommend"/"neutral"/"not_recommend"/"strongly_not_recommend"）
 - summary: 综合分析摘要（中文，2-3句话）
 - suggested_questions: 建议面试问题（中文，3-5个）
-- dimensions: 能力维度评分数组，每个包含 { name, score(0-5), reason }
+- dimensions: 必须且只能包含七项 ${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}，每个包含 { name, score(0-5), reason }。关键词匹配和避坑雷区均为硬门槛，只有 5 分才通过。
+
+${WEIGHTED_SCREENING_PROMPT}
 
 第三部分 - 个性化需求匹配（如果岗位有个性化需求）：
 - personalized_match_score: 个性化需求匹配度（0-100的整数）
@@ -720,7 +726,13 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
   const result = await callAI(env, systemPrompt, userPrompt);
   if (!result) return null;
   let parsed: any;
-  try { parsed = extractJSON(result); } catch { return { raw_response: result, match_score: 50, dimensions: [] }; }
+  try { parsed = extractJSON(result); } catch {
+    return enrichScreeningEvaluation(
+      { raw_response: result, dimensions: [] },
+      positionReq?.capability_dimensions || [],
+      positionReq?.hard_requirements || [],
+    );
+  }
   // Flatten nested structure
   const flattened: any = {};
   for (const [k, v] of Object.entries(parsed)) {
@@ -4584,20 +4596,18 @@ app.post('/api/resumes', authMiddleware, async (c) => {
           const posName = resume.position_applied || resume.mapped_position || positionId || parsedPositionName || '';
           const posCtx = await getPositionContext(c.env.DB, posName);
           const prompt = await getAIPrompt(c.env, 'analyze_resume', {
-            system: '你是一位资深的 HR 招聘评估 AI。请按岗位能力维度逐条 0-5 打分，用中文返回 JSON：{match_score:0-100,recommendation,summary,strengths:[],risks:[],suggested_questions:[],dimensions:[{name,score,reason}]}。',
+            system: `你是一位资深的 HR 招聘评估 AI。${WEIGHTED_SCREENING_PROMPT}`,
             user: '【岗位】' + (posCtx.standardPosition || posName) + '\n' + (posCtx.capabilityDimensions ? '【能力维度】' + posCtx.capabilityDimensions + '\n' : '') + '\n【简历全文】\n' + resumeText,
           });
           const aiResp = await callAI(c.env, prompt.system, prompt.user, 'deepseek-v4-flash');
           if (aiResp) {
             let parsed: any;
             try { parsed = extractJSON(aiResp); } catch { parsed = { summary: aiResp }; }
-            const matchScore = parsed.match_score ?? 50;
-            const screeningResult = aiScreeningResultFromScore(matchScore);
-            const aiEvalObj: any = { summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '' };
-            if (Array.isArray(parsed.dimensions)) {
-              aiEvalObj.dimensions = parsed.dimensions.map((d: any) => ({ name: d.name || '', score: d.score ?? 0, reason: d.reason || '' }));
-            }
-            const aiReview = JSON.stringify({ summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '', strengths: parsed.strengths || [], risks: parsed.risks || [], suggested_questions: parsed.suggested_questions || [], dimensions: aiEvalObj.dimensions || [] });
+            const evaluation = enrichScreeningEvaluation(parsed, [], [], {});
+            const matchScore = evaluation.weighted_score;
+            const screeningResult = evaluation.screening_result;
+            const aiEvalObj: any = { ...evaluation, match_score: matchScore };
+            const aiReview = JSON.stringify({ ...evaluation, match_score: matchScore, strengths: parsed.strengths || [], risks: parsed.risks || [], suggested_questions: parsed.suggested_questions || [] });
             await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, parse_status=?, updated_at=? WHERE id=?')
               .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, 'ai_screened', now(), recordId).run();
             try {
@@ -5475,15 +5485,13 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
         const prompt = await getAIPrompt(c.env, 'analyze_resume', {
           system: `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON 对象：
 
-- match_score: 人岗匹配度整数 0-100
+- match_score: 非权威参考值；${WEIGHTED_SCREENING_PROMPT}
 - recommendation: 推荐建议，取值 "strongly_recommend" / "recommend" / "neutral" / "not_recommend" / "strongly_not_recommend"
 - summary: 候选人综合摘要（中文，2-3 句）
 - strengths: 3-5 个核心优势（中文数组）
 - risks: 2-4 个潜在风险（中文数组）
 - suggested_questions: 3-5 个建议面试问题（中文数组）
-- dimensions: 能力维度评分明细数组，必须依据岗位给出的「能力维度」逐条打分。每个元素格式：
-  { "name": "维度名称（与岗位能力维度保持一致）", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }
-  若岗位未提供能力维度，则基于岗位通用要求自行归纳 3-5 个关键维度打分。`,
+- dimensions: 必须且只能包含 ${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}；每项格式为 { "name": "指定维度名", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }。`,
           user: ''
         });
 
@@ -5528,13 +5536,13 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
           enrichedParsedData,
         );
 
-        const matchScore = enrichedEvaluation.match_score ?? 50;
-        const screeningResult = aiScreeningResultFromScore(matchScore);
+        const matchScore = enrichedEvaluation.weighted_score;
+        const screeningResult = enrichedEvaluation.screening_result;
 
         // ai_evaluation 与 ai-screen 路由格式一致
-        const aiEvalObj: any = { summary: enrichedEvaluation.summary || '', match_score: matchScore, weighted_score: enrichedEvaluation.weighted_score, configured_dimensions: enrichedEvaluation.configured_dimensions, recommendation: enrichedEvaluation.recommendation || '', dimensions: enrichedEvaluation.dimensions || [] };
+        const aiEvalObj: any = { summary: enrichedEvaluation.summary || '', match_score: matchScore, weighted_score: enrichedEvaluation.weighted_score, screening_result: screeningResult, screening_reason: enrichedEvaluation.screening_reason, gate_results: enrichedEvaluation.gate_results, configured_dimensions: enrichedEvaluation.configured_dimensions, recommendation: enrichedEvaluation.recommendation || '', dimensions: enrichedEvaluation.dimensions || [] };
         const aiReviewText = JSON.stringify({
-          summary: enrichedEvaluation.summary || '', match_score: matchScore, recommendation: enrichedEvaluation.recommendation || '',
+          summary: enrichedEvaluation.summary || '', match_score: matchScore, weighted_score: enrichedEvaluation.weighted_score, screening_result: screeningResult, screening_reason: enrichedEvaluation.screening_reason, gate_results: enrichedEvaluation.gate_results, recommendation: enrichedEvaluation.recommendation || '',
           strengths: enrichedEvaluation.strengths || [], risks: enrichedEvaluation.risks || [],
           suggested_questions: enrichedEvaluation.suggested_questions || [], dimensions: aiEvalObj.dimensions || [],
         });
@@ -5547,7 +5555,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
         try {
           const tid = getBitableTableId(c.env, 'talent');
           await bitableUpdateRecord(c.env, tid, rid, {
-            'AI简历评估': JSON.stringify({ summary: parsed.summary || '', match_score: matchScore, recommendation: parsed.recommendation || '', dimensions: aiEvalObj.dimensions || [] }),
+            'AI简历评估': JSON.stringify(aiEvalObj),
             'AI简历初筛结果': screeningResult,
             '优势分析': (parsed.strengths || []).join('\n'),
             '风险点': (parsed.risks || []).join('\n'),
@@ -6101,10 +6109,11 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
 - position: 应聘岗位（从文件名或文本中提取）
 - advantage (优势分析): 用中文描述3-5个核心优势
 - risk (风险点/劣势分析): 用中文描述2-4个劣势或风险
-- match_score: 人岗匹配度（0-100的整数）
+- match_score: 非权威参考值；${WEIGHTED_SCREENING_PROMPT}
 - recommendation: 推荐建议（"strongly_recommend"/"recommend"/"neutral"/"not_recommend"/"strongly_not_recommend"）
 - summary: 综合分析摘要（中文，2-3句话）
-- suggested_questions: 建议面试问题（中文，3-5个）`;
+- suggested_questions: 建议面试问题（中文，3-5个）
+- dimensions: 必须且只能包含 ${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}；每项包含 { name, score(0-5), reason }。`;
     const inputHint = reparseSource === 'parsed' ? '已解析的结构化字段（来自飞书同步）：' : '简历文本（请提取完整信息）：';
     userPrompt = inputHint + appendContext + '\n\n' + reparseInputText;
   }
@@ -6206,7 +6215,8 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     if (normalized.recent_company) delete normalized.current_company;
     // Build ai_review as structured JSON object (not markdown string)
     // Load capability dimensions for enrichment
-    let enrichedEval = merged;
+    let enrichedEval: any = merged;
+    let configuredDimensions: CapabilityDimension[] = [];
     try {
       let posName = merged.position || resume.position_applied || resume.standard_position || '';
       if (posName) {
@@ -6225,7 +6235,7 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
         const posRow = await c.env.DB.prepare(
           'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
         ).bind(posName).first() as any;
-        let configuredDimensions = normalizeCapabilityDimensions(posRow?.capability_dimensions || []);
+        configuredDimensions = normalizeCapabilityDimensions(posRow?.capability_dimensions || []);
         // 如果 positions 表没有，从 capability_dimensions 独立表补充
         if (configuredDimensions.length === 0) {
           try {
@@ -6237,26 +6247,27 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
             }
           } catch {}
         }
-        enrichedEval = enrichScreeningEvaluation(merged, configuredDimensions, [], {});
       }
     } catch (e: any) {
       console.error(`[Reparse] enrichment failed: ${e.message}`);
     }
+    enrichedEval = enrichScreeningEvaluation(merged, configuredDimensions, [], normalized);
     const aiReview = enrichedEval;
     // Keep variables for Feishu sync compatibility
     const advantage = merged.advantage || merged.advantages || '';
     const risk = merged.risk || merged.risks || '';
     const pos = merged.position || '';
-    const matchScore = typeof merged.match_score === 'number' ? merged.match_score : null;
+    const matchScore = enrichedEval.weighted_score ?? null;
     const recommendation = merged.recommendation || '';
-    const enrichedScore = typeof enrichedEval.match_score === 'number' ? enrichedEval.match_score : null;
+    const enrichedScore = enrichedEval.weighted_score ?? null;
     await c.env.DB.prepare(
-      'UPDATE resumes SET parsed_data = ?, ai_review = ?, match_score = ?, screening_result = ?, parse_status = ? WHERE id = ?'
+      'UPDATE resumes SET parsed_data = ?, ai_review = ?, ai_evaluation = ?, match_score = ?, screening_result = ?, parse_status = ? WHERE id = ?'
     ).bind(
       JSON.stringify(normalized),
       JSON.stringify(aiReview || normalized),
+      JSON.stringify(enrichedEval),
       enrichedScore,
-      enrichedScore !== null ? aiScreeningResultFromScore(enrichedScore) : '',
+      enrichedEval.screening_result,
       'reparsed',
       id
     ).run();
@@ -6325,15 +6336,13 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
   const prompt = await getAIPrompt(c.env, 'analyze_resume', {
     system: `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON 对象：
 
-- match_score: 人岗匹配度整数 0-100
+- match_score: 非权威参考值；${WEIGHTED_SCREENING_PROMPT}
 - recommendation: 推荐建议，取值 "strongly_recommend" / "recommend" / "neutral" / "not_recommend" / "strongly_not_recommend"
 - summary: 候选人综合摘要（中文，2-3 句）
 - strengths: 3-5 个核心优势（中文数组）
 - risks: 2-4 个潜在风险（中文数组）
 - suggested_questions: 3-5 个建议面试问题（中文数组）
-- dimensions: 能力维度评分明细数组，必须依据岗位给出的「能力维度」逐条打分。每个元素格式：
-  { "name": "维度名称（与岗位能力维度保持一致）", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }
-  若岗位未提供能力维度，则基于岗位通用要求自行归纳 3-5 个关键维度打分。`,
+- dimensions: 必须且只能包含 ${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}；每项格式为 { "name": "指定维度名", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }。`,
     user: ''
   });
   const systemPrompt = prompt.system;
@@ -6378,12 +6387,16 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
       candidateFields,
     );
     // ai_evaluation：写入能力维度评分明细 JSON（格式与前端 parseScoreDetail 兼容：{dimensions:[{name,score,reason}]}）
-    const aiEvalObj: any = { summary: enrichedEvaluation.summary || '', match_score: enrichedEvaluation.match_score ?? null, weighted_score: enrichedEvaluation.weighted_score, configured_dimensions: enrichedEvaluation.configured_dimensions, recommendation: enrichedEvaluation.recommendation || '', dimensions: enrichedEvaluation.dimensions || [] };
+    const aiEvalObj: any = { summary: enrichedEvaluation.summary || '', match_score: enrichedEvaluation.weighted_score ?? null, weighted_score: enrichedEvaluation.weighted_score, screening_result: enrichedEvaluation.screening_result, screening_reason: enrichedEvaluation.screening_reason, gate_results: enrichedEvaluation.gate_results, configured_dimensions: enrichedEvaluation.configured_dimensions, recommendation: enrichedEvaluation.recommendation || '', dimensions: enrichedEvaluation.dimensions || [] };
     const aiEvalText = JSON.stringify(aiEvalObj);
     // ai_review：完整评估 JSON（供详情页展示）
     const aiReviewText = JSON.stringify({
       summary: enrichedEvaluation.summary || '',
-      match_score: enrichedEvaluation.match_score ?? null,
+      match_score: enrichedEvaluation.weighted_score ?? null,
+      weighted_score: enrichedEvaluation.weighted_score,
+      screening_result: enrichedEvaluation.screening_result,
+      screening_reason: enrichedEvaluation.screening_reason,
+      gate_results: enrichedEvaluation.gate_results,
       recommendation: enrichedEvaluation.recommendation || '',
       strengths: enrichedEvaluation.strengths || [],
       risks: enrichedEvaluation.risks || [],
@@ -6392,7 +6405,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
     });
     await c.env.DB.prepare(
       'UPDATE resumes SET ai_review = ?, ai_evaluation = ?, match_score = ?, screening_result = ?, hard_requirement_result = ?, parse_status = ?, updated_at = ? WHERE id = ?'
-    ).bind(aiReviewText, aiEvalText, enrichedEvaluation.match_score || null, JSON.stringify(parsed), JSON.stringify(enrichedEvaluation.hard_requirement_result), 'ai_screened', now(), id).run();
+    ).bind(aiReviewText, aiEvalText, enrichedEvaluation.weighted_score ?? null, enrichedEvaluation.screening_result, JSON.stringify(enrichedEvaluation.hard_requirement_result), 'ai_screened', now(), id).run();
 
     // 同步写回飞书多维表格（人才库表）
     try {
@@ -10287,11 +10300,11 @@ app.post('/api/resumes/auto-evaluate', authMiddleware, async (c) => {
     const evalResult = await callAIScreening(c.env, resumeText, positionReq);
     if (!evalResult) return c.json({ detail: 'AI评估失败' }, 500);
     // 写全字段
-    const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
-    const screeningResult = aiScreeningResultFromScore(matchScore);
-    const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '', personalized_match_score: evalResult.personalized_match_score, personalized_met_items: evalResult.personalized_met_items, personalized_unmet_items: evalResult.personalized_unmet_items };
+    const matchScore = evalResult.weighted_score ?? null;
+    const screeningResult = evalResult.screening_result;
+    const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, screening_result: screeningResult, screening_reason: evalResult.screening_reason, gate_results: evalResult.gate_results, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '', personalized_match_score: evalResult.personalized_match_score, personalized_met_items: evalResult.personalized_met_items, personalized_unmet_items: evalResult.personalized_unmet_items };
     const toArray = (v: any): string[] => { if (Array.isArray(v)) return v; if (typeof v === 'string' && v.trim()) return v.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean); return []; };
-    const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: toArray(evalResult.advantage), risks: toArray(evalResult.risk), suggested_questions: toArray(evalResult.suggested_questions), dimensions: evalResult.dimensions || [] });
+    const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, screening_result: screeningResult, screening_reason: evalResult.screening_reason, gate_results: evalResult.gate_results, recommendation: evalResult.recommendation || '', strengths: toArray(evalResult.advantage), risks: toArray(evalResult.risk), suggested_questions: toArray(evalResult.suggested_questions), dimensions: evalResult.dimensions || [] });
     await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, hard_requirement_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
       .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, JSON.stringify(evalResult.hard_requirement_result), 'ai_screened', new Date().toISOString(), candidateName).run();
     return c.json({ ok: true, candidate_name: candidateName, dimensions: evalResult.dimensions || [], match_score: matchScore, summary: evalResult.summary, screening_result: screeningResult });
@@ -10359,11 +10372,11 @@ app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
         const positionReq = position ? await getPositionRequirements(c.env, position) : null;
         const evalResult = await callAIScreening(c.env, limitedText, positionReq);
         if (!evalResult) return { name: candidateName, status: 'fail', reason: 'AI返回空' };
-        const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
-        const screeningResult = aiScreeningResultFromScore(matchScore);
-        const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
+        const matchScore = evalResult.weighted_score ?? null;
+        const screeningResult = evalResult.screening_result;
+        const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, screening_result: screeningResult, screening_reason: evalResult.screening_reason, gate_results: evalResult.gate_results, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
         const toArray = (v: any): string[] => { if (Array.isArray(v)) return v; if (typeof v === 'string' && v.trim()) return v.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean); return []; };
-        const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: toArray(evalResult.advantage), risks: toArray(evalResult.risk), suggested_questions: toArray(evalResult.suggested_questions), dimensions: evalResult.dimensions || [] });
+        const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, screening_result: screeningResult, screening_reason: evalResult.screening_reason, gate_results: evalResult.gate_results, recommendation: evalResult.recommendation || '', strengths: toArray(evalResult.advantage), risks: toArray(evalResult.risk), suggested_questions: toArray(evalResult.suggested_questions), dimensions: evalResult.dimensions || [] });
         // 立即写 D1 — 前端轮询可以实时看到结果
         await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, hard_requirement_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
           .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, JSON.stringify(evalResult.hard_requirement_result), 'ai_screened', new Date().toISOString(), candidateName).run();
@@ -10439,10 +10452,10 @@ app.post('/api/resumes/batch-ai-evaluate', authMiddleware, async (c) => {
         const positionReq = position ? await getPositionRequirements(c.env, position) : null;
         const evalResult = await callAIScreening(c.env, resumeText, positionReq);
         if (!evalResult) { failed++; continue; }
-        const matchScore = evalResult.match_score ?? evalResult.overall_score ?? 50;
-        const screeningResult = aiScreeningResultFromScore(matchScore);
-        const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
-        const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, recommendation: evalResult.recommendation || '', strengths: (Array.isArray(evalResult.advantage) ? evalResult.advantage : (typeof evalResult.advantage === 'string' ? evalResult.advantage.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), risks: (Array.isArray(evalResult.risk) ? evalResult.risk : (typeof evalResult.risk === 'string' ? evalResult.risk.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), suggested_questions: (Array.isArray(evalResult.suggested_questions) ? evalResult.suggested_questions : (typeof evalResult.suggested_questions === 'string' ? evalResult.suggested_questions.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), dimensions: evalResult.dimensions || [] });
+        const matchScore = evalResult.weighted_score ?? null;
+        const screeningResult = evalResult.screening_result;
+        const aiEvalObj = { summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, screening_result: screeningResult, screening_reason: evalResult.screening_reason, gate_results: evalResult.gate_results, configured_dimensions: evalResult.configured_dimensions || [], recommendation: evalResult.recommendation || '', dimensions: evalResult.dimensions || [], advantage: evalResult.advantage || '', risk: evalResult.risk || '' };
+        const aiReview = JSON.stringify({ summary: evalResult.summary || '', match_score: matchScore, weighted_score: evalResult.weighted_score, screening_result: screeningResult, screening_reason: evalResult.screening_reason, gate_results: evalResult.gate_results, recommendation: evalResult.recommendation || '', strengths: (Array.isArray(evalResult.advantage) ? evalResult.advantage : (typeof evalResult.advantage === 'string' ? evalResult.advantage.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), risks: (Array.isArray(evalResult.risk) ? evalResult.risk : (typeof evalResult.risk === 'string' ? evalResult.risk.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), suggested_questions: (Array.isArray(evalResult.suggested_questions) ? evalResult.suggested_questions : (typeof evalResult.suggested_questions === 'string' ? evalResult.suggested_questions.split(/\n|(?=\d+\.)/).map((s: string) => s.trim()).filter(Boolean) : [])), dimensions: evalResult.dimensions || [] });
         await c.env.DB.prepare('UPDATE resumes SET ai_review=?, ai_evaluation=?, match_score=?, screening_result=?, hard_requirement_result=?, parse_status=?, updated_at=? WHERE candidate_name=?')
           .bind(aiReview, JSON.stringify(aiEvalObj), matchScore, screeningResult, JSON.stringify(evalResult.hard_requirement_result), 'ai_screened', now(), candidateName).run();
         evaluated++;

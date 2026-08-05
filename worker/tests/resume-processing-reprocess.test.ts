@@ -16,7 +16,7 @@ describe('resume reprocess enqueue', () => {
     expect(resetSql).not.toContain('\n       status=');
     expect(resetSql).not.toContain('hr_review=');
     expect(resetSql).not.toContain('stage=');
-    expect(queue.messages).toEqual([{ jobId: 'job-failed', resumeId: 'resume-1' }]);
+    expect(queue.messages).toEqual([{ jobId: 'job-failed', resumeId: 'resume-1', reprocess: true }]);
   });
 
   it('reuses an active job without sending a duplicate queue message', async () => {
@@ -38,7 +38,7 @@ describe('resume reprocess enqueue', () => {
 
     const result = await enqueueResumeReprocess(db as never, queue, 'resume-1');
     expect(result).toMatchObject({ status: 'queued', queued: true });
-    expect(queue.messages).toEqual([{ jobId: result.jobId, resumeId: 'resume-1' }]);
+    expect(queue.messages).toEqual([{ jobId: result.jobId, resumeId: 'resume-1', reprocess: true }]);
     expect(db.calls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS resume_processing_jobs'))).toBe(true);
     expect(db.calls.some((sql) => sql.includes('INSERT OR IGNORE INTO resume_processing_jobs'))).toBe(true);
   });
@@ -54,10 +54,10 @@ describe('resume reprocess enqueue', () => {
 });
 
 function createQueue() {
-  const messages: Array<{ jobId: string; resumeId: string }> = [];
+  const messages: Array<{ jobId: string; resumeId: string; reprocess?: boolean }> = [];
   return {
     messages,
-    async send(message: { jobId: string; resumeId: string }) {
+    async send(message: { jobId: string; resumeId: string; reprocess?: boolean }) {
       messages.push(message);
     },
   };

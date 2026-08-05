@@ -15,6 +15,7 @@ export type ResumeJobStep =
 export interface ResumeQueueMessage {
   jobId: string;
   resumeId: string;
+  reprocess?: boolean;
 }
 
 export interface ResumeProcessingJob {

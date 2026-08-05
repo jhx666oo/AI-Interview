@@ -5,7 +5,7 @@ import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { mergeConfiguredDimensionScores, missingDimensionNames, normalizeDimensionScores } from './resume-processing/dimension-scores';
-import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
+import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './index';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
 import { EventRepository } from './recruitment-events/repository';
 import { ResumeSearchDocumentGenerator } from './resume-search/document-generator';
@@ -168,8 +168,8 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       const context = await getPositionContext(env.DB, position);
       // 第一步：基础筛选（match_score + recommendation + summary + strengths + risks）
       const screeningResponse = await callAI(env as any,
-        '你是资深招聘评估AI，只返回JSON。根据简历文本和岗位信息，评估人岗匹配度。',
-        `岗位：${context.standardPosition || position}\n简历：${text}\n字段：${JSON.stringify(fields)}\n请返回JSON：{"match_score":0-100,"recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"]}`,
+        `你是资深招聘评估AI，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
+        `岗位：${context.standardPosition || position}\n简历：${text}\n字段：${JSON.stringify(fields)}\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}`,
         'deepseek-v4-flash'
       );
       const parsed = extractJSON(screeningResponse);
@@ -207,9 +207,10 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       } catch {}
 
       // 第三步：能力维度专项评分（使用详细提示词，含维度描述、岗位职责、个性化需求）
-      if (configuredDimensions.length > 0) {
+      const screeningDimensions = WEIGHTED_SCREENING_DIMENSION_NAMES.map((name) => configuredDimensions.find((item: any) => item.name === name) || { name, weight: 0, description: '' });
+      if (screeningDimensions.length > 0) {
         try {
-          const dimsText = configuredDimensions.map((d: any) => {
+          const dimsText = screeningDimensions.map((d: any) => {
             let text = '  - ' + d.name;
             if (d.weight) text += '（权重' + Math.round(d.weight) + '%）';
             if (d.description) text += '：' + d.description;
@@ -251,7 +252,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
 
           const dimResponse = await callAI(
             env as any,
-            '你是专业人才能力量化评估专家，只返回JSON。必须严格遵循评分规则，逐项评分所有维度，不得遗漏。',
+            `你是专业人才能力量化评估专家，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
             dimensionPrompt,
             'deepseek-v4-flash',
           );
@@ -266,13 +267,13 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       }
 
       // 第四步：检查缺失维度并补充
-      const missingDimensions = missingDimensionNames(configuredDimensions.map((item: any) => item.name), evaluation);
+      const missingDimensions = missingDimensionNames([...WEIGHTED_SCREENING_DIMENSION_NAMES], evaluation);
       if (missingDimensions.length > 0) {
         try {
           const supplemental = await callAI(
             env as any,
-            '你是招聘评估专家，只返回 JSON。必须为每个给定能力维度评分，不能返回空数组。',
-            '候选人简历原文：\n' + text + '\n\n请只返回 {"dimensions":[{"name":"维度名","score":1-5或"N/A","reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：' + missingDimensions.join('、') + '。',
+            `你是招聘评估专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
+            '候选人简历原文：\n' + text + '\n\n请只返回 {"dimensions":[{"name":"维度名","score":1-5,"reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：' + missingDimensions.join('、') + '。',
             'deepseek-v4-flash',
           );
           const scores = normalizeDimensionScores(extractJSON(supplemental));
@@ -305,11 +306,12 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         hardRequirements,
         fields,
       );
-      const score = Number((enrichedEvaluation as any).match_score ?? 0);
+      const score = enrichedEvaluation.weighted_score ?? null;
       await updateResume(env.DB, message.resumeId, {
         ai_review: JSON.stringify(enrichedEvaluation),
-        match_score: Number.isFinite(score) ? score : null,
-        screening_result: aiScreeningResultFromScore(score),
+        ai_evaluation: JSON.stringify(enrichedEvaluation),
+        match_score: score,
+        screening_result: enrichedEvaluation.screening_result,
       });
       return enrichedEvaluation;
     },
@@ -388,7 +390,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
     screen: async (text, fields, resume) => {
       const position = String(resume.position_applied || resume.mapped_position || '');
       const context = await getPositionContext(env.DB, position);
-      const response = await callAI(env as any, '你是资深招聘评估 AI，只返回 JSON：{match_score,recommendation,summary,strengths,risks,suggested_questions,dimensions}。', `岗位：\${context.standardPosition || position}\n能力维度：\${context.capabilityDimensions}\n字段：\${JSON.stringify(fields)}\n简历：\${text}`, 'deepseek-v4-flash');
+      const response = await callAI(env as any, `你是资深招聘评估 AI，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`, `岗位：\${context.standardPosition || position}\n能力维度：\${context.capabilityDimensions}\n字段：\${JSON.stringify(fields)}\n简历：\${text}`, 'deepseek-v4-flash');
       const parsed = extractJSON(response);
       const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? parsed as Record<string, unknown>
@@ -398,12 +400,12 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
       ).bind(resolvedTitle).first() as any;
       const configuredDimensions = normalizeCapabilityDimensions(positionRow?.capability_dimensions || []);
-      const missingDimensions = missingDimensionNames(configuredDimensions.map((item: any) => item.name), evaluation);
+      const missingDimensions = missingDimensionNames([...WEIGHTED_SCREENING_DIMENSION_NAMES], evaluation);
       if (missingDimensions.length > 0) {
         try {
           const supplemental = await callAI(
             env as any,
-            '你是招聘评估专家，只返回 JSON。必须为每个给定能力维度评分，不能返回空数组。',
+            `你是招聘评估专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
             `候选人简历：\n\${text}\n\n请只返回 {"dimensions":[{"name":"维度名","score":0-5,"reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：\${missingDimensions.join('、')}。`,
             'deepseek-v4-flash',
           );
@@ -432,11 +434,12 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         hardRequirements,
         fields,
       );
-      const score = Number(enrichedEvaluation.match_score ?? 0);
+      const score = enrichedEvaluation.weighted_score ?? null;
       await updateResume(env.DB, message.resumeId, {
         ai_review: JSON.stringify(enrichedEvaluation),
-        match_score: Number.isFinite(score) ? score : null,
-        screening_result: aiScreeningResultFromScore(score),
+        ai_evaluation: JSON.stringify(enrichedEvaluation),
+        match_score: score,
+        screening_result: enrichedEvaluation.screening_result,
       });
 
       // 搜索文档生成（当 RESUME_HYBRID_SEARCH=true 时）
@@ -464,7 +467,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             action: 'ai_complete',
             source: 'system',
             dedupeKey: `system:${message.resumeId}:ai_screened:ai_complete`,
-            metadata: { matchScore: score, screeningResult: aiScreeningResultFromScore(score) },
+            metadata: { matchScore: score, screeningResult: enrichedEvaluation.screening_result },
           });
         } catch (e) {
           console.error('[Event] ai_screened recording failed:', e);

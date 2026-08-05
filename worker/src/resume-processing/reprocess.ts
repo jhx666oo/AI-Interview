@@ -129,7 +129,7 @@ export async function enqueueResumeReprocess(
   logResumeProcessing('reprocess.queue_send.start', { resumeId, jobId: job.id });
   const queueStartedAt = Date.now();
   try {
-    await queue.send({ jobId: job.id, resumeId });
+    await queue.send({ jobId: job.id, resumeId, reprocess: true });
   } catch (error) {
     logResumeProcessingError('reprocess.queue_send.error', error, {
       resumeId,
