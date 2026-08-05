@@ -11,7 +11,7 @@ import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES } from './resume-processing/weighted-screening';
 export { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES } from './resume-processing/weighted-screening';
-import { enqueueResumeReprocess, ResumeNotFoundError } from './resume-processing/reprocess';
+import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, ResumeNotFoundError, selectVisibleResumeIdsForReprocess } from './resume-processing/reprocess';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
 import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
@@ -1077,36 +1077,6 @@ function getOwnerName(c: any): string | null {
   if (!user || user.role === 'admin') return null;
   // HR 用户：用 full_name 作为 responsible_person 过滤条件
   return user.full_name || null;
-}
-
-async function enqueueResumeReprocessBatchForIds(c: any, ids: string[]) {
-  const queued: string[] = [];
-  const alreadyProcessing: string[] = [];
-  const failed: Array<{ id: string; detail: string }> = [];
-  for (let start = 0; start < ids.length; start += 10) {
-    const chunk = ids.slice(start, start + 10);
-    const results = await Promise.all(chunk.map(async (resumeId) => {
-      try {
-        return { resumeId, result: await enqueueResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, resumeId) };
-      } catch (error: any) {
-        return { resumeId, error: error instanceof ResumeNotFoundError ? 'Resume not found' : (error?.message || '重新入队失败') };
-      }
-    }));
-    for (const item of results) {
-      if (item.error) failed.push({ id: item.resumeId, detail: item.error });
-      else if (item.result?.queued) queued.push(item.resumeId);
-      else alreadyProcessing.push(item.resumeId);
-    }
-  }
-  return {
-    requested: ids.length,
-    matched: ids.length,
-    queued: queued.length,
-    already_processing: alreadyProcessing.length,
-    failed: failed.length,
-    failed_items: failed.slice(0, 20),
-    job_ids: queued,
-  };
 }
 
 // ==================== Health Check ====================
@@ -5424,7 +5394,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
     : '';
   const ownerParams = owner ? [owner, owner, owner] : [];
   const rows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE 1=1${ownerWhere}`).bind(...ownerParams).all();
-  const result = await enqueueResumeReprocessBatchForIds(c, (rows.results || []).map((row: any) => row.id));
+  const result = await enqueueResumeReprocessBatchForIds(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, (rows.results || []).map((row: any) => row.id));
   return c.json({ ok: true, ...result }, 202);
 
   /* Legacy synchronous implementation retained below for source compatibility only. */
@@ -5894,7 +5864,7 @@ app.post('/api/resumes/:id/retry-processing', authMiddleware, async (c) => {
 });
 
 // 统一的批量重新评估入口：选中简历时只处理选中项，否则处理当前用户可见的全部简历。
-app.post('/api/resumes/batch-reprocess', authMiddleware, async (c) => {
+export async function handleBatchResumeReprocess(c: any) {
   try {
     const body = await c.req.json().catch(() => ({}));
     const requestedIds = Array.isArray(body?.ids) ? body.ids : [];
@@ -5903,62 +5873,21 @@ app.post('/api/resumes/batch-reprocess', authMiddleware, async (c) => {
     }
 
     const owner = getOwnerName(c);
-    const ownerWhere = owner
-      ? ` AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))`
-      : '';
-    const ownerParams = owner ? [owner, owner, owner] : [];
-    let ids: string[] = [];
-
-    if (requestedIds.length > 0) {
-      // 分块避免 SQLite/D1 的变量数量限制，同时仍按责任人过滤。
-      for (let start = 0; start < requestedIds.length; start += 200) {
-        const chunk = requestedIds.slice(start, start + 200);
-        const placeholders = chunk.map(() => '?').join(', ');
-        const rows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE id IN (${placeholders})${ownerWhere}`)
-          .bind(...chunk, ...ownerParams).all();
-        ids.push(...(rows.results || []).map((row: any) => row.id));
-      }
-    } else {
-      const rows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE 1=1${ownerWhere} ORDER BY created_at DESC`)
-        .bind(...ownerParams).all();
-      ids = (rows.results || []).map((row: any) => row.id);
-    }
-
-    const queued: string[] = [];
-    const alreadyProcessing: string[] = [];
-    const failed: Array<{ id: string; detail: string }> = [];
-    // 限制并发，避免一次请求占满 D1/Queue 子请求额度。
-    for (let start = 0; start < ids.length; start += 10) {
-      const chunk = ids.slice(start, start + 10);
-      const results = await Promise.all(chunk.map(async (resumeId) => {
-        try {
-          return { resumeId, result: await enqueueResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, resumeId) };
-        } catch (error: any) {
-          return { resumeId, error: error instanceof ResumeNotFoundError ? 'Resume not found' : (error?.message || '重新入队失败') };
-        }
-      }));
-      for (const item of results) {
-        if (item.error) failed.push({ id: item.resumeId, detail: item.error });
-        else if (item.result?.queued) queued.push(item.resumeId);
-        else alreadyProcessing.push(item.resumeId);
-      }
-    }
+    const ids = await selectVisibleResumeIdsForReprocess(c.env.DB, requestedIds, owner);
+    const result = await enqueueResumeReprocessBatchForIds(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, ids);
 
     return c.json({
       ok: true,
-      requested: requestedIds.length > 0 ? requestedIds.length : ids.length,
-      matched: ids.length,
-      queued: queued.length,
-      already_processing: alreadyProcessing.length,
-      failed: failed.length,
-      failed_items: failed.slice(0, 20),
-      job_ids: queued,
+      ...result,
+      requested: requestedIds.length > 0 ? requestedIds.length : result.requested,
     }, 202);
   } catch (error: any) {
     console.error('[batch-reprocess] failed', error);
     return c.json({ detail: '批量重新评估失败: ' + (error?.message || error) }, 500);
   }
-});
+}
+
+app.post('/api/resumes/batch-reprocess', authMiddleware, handleBatchResumeReprocess);
 
 // 批量清除已淘汰（HR复核结果='未通过'）
 app.post('/api/resumes/clear-rejected', authMiddleware, async (c) => {
@@ -10333,7 +10262,7 @@ app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
   const ownerParams = owner ? [owner, owner, owner] : [];
   const visibleRows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE 1=1${ownerWhere}`).bind(...ownerParams).all();
   const ids = (visibleRows.results || []).map((row: any) => row.id);
-  const result = await enqueueResumeReprocessBatchForIds(c, ids);
+  const result = await enqueueResumeReprocessBatchForIds(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, ids);
   return c.json({ ok: true, ...result, force: body?.force === true }, 202);
 
   /* Legacy synchronous implementation retained below for source compatibility only. */
@@ -10442,7 +10371,7 @@ app.post('/api/resumes/batch-ai-evaluate', authMiddleware, async (c) => {
   const placeholders = ids.length > 0 ? ids.map(() => '?').join(', ') : '';
   const sql = ids.length > 0 ? `SELECT id FROM resumes WHERE id IN (${placeholders})${ownerWhere}` : `SELECT id FROM resumes WHERE 1=1${ownerWhere}`;
   const rows = await c.env.DB.prepare(sql).bind(...(ids.length > 0 ? ids : []), ...ownerParams).all();
-  const result = await enqueueResumeReprocessBatchForIds(c, (rows.results || []).map((row: any) => row.id));
+  const result = await enqueueResumeReprocessBatchForIds(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, (rows.results || []).map((row: any) => row.id));
   return c.json({ ok: true, ...result }, 202);
 
   /* Legacy synchronous implementation retained below for source compatibility only. */

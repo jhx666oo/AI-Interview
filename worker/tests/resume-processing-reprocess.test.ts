@@ -12,10 +12,16 @@ describe('resume reprocess enqueue', () => {
     expect(resetSql).toContain('ai_review=NULL');
     expect(resetSql).toContain('ai_evaluation=NULL');
     expect(resetSql).toContain('match_score=NULL');
+    expect(resetSql).toContain('capability_scores=NULL');
+    expect(resetSql).toContain('three_layer_match=NULL');
+    expect(resetSql).toContain('hard_requirement_result=NULL');
     expect(resetSql).toContain("parse_status='queued'");
     expect(resetSql).not.toContain('\n       status=');
     expect(resetSql).not.toContain('hr_review=');
     expect(resetSql).not.toContain('stage=');
+    expect(resetSql).not.toContain('raw_text=NULL');
+    expect(resetSql).not.toContain('ocr_markdown=NULL');
+    expect(resetSql).not.toContain('file_path=NULL');
     expect(queue.messages).toEqual([{ jobId: 'job-failed', resumeId: 'resume-1', reprocess: true }]);
   });
 

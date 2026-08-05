@@ -4,6 +4,35 @@ import { logResumeProcessing, logResumeProcessingError } from './logging';
 
 type ReprocessDb = Pick<D1Database, 'prepare'>;
 type ReprocessQueue = { send(message: ResumeQueueMessage): Promise<unknown> };
+type ReprocessOwner = string | null;
+
+export async function selectVisibleResumeIdsForReprocess(
+  db: ReprocessDb,
+  requestedIds: string[],
+  owner: ReprocessOwner,
+): Promise<string[]> {
+  const ownerWhere = owner
+    ? ` AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))`
+    : '';
+  const ownerParams = owner ? [owner, owner, owner] : [];
+  const ids: string[] = [];
+
+  if (requestedIds.length > 0) {
+    for (let start = 0; start < requestedIds.length; start += 200) {
+      const chunk = requestedIds.slice(start, start + 200);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await db.prepare(`SELECT id FROM resumes WHERE id IN (${placeholders})${ownerWhere}`)
+        .bind(...chunk, ...ownerParams).all();
+      ids.push(...(rows.results || []).map((row: any) => row.id));
+    }
+  } else {
+    const rows = await db.prepare(`SELECT id FROM resumes WHERE 1=1${ownerWhere} ORDER BY created_at DESC`)
+      .bind(...ownerParams).all();
+    ids.push(...(rows.results || []).map((row: any) => row.id));
+  }
+
+  return [...new Set(ids)];
+}
 
 export class ResumeNotFoundError extends Error {
   constructor(public readonly resumeId: string) {
@@ -21,11 +50,53 @@ export async function resetResumeForReprocess(db: ReprocessDb, resumeId: string)
        match_score=NULL,
        screening_result=NULL,
        hard_requirement_result=NULL,
+       capability_scores=NULL,
+       three_layer_match=NULL,
        parse_status='queued',
        parse_error=NULL,
        updated_at=?
      WHERE id=?`,
   ).bind(timestamp, resumeId).run();
+}
+
+export async function enqueueResumeReprocessBatchForIds(
+  db: ReprocessDb,
+  queue: ReprocessQueue,
+  resumeIds: string[],
+) {
+  const ids = [...new Set(resumeIds)];
+  const queued: string[] = [];
+  const alreadyProcessing: string[] = [];
+  const failed: Array<{ id: string; detail: string }> = [];
+  logResumeProcessing('reprocess.batch.start', { requested: ids.length });
+
+  for (let start = 0; start < ids.length; start += 10) {
+    const chunk = ids.slice(start, start + 10);
+    const results = await Promise.all(chunk.map(async (resumeId) => {
+      try {
+        return { resumeId, result: await enqueueResumeReprocess(db, queue, resumeId) };
+      } catch (error: any) {
+        return { resumeId, error: error instanceof ResumeNotFoundError ? 'Resume not found' : (error?.message || '重新入队失败') };
+      }
+    }));
+    for (const item of results) {
+      if (item.error) failed.push({ id: item.resumeId, detail: item.error });
+      else if (item.result?.queued) queued.push(item.resumeId);
+      else alreadyProcessing.push(item.resumeId);
+    }
+  }
+
+  const result = {
+    requested: ids.length,
+    matched: ids.length,
+    queued: queued.length,
+    already_processing: alreadyProcessing.length,
+    failed: failed.length,
+    failed_items: failed.slice(0, 20),
+    job_ids: queued,
+  };
+  logResumeProcessing('reprocess.batch.complete', result);
+  return result;
 }
 
 export async function enqueueResumeReprocess(
