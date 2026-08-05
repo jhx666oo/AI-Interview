@@ -6046,6 +6046,16 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
         } catch {}
       }
 
+      // 最后从 resume_files 表（KV/D1 存储）读取
+      if (!pdfBytes) {
+        try {
+          const fileResult = await getResumeFileBytes(c.env, id);
+          if (fileResult.bytes && fileResult.bytes.length > 100) {
+            pdfBytes = fileResult.bytes.buffer;
+          }
+        } catch {}
+      }
+
       if (pdfBytes && pdfBytes.byteLength > 100) {
         // MinerU OCR
         const signResp = await fetch(`${mineruBase}/api/v1/agent/parse/file`, {
