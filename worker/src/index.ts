@@ -9,6 +9,7 @@ import { createMaintenanceRoutes } from './resume-maintenance/routes';
 import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
+export { evaluateWeightedScreening } from './resume-processing/weighted-screening';
 import { enqueueResumeReprocess, ResumeNotFoundError } from './resume-processing/reprocess';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
