@@ -8,6 +8,7 @@ import { createUploadRoutes } from './resume-uploads/routes';
 import { createMaintenanceRoutes } from './resume-maintenance/routes';
 import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
+import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -491,19 +492,28 @@ async function getPositionRequirements(env: Env, positionName: string): Promise<
     const posRow = await env.DB.prepare(
       'SELECT title, description, requirements, personalized_requirements, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
     ).bind(mappedName).first() as any;
-    if (!posRow) return null;
-    let dimensions: any[] = [];
+    const positionTitle = posRow?.title || mappedName;
+    let dimensions = normalizeCapabilityDimensions(posRow?.capability_dimensions || []);
+    let personalizedRequirements = posRow?.personalized_requirements || '';
+
+    // 岗位管理的新数据写入独立能力维度表，优先使用其中的名称、描述和权重。
     try {
-      const rawDims = typeof posRow.capability_dimensions === 'string'
-        ? JSON.parse(posRow.capability_dimensions)
-        : (posRow.capability_dimensions || []);
-      dimensions = normalizeCapabilityDimensions(rawDims);
+      const dimRow = await env.DB.prepare(
+        'SELECT dimensions_json, personalized_requirements FROM capability_dimensions WHERE position_name = ? LIMIT 1'
+      ).bind(positionTitle).first() as any;
+      if (dimRow?.dimensions_json) {
+        const configured = normalizeCapabilityDimensions(dimRow.dimensions_json);
+        if (configured.length > 0) dimensions = configured;
+      }
+      if (dimRow?.personalized_requirements) personalizedRequirements = dimRow.personalized_requirements;
     } catch {}
+
+    if (!posRow && dimensions.length === 0) return null;
     let hardRequirements: any[] = [];
     try {
       const requisition = await env.DB.prepare(
         'SELECT hard_requirements FROM job_requisitions WHERE title = ? LIMIT 1'
-      ).bind(posRow.title).first() as any;
+      ).bind(positionTitle).first() as any;
       if (requisition?.hard_requirements) {
         const parsed = typeof requisition.hard_requirements === 'string'
           ? JSON.parse(requisition.hard_requirements)
@@ -512,10 +522,10 @@ async function getPositionRequirements(env: Env, positionName: string): Promise<
       }
     } catch {}
     return {
-      positionTitle: posRow.title,
-      description: posRow.description || '',
-      requirements: posRow.requirements || '',
-      personalized_requirements: posRow.personalized_requirements || '',
+      positionTitle,
+      description: posRow?.description || '',
+      requirements: posRow?.requirements || '',
+      personalized_requirements: personalizedRequirements,
       capability_dimensions: dimensions,
       hard_requirements: hardRequirements,
     };
@@ -612,10 +622,13 @@ export function enrichScreeningEvaluation(
 ) {
   const configured_dimensions = normalizeCapabilityDimensions(configuredDimensionInput);
   const configuredByName = new Map(configured_dimensions.map(item => [item.name, item]));
-  const dimensions = Array.isArray(evaluation.dimensions) ? evaluation.dimensions.map((item: any) => ({
+  const dimensions = filterDimensionScoresToConfigured(
+    normalizeDimensionScores(evaluation),
+    configured_dimensions.map(item => item.name),
+  ).map((item: any) => ({
     ...item,
-    weight: configuredByName.get(String(item?.name || ''))?.weight,
-  })) : [];
+    weight: configuredByName.get(item.name)?.weight,
+  }));
   return {
     ...evaluation,
     dimensions,

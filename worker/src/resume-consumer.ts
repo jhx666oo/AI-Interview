@@ -3,7 +3,7 @@ import { claimJob } from './resume-processing/job-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
-import { missingDimensionNames, normalizeDimensionScores } from './resume-processing/dimension-scores';
+import { mergeConfiguredDimensionScores, missingDimensionNames, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
 import { EventRepository } from './recruitment-events/repository';
@@ -254,8 +254,11 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
           const scores = normalizeDimensionScores(extractJSON(supplemental));
           if (scores.length > 0) {
             const existing = normalizeDimensionScores(evaluation);
-            const existingNames = new Set(existing.map((item: any) => item.name));
-            evaluation.dimensions = [...existing, ...scores.filter((item: any) => !existingNames.has(item.name))];
+            evaluation.dimensions = mergeConfiguredDimensionScores(
+              existing,
+              scores,
+              configuredDimensions.map((item: any) => item.name),
+            );
           }
         } catch (error) {
           console.error('[ResumeConsumer] supplemental dimension scoring failed:', error);
