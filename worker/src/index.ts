@@ -3840,21 +3840,16 @@ app.delete('/api/requisitions/:id', authMiddleware, async (c) => {
 // ---- 人才库：直读飞书人才库表 ----
 app.get('/api/talent-pool', authMiddleware, async (c) => {
   try {
-    const tableId = getBitableTableId(c.env, 'talent');
-    const records = await bitableListRecords(c.env, tableId);
-    const feishuItems = records.map(parseTalentRecord);
+    // v2.0: 不再默认从飞书拉取，只返回本地 D1 数据
+    // 飞书数据通过手动点击「从飞书同步」按钮导入
     let d1Rows: any[] = [];
     try {
-      // Only approved D1 resumes belong in the talent-pool projection. This
-      // preserves the legacy endpoint's behavior of hiding pending uploads.
       const result = await c.env.DB.prepare("SELECT * FROM resumes WHERE status = 'approved'").all();
       d1Rows = result.results || [];
     } catch (error: any) {
-      // Keep the legacy Feishu-only view available if an older D1 schema is
-      // temporarily unavailable during rollout.
-      console.error(`[TalentPool] D1 projection unavailable: ${error?.message || error}`);
+      console.error(`[TalentPool] D1 query failed: ${error?.message || error}`);
     }
-    let items = mergeTalentPoolItems(feishuItems, d1Rows);
+    let items = d1Rows.map(parseD1TalentRow);
 
     const nameFilter = c.req.query('candidate_name');
     const statusFilter = c.req.query('status');
@@ -5536,19 +5531,7 @@ app.get('/api/resumes/:id/file', async (c) => {
     const payload = await verifyJwt(c.env.SECRET_KEY, token);
     if (!payload) return c.json({ detail: 'Invalid token' }, 401);
 
-    // v2.0: 30天预览限制
     const isDownload = c.req.query('download') === 'true';
-    if (!isDownload) {
-      try {
-      const resumeInfo = await c.env.DB.prepare('SELECT uploaded_at, feishu_file_token FROM resumes WHERE id = ?').bind(c.req.param('id')).first() as any;
-      if (resumeInfo?.uploaded_at) {
-        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        if (new Date(resumeInfo.uploaded_at).getTime() < thirtyDaysAgo) {
-          return c.json({ detail: '简历文件预览已过期（超出30天）。请联系管理员通过飞书云盘查看原始文件。', expired: true }, 410);
-        }
-      }
-      } catch { /* uploaded_at 列可能不存在 */ }
-    }
 
     const recordId = c.req.param('id');
 
@@ -5565,92 +5548,8 @@ app.get('/api/resumes/:id/file', async (c) => {
       }
     } catch {}
 
-    // 2. 飞书 Bitable 获取附件（仅当本地缓存未命中时）
-    const tableId = getBitableTableId(c.env, 'talent');
-    const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
-    if (!record) return c.json({ detail: 'Not found' }, 404);
-    const f = record.fields || {};
-    
-    // 提取候选人姓名和文件名
-    let candidateName = f['姓名'] || 'resume';
-    let attachmentFileName = candidateName + '.pdf';
-
-    // 从 record.fields 中找附件数据
-    let fileToken = '', feishuDownloadUrl = '';
-    for (const [, fieldValue] of Object.entries(f)) {
-      if (Array.isArray(fieldValue) && fieldValue.length > 0) {
-        const item = fieldValue[0];
-        if (item && typeof item === 'object') {
-          if (item.url || item.download_url || item.tmp_url) {
-            feishuDownloadUrl = item.url || item.download_url || item.tmp_url;
-            if (item.name) attachmentFileName = item.name;
-            if (item.file_token) fileToken = item.file_token;
-            break;
-          }
-          if (item.file_token) { fileToken = item.file_token; if (item.name) attachmentFileName = item.name; }
-        }
-      }
-    }
-    if (!feishuDownloadUrl && fileToken) {
-      const parsed = parseTalentRecord(record);
-      if (parsed.resume_file?.download_url) feishuDownloadUrl = parsed.resume_file.download_url;
-    }
-
-    // 3. 用 feishuDownloadUrl 直接下载（带 bitablePerm 的 Drive URL，无需额外权限）
-    if (feishuDownloadUrl) {
-      try {
-        const feishuToken = await getFeishuToken(c.env);
-        const dlResp = await fetch(feishuDownloadUrl, {
-          headers: { Authorization: `Bearer ${feishuToken}` },
-          redirect: 'follow',
-        });
-        if (dlResp.ok) {
-          const ct = dlResp.headers.get('Content-Type') || 'application/pdf';
-          try {
-            const arrBuf = await dlResp.clone().arrayBuffer();
-            await c.env.DB.prepare('CREATE TABLE IF NOT EXISTS resume_files (id TEXT PRIMARY KEY, content TEXT, file_name TEXT, created_at TEXT)').run();
-            await storeResumeFile(c.env, recordId, attachmentFileName, arrBuf.byteLength, arrBuf);
-          } catch {}
-          const disposition = isDownload ? 'attachment' : 'inline';
-          return new Response(dlResp.body, { status: 200, headers: {
-            'Content-Type': ct,
-            'Content-Disposition': `${disposition}; filename="${attachmentFileName}"`,
-            'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
-          }});
-        }
-      } catch (e) { console.log(`[ResumeFile] 下载失败: ${e}`); }
-    }
-
-    // 最终兜底：返回引导页面（含飞书链接让用户手动打开）
-    const fallbackLink = feishuDownloadUrl || (fileToken ? `https://ywwlaii6ga7.feishu.cn/space/api/box/stream/download/all/${fileToken}?mount_point=bitable` : '#');
-    const html = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-  .card{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08);padding:48px 40px;text-align:center;max-width:400px}
-  .icon{font-size:48px;margin-bottom:16px}
-  h2{font-size:18px;color:#0f172a;margin-bottom:8px}
-  p{font-size:14px;color:#64748b;margin-bottom:24px;line-height:1.6}
-  a{display:inline-block;padding:10px 28px;background:#6366f1;color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500;transition:background .2s}
-  a:hover{background:#4f46e5}
-</style></head>
-<body>
-<div class="card">
-  <div class="icon">📄</div>
-  <h2>无法在线预览 [V2]</h2>
-  <p>该简历文件托管在飞书平台，需要登录飞书账号后才能查看。</p>
-  <a href="${fallbackLink}" target="_blank">在飞书中打开</a>
-</div>
-</body></html>`;
-    return new Response(html, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Access-Control-Allow-Origin': getAllowedOrigin(c.req.header('origin')) || '',
-      },
-    });
+    // 2. 不再从飞书拉取 PDF，只返回本地缓存的简历文件
+    return c.json({ detail: '该简历文件未本地缓存，无法预览。请重新上传 PDF 或联系管理员', not_cached: true }, 404);
   } catch (e: any) {
     return c.json({ detail: '下载简历文件失败: ' + e.message }, 500);
   }
