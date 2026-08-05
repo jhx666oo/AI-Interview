@@ -6016,34 +6016,36 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     if (normalized.highest_degree) delete normalized.education;
     if (normalized.years_of_experience !== undefined) delete normalized.work_years;
     if (normalized.recent_company) delete normalized.current_company;
-    // Build ai_review markdown from screening data
+    // Build ai_review as structured JSON object (not markdown string)
+    // Load capability dimensions for enrichment
+    let enrichedEval = merged;
+    try {
+      const posName = merged.position || resume.position_applied || '';
+      if (posName) {
+        const posRow = await c.env.DB.prepare(
+          'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
+        ).bind(posName).first() as any;
+        const configuredDimensions = normalizeCapabilityDimensions(posRow?.capability_dimensions || []);
+        enrichedEval = enrichScreeningEvaluation(merged, configuredDimensions, [], {});
+      }
+    } catch (e: any) {
+      console.error(`[Reparse] enrichment failed: ${e.message}`);
+    }
+    const aiReview = enrichedEval;
+    // Keep variables for Feishu sync compatibility
     const advantage = merged.advantage || merged.advantages || '';
     const risk = merged.risk || merged.risks || '';
     const pos = merged.position || '';
     const matchScore = typeof merged.match_score === 'number' ? merged.match_score : null;
     const recommendation = merged.recommendation || '';
-    const recLabel: Record<string, string> = {
-      'strongly_recommend': '强烈推荐', 'recommend': '推荐',
-      'neutral': '待定', 'not_recommend': '不推荐', 'strongly_not_recommend': '强烈不推荐'
-    };
-    const aiReview = [
-      `📌 面试岗位：${pos}`,
-      ``,
-      `初筛结果: ${recLabel[recommendation] || recommendation}`,
-      matchScore !== null ? `匹配分数: ${matchScore}/100` : '',
-      ``,
-      advantage ? `优势分析:\n${advantage}` : '',
-      risk ? `\n风险点:\n${risk}` : '',
-      merged.summary ? `\n综合评估:\n${merged.summary}` : '',
-    ].filter(Boolean).join('\n');
-
+    const enrichedScore = typeof enrichedEval.match_score === 'number' ? enrichedEval.match_score : null;
     await c.env.DB.prepare(
       'UPDATE resumes SET parsed_data = ?, ai_review = ?, match_score = ?, screening_result = ?, parse_status = ? WHERE id = ?'
     ).bind(
       JSON.stringify(normalized),
-      aiReview || JSON.stringify(normalized),
-      matchScore,
-      merged.recommendation || JSON.stringify(merged),
+      JSON.stringify(aiReview || normalized),
+      enrichedScore,
+      enrichedScore !== null ? (enrichedScore >= 75 ? '通过' : enrichedScore >= 60 ? '存疑' : '淘汰') : 'pending',
       'reparsed',
       id
     ).run();
