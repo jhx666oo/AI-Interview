@@ -1,5 +1,6 @@
 import { ensureResumeProcessingJobsSchema, isMissingResumeProcessingJobsError } from './job-repository';
 import type { ResumeQueueMessage } from './types';
+import { logResumeProcessing, logResumeProcessingError } from './logging';
 
 type ReprocessDb = Pick<D1Database, 'prepare'>;
 type ReprocessQueue = { send(message: ResumeQueueMessage): Promise<unknown> };
@@ -32,8 +33,13 @@ export async function enqueueResumeReprocess(
   queue: ReprocessQueue,
   resumeId: string,
 ): Promise<{ jobId: string; status: 'queued' | 'running'; queued: boolean }> {
+  const startedAt = Date.now();
+  logResumeProcessing('reprocess.enqueue.start', { resumeId });
   const resume = await db.prepare('SELECT id FROM resumes WHERE id=?').bind(resumeId).first();
-  if (!resume) throw new ResumeNotFoundError(resumeId);
+  if (!resume) {
+    logResumeProcessing('reprocess.resume.not_found', { resumeId, durationMs: Date.now() - startedAt });
+    throw new ResumeNotFoundError(resumeId);
+  }
 
   const findActiveJob = () => db.prepare(
     "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
@@ -48,6 +54,12 @@ export async function enqueueResumeReprocess(
     activeJob = await findActiveJob() as any;
   }
   if (activeJob) {
+    logResumeProcessing('reprocess.active_job', {
+      resumeId,
+      jobId: activeJob.id,
+      status: activeJob.status,
+      durationMs: Date.now() - startedAt,
+    });
     return { jobId: activeJob.id, status: activeJob.status, queued: false };
   }
 
@@ -73,10 +85,19 @@ export async function enqueueResumeReprocess(
       const activeAfterRace = await db.prepare(
         "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
       ).bind(resumeId).first() as any;
-      if (activeAfterRace) return { jobId: activeAfterRace.id, status: activeAfterRace.status, queued: false };
+      if (activeAfterRace) {
+        logResumeProcessing('reprocess.active_job.race', {
+          resumeId,
+          jobId: activeAfterRace.id,
+          status: activeAfterRace.status,
+          durationMs: Date.now() - startedAt,
+        });
+        return { jobId: activeAfterRace.id, status: activeAfterRace.status, queued: false };
+      }
       throw new Error('Unable to requeue failed resume processing job');
     }
     job = { ...job, status: 'queued' };
+    logResumeProcessing('reprocess.job.requeued', { resumeId, jobId: job.id });
   } else {
     const timestamp = new Date().toISOString();
     const candidateJobId = crypto.randomUUID();
@@ -87,17 +108,41 @@ export async function enqueueResumeReprocess(
     ).bind(candidateJobId, resumeId, timestamp, timestamp).run();
     if (insertResult.meta?.changes) {
       job = { id: candidateJobId, status: 'queued' };
+      logResumeProcessing('reprocess.job.created', { resumeId, jobId: job.id });
     } else {
       // INSERT OR IGNORE 命中并发请求创建的活动任务；不要再次清空数据或发送消息。
       const activeAfterRace = await db.prepare(
         "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
       ).bind(resumeId).first() as any;
       if (!activeAfterRace) throw new Error('Unable to create resume processing job');
+      logResumeProcessing('reprocess.active_job.insert_race', {
+        resumeId,
+        jobId: activeAfterRace.id,
+        status: activeAfterRace.status,
+        durationMs: Date.now() - startedAt,
+      });
       return { jobId: activeAfterRace.id, status: activeAfterRace.status, queued: false };
     }
   }
 
   await resetResumeForReprocess(db, resumeId);
-  await queue.send({ jobId: job.id, resumeId });
+  logResumeProcessing('reprocess.queue_send.start', { resumeId, jobId: job.id });
+  const queueStartedAt = Date.now();
+  try {
+    await queue.send({ jobId: job.id, resumeId });
+  } catch (error) {
+    logResumeProcessingError('reprocess.queue_send.error', error, {
+      resumeId,
+      jobId: job.id,
+      durationMs: Date.now() - queueStartedAt,
+    });
+    throw error;
+  }
+  logResumeProcessing('reprocess.queue_send.ok', {
+    resumeId,
+    jobId: job.id,
+    durationMs: Date.now() - queueStartedAt,
+    totalDurationMs: Date.now() - startedAt,
+  });
   return { jobId: job.id, status: 'queued', queued: true };
 }

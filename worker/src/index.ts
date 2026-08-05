@@ -10,6 +10,7 @@ import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { enqueueResumeReprocess, ResumeNotFoundError } from './resume-processing/reprocess';
+import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -4311,6 +4312,7 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
 
 // ---- 简历上传：上传 PDF → D1 存储 → 存 Bitable ----
 app.post('/api/resumes', authMiddleware, async (c) => {
+  const uploadStartedAt = Date.now();
   try {
     const formData = await c.req.formData();
     const file = formData.get('file') as File | null;
@@ -4322,6 +4324,11 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     if (!file.name.toLowerCase().endsWith('.pdf')) {
       return c.json({ detail: '仅支持 PDF 格式' }, 400);
     }
+    logResumeProcessing('upload.legacy.start', {
+      fileNameLength: file.name.length,
+      fileSize: file.size,
+      positionId: positionId || undefined,
+    });
 
     // Feature Flag: 开启 R2 直传时走新路径，替代 Base64 存 D1
     const r2UploadEnabled = (c.env.DIRECT_R2_UPLOAD || '').toLowerCase() === 'true';
@@ -4402,7 +4409,9 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     // 2. 保存 PDF：优先 KV（大文件），D1 只留元数据
     try {
       await storeResumeFile(c.env, recordId, file.name, fileSize, fileBuffer);
+      logResumeProcessing('upload.legacy.file_saved', { resumeId: recordId, fileSize });
     } catch (e: any) {
+      logResumeProcessingError('upload.legacy.file_save_error', e, { resumeId: recordId, fileSize });
       return c.json({ detail: '保存文件失败: ' + e.message }, 500);
     }
 
@@ -4439,10 +4448,12 @@ app.post('/api/resumes', authMiddleware, async (c) => {
           now()
         ).run();
       } catch (dbErr: any) {
-        console.error('[Upload] OCR pending D1 写入失败:', dbErr.message);
+        logResumeProcessingError('upload.legacy.ocr_pending_db_error', dbErr, { resumeId: recordId });
       }
       const job = await createOrGetActiveJob(c.env.DB, recordId);
+      logResumeProcessing('upload.legacy.queue_send.start', { resumeId: recordId, jobId: job.id, ocrPending: true });
       await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId: recordId });
+      logResumeProcessing('upload.legacy.queue_send.ok', { resumeId: recordId, jobId: job.id, totalDurationMs: Date.now() - uploadStartedAt });
       return c.json({
         id: recordId,
         job_id: job.id,
@@ -4507,12 +4518,14 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         ).bind(recordId, displayName, mappedPos, mappedPos, JSON.stringify({ name: displayName }), extractedText?.substring(0, 200000) || '', 'pending_screening', now()).run();
       }
     } catch (dbErr: any) {
-      console.error('[Upload] D1 写入失败:', dbErr.message);
+      logResumeProcessingError('upload.legacy.db_error', dbErr, { resumeId: recordId });
     }
 
     // 后台队列是 AI/OCR 的唯一执行入口。前端关闭、刷新或网络波动都不会中断。
     const job = await createOrGetActiveJob(c.env.DB, recordId);
+    logResumeProcessing('upload.legacy.queue_send.start', { resumeId: recordId, jobId: job.id, ocrPending: false });
     await c.env.RESUME_PROCESSING_QUEUE.send({ jobId: job.id, resumeId: recordId });
+    logResumeProcessing('upload.legacy.queue_send.ok', { resumeId: recordId, jobId: job.id, totalDurationMs: Date.now() - uploadStartedAt });
     return c.json({
       id: recordId,
       job_id: job.id,
@@ -4568,6 +4581,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     return c.json({ id: recordId, candidate_name: displayName, status: 'uploaded', parse_status: 'pending_screening', detail: '简历已上传，AI 初筛完成' });
 
   } catch (e: any) {
+    logResumeProcessingError('upload.legacy.error', e, { totalDurationMs: Date.now() - uploadStartedAt });
     return c.json({ detail: '上传简历失败: ' + e.message }, 500);
   }
 });
@@ -5960,13 +5974,25 @@ app.post('/api/resumes/batch', authMiddleware, async (c) => {
 
 app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
   const id = c.req.param('id');
+  const startedAt = Date.now();
+  logResumeProcessing('reparse.request.start', { resumeId: id });
   // 兼容旧客户端：重新解析统一走队列消费者，确保字段提取、能力维度评分和初筛使用同一套流程。
   try {
     const result = await enqueueResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, id);
+    logResumeProcessing('reparse.request.ok', {
+      resumeId: id,
+      jobId: result.jobId,
+      queued: result.queued,
+      status: result.status,
+      durationMs: Date.now() - startedAt,
+    });
     return c.json({ id, job_id: result.jobId, parse_status: result.status === 'running' ? 'processing' : 'queued', queued: result.queued, detail: result.queued ? '已提交重新评估任务' : '任务已在处理中' }, 202);
   } catch (error) {
-    if (error instanceof ResumeNotFoundError) return c.json({ detail: 'Resume not found' }, 404);
-    console.error(`[reparse] ${id} failed`, error);
+    if (error instanceof ResumeNotFoundError) {
+      logResumeProcessing('reparse.request.not_found', { resumeId: id, durationMs: Date.now() - startedAt });
+      return c.json({ detail: 'Resume not found' }, 404);
+    }
+    logResumeProcessingError('reparse.request.error', error, { resumeId: id, durationMs: Date.now() - startedAt });
     return c.json({ detail: '重新评估失败' }, 500);
   }
 

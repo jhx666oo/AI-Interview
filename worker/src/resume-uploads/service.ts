@@ -2,6 +2,7 @@ import { generateArtifactId, generateObjectKey } from '../resume-storage/object-
 import { ArtifactRepository } from '../resume-storage/artifact-repository';
 import { generatePresignedPutUrl } from './presigner';
 import type { InitUploadRequest, InitUploadResponse, CompleteUploadResponse } from './types';
+import { logResumeProcessing, logResumeProcessingError } from '../resume-processing/logging';
 
 interface UploadServiceDeps {
   db: D1Database;
@@ -20,9 +21,15 @@ export class UploadService {
   constructor(private deps: UploadServiceDeps) {}
 
   async initUpload(req: InitUploadRequest): Promise<InitUploadResponse> {
+    const startedAt = Date.now();
     const resumeId = `res_${crypto.randomUUID()}`;
     const pdfArtifactId = generateArtifactId();
     const pdfObjectKey = generateObjectKey('pdf', resumeId, 1);
+    logResumeProcessing('upload.init.start', {
+      resumeId,
+      fileNameLength: req.originalFilename.length,
+      fileSize: req.fileSize,
+    });
 
     // 创建简历记录
     await this.deps.db.prepare(`
@@ -62,6 +69,7 @@ export class UploadService {
       VALUES (?, ?, ?, ?, ?, ?, ?, 'initiated', ?)
     `).bind(uploadId, resumeId, pdfArtifactId, this.deps.userId, req.originalFilename, req.fileSize, req.fileSha256, expiresAt).run();
 
+    logResumeProcessing('upload.init.ok', { resumeId, uploadId, durationMs: Date.now() - startedAt });
     return {
       uploadId,
       resumeId,
@@ -72,6 +80,8 @@ export class UploadService {
   }
 
   async completeUpload(uploadId: string): Promise<CompleteUploadResponse> {
+    const startedAt = Date.now();
+    logResumeProcessing('upload.complete.start', { uploadId });
     // 获取上传会话
     const session = await this.deps.db.prepare(`
       SELECT * FROM resume_upload_sessions WHERE id = ?
@@ -98,9 +108,28 @@ export class UploadService {
     `).bind(session.resume_id).run();
 
     // 入队处理
-    await this.deps.env.RESUME_PROCESSING_QUEUE.send({
-      jobId,
+    logResumeProcessing('upload.queue_send.start', { uploadId, resumeId: session.resume_id, jobId });
+    const queueStartedAt = Date.now();
+    try {
+      await this.deps.env.RESUME_PROCESSING_QUEUE.send({
+        jobId,
+        resumeId: session.resume_id,
+      });
+    } catch (error) {
+      logResumeProcessingError('upload.queue_send.error', error, {
+        uploadId,
+        resumeId: session.resume_id,
+        jobId,
+        durationMs: Date.now() - queueStartedAt,
+      });
+      throw error;
+    }
+    logResumeProcessing('upload.queue_send.ok', {
+      uploadId,
       resumeId: session.resume_id,
+      jobId,
+      durationMs: Date.now() - queueStartedAt,
+      totalDurationMs: Date.now() - startedAt,
     });
 
     return {
@@ -111,6 +140,7 @@ export class UploadService {
   }
 
   async failUpload(uploadId: string, errorCode: string): Promise<void> {
+    logResumeProcessing('upload.fail', { uploadId, errorCode });
     await this.deps.db.prepare(`
       UPDATE resume_upload_sessions SET status = 'failed', error_code = ?, updated_at = datetime('now') WHERE id = ?
     `).bind(errorCode, uploadId).run();

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { UploadService } from './service';
 import { ArtifactRepository } from '../resume-storage/artifact-repository';
 import type { InitUploadRequest } from './types';
+import { logResumeProcessingError } from '../resume-processing/logging';
 
 interface Env {
   DB: D1Database;
@@ -41,7 +42,7 @@ export function createUploadRoutes(app: Hono<{ Bindings: Env }>): void {
       const result = await uploadService.initUpload(body);
       return c.json(result, 201);
     } catch (err) {
-      console.error('[UploadInit] error:', err);
+      logResumeProcessingError('upload.init.error', err);
       return c.json({ error: 'Failed to initialize upload' }, 500);
     }
   });
@@ -66,7 +67,7 @@ export function createUploadRoutes(app: Hono<{ Bindings: Env }>): void {
       const result = await uploadService.completeUpload(uploadId);
       return c.json(result);
     } catch (err: any) {
-      console.error('[UploadComplete] error:', err);
+      logResumeProcessingError('upload.complete.error', err, { uploadId: c.req.param('uploadId') });
       const status = err.message?.includes('not found') ? 404 : 409;
       return c.json({ error: err.message ?? 'Failed to complete upload' }, status);
     }
@@ -93,7 +94,7 @@ export function createUploadRoutes(app: Hono<{ Bindings: Env }>): void {
       await uploadService.failUpload(uploadId, errorCode);
       return c.json({ status: 'failed' });
     } catch (err) {
-      console.error('[UploadFail] error:', err);
+      logResumeProcessingError('upload.fail.error', err, { uploadId: c.req.param('uploadId') });
       return c.json({ error: 'Failed to mark upload as failed' }, 500);
     }
   });

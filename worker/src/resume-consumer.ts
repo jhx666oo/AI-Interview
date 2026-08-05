@@ -3,6 +3,7 @@ import { claimJob } from './resume-processing/job-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
+import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { mergeConfiguredDimensionScores, missingDimensionNames, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
@@ -35,22 +36,44 @@ export async function handleResumeQueueMessage(
   message: QueueMessage,
   deps: ResumeConsumerDeps,
 ): Promise<void> {
+  logResumeProcessing('consumer.claim.start', {
+    jobId: message.body.jobId,
+    resumeId: message.body.resumeId,
+  });
   const job = await deps.claim(message.body.jobId);
   if (!job) {
+    logResumeProcessing('consumer.claim.skip', {
+      jobId: message.body.jobId,
+      resumeId: message.body.resumeId,
+      reason: 'not_active',
+    });
     message.ack();
     return;
   }
+  logResumeProcessing('consumer.claim.ok', { jobId: message.body.jobId, resumeId: message.body.resumeId });
 
   try {
+    logResumeProcessing('consumer.process.start', { jobId: message.body.jobId, resumeId: message.body.resumeId });
     await deps.process(message.body);
+    logResumeProcessing('consumer.process.ok', { jobId: message.body.jobId, resumeId: message.body.resumeId });
     await deps.complete(message.body.jobId);
+    logResumeProcessing('consumer.complete.ok', { jobId: message.body.jobId, resumeId: message.body.resumeId });
     message.ack();
   } catch (error) {
     if (error instanceof RetryableResumeError) {
+      logResumeProcessingError('consumer.process.retry', error, {
+        jobId: message.body.jobId,
+        resumeId: message.body.resumeId,
+        retryDelaySeconds: 30,
+      });
       await deps.resetJob(message.body.jobId);
       message.retry({ delaySeconds: 30 });
       return;
     }
+    logResumeProcessingError('consumer.process.fail', error, {
+      jobId: message.body.jobId,
+      resumeId: message.body.resumeId,
+    });
     await deps.fail(message.body.jobId, error instanceof Error ? error : new Error(String(error)));
     message.ack();
   }
@@ -459,26 +482,50 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
 export default {
   async queue(batch: MessageBatch<ResumeQueueMessage>, env: ConsumerEnv): Promise<void> {
     const r2Enabled = ((env as any).R2_ARTIFACT_READ || '').toLowerCase() === 'true';
+    logResumeProcessing('consumer.batch.start', { messageCount: batch.messages.length, r2Enabled });
     for (const message of batch.messages) {
-      await handleResumeQueueMessage(message, {
-        claim: (jobId) => claimJob(env.DB, jobId),
-        process: (payload) => r2Enabled ? processWithR2(env, payload) : processWithD1(env, payload),
-        resetJob: async (jobId) => {
-        const timestamp = new Date().toISOString();
-        await env.DB.prepare("UPDATE resume_processing_jobs SET status='queued', updated_at=? WHERE id=? AND status='running'").bind(timestamp, jobId).run();
-      },
-      complete: async (jobId) => {
-          const timestamp = new Date().toISOString();
-          await env.DB.prepare("UPDATE resume_processing_jobs SET status='completed', completed_at=?, updated_at=? WHERE id=? AND status='running'")
-            .bind(timestamp, timestamp, jobId).run();
-        },
-        fail: async (jobId, error) => {
-          await env.DB.prepare("UPDATE resume_processing_jobs SET status='failed', error_code=?, error_message=?, updated_at=? WHERE id=?")
-            .bind('PROCESSING_FAILED', error.message.slice(0, 500), new Date().toISOString(), jobId).run();
-          await env.DB.prepare("UPDATE resumes SET parse_status='failed', parse_error=?, updated_at=? WHERE id=?")
-            .bind(error.message.slice(0, 500), new Date().toISOString(), message.body.resumeId).run();
-        },
+      const startedAt = Date.now();
+      logResumeProcessing('consumer.message.start', {
+        jobId: message.body.jobId,
+        resumeId: message.body.resumeId,
+        messageId: message.id,
       });
+      try {
+        await handleResumeQueueMessage(message, {
+          claim: (jobId) => claimJob(env.DB, jobId),
+          process: (payload) => r2Enabled ? processWithR2(env, payload) : processWithD1(env, payload),
+          resetJob: async (jobId) => {
+            const timestamp = new Date().toISOString();
+            await env.DB.prepare("UPDATE resume_processing_jobs SET status='queued', updated_at=? WHERE id=? AND status='running'").bind(timestamp, jobId).run();
+          },
+          complete: async (jobId) => {
+            const timestamp = new Date().toISOString();
+            await env.DB.prepare("UPDATE resume_processing_jobs SET status='completed', completed_at=?, updated_at=? WHERE id=? AND status='running'")
+              .bind(timestamp, timestamp, jobId).run();
+          },
+          fail: async (jobId, error) => {
+            await env.DB.prepare("UPDATE resume_processing_jobs SET status='failed', error_code=?, error_message=?, updated_at=? WHERE id=?")
+              .bind('PROCESSING_FAILED', error.message.slice(0, 500), new Date().toISOString(), jobId).run();
+            await env.DB.prepare("UPDATE resumes SET parse_status='failed', parse_error=?, updated_at=? WHERE id=?")
+              .bind(error.message.slice(0, 500), new Date().toISOString(), message.body.resumeId).run();
+          },
+        });
+        logResumeProcessing('consumer.message.ok', {
+          jobId: message.body.jobId,
+          resumeId: message.body.resumeId,
+          messageId: message.id,
+          durationMs: Date.now() - startedAt,
+        });
+      } catch (error) {
+        logResumeProcessingError('consumer.message.error', error, {
+          jobId: message.body.jobId,
+          resumeId: message.body.resumeId,
+          messageId: message.id,
+          durationMs: Date.now() - startedAt,
+        });
+        throw error;
+      }
     }
+    logResumeProcessing('consumer.batch.ok', { messageCount: batch.messages.length });
   },
 } satisfies ExportedHandler<ConsumerEnv, ResumeQueueMessage>;
