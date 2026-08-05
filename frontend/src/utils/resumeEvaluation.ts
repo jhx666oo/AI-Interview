@@ -82,10 +82,10 @@ export function getScreeningGateRows(evaluation: Pick<NormalizedResumeEvaluation
     { key: 'keyword_match', label: '关键词匹配', reason: '关键词匹配未达 5 分' },
     { key: 'red_flag', label: '避坑雷区', reason: '命中避坑雷区' },
   ];
-  return gateDefinitions.map((gate) => {
+  return gateDefinitions.flatMap((gate) => {
     const result = evaluation.gateResults[gate.key];
-    const passed = result?.passed === true;
-    return { ...gate, passed, reason: passed ? '已通过' : gate.reason };
+    if (!result) return [];
+    return [{ ...gate, passed: result.passed, reason: result.passed ? '已通过' : gate.reason }];
   });
 }
 
@@ -152,9 +152,10 @@ export function normalizeResumeEvaluation(resume: {
     ?? source?.weighted_score ?? topLevel?.match_score ?? source?.match_score ?? evaluation?.match_score ?? review?.match_score;
   const gateResults = gateResultsFrom(topLevel?.gate_results ?? source?.gate_results ?? evaluation?.gate_results ?? review?.gate_results);
   const screeningReason = String(topLevel?.screening_reason ?? source?.screening_reason ?? evaluation?.screening_reason ?? review?.screening_reason ?? '');
+  const hasFailedGate = Object.values(gateResults).some((gate) => !gate.passed);
   return {
     dimensions,
-    overallScore: toDisplayScore(overallRaw),
+    overallScore: hasFailedGate ? null : toDisplayScore(overallRaw),
     gateResults,
     screeningReason,
     summary: String(source?.summary || source?.ai_review || ''),

@@ -47,4 +47,30 @@ describe('weighted screening display', () => {
       { key: 'red_flag', label: '避坑雷区', passed: false, reason: '命中避坑雷区' },
     ]);
   });
+
+  it('shows only gates reported by the API instead of treating an absent gate as failed', () => {
+    const evaluation = normalizeResumeEvaluation({
+      weighted_score: 4.2,
+      gate_results: {
+        keyword_match: { score: 5, passed: true },
+      },
+    });
+
+    expect(getScreeningGateRows(evaluation)).toEqual([
+      { key: 'keyword_match', label: '关键词匹配', passed: true, reason: '已通过' },
+    ]);
+  });
+
+  it('suppresses a weighted score whenever a reported gate fails', () => {
+    const evaluation = normalizeResumeEvaluation({
+      weighted_score: 4.2,
+      gate_results: {
+        keyword_match: { score: 5, passed: true },
+        red_flag: { score: 4, passed: false },
+      },
+    });
+
+    expect(evaluation.overallScore).toBeNull();
+    expect(formatWeightedScore(evaluation.overallScore)).toBe('—');
+  });
 });
