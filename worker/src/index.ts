@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createOrGetActiveJob } from './resume-processing/job-repository';
 import { normalizeResumeFields } from './resume-processing/fields';
-import { ensureResumeListSchema, RESUME_LIST_COMPATIBILITY_MIGRATIONS } from './resume-schema';
+import { ensureResumeListSchema, exposeStructuredEvaluation, RESUME_LIST_COMPATIBILITY_MIGRATIONS } from './resume-schema';
 import { assertShareDataMode, createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow, toShanghaiSnapshotDate } from './recruiting-operations/share-links';
 import { createUploadRoutes } from './resume-uploads/routes';
 import { createMaintenanceRoutes } from './resume-maintenance/routes';
@@ -5094,12 +5094,12 @@ app.get('/api/resumes', authMiddleware, async (c) => {
         try { const b = new Date(r.birthday); const diff = Date.now() - b.getTime(); item.age = Math.floor(diff / (365.25 * 24 * 3600 * 1000)); } catch {}
       }
       if (r.ai_review) { try { item.ai_review = JSON.parse(r.ai_review); } catch { item.ai_review = r.ai_review; } }
-      if (r.ai_evaluation) { try { item.ai_evaluation = JSON.parse(r.ai_evaluation); } catch {} }
+      exposeStructuredEvaluation(item);
       if (r.parsed_data) { try { item.parsed_data = JSON.parse(r.parsed_data); } catch {} }
       if (r.capability_scores) { try { item.capability_scores = JSON.parse(r.capability_scores); } catch {} }
       if (r.hard_requirement_result) { try { item.hard_requirement_result = JSON.parse(r.hard_requirement_result); } catch {} }
-      if (r.screening_result) {
-        const sr = r.screening_result;
+      if (item.screening_result || r.screening_result) {
+        const sr = item.screening_result || r.screening_result;
         item.screening_result = normalizeAiScreeningResult(sr);
         item.screening_label = item.screening_result;
       }
@@ -5584,6 +5584,11 @@ app.get('/api/resumes/:id', authMiddleware, async (c) => {
       for (const key of ['parsed_data', 'ai_review', 'ai_evaluation', 'work_experience', 'education', 'certifications']) {
         if (typeof item[key] === 'string') item[key] = safeJsonParse(item[key]) || item[key];
       }
+      exposeStructuredEvaluation(item);
+      if (item.screening_result) {
+        item.screening_result = normalizeAiScreeningResult(item.screening_result);
+        item.screening_label = item.screening_result;
+      }
       applyParsedResumeFields(item);
       try {
         const map = await buildPositionMapping(c.env.DB);
@@ -5626,6 +5631,11 @@ app.get('/api/resumes/:id', authMiddleware, async (c) => {
         if (d1Row.parse_status) item.parse_status = d1Row.parse_status;
       }
     } catch {}
+    exposeStructuredEvaluation(item);
+    if (item.screening_result) {
+      item.screening_result = normalizeAiScreeningResult(item.screening_result);
+      item.screening_label = item.screening_result;
+    }
     return c.json(item);
   } catch (e: any) {
     return c.json({ detail: e.message }, 500);

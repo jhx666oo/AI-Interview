@@ -5,6 +5,7 @@
  */
 
 import { normalizeAiScreeningResult } from '../ai-screening-result';
+import { exposeStructuredEvaluation } from '../resume-schema';
 
 const LIST_COLUMNS = `
   r.id, r.candidate_name, r.position_applied, r.mapped_position,
@@ -93,10 +94,10 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     if (r.parsed_data) { try { item.parsed_data = JSON.parse(r.parsed_data); } catch {} }
     if (r.capability_scores) { try { item.capability_scores = JSON.parse(r.capability_scores); } catch {} }
     if (r.hard_requirement_result) { try { item.hard_requirement_result = JSON.parse(r.hard_requirement_result); } catch {} }
-    if (r.ai_evaluation) { try { item.ai_evaluation = JSON.parse(r.ai_evaluation); } catch {} }
+    exposeStructuredEvaluation(item);
     if (r.ai_review) { try { item.ai_review = JSON.parse(r.ai_review); } catch {} }
-    if (r.screening_result) {
-      const sr = r.screening_result;
+    if (item.screening_result || r.screening_result) {
+      const sr = item.screening_result || r.screening_result;
       item.screening_result = normalizeAiScreeningResult(sr);
       item.screening_label = item.screening_result;
     }

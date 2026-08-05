@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ensureResumeListSchema, RESUME_LIST_COMPATIBILITY_MIGRATIONS } from '../src/resume-schema';
+import { ensureResumeListSchema, exposeStructuredEvaluation, RESUME_LIST_COMPATIBILITY_MIGRATIONS } from '../src/resume-schema';
 
 describe('resume list schema compatibility', () => {
   it('repairs every legacy resume column required by the list endpoint', () => {
@@ -41,5 +41,25 @@ describe('ensureResumeListSchema', () => {
 
     await expect(ensureResumeListSchema(db as never)).resolves.toBeUndefined();
     expect(attempted).toEqual([...RESUME_LIST_COMPATIBILITY_MIGRATIONS]);
+  });
+});
+
+describe('structured screening compatibility', () => {
+  it('keeps a null weighted score when a hard gate fails', () => {
+    const item: Record<string, unknown> = {
+      match_score: 62,
+      ai_evaluation: JSON.stringify({
+        weighted_score: null,
+        gate_results: { red_flag: { score: 4, passed: false } },
+        screening_reason: '避坑雷区未达到 5 分',
+      }),
+    };
+
+    exposeStructuredEvaluation(item);
+
+    expect(item.match_score).toBeNull();
+    expect(item.weighted_score).toBeNull();
+    expect(item.gate_results).toEqual({ red_flag: { score: 4, passed: false } });
+    expect(item.screening_reason).toBe('避坑雷区未达到 5 分');
   });
 });
