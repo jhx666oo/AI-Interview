@@ -133,8 +133,8 @@ const InterviewsList: React.FC = () => {
       if (editRecord.interview_id) {
         await request.put(`/interviews/${editRecord.interview_id}`, values);
       } else {
-        // 无面试记录时创建新的
-        await request.post('/interviews', { ...values, status: values.status || 'scheduled' });
+        // 无面试记录时创建新的（带上候选人姓名）
+        await request.post('/interviews', { ...values, candidate_name: editRecord.candidate_name, status: values.status || 'scheduled' });
       }
       message.success('已保存');
       setEditModalVisible(false);

@@ -3102,7 +3102,7 @@ app.get('/api/interviews', authMiddleware, async (c) => {
     return c.json({
       items: results.map((row: any) => ({
         ...transformRow(row),
-        resume: { candidate_name: row._candidate_name || row.interviewer || '未知' },
+        resume: { candidate_name: row._candidate_name || row.candidate_name || '未知' },
         position: { title: row._position_title || row.position_id || '未知岗位' }
       })),
       total, page, pageSize,
@@ -3113,7 +3113,7 @@ app.get('/api/interviews', authMiddleware, async (c) => {
   // 把 _candidate_name 和 _position_title 嵌入到嵌套对象，保持前端现有列定义兼容
   return c.json(results.map((row: any) => ({
     ...transformRow(row),
-    resume: { candidate_name: row._candidate_name || row.interviewer || '未知' },
+    resume: { candidate_name: row._candidate_name || row.candidate_name || '未知' },
     position: { title: row._position_title || row.position_id || '未知岗位' }
   })));
 });
@@ -4195,9 +4195,9 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
     const interviewerStr = interviewerNames.length > 0 ? interviewerNames.join(', ') : assignment.interviewer;
 
     await c.env.DB.prepare(
-      `INSERT INTO interviews (id, resume_id, interviewer, position_id, status, created_at, comments, primary_interviewer, secondary_interviewer)
-       VALUES (?, ?, ?, ?, 'scheduled', datetime('now'), ?, ?, ?)`
-    ).bind(interviewId, feishu_record_id || '', candidate_name, position_applied || '', interviewerStr, assignment.primaryInterviewer, assignment.secondaryInterviewer).run();
+      `INSERT INTO interviews (id, resume_id, candidate_name, interviewer, position_id, status, created_at, comments, primary_interviewer, secondary_interviewer)
+       VALUES (?, ?, ?, ?, ?, 'scheduled', datetime('now'), ?, ?, ?)`
+    ).bind(interviewId, feishu_record_id || '', candidate_name, interviewerStr, position_applied || '', assignment.primaryInterviewer, assignment.secondaryInterviewer).run();
 
     // == 给面试官发飞书私信 ==
     const notificationResults: string[] = [];
