@@ -6021,9 +6021,68 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     const inputHint = reparseSource === 'parsed' ? '已解析的结构化字段（来自飞书同步）：' : '简历文本（请提取完整信息）：';
     userPrompt = inputHint + appendContext + '\n\n' + reparseInputText;
   }
-  // 既无原文也无结构化字段：无法 reparse
+  // 既无原文也无结构化字段：尝试从 PDF 提取文本
   if (reparseSource === 'none') {
-    return c.json({ detail: '该简历既无原始文本也无已解析字段，无法重新解析。请重新上传 PDF 或手动编辑', need_manual: true }, 400);
+    try {
+      const mineruBase = (c.env.MINERU_BASE || 'https://mineru.net').replace(/\/+$/, '');
+      let pdfUrl = resume.file_path || '';
+      let pdfBytes: ArrayBuffer | null = null;
+
+      // 优先从 feishu_file_token 下载
+      if (resume.feishu_file_token) {
+        try {
+          const feishuToken = await getFeishuToken(c.env);
+          const dlUrl = `https://open.feishu.cn/open-apis/drive/v1/medias/${resume.feishu_file_token}/download`;
+          const dlResp = await fetch(dlUrl, { headers: { Authorization: `Bearer ${feishuToken}` } });
+          if (dlResp.ok) pdfBytes = await dlResp.arrayBuffer();
+        } catch {}
+      }
+
+      // 其次从 file_path URL 下载
+      if (!pdfBytes && pdfUrl) {
+        try {
+          const dlResp = await fetch(pdfUrl);
+          if (dlResp.ok) pdfBytes = await dlResp.arrayBuffer();
+        } catch {}
+      }
+
+      if (pdfBytes && pdfBytes.byteLength > 100) {
+        // MinerU OCR
+        const signResp = await fetch(`${mineruBase}/api/v1/agent/parse/file`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_name: `${resume.candidate_name || 'resume'}.pdf`, language: 'ch', is_ocr: true, enable_table: true, enable_formula: false }),
+        });
+        const signData: any = await signResp.json().catch(() => ({}));
+        if (signData?.data?.file_url && signData?.data?.task_id) {
+          await fetch(signData.data.file_url, { method: 'PUT', body: pdfBytes, headers: { 'Content-Type': '' } });
+          let markdown = '';
+          for (let i = 0; i < 20; i++) {
+            const pollResp = await fetch(`${mineruBase}/api/v1/agent/parse/${signData.data.task_id}`);
+            const pollData: any = await pollResp.json().catch(() => ({}));
+            if (pollData?.data?.state === 'done') {
+              const mdResp = await fetch(pollData.data.markdown_url);
+              if (mdResp.ok) markdown = await mdResp.text();
+              break;
+            }
+            if (pollData?.data?.state === 'failed') break;
+            await new Promise(r => setTimeout(r, 2000));
+          }
+          if (markdown && markdown.length > 50) {
+            rawText = markdown;
+            reparseSource = 'text';
+            // 缓存 OCR 结果
+            try { await c.env.DB.prepare('UPDATE resumes SET ocr_markdown=?, ocr_status=? WHERE id=?').bind(markdown.substring(0, 200000), 'ocr_done', id).run(); } catch {}
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error(`[reparse] PDF extraction failed: ${e.message}`);
+    }
+  }
+
+  // 仍然无文本：返回错误
+  if (reparseSource === 'none') {
+    return c.json({ detail: '找不到简历 PDF，无法提取文本重新解析。请重新上传 PDF 再试', need_manual: true }, 400);
   }
   try {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
