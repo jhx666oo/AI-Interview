@@ -30,6 +30,20 @@ describe('evaluateWeightedScreening', () => {
     expect(result.screening_result).toBe('通过');
   });
 
+  it('uses canonical fallback weights for every omitted scoring dimension', () => {
+    const result = evaluateWeightedScreening({
+      dimensions: [
+        { name: '核心画像', score: 1 }, { name: '核心职责', score: 5 },
+        { name: '任职要求', score: 5 }, { name: '企业背景', score: 5 },
+        { name: '加分项', score: 5 }, { name: '关键词匹配', score: 5 },
+        { name: '避坑雷区', score: 5 },
+      ],
+    }, [{ name: '核心画像', weight: 100 }]);
+
+    expect(result.weighted_score).toBe(2.6);
+    expect(result.screening_result).toBe('不通过');
+  });
+
   it('uses four as the pass boundary and treats missing gate dimensions as zero', () => {
     const scores = { '核心画像': 4, '核心职责': 4, '任职要求': 4, '企业背景': 4, '加分项': 4, '关键词匹配': 5, '避坑雷区': 5 };
     const result = evaluateWeightedScreening({ dimensions: Object.entries(scores).map(([name, score]) => ({ name, score })) }, config);

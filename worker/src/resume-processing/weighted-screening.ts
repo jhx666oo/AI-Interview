@@ -57,10 +57,7 @@ function scoringWeights(configuredDimensions: readonly ConfiguredDimension[] | n
     }
   }
 
-  const configuredWeights = SCORING_DIMENSIONS.map((name) => configuredByName.get(name) || 0);
-  return configuredWeights.some((weight) => weight > 0)
-    ? configuredWeights
-    : SCORING_DIMENSIONS.map((name) => DEFAULT_WEIGHTS[name]);
+  return SCORING_DIMENSIONS.map((name) => configuredByName.get(name) ?? DEFAULT_WEIGHTS[name]);
 }
 
 /** Applies the seven-dimension screening gates and five-dimension weighted score. */
