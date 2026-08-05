@@ -1,4 +1,3 @@
-import { createOrGetActiveJob } from './job-repository';
 import type { ResumeQueueMessage } from './types';
 
 type ReprocessDb = Pick<D1Database, 'prepare'>;
@@ -48,7 +47,7 @@ export async function enqueueResumeReprocess(
 
   if (job) {
     const timestamp = new Date().toISOString();
-    await db.prepare(
+    const resetJobResult = await db.prepare(
       `UPDATE resume_processing_jobs SET
          status='queued',
          step='extracting_text',
@@ -59,9 +58,33 @@ export async function enqueueResumeReprocess(
          updated_at=?
        WHERE id=? AND status='failed'`,
     ).bind(timestamp, job.id).run();
+    // 另一个请求可能已经抢先重置了失败任务；此时它负责发送唯一的队列消息。
+    if (!resetJobResult.meta?.changes) {
+      const activeAfterRace = await db.prepare(
+        "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+      ).bind(resumeId).first() as any;
+      if (activeAfterRace) return { jobId: activeAfterRace.id, status: activeAfterRace.status, queued: false };
+      throw new Error('Unable to requeue failed resume processing job');
+    }
     job = { ...job, status: 'queued' };
   } else {
-    job = await createOrGetActiveJob(db as D1Database, resumeId);
+    const timestamp = new Date().toISOString();
+    const candidateJobId = crypto.randomUUID();
+    const insertResult = await db.prepare(
+      `INSERT OR IGNORE INTO resume_processing_jobs
+         (id, resume_id, status, step, created_at, updated_at)
+       VALUES (?, ?, 'queued', 'extracting_text', ?, ?)`,
+    ).bind(candidateJobId, resumeId, timestamp, timestamp).run();
+    if (insertResult.meta?.changes) {
+      job = { id: candidateJobId, status: 'queued' };
+    } else {
+      // INSERT OR IGNORE 命中并发请求创建的活动任务；不要再次清空数据或发送消息。
+      const activeAfterRace = await db.prepare(
+        "SELECT * FROM resume_processing_jobs WHERE resume_id=? AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+      ).bind(resumeId).first() as any;
+      if (!activeAfterRace) throw new Error('Unable to create resume processing job');
+      return { jobId: activeAfterRace.id, status: activeAfterRace.status, queued: false };
+    }
   }
 
   await resetResumeForReprocess(db, resumeId);

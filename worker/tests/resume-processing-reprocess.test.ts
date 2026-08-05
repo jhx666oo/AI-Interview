@@ -32,6 +32,16 @@ describe('resume reprocess enqueue', () => {
     expect(db.calls.some((sql) => sql.startsWith('UPDATE resumes SET'))).toBe(false);
   });
 
+  it('creates one queued job and sends one message for a fresh resume', async () => {
+    const db = createReprocessDb({});
+    const queue = createQueue();
+
+    const result = await enqueueResumeReprocess(db as never, queue, 'resume-1');
+    expect(result).toMatchObject({ status: 'queued', queued: true });
+    expect(queue.messages).toEqual([{ jobId: result.jobId, resumeId: 'resume-1' }]);
+    expect(db.calls.some((sql) => sql.includes('INSERT OR IGNORE INTO resume_processing_jobs'))).toBe(true);
+  });
+
   it('rejects an unknown resume before creating a job', async () => {
     const db = createReprocessDb({ resumeExists: false });
     const queue = createQueue();
