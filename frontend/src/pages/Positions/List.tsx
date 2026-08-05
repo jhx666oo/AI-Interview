@@ -8,6 +8,7 @@ import { useOwner } from '../../contexts/OwnerContext';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { buildPositionCapabilitySave } from './capabilitySave';
 
 const { Title, Text } = Typography;
 
@@ -77,7 +78,6 @@ const PositionsList: React.FC = () => {
   const { user } = useAuth();
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
-  const [syncDescriptions, setSyncDescriptions] = useState(true); // 保存时同步描述到所有岗位
   const [users, setUsers] = useState<any[]>([]);
   const [jdModalVisible, setJdModalVisible] = useState(false);
   const [aiMatchingId, setAiMatchingId] = useState<string | null>(null);
@@ -543,58 +543,20 @@ const PositionsList: React.FC = () => {
     try {
       const values = await form.validateFields();
       setSubmitting(true);
-      // 能力维度数组 → JSON 字符串
-      const payload = { ...values };
-      if (payload.capability_dimensions) {
-        payload.capability_dimensions = JSON.stringify(payload.capability_dimensions);
-      }
-      if (payload.requirements) {
+      const payloadInput = { ...values };
+      if (payloadInput.requirements) {
         // 多选/标签输入 → JSON 字符串数组
-        if (Array.isArray(payload.requirements)) {
-          payload.requirements = JSON.stringify(payload.requirements);
+        if (Array.isArray(payloadInput.requirements)) {
+          payloadInput.requirements = JSON.stringify(payloadInput.requirements);
         }
       }
+      const { payload } = buildPositionCapabilitySave(payloadInput);
       if (editingId) {
         await request.put(`/positions/${editingId}`, payload);
         message.success('更新成功');
       } else {
         await request.post('/positions', payload);
         message.success('创建成功');
-      }
-      // 同步维度描述到所有包含相同维度的岗位
-      if (syncDescriptions && payload.capability_dimensions) {
-        try {
-          const dims = JSON.parse(payload.capability_dimensions);
-          const dimsWithDesc = (Array.isArray(dims) ? dims : []).filter((d: any) => d.description);
-          if (dimsWithDesc.length > 0) {
-            // 获取所有岗位
-            const allPositions = await request.get('/positions', { params: { page_size: 500 } });
-            const updates = (Array.isArray(allPositions) ? allPositions : []).filter((p: any) => p.id !== editingId);
-            for (const pos of updates) {
-              let posDims: any[] = [];
-              const cd = pos.capability_dimensions;
-              if (cd) {
-                if (Array.isArray(cd)) posDims = cd;
-                else if (typeof cd === 'string') { try { posDims = JSON.parse(cd); } catch {} }
-              }
-              let changed = false;
-              const newPosDims = posDims.map((d: any) => {
-                const name = typeof d === 'string' ? d : d.name;
-                const match = dimsWithDesc.find((dd: any) => dd.name === name);
-                if (match && (!d.description || d.description !== match.description)) {
-                  changed = true;
-                  return { name, description: match.description };
-                }
-                return d;
-              });
-              if (changed) {
-                // 只更新能力维度字段，避免把列表投影中的 stats/关联字段一并提交，
-                // 导致通用岗位更新接口因未知列而整次同步失败。
-                await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(newPosDims) }).catch(() => {});
-              }
-            }
-          }
-        } catch {}
       }
       setIsModalVisible(false);
       fetchPositions();
@@ -902,10 +864,7 @@ const PositionsList: React.FC = () => {
         width={880}
         centered
         footer={
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Checkbox checked={syncDescriptions} onChange={e => setSyncDescriptions(e.target.checked)} style={{ fontSize: 12 }}>
-              同步描述到所有岗位的相同维度
-            </Checkbox>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
             <Space>
               <Button onClick={() => setIsModalVisible(false)}>取消</Button>
               <Button type="primary" loading={submitting} onClick={handleOk}>保存</Button>
