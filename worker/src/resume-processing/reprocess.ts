@@ -1,10 +1,177 @@
 import { ensureResumeProcessingJobsSchema, isMissingResumeProcessingJobsError } from './job-repository';
-import type { ResumeQueueMessage } from './types';
+import type { HistoricalReprocessQueueMessage, ResumeProcessingQueueMessage, ResumeQueueMessage } from './types';
 import { logResumeProcessing, logResumeProcessingError } from './logging';
 
 type ReprocessDb = Pick<D1Database, 'prepare'>;
-type ReprocessQueue = { send(message: ResumeQueueMessage): Promise<unknown> };
+type ReprocessQueue = { send(message: ResumeProcessingQueueMessage): Promise<unknown> };
 type ReprocessOwner = string | null;
+export const HISTORICAL_REPROCESS_PAGE_SIZE = 25;
+
+async function ensureHistoricalReprocessSchema(db: ReprocessDb): Promise<void> {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS resume_reprocess_batches (
+    id TEXT PRIMARY KEY,
+    owner TEXT,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed')),
+    cursor TEXT,
+    requested_count INTEGER NOT NULL DEFAULT 0,
+    matched_count INTEGER NOT NULL DEFAULT 0,
+    queued_count INTEGER NOT NULL DEFAULT 0,
+    already_processing_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT
+  )`).bind().run();
+  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_reprocess_one_active_owner
+    ON resume_reprocess_batches(COALESCE(owner, '')) WHERE status IN ('queued', 'running')`).bind().run();
+}
+
+export async function startHistoricalResumeReprocess(
+  db: ReprocessDb,
+  queue: ReprocessQueue,
+  owner: ReprocessOwner,
+) {
+  await ensureHistoricalReprocessSchema(db);
+  const ownerPredicate = owner ? 'owner=?' : 'owner IS NULL';
+  const active = await db.prepare(
+    `SELECT * FROM resume_reprocess_batches WHERE ${ownerPredicate} AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1`,
+  ).bind(...(owner ? [owner] : [])).first() as any;
+  if (active) {
+    return {
+      batch_id: active.id,
+      requested: Number(active.requested_count || 0),
+      matched: Number(active.matched_count || 0),
+      queued: Number(active.matched_count || 0),
+      already_processing: Number(active.already_processing_count || 0),
+      failed: Number(active.failed_count || 0),
+      coordinator_queued: false,
+    };
+  }
+
+  const ownerWhere = owner
+    ? ` WHERE position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?)`
+    : '';
+  const countRow = await db.prepare(`SELECT COUNT(*) AS total FROM resumes${ownerWhere}`)
+    .bind(...(owner ? [owner, owner, owner] : [])).first() as any;
+  const total = Number(countRow?.total || 0);
+  const batchId = crypto.randomUUID();
+  const timestamp = new Date().toISOString();
+  const inserted = await db.prepare(`INSERT OR IGNORE INTO resume_reprocess_batches
+    (id, owner, status, requested_count, matched_count, created_at, updated_at)
+    VALUES (?, ?, 'queued', ?, ?, ?, ?)`)
+    .bind(batchId, owner, total, total, timestamp, timestamp).run();
+  if (!inserted.meta?.changes) {
+    const winner = await db.prepare(
+      `SELECT * FROM resume_reprocess_batches WHERE ${ownerPredicate} AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1`,
+    ).bind(...(owner ? [owner] : [])).first() as any;
+    if (!winner) throw new Error('Unable to create historical reprocess batch');
+    return {
+      batch_id: winner.id,
+      requested: Number(winner.requested_count || 0),
+      matched: Number(winner.matched_count || 0),
+      queued: Number(winner.matched_count || 0),
+      already_processing: Number(winner.already_processing_count || 0),
+      failed: Number(winner.failed_count || 0),
+      coordinator_queued: false,
+    };
+  }
+
+  try {
+    await queue.send({ kind: 'historical_reprocess', batchId });
+  } catch (error) {
+    await db.prepare("UPDATE resume_reprocess_batches SET status='failed', error_message=?, updated_at=? WHERE id=?")
+      .bind(String((error as any)?.message || error).slice(0, 500), new Date().toISOString(), batchId).run();
+    throw error;
+  }
+
+  return {
+    batch_id: batchId,
+    requested: total,
+    matched: total,
+    queued: total,
+    already_processing: 0,
+    failed: 0,
+    coordinator_queued: true,
+  };
+}
+
+type HistoricalBatch = { id: string; cursor: string | null; owner?: string | null };
+type HistoricalCoordinatorDeps = {
+  pageSize?: number;
+  claimBatch(): Promise<HistoricalBatch | null>;
+  loadPage(batch: HistoricalBatch, limit: number): Promise<Array<{ id: string }>>;
+  enqueuePage(ids: string[]): Promise<{ queued: number; already_processing: number; failed: number }>;
+  saveProgress(batch: HistoricalBatch, cursor: string, counts: { queued: number; already_processing: number; failed: number }): Promise<void>;
+  complete(batch: HistoricalBatch, counts: { queued: number; already_processing: number; failed: number }): Promise<void>;
+  sendNext(message: HistoricalReprocessQueueMessage): Promise<void>;
+};
+
+export async function runHistoricalReprocessCoordinator(batchId: string, deps: HistoricalCoordinatorDeps) {
+  const pageSize = Math.max(1, Math.min(HISTORICAL_REPROCESS_PAGE_SIZE, deps.pageSize || HISTORICAL_REPROCESS_PAGE_SIZE));
+  const batch = await deps.claimBatch();
+  if (!batch) return { claimed: false, processed: 0, has_more: false };
+  const rows = await deps.loadPage(batch, pageSize);
+  if (rows.length === 0) {
+    await deps.complete(batch, { queued: 0, already_processing: 0, failed: 0 });
+    return { claimed: true, processed: 0, has_more: false };
+  }
+  const counts = await deps.enqueuePage(rows.map((row) => row.id));
+  const cursor = rows[rows.length - 1].id;
+  const hasMore = rows.length === pageSize;
+  if (hasMore) {
+    await deps.saveProgress(batch, cursor, counts);
+    await deps.sendNext({ kind: 'historical_reprocess', batchId });
+  } else {
+    await deps.complete(batch, counts);
+  }
+  return { claimed: true, processed: rows.length, has_more: hasMore, ...counts };
+}
+
+export async function processHistoricalResumeReprocessPage(
+  db: ReprocessDb,
+  queue: ReprocessQueue,
+  batchId: string,
+) {
+  return runHistoricalReprocessCoordinator(batchId, {
+    claimBatch: async () => {
+      const timestamp = new Date().toISOString();
+      const claimed = await db.prepare("UPDATE resume_reprocess_batches SET status='running', updated_at=? WHERE id=? AND status='queued'")
+        .bind(timestamp, batchId).run();
+      if (!claimed.meta?.changes) return null;
+      return await db.prepare('SELECT id, owner, cursor FROM resume_reprocess_batches WHERE id=?').bind(batchId).first() as HistoricalBatch | null;
+    },
+    loadPage: async (batch, limit) => {
+      const clauses = ['id > ?'];
+      const values: unknown[] = [batch.cursor || ''];
+      if (batch.owner) {
+        clauses.push('(position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))');
+        values.push(batch.owner, batch.owner, batch.owner);
+      }
+      const rows = await db.prepare(`SELECT id FROM resumes WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`)
+        .bind(...values, limit).all();
+      return (rows.results || []) as Array<{ id: string }>;
+    },
+    enqueuePage: async (ids) => enqueueResumeReprocessBatchForIds(db, queue, ids),
+    saveProgress: async (_batch, cursor, counts) => {
+      await db.prepare(`UPDATE resume_reprocess_batches SET cursor=?, status='queued',
+        queued_count=queued_count+?, already_processing_count=already_processing_count+?, failed_count=failed_count+?, updated_at=? WHERE id=?`)
+        .bind(cursor, counts.queued, counts.already_processing, counts.failed, new Date().toISOString(), batchId).run();
+    },
+    complete: async (_batch, counts) => {
+      const timestamp = new Date().toISOString();
+      await db.prepare(`UPDATE resume_reprocess_batches SET status='completed',
+        queued_count=queued_count+?, already_processing_count=already_processing_count+?, failed_count=failed_count+?, completed_at=?, updated_at=? WHERE id=?`)
+        .bind(counts.queued, counts.already_processing, counts.failed, timestamp, timestamp, batchId).run();
+    },
+    sendNext: (message) => queue.send(message).then(() => undefined),
+  });
+}
+
+export async function resetHistoricalResumeReprocessBatch(db: ReprocessDb, batchId: string): Promise<void> {
+  await db.prepare("UPDATE resume_reprocess_batches SET status='queued', updated_at=? WHERE id=? AND status='running'")
+    .bind(new Date().toISOString(), batchId).run();
+}
 
 export async function selectVisibleResumeIdsForReprocess(
   db: ReprocessDb,
@@ -201,6 +368,11 @@ export async function enqueueResumeReprocess(
   try {
     await queue.send({ jobId: job.id, resumeId, reprocess: true });
   } catch (error) {
+    const timestamp = new Date().toISOString();
+    await db.prepare(
+      `UPDATE resume_processing_jobs SET status='failed', error_code='QUEUE_SEND_FAILED', error_message=?, updated_at=?
+       WHERE id=? AND status='queued'`,
+    ).bind(String((error as any)?.message || error).slice(0, 500), timestamp, job.id).run();
     logResumeProcessingError('reprocess.queue_send.error', error, {
       resumeId,
       jobId: job.id,

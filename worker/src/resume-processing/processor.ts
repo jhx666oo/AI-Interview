@@ -53,7 +53,9 @@ export async function processResume(
   await deps.setJobStep(message.jobId, 'extracting_text');
   const text = await deps.getText(resume);
   if (text.trim().length < 20) throw new Error('RESUME_TEXT_UNAVAILABLE');
-  await deps.updateResume(message.resumeId, { raw_text: text, parse_status: 'extracting_fields' });
+  await deps.updateResume(message.resumeId, message.reprocess
+    ? { parse_status: 'extracting_fields' }
+    : { raw_text: text, parse_status: 'extracting_fields' });
 
   let fields = jsonObject(resume.parsed_data);
   if (!hasExtractedFields(fields)) {

@@ -43,6 +43,30 @@ describe('resume processor', () => {
     expect(screenCalls).toBe(1);
   });
 
+  it('uses OCR text for re-evaluation without overwriting raw or OCR source fields', async () => {
+    const updates: Record<string, unknown>[] = [];
+    await processResume({ jobId: 'job-1', resumeId: 'resume-1', reprocess: true }, {
+      getResume: async () => ({
+        id: 'resume-1',
+        raw_text: 'ORIGINAL RAW TEXT THAT MUST REMAIN BYTE FOR BYTE',
+        ocr_markdown: 'DISTINCT OCR MARKDOWN USED FOR THE NEW EVALUATION',
+        parsed_data: '{"school":"A大学"}',
+        ai_evaluation: '{"match_score":82}',
+      }),
+      getText: async (resume) => String(resume.ocr_markdown),
+      extractFields: async () => ({}),
+      screen: async (text) => {
+        expect(text).toBe('DISTINCT OCR MARKDOWN USED FOR THE NEW EVALUATION');
+        return { weighted_score: 5, screening_result: '通过' };
+      },
+      updateResume: async (_id, update) => { updates.push(update); },
+      setJobStep: async () => undefined,
+    });
+
+    expect(updates.some((update) => Object.prototype.hasOwnProperty.call(update, 'raw_text'))).toBe(false);
+    expect(updates.some((update) => Object.prototype.hasOwnProperty.call(update, 'ocr_markdown'))).toBe(false);
+  });
+
   it('extracts fields when upload only stored a candidate-name placeholder', async () => {
     let fieldCalls = 0;
     const updates: Record<string, unknown>[] = [];

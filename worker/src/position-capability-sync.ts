@@ -33,7 +33,7 @@ export function normalizeCapabilityDimensionsForStorage(value: unknown): StoredC
       if (text) result[key] = text;
     }
     const weight = Number(raw.weight);
-    if (Number.isFinite(weight) && weight > 0) result.weight = weight;
+    if (Number.isFinite(weight) && weight >= 0 && raw.weight !== null && raw.weight !== undefined && raw.weight !== '') result.weight = weight;
     return result;
   }).filter((item): item is StoredCapabilityDimension => Boolean(item));
 }

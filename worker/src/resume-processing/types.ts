@@ -13,10 +13,18 @@ export type ResumeJobStep =
   | 'syncing_feishu';
 
 export interface ResumeQueueMessage {
+  kind?: 'resume_reprocess';
   jobId: string;
   resumeId: string;
   reprocess?: boolean;
 }
+
+export interface HistoricalReprocessQueueMessage {
+  kind: 'historical_reprocess';
+  batchId: string;
+}
+
+export type ResumeProcessingQueueMessage = ResumeQueueMessage | HistoricalReprocessQueueMessage;
 
 export interface ResumeProcessingJob {
   id: string;

@@ -10,6 +10,11 @@ describe('position capability dimension storage', () => {
       .toEqual([{ name: '客户洞察', description: '能从数据提炼需求' }]);
   });
 
+  it('preserves an explicitly configured zero weight', () => {
+    expect(normalizeCapabilityDimensionsForStorage('[{"name":"核心画像","weight":0},{"name":"核心职责","weight":100}]'))
+      .toEqual([{ name: '核心画像', weight: 0 }, { name: '核心职责', weight: 100 }]);
+  });
+
   it('builds readable full text from either description format', () => {
     expect(buildCapabilityDimensionsFullText([
       { name: '客户洞察', description: '能从数据提炼需求' },

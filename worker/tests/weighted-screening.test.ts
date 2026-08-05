@@ -30,7 +30,7 @@ describe('evaluateWeightedScreening', () => {
     expect(result.screening_result).toBe('通过');
   });
 
-  it('uses canonical fallback weights for every omitted scoring dimension', () => {
+  it('normalizes only a partially configured positive scoring vector', () => {
     const result = evaluateWeightedScreening({
       dimensions: [
         { name: '核心画像', score: 1 }, { name: '核心职责', score: 5 },
@@ -40,8 +40,39 @@ describe('evaluateWeightedScreening', () => {
       ],
     }, [{ name: '核心画像', weight: 100 }]);
 
-    expect(result.weighted_score).toBe(2.6);
+    expect(result.weighted_score).toBe(1);
     expect(result.screening_result).toBe('不通过');
+  });
+
+  it('preserves explicit zero weights when other scoring weights are positive', () => {
+    const result = evaluateWeightedScreening({
+      dimensions: config.map(({ name }) => ({ name, score: name === '核心画像' ? 5 : name === '核心职责' ? 1 : 5 })),
+    }, [
+      { name: '核心画像', weight: 0 },
+      { name: '核心职责', weight: 100 },
+      { name: '任职要求', weight: 0 },
+      { name: '企业背景', weight: 0 },
+      { name: '加分项', weight: 0 },
+    ]);
+
+    expect(result.weighted_score).toBe(1);
+  });
+
+  it('uses the complete canonical default vector only when no scoring weight is positive', () => {
+    const scores = config.map(({ name }) => ({ name, score: name === '核心画像' ? 1 : 5 }));
+    const withoutConfig = evaluateWeightedScreening({ dimensions: scores }, []);
+    const allZero = evaluateWeightedScreening({ dimensions: scores }, config.map(({ name }) => ({ name, weight: 0 })));
+
+    expect(withoutConfig.weighted_score).toBe(3.9);
+    expect(allZero.weighted_score).toBe(3.9);
+  });
+
+  it('keeps the canonical fallback through compatibility normalization for an all-zero stored config', () => {
+    const result = enrichScreeningEvaluation({
+      dimensions: config.map(({ name }) => ({ name, score: name === '核心画像' ? 1 : 5 })),
+    }, config.map(({ name }) => ({ name, weight: 0 })));
+
+    expect(result.weighted_score).toBe(3.9);
   });
 
   it('uses four as the pass boundary and treats missing gate dimensions as zero', () => {

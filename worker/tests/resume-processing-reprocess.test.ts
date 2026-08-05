@@ -58,6 +58,26 @@ describe('resume reprocess enqueue', () => {
       .rejects.toBeInstanceOf(ResumeNotFoundError);
     expect(queue.messages).toEqual([]);
   });
+
+  it('marks a job failed after queue send rejection so a retry can send it again', async () => {
+    const db = createReprocessDb({});
+    let sendAttempts = 0;
+    const messages: Array<{ jobId: string; resumeId: string; reprocess?: boolean }> = [];
+    const queue = {
+      async send(message: { jobId: string; resumeId: string; reprocess?: boolean }) {
+        sendAttempts += 1;
+        if (sendAttempts === 1) throw new Error('queue unavailable');
+        messages.push(message);
+      },
+    };
+
+    await expect(enqueueResumeReprocess(db as never, queue, 'resume-1')).rejects.toThrow('queue unavailable');
+    expect(db.calls.some((sql) => sql.includes("SET status='failed'") && sql.includes('QUEUE_SEND_FAILED'))).toBe(true);
+
+    const retryResult = await enqueueResumeReprocess(db as never, queue, 'resume-1');
+    expect(retryResult).toMatchObject({ queued: true });
+    expect(messages).toEqual([{ jobId: retryResult.jobId, resumeId: 'resume-1', reprocess: true }]);
+  });
 });
 
 function createQueue() {
@@ -77,7 +97,7 @@ function createReprocessDb(options: {
   jobsTableMissing?: boolean;
 }) {
   const calls: string[] = [];
-  let createdJob: { id: string; status: 'queued' } | null = null;
+  let createdJob: { id: string; status: 'queued' | 'failed' } | null = null;
   let schemaReady = !options.jobsTableMissing;
   return {
     calls,
@@ -89,14 +109,23 @@ function createReprocessDb(options: {
             async first() {
               if (sql.includes('SELECT id FROM resumes')) return options.resumeExists === false ? null : { id: values[0] };
               if (!schemaReady && sql.includes('resume_processing_jobs')) throw new Error('no such table: resume_processing_jobs');
-              if (sql.includes("status IN ('queued', 'running')")) return options.activeJob || createdJob;
-              if (sql.includes("status='failed'")) return options.failedJob || null;
+              if (sql.includes("status IN ('queued', 'running')")) {
+                if (options.activeJob) return options.activeJob;
+                return createdJob?.status === 'queued' ? createdJob : null;
+              }
+              if (sql.includes("status='failed'")) return options.failedJob || (createdJob?.status === 'failed' ? createdJob : null);
               return null;
             },
             async run() {
               if (sql.includes('CREATE TABLE IF NOT EXISTS resume_processing_jobs')) schemaReady = true;
               if (sql.includes('INSERT OR IGNORE')) {
                 createdJob = { id: 'job-new', status: 'queued' };
+              }
+              if (sql.includes("SET status='failed'")) {
+                createdJob = { id: String(values.at(-1)), status: 'failed' };
+              }
+              if (sql.includes("SET\n         status='queued'")) {
+                createdJob = { id: String(values.at(-1)), status: 'queued' };
               }
               return { meta: { changes: 1 } };
             },

@@ -1,4 +1,5 @@
-import type { ResumeQueueMessage } from './resume-processing/types';
+import type { ResumeProcessingQueueMessage, ResumeQueueMessage } from './resume-processing/types';
+import { processHistoricalResumeReprocessPage, resetHistoricalResumeReprocessBatch } from './resume-processing/reprocess';
 import { claimJob } from './resume-processing/job-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
@@ -92,7 +93,37 @@ type ConsumerEnv = {
   RESUME_ARTIFACTS?: R2Bucket;
   R2_ARTIFACT_READ?: string;
   R2_ARTIFACT_WRITE?: string;
+  RESUME_PROCESSING_QUEUE: Queue<ResumeProcessingQueueMessage>;
 };
+
+function cleanBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '');
+}
+
+export function buildR2OcrSignRequest(baseUrl: string, resumeId: string) {
+  return { url: `${cleanBaseUrl(baseUrl)}/api/v1/agent/parse/file`, fileName: `${resumeId}.pdf` };
+}
+
+export function buildR2OcrStatusUrl(baseUrl: string, taskId: string): string {
+  return `${cleanBaseUrl(baseUrl)}/api/v1/agent/parse/${taskId}`;
+}
+
+export function buildR2ExtractionPrompt(text: string): string {
+  return `从以下简历文本中提取字段：姓名、最高学历、学校、专业、工作年限、性别、年龄、技能列表、期望职位、期望薪资、工作经历摘要、证书。只返回 JSON 对象，不要包含其他文字。\n${text}`;
+}
+
+export function buildR2ScreeningPrompt(input: {
+  position: string;
+  capabilityDimensions: string;
+  fields: Record<string, unknown>;
+  text: string;
+}): string {
+  return `岗位：${input.position}\n能力维度：${input.capabilityDimensions}\n字段：${JSON.stringify(input.fields)}\n简历：${input.text}`;
+}
+
+export function buildR2SupplementalPrompt(text: string, missingDimensions: string[]): string {
+  return `候选人简历：\n${text}\n\n请只返回 {"dimensions":[{"name":"维度名","score":0-5,"reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：${missingDimensions.join('、')}。`;
+}
 
 async function updateResume(db: D1Database, resumeId: string, update: Record<string, unknown>) {
   const keys = Object.keys(update);
@@ -123,6 +154,9 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
   await processResume(message, {
     getResume: async (id) => await env.DB.prepare('SELECT * FROM resumes WHERE id=?').bind(id).first() as any,
     getText: async (resume) => {
+      if (message.reprocess && !((resume.ocr_markdown && String(resume.ocr_markdown).length >= 20) || (resume.raw_text && String(resume.raw_text).length >= 20))) {
+        throw new Error('RESUME_TEXT_UNAVAILABLE');
+      }
       const baseUrl = (env.MINERU_BASE || 'https://mineru.net').replace(/\/$/, '');
       const resolved = await resolveResumeText(resume as any, {
         getFile: (resumeId) => getResumeFileContent(env, resumeId),
@@ -328,6 +362,9 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
   await processResume(message, {
     getResume: async (id) => await env.DB.prepare('SELECT * FROM resumes WHERE id=?').bind(id).first() as any,
     getText: async (resume) => {
+      if (message.reprocess && !((resume.ocr_markdown && String(resume.ocr_markdown).length >= 20) || (resume.raw_text && String(resume.raw_text).length >= 20))) {
+        throw new Error('RESUME_TEXT_UNAVAILABLE');
+      }
       const baseUrl = (env.MINERU_BASE || 'https://mineru.net').replace(/\/$/, '');
       const artifactRepo = new ArtifactRepository(env.DB);
       const r2Store = new R2ArtifactStore((env as any).RESUME_ARTIFACTS);
@@ -351,9 +388,10 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
           return getResumeFileContent(env, resumeId);
         },
         startOcr: async (content, resumeId) => {
-          const sign = await fetch(`\${baseUrl}/api/v1/agent/parse/file`, {
+          const request = buildR2OcrSignRequest(baseUrl, resumeId);
+          const sign = await fetch(request.url, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ file_name: `\${resumeId}.pdf`, language: 'ch', is_ocr: true, enable_table: true, enable_formula: false }),
+            body: JSON.stringify({ file_name: request.fileName, language: 'ch', is_ocr: true, enable_table: true, enable_formula: false }),
           });
           const data: any = await sign.json().catch(() => ({}));
           const taskId = data?.data?.task_id;
@@ -365,7 +403,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
           return { taskId };
         },
         getOcrStatus: async (taskId) => {
-          const response = await fetch(`\${baseUrl}/api/v1/agent/parse/\${taskId}`);
+          const response = await fetch(buildR2OcrStatusUrl(baseUrl, taskId));
           const data: any = await response.json().catch(() => ({}));
           const state = data?.data?.state;
           if (!response.ok || !state) throw new RetryableResumeError('OCR_STATUS_FAILED', data?.msg || 'MinerU 状态查询失败');
@@ -384,13 +422,18 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       return resolved.text;
     },
     extractFields: async (text, resume) => {
-      const response = await callAI(env as any, '你是一个简历解析专家。请从简历文本中提取结构化字段，只返回 JSON。', `从以下简历文本中提取字段：姓名、最高学历、学校、专业、工作年限、性别、年龄、技能列表、期望职位、期望薪资、工作经历摘要、证书。只返回 JSON 对象，不要包含其他文字。\n\${text}`, 'deepseek-v4-flash');
+      const response = await callAI(env as any, '你是一个简历解析专家。请从简历文本中提取结构化字段，只返回 JSON。', buildR2ExtractionPrompt(text), 'deepseek-v4-flash');
       return normalizeResumeFields(extractJSON(response));
     },
     screen: async (text, fields, resume) => {
       const position = String(resume.position_applied || resume.mapped_position || '');
       const context = await getPositionContext(env.DB, position);
-      const response = await callAI(env as any, `你是资深招聘评估 AI，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`, `岗位：\${context.standardPosition || position}\n能力维度：\${context.capabilityDimensions}\n字段：\${JSON.stringify(fields)}\n简历：\${text}`, 'deepseek-v4-flash');
+      const response = await callAI(env as any, `你是资深招聘评估 AI，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`, buildR2ScreeningPrompt({
+        position: context.standardPosition || position,
+        capabilityDimensions: context.capabilityDimensions,
+        fields,
+        text,
+      }), 'deepseek-v4-flash');
       const parsed = extractJSON(response);
       const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? parsed as Record<string, unknown>
@@ -406,7 +449,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
           const supplemental = await callAI(
             env as any,
             `你是招聘评估专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
-            `候选人简历：\n\${text}\n\n请只返回 {"dimensions":[{"name":"维度名","score":0-5,"reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：\${missingDimensions.join('、')}。`,
+            buildR2SupplementalPrompt(text, missingDimensions),
             'deepseek-v4-flash',
           );
           const scores = normalizeDimensionScores(extractJSON(supplemental));
@@ -484,18 +527,30 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
 }
 
 export default {
-  async queue(batch: MessageBatch<ResumeQueueMessage>, env: ConsumerEnv): Promise<void> {
+  async queue(batch: MessageBatch<ResumeProcessingQueueMessage>, env: ConsumerEnv): Promise<void> {
     const r2Enabled = ((env as any).R2_ARTIFACT_READ || '').toLowerCase() === 'true';
     logResumeProcessing('consumer.batch.start', { messageCount: batch.messages.length, r2Enabled });
     for (const message of batch.messages) {
+      if (message.body.kind === 'historical_reprocess') {
+        try {
+          await processHistoricalResumeReprocessPage(env.DB, env.RESUME_PROCESSING_QUEUE, message.body.batchId);
+          message.ack();
+        } catch (error) {
+          logResumeProcessingError('historical_reprocess.page.error', error, { batchId: message.body.batchId });
+          await resetHistoricalResumeReprocessBatch(env.DB, message.body.batchId);
+          message.retry({ delaySeconds: 30 });
+        }
+        continue;
+      }
+      const resumeBody = message.body;
       const startedAt = Date.now();
       logResumeProcessing('consumer.message.start', {
-        jobId: message.body.jobId,
-        resumeId: message.body.resumeId,
+        jobId: resumeBody.jobId,
+        resumeId: resumeBody.resumeId,
         messageId: message.id,
       });
       try {
-        await handleResumeQueueMessage(message, {
+        await handleResumeQueueMessage({ body: resumeBody, ack: () => message.ack(), retry: (options) => message.retry(options) }, {
           claim: (jobId) => claimJob(env.DB, jobId),
           process: (payload) => r2Enabled ? processWithR2(env, payload) : processWithD1(env, payload),
           resetJob: async (jobId) => {
@@ -511,19 +566,19 @@ export default {
             await env.DB.prepare("UPDATE resume_processing_jobs SET status='failed', error_code=?, error_message=?, updated_at=? WHERE id=?")
               .bind('PROCESSING_FAILED', error.message.slice(0, 500), new Date().toISOString(), jobId).run();
             await env.DB.prepare("UPDATE resumes SET parse_status='failed', parse_error=?, updated_at=? WHERE id=?")
-              .bind(error.message.slice(0, 500), new Date().toISOString(), message.body.resumeId).run();
+              .bind(error.message.slice(0, 500), new Date().toISOString(), resumeBody.resumeId).run();
           },
         });
         logResumeProcessing('consumer.message.ok', {
-          jobId: message.body.jobId,
-          resumeId: message.body.resumeId,
+          jobId: resumeBody.jobId,
+          resumeId: resumeBody.resumeId,
           messageId: message.id,
           durationMs: Date.now() - startedAt,
         });
       } catch (error) {
         logResumeProcessingError('consumer.message.error', error, {
-          jobId: message.body.jobId,
-          resumeId: message.body.resumeId,
+          jobId: resumeBody.jobId,
+          resumeId: resumeBody.resumeId,
           messageId: message.id,
           durationMs: Date.now() - startedAt,
         });

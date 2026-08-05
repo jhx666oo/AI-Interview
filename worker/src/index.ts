@@ -11,10 +11,13 @@ import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES } from './resume-processing/weighted-screening';
 export { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES } from './resume-processing/weighted-screening';
-import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, ResumeNotFoundError, selectVisibleResumeIdsForReprocess } from './resume-processing/reprocess';
+import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess } from './resume-processing/reprocess';
+import type { ResumeProcessingQueueMessage } from './resume-processing/types';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
 import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
+import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
+import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -52,7 +55,7 @@ interface Env {
   RESUMES_KV?: KVNamespace;
   CRON_SECRET?: string;
   RESUME_UPLOAD_API_KEY?: string; // 对外简历上传接口的 API Key（x-api-key header）
-  RESUME_PROCESSING_QUEUE: Queue<{ jobId: string; resumeId: string }>;
+  RESUME_PROCESSING_QUEUE: Queue<ResumeProcessingQueueMessage>;
 }
 
 // 飞书配置（非敏感 ID 类配置；appSecret 必须通过环境变量 FEISHU_APP_SECRET 提供：
@@ -551,17 +554,11 @@ export function normalizeCapabilityDimensions(value: unknown): CapabilityDimensi
     if (typeof item === 'string') return { name: item.trim(), weight: 0, description: '' };
     return {
       name: String(item?.name || item?.title || '').trim(),
-      weight: Number(item?.weight) || 0,
+      weight: Number.isFinite(Number(item?.weight)) && Number(item?.weight) >= 0 ? Number(item.weight) : 0,
       description: String(item?.description || item?.definition || '').trim(),
     };
   }).filter((item: CapabilityDimension) => item.name);
-  if (!dimensions.length) return [];
-  const configuredTotal = dimensions.reduce((sum, item) => sum + Math.max(0, item.weight), 0);
-  if (configuredTotal <= 0) {
-    const evenWeight = 100 / dimensions.length;
-    return dimensions.map(item => ({ ...item, weight: evenWeight }));
-  }
-  return dimensions.map(item => ({ ...item, weight: Math.max(0, item.weight) / configuredTotal * 100 }));
+  return dimensions;
 }
 
 export function weightedScore(items: Array<{ score: unknown; weight?: unknown }>): number | null {
@@ -5873,6 +5870,11 @@ export async function handleBatchResumeReprocess(c: any) {
     }
 
     const owner = getOwnerName(c);
+    if (requestedIds.length === 0) {
+      const result = await startHistoricalResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, owner);
+      return c.json({ ok: true, ...result }, 202);
+    }
+    if (requestedIds.length > 50) return c.json({ detail: '一次最多提交 50 份简历' }, 400);
     const ids = await selectVisibleResumeIdsForReprocess(c.env.DB, requestedIds, owner);
     const result = await enqueueResumeReprocessBatchForIds(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, ids);
 
@@ -6214,27 +6216,11 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     // 同步写回飞书多维表格（人才库表）
     try {
       const talentTableId = getBitableTableId(c.env, 'talent');
-      const advantageStr = advantage;
-      const riskStr = risk;
-      const recLabelForEval: Record<string, string> = {
-        'strongly_recommend': '强烈推荐', 'recommend': '推荐',
-        'neutral': '待定', 'not_recommend': '不推荐', 'strongly_not_recommend': '强烈不推荐'
-      };
-      const evalSummary = [
-        merged.summary || '',
-        '',
-        `匹配分数: ${matchScore !== null ? matchScore + '/100' : '-'}`,
-        `推荐意见: ${recLabelForEval[recommendation] || recommendation || '-'}`,
-        '',
-        advantageStr ? `优势:\n${advantageStr}` : '',
-        riskStr ? `\n风险:\n${riskStr}` : '',
-      ].filter(Boolean).join('\n');
-      await bitableUpdateRecord(c.env, talentTableId, id, {
-        'AI简历评估': evalSummary,
-        '优势分析': advantageStr,
-        '风险点': riskStr,
-        'AI简历初筛结果': recommendation || '',
-      });
+      await bitableUpdateRecord(c.env, talentTableId, id, buildFeishuScreeningMirror({
+        ...enrichedEval,
+        advantage,
+        risk,
+      }));
     } catch (e: any) {
       console.error(`[Reparse] 同步到飞书失败: ${e.message}`);
     }
@@ -6351,21 +6337,11 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
       const talentTableId = getBitableTableId(c.env, 'talent');
       const strengths = Array.isArray(parsed.strengths) ? parsed.strengths.join('\n') : (parsed.strengths || '');
       const risks = Array.isArray(parsed.risks) ? parsed.risks.join('\n') : (parsed.risks || '');
-      const aiEval = [
-        parsed.summary || '',
-        '',
-        `匹配分数: ${parsed.match_score ?? '-'}/100`,
-        `推荐意见: ${parsed.recommendation || '-'}`,
-        '',
-        strengths ? `优势:\n${strengths}` : '',
-        risks ? `\n风险:\n${risks}` : '',
-      ].filter(Boolean).join('\n');
-      await bitableUpdateRecord(c.env, talentTableId, id, {
-        'AI简历评估': aiEval,
-        '优势分析': strengths,
-        '风险点': risks,
-        'AI简历初筛结果': parsed.recommendation || '',
-      });
+      await bitableUpdateRecord(c.env, talentTableId, id, buildFeishuScreeningMirror({
+        ...enrichedEvaluation,
+        strengths,
+        risks,
+      }));
     } catch (e: any) {
       console.error(`[AIScreen] 同步到飞书失败: ${e.message}`);
     }
@@ -7929,7 +7905,7 @@ app.post('/api/resumes/:id/score-capabilities', authMiddleware, async (c) => {
 
     const dimNames = dims.map((d: any) => d.name || d.dimension_name).filter(Boolean);
     const prompt = await getAIPrompt(c.env, 'analyze_resume', {
-      system: `你是 HR 评审专家。对候选人逐项评分（1-5分，5分最高）。返回 JSON：{"scores":[{"dimension":"维度名","score":3,"reason":"评分理由"}]}。`,
+      system: `你是 HR 评审专家。这个接口只生成能力证据，不作出初筛决策。对候选人逐项评分（0-5分，5分最高）。返回 JSON：{"scores":[{"dimension":"维度名","score":3,"reason":"评分理由"}]}。`,
       user: ''
     });
     const systemPrompt = prompt.system;
@@ -7937,9 +7913,10 @@ app.post('/api/resumes/:id/score-capabilities', authMiddleware, async (c) => {
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     const parsed = extractJSON(result);
 
+    const evidence = { ...parsed, screening_decision: null, decision_source: 'evidence_only' };
     await c.env.DB.prepare('UPDATE resumes SET capability_scores = ? WHERE id = ?')
-      .bind(JSON.stringify(parsed), c.req.param('id')).run();
-    return c.json(parsed);
+      .bind(JSON.stringify(evidence), c.req.param('id')).run();
+    return c.json(evidence);
   } catch (e: any) {
     return c.json({ detail: '评分失败: ' + e.message }, 500);
   }
@@ -7988,106 +7965,63 @@ app.post('/api/resume-screening', authMiddleware, async (c) => {
 });
 
 // AI analyze a resume for screening (core 小七 analysis engine)
+async function analyzeResumeScreeningRecord(env: Env, record: any) {
+  let resumeText = '';
+  if (record.resume_id) {
+    const resume = await env.DB.prepare('SELECT raw_text, ocr_markdown FROM resumes WHERE id = ?').bind(record.resume_id).first() as any;
+    resumeText = resume?.ocr_markdown || resume?.raw_text || '';
+  }
+  if (!resumeText) resumeText = record.ai_analysis || '无简历文本';
+
+  let mappedPosition = record.mapped_position || '';
+  if (!mappedPosition && record.position_applied) {
+    const pmRow = await env.DB.prepare('SELECT mapped_name FROM position_mappings WHERE raw_name LIKE ? LIMIT 1')
+      .bind(`%${record.position_applied.split('_')[0]}%`).first() as any;
+    if (pmRow?.mapped_name) mappedPosition = pmRow.mapped_name;
+  }
+  if (!mappedPosition) mappedPosition = record.position_applied?.split('_')[0] || '未知岗位';
+
+  const positionRequirements = await getPositionRequirements(env, mappedPosition);
+  const configuredDimensions = positionRequirements?.capability_dimensions || [];
+  const result = await callAI(
+    env,
+    `你是专业的简历初筛专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
+    `岗位：${mappedPosition}\n岗位职责：${positionRequirements?.description || '-'}\n岗位要求：${positionRequirements?.requirements || '-'}\n能力维度：${JSON.stringify(configuredDimensions)}\n候选人：${record.candidate_name || '未知'}\n简历：${resumeText}\n请返回 {"summary":"摘要","strengths":[],"risks":[],"suggested_questions":[],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}。`,
+    'deepseek-v4-flash',
+  );
+  const parsed = extractJSON(result);
+  const evidence = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : { summary: String(parsed || '') };
+  const persistence = buildScreeningQueuePersistence(evidence, configuredDimensions);
+  await env.DB.prepare(`UPDATE resume_screening_queue SET
+    ai_analysis=?, ai_result=?, screening_result=?, match_score=?, weighted_score=?, gate_results=?, screening_reason=?, mapped_position=?, updated_at=?
+    WHERE id=?`)
+    .bind(
+      persistence.ai_analysis,
+      persistence.ai_result,
+      persistence.screening_result,
+      persistence.match_score,
+      persistence.weighted_score,
+      persistence.gate_results,
+      persistence.screening_reason,
+      mappedPosition,
+      now(),
+      record.id,
+    ).run();
+  return persistence;
+}
+
 app.post('/api/resume-screening/:id/ai-analyze', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const record = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(id).first() as any;
   if (!record) return c.json({ detail: 'Not found' }, 404);
 
-  // Get resume text
-  let resumeText = '';
-  if (record.resume_id) {
-    const resume = await c.env.DB.prepare('SELECT raw_text FROM resumes WHERE id = ?').bind(record.resume_id).first() as any;
-    if (resume?.raw_text) resumeText = resume.raw_text;
-  }
-  if (!resumeText) resumeText = record.ai_analysis || '无简历文本';
-
-  // Map position
-  let mappedPosition = record.mapped_position || '';
-  if (!mappedPosition && record.position_applied) {
-    const pmRow = await c.env.DB.prepare('SELECT mapped_name FROM position_mappings WHERE raw_name LIKE ? LIMIT 1').bind(`%${record.position_applied.split('_')[0]}%`).first() as any;
-    if (pmRow?.mapped_name) mappedPosition = pmRow.mapped_name;
-  }
-  if (!mappedPosition) mappedPosition = record.position_applied?.split('_')[0] || '未知岗位';
-
-  // Get capability dimensions for this position
-  const dimsResult = await c.env.DB.prepare('SELECT full_text FROM capability_dimensions WHERE position_name = ? LIMIT 3').bind(mappedPosition).all();
-  let dimensionsText = '';
-  if (dimsResult.results && dimsResult.results.length > 0) {
-    dimensionsText = dimsResult.results.map((r: any) => r.full_text || '').filter(Boolean).join('\n');
-  }
-
-  // Get JD from job_requisitions if available
-  const reqRow = await c.env.DB.prepare('SELECT requirements FROM job_requisitions WHERE title LIKE ? LIMIT 1').bind(`%${mappedPosition}%`).first() as any;
-  const jdText = reqRow?.requirements || '(无JD)';
-
-  const systemPrompt = `你是一个专业的人力资源简历初筛专家（AI简历分析引擎）。你的任务是分析候选人简历，评估其与目标岗位的匹配度。
-
-分析要求：
-1. 初筛结果：只能是通过或不通过，禁止返回待定、存疑等第三种结果
-2. 优势分析：候选人的核心优势（2-3条）
-3. 风险点：潜在风险或不足（1-2条）
-4. 能力维度匹配：按岗位能力维度逐项评分（0-5分），并给出匹配依据
-5. 建议追问的面试问题（3-5个）
-6. 互动引导语：给面试官的一段简短引导
-
-请用以下格式输出（中文）：
-
-初筛结果：[通过/不通过]
-匹配分数：[0-5的数字]
-
-优势分析：
-• ...
-• ...
-
-风险点：
-• ...
-
-能力维度匹配：
-能力：[维度名] [X]/5分。依据：...
-能力：[维度名] [X]/5分。依据：...
-
-建议追问的面试问题：
-1. ...
-2. ...
-3. ...
-
-互动引导语：
-[一段简短的话]`;
-
-  const userPrompt = `岗位名称：${mappedPosition}
-岗位JD：
-${jdText}
-
-岗位能力维度要求：
-${dimensionsText || '(无具体维度要求，请根据岗位常识评估)'}
-
-候选人信息：
-姓名：${record.candidate_name}
-年龄：${record.age || '未知'}
-性别：${record.gender || '未知'}
-学历：${record.education || '未知'}
-申请岗位：${record.position_applied || '未知'}
-
-简历内容：
-${resumeText}`;
-
-  let aiAnalysis = '';
   try {
-    aiAnalysis = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    await analyzeResumeScreeningRecord(c.env, record);
   } catch (e: any) {
     return c.json({ detail: `AI分析失败: ${e.message}` }, 500);
   }
-
-  // Parse match score from AI response
-  const scoreMatch = aiAnalysis.match(/匹配分数[：:]\s*(\d+(\.\d+)?)/);
-  const matchScore = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
-  const resultMatch = aiAnalysis.match(/初筛结果[：:]\s*(通过|不通过|待定)/);
-  const aiResult = resultMatch ? normalizeAiScreeningResult(resultMatch[1]) : '不通过';
-
-  // Update the screening record
-  await c.env.DB.prepare(
-    'UPDATE resume_screening_queue SET ai_analysis = ?, ai_result = ?, match_score = ?, mapped_position = ?, updated_at = ? WHERE id = ?'
-  ).bind(aiAnalysis, aiResult, matchScore, mappedPosition, now(), id).run();
 
   const row = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
@@ -8171,30 +8105,14 @@ app.post('/api/resume-screening/:id/reject', authMiddleware, async (c) => {
 
 // Batch AI analyze all pending records
 app.post('/api/resume-screening/batch-analyze', authMiddleware, async (c) => {
-  const result = await c.env.DB.prepare("SELECT id FROM resume_screening_queue WHERE status = 'pending' AND (ai_analysis IS NULL OR ai_analysis = '')").all();
+  const result = await c.env.DB.prepare("SELECT id FROM resume_screening_queue WHERE status = 'pending' AND (ai_analysis IS NULL OR ai_analysis = '') ORDER BY created_at LIMIT 25").all();
   const ids = result.results.map((r: any) => r.id);
   let processed = 0;
   for (const rid of ids) {
     try {
       const rec = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(rid).first() as any;
       if (!rec) continue;
-      let resumeText = '';
-      if (rec.resume_id) {
-        const resume = await c.env.DB.prepare('SELECT raw_text FROM resumes WHERE id = ?').bind(rec.resume_id).first() as any;
-        if (resume?.raw_text) resumeText = resume.raw_text;
-      }
-      if (!resumeText) continue;
-      let mappedPosition = rec.mapped_position || rec.position_applied?.split('_')[0] || '未知岗位';
-      const dimsResult = await c.env.DB.prepare('SELECT full_text FROM capability_dimensions WHERE position_name = ? LIMIT 3').bind(mappedPosition).all();
-      const dimensionsText = dimsResult.results?.map((r: any) => r.full_text || '').filter(Boolean).join('\n') || '';
-      const systemPrompt = `你是简历初筛专家。分析简历并输出：初筛结果（只能通过或不通过，不得返回待定/存疑）、匹配分数（0-5）、优势分析、风险点、能力维度匹配（每项0-5分）、面试问题建议（3个）、互动引导语。用中文输出。`;
-      const userPrompt = `岗位：${mappedPosition}\n能力维度要求：${dimensionsText || '(无)'}\n候选人：${rec.candidate_name} ${rec.age || ''}岁 ${rec.gender || ''} ${rec.education || ''}\n简历：${resumeText}`;
-      const aiAnalysis = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
-      const scoreMatch = aiAnalysis.match(/匹配分数[：:]\s*(\d+(\.\d+)?)/);
-      const matchScore = scoreMatch ? parseFloat(scoreMatch[1]) : 0;
-      const resultMatch = aiAnalysis.match(/初筛结果[：:]\s*(通过|不通过|待定)/);
-      const aiResult = resultMatch ? normalizeAiScreeningResult(resultMatch[1]) : '不通过';
-      await c.env.DB.prepare('UPDATE resume_screening_queue SET ai_analysis = ?, ai_result = ?, match_score = ?, mapped_position = ?, updated_at = ? WHERE id = ?').bind(aiAnalysis, aiResult, matchScore, mappedPosition, now(), rid).run();
+      await analyzeResumeScreeningRecord(c.env, rec);
       processed++;
     } catch (e) { /* skip on error */ }
   }
@@ -10256,13 +10174,7 @@ app.post('/api/resumes/auto-evaluate-all', authMiddleware, async (c) => {
   // 兼容旧客户端：自动评估不再直接调用 AI，统一提交队列任务。
   const body = await c.req.json().catch(() => ({}));
   const owner = getOwnerName(c);
-  const ownerWhere = owner
-    ? ` AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))`
-    : '';
-  const ownerParams = owner ? [owner, owner, owner] : [];
-  const visibleRows = await c.env.DB.prepare(`SELECT id FROM resumes WHERE 1=1${ownerWhere}`).bind(...ownerParams).all();
-  const ids = (visibleRows.results || []).map((row: any) => row.id);
-  const result = await enqueueResumeReprocessBatchForIds(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, ids);
+  const result = await startHistoricalResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, owner);
   return c.json({ ok: true, ...result, force: body?.force === true }, 202);
 
   /* Legacy synchronous implementation retained below for source compatibility only. */
@@ -10364,6 +10276,11 @@ app.post('/api/resumes/batch-ai-evaluate', authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const ids = Array.isArray(body?.ids) ? body.ids.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0) : [];
   const owner = getOwnerName(c);
+  if (ids.length === 0) {
+    const result = await startHistoricalResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, owner);
+    return c.json({ ok: true, ...result }, 202);
+  }
+  if (ids.length > 50) return c.json({ detail: '一次最多提交 50 份简历' }, 400);
   const ownerWhere = owner
     ? ` AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))`
     : '';

@@ -24,6 +24,10 @@
     "preview_bucket_name": "ai-interview-resume-artifacts-staging"
   }],
   "queues": {
+    "producers": [{
+      "binding": "RESUME_PROCESSING_QUEUE",
+      "queue": "resume-processing"
+    }],
     "consumers": [{
       "queue": "resume-processing",
       "max_batch_size": 1,
