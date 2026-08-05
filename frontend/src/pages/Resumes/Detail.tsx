@@ -8,7 +8,7 @@ import { DownloadOutlined, FilePdfOutlined, ArrowLeftOutlined, CloseCircleOutlin
 import RejectReasonSelector, { REJECT_REASONS } from '../../components/RejectReasonSelector';
 import { useAuth } from '../../contexts/AuthContext';
 import { getMaximizedPdfPreviewUrl } from '../../utils/pdfPreview';
-import { asDisplayTextList, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
+import { asDisplayTextList, formatWeightedScore, getScreeningGateRows, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
@@ -159,6 +159,8 @@ const ResumeDetail: React.FC = () => {
   const matchedSkills = asDisplayTextList(aiReviewObject.skill_match?.matched);
   const skillGaps = asDisplayTextList(aiReviewObject.skill_match?.gaps);
   const aiDimensions = normalizedEvaluation.dimensions;
+  const gateRows = getScreeningGateRows(normalizedEvaluation);
+  const hasGateResults = Object.keys(normalizedEvaluation.gateResults).length > 0;
   const aiContentStyle: React.CSSProperties = {
     maxWidth: '100%',
     minWidth: 0,
@@ -614,17 +616,17 @@ const ResumeDetail: React.FC = () => {
               </div>
             </div>
 
-            {/* 匹配度 + 状态 */}
+            {/* 加权分 + 状态 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <div style={{ textAlign: 'center' }}>
-                <Text type="secondary" style={{ fontSize: 11 }}>匹配度</Text>
+                <Text type="secondary" style={{ fontSize: 11 }}>加权分</Text>
                 <div style={{ marginTop: 2 }}>
                   <Progress
                     type="circle"
-                    percent={resume.match_score}
+                    percent={(normalizedEvaluation.overallScore || 0) * 20}
                     size={44}
-                    format={percent => <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>{percent}%</span>}
-                    strokeColor={resume.match_score >= 80 ? '#10B981' : resume.match_score >= 60 ? '#F59E0B' : '#EF4444'}
+                    format={() => <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{formatWeightedScore(normalizedEvaluation.overallScore)}</span>}
+                    strokeColor={normalizedEvaluation.overallScore == null ? '#CBD5E1' : normalizedEvaluation.overallScore >= 4 ? '#10B981' : normalizedEvaluation.overallScore >= 3 ? '#F59E0B' : '#EF4444'}
                   />
                 </div>
               </div>
@@ -638,6 +640,17 @@ const ResumeDetail: React.FC = () => {
               {renderActionButtons()}
             </div>
           </div>
+
+          {(hasGateResults || normalizedEvaluation.screeningReason) && (
+            <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {hasGateResults && gateRows.map((gate) => (
+                <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
+                  {gate.passed ? `${gate.label}已通过` : gate.reason}
+                </Tag>
+              ))}
+              {normalizedEvaluation.screeningReason && <Text type="secondary" style={{ fontSize: 12 }}>初筛结论：{normalizedEvaluation.screeningReason}</Text>}
+            </div>
+          )}
 
           <Descriptions column={2} bordered size="small">
             <Descriptions.Item label="应聘岗位">{resume.standard_position || resume.position?.title || resume.position_applied || '-'}</Descriptions.Item>
@@ -731,6 +744,15 @@ const ResumeDetail: React.FC = () => {
           {aiReview ? (
             typeof aiReview === 'object' ? (
               <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', ...aiContentStyle }}>
+                <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                  <Tag color={normalizedEvaluation.overallScore == null ? 'red' : 'geekblue'} style={{ margin: 0 }}>加权分 {formatWeightedScore(normalizedEvaluation.overallScore)}</Tag>
+                  {hasGateResults && gateRows.map((gate) => (
+                    <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
+                      {gate.passed ? `${gate.label}已通过` : gate.reason}
+                    </Tag>
+                  ))}
+                  {normalizedEvaluation.screeningReason && <Text type="secondary" style={{ fontSize: 12 }}>{normalizedEvaluation.screeningReason}</Text>}
+                </div>
                 {aiDimensions.length > 0 && (
                   <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     {aiDimensions.map((dimension) => (

@@ -8,7 +8,7 @@ import SimplePagination from '../../components/SimplePagination';
 import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { getDimensionScoreTotal, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
+import { formatWeightedScore, getDimensionScoreTotal, getScreeningGateRows, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 import { filterResumesByDemographics, filterResumesByMinimumDimensionScore } from '../../utils/resumeFilters';
 import { sortResumesNewestFirst } from '../../utils/resumeSort';
 import { getCurrentPageSelectionState, toggleCurrentPageSelection } from '../../utils/resumeSelection';
@@ -1373,6 +1373,8 @@ const handleUploadClick = () => {
               const normalizedEvaluation = normalizeResumeEvaluation(record);
               const scoreDetails = normalizedEvaluation.dimensions;
               const scoreTotal = getDimensionScoreTotal(scoreDetails);
+              const gateRows = getScreeningGateRows(normalizedEvaluation);
+              const hasGateResults = Object.keys(normalizedEvaluation.gateResults).length > 0;
               const matchCount = scoreDetails?.filter(d => d.score >= 3).length || 0;
               const totalDims = scoreDetails?.length || 0;
               const hardResult = parseHardRequirementResult(record.hard_requirement_result);
@@ -1414,6 +1416,11 @@ const handleUploadClick = () => {
                         AI{record.screening_label}
                       </Tag>
                     )}
+                    {hasGateResults && gateRows.map((gate) => (
+                      <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
+                        {gate.passed ? `${gate.label}已通过` : gate.reason}
+                      </Tag>
+                    ))}
                     {hardResult?.passed === false && (
                       <Tag color="red" style={{ margin: 0 }}>硬条件未满足{hardResult.unmet_items?.length ? `：${hardResult.unmet_items.join('、')}` : ''}</Tag>
                     )}
@@ -1437,7 +1444,8 @@ const handleUploadClick = () => {
                         <span style={{ fontSize: 12, color: '#1677ff', fontWeight: 600, background: '#f0f5ff', padding: '1px 8px', borderRadius: 4 }}>
                           AI 评估 {matchCount}/{totalDims} 符合
                         </span>
-                        <span style={{ fontSize: 12, color: '#8c8c8c' }}>总分：{scoreTotal.total}/{scoreTotal.maximum}</span>
+                        <span style={{ fontSize: 12, color: '#8c8c8c' }}>加权分：{formatWeightedScore(normalizedEvaluation.overallScore)}</span>
+                        <span style={{ fontSize: 12, color: '#8c8c8c' }}>维度合计：{scoreTotal.total}/{scoreTotal.maximum}</span>
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 4 }}>
                         {scoreDetails.map((d: any, i: number) => {
@@ -1459,7 +1467,14 @@ const handleUploadClick = () => {
                   )}
                   {scoreDetails.length === 0 && normalizedEvaluation.overallScore != null && (
                     <div style={{ marginTop: 4 }}>
-                      <span style={{ color: '#1677ff', fontSize: 12 }}>AI 匹配分 {normalizedEvaluation.overallScore}</span>
+                      <span style={{ color: '#1677ff', fontSize: 12 }}>AI 加权分 {formatWeightedScore(normalizedEvaluation.overallScore)}</span>
+                    </div>
+                  )}
+                  {normalizedEvaluation.screeningReason && (
+                    <div style={{ marginTop: 4 }}>
+                      <span style={{ color: hasGateResults && normalizedEvaluation.overallScore == null ? '#cf1322' : '#8c8c8c', fontSize: 12 }}>
+                        初筛结论：{normalizedEvaluation.screeningReason}
+                      </span>
                     </div>
                   )}
                   {scoreDetails.length === 0 && normalizedEvaluation.overallScore == null && (

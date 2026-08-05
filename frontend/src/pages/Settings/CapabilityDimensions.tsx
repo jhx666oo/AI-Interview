@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  Card, Table, Button, Space, Modal, Form, Input, Tag, message,
+  Card, Table, Button, Space, Modal, Form, Input, InputNumber, Tag, message,
   Typography, Popconfirm, Tooltip
 } from 'antd';
 import {
@@ -8,6 +8,7 @@ import {
   MinusCircleOutlined, AppstoreOutlined, UserOutlined, SearchOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { WEIGHTED_GATE_DIMENSIONS, WEIGHTED_SCORING_DIMENSIONS, WEIGHTED_SCREENING_DEFAULT_WEIGHTS } from '../../utils/resumeEvaluation';
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
@@ -16,7 +17,19 @@ interface Dimension {
   name: string;
   definition: string;
   behavior: string;
+  weight?: number | null;
 }
+
+const isWeightedScoringDimension = (name: string): name is (typeof WEIGHTED_SCORING_DIMENSIONS)[number] =>
+  (WEIGHTED_SCORING_DIMENSIONS as readonly string[]).includes(name);
+
+const isScreeningGateDimension = (name: string) =>
+  (WEIGHTED_GATE_DIMENSIONS as readonly string[]).includes(name);
+
+const defaultDimensions = (): Dimension[] => [
+  ...WEIGHTED_SCORING_DIMENSIONS.map((name) => ({ name, definition: '', behavior: '', weight: WEIGHTED_SCREENING_DEFAULT_WEIGHTS[name] })),
+  ...WEIGHTED_GATE_DIMENSIONS.map((name) => ({ name, definition: '', behavior: '', weight: null })),
+];
 
 const CapabilityDimensions: React.FC = () => {
   const [data, setData] = useState<any[]>([]);
@@ -72,7 +85,7 @@ const CapabilityDimensions: React.FC = () => {
   const handleCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ dimensions: [{ name: '', definition: '', behavior: '' }] });
+    form.setFieldsValue({ dimensions: defaultDimensions() });
     setModalVisible(true);
   };
 
@@ -86,7 +99,12 @@ const CapabilityDimensions: React.FC = () => {
       : parseFullText(record.full_text || '');
     form.setFieldsValue({
       position_name: record.position_name,
-      dimensions: dims.length > 0 ? dims : [{ name: '', definition: '', behavior: '' }],
+      dimensions: dims.length > 0 ? dims.map((dimension: Dimension) => ({
+        ...dimension,
+        weight: isWeightedScoringDimension(dimension.name)
+          ? (Number.isFinite(Number(dimension.weight)) ? Number(dimension.weight) : WEIGHTED_SCREENING_DEFAULT_WEIGHTS[dimension.name])
+          : null,
+      })) : defaultDimensions(),
       personalized_requirements: record.personalized_requirements || '',
     });
     setModalVisible(true);
@@ -194,7 +212,7 @@ const CapabilityDimensions: React.FC = () => {
                   </div>
                 }>
                   <Tag color="blue" style={{ cursor: 'pointer', margin: 2, maxWidth: 320 }}>
-                    {d.name}
+                    {d.name}{isWeightedScoringDimension(d.name) ? ` · ${d.weight ?? WEIGHTED_SCREENING_DEFAULT_WEIGHTS[d.name]}%` : isScreeningGateDimension(d.name) ? ' · 硬门槛' : ''}
                   </Tag>
                 </Tooltip>
               )) : <Text type="secondary">-</Text>}
@@ -372,6 +390,18 @@ const CapabilityDimensions: React.FC = () => {
                       >
                         <Input placeholder="例：市场洞察能力" />
                       </Form.Item>
+                      {isWeightedScoringDimension(String(form.getFieldValue(['dimensions', name, 'name']) || '')) ? (
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'weight']}
+                          label="评分权重"
+                          extra="仅五项能力参与加权分。"
+                        >
+                          <InputNumber min={0} max={100} precision={0} addonAfter="%" style={{ width: '100%' }} />
+                        </Form.Item>
+                      ) : isScreeningGateDimension(String(form.getFieldValue(['dimensions', name, 'name']) || '')) ? (
+                        <Tag color="orange">硬门槛（不计入加权分）</Tag>
+                      ) : null}
                       <Form.Item
                         {...restField}
                         name={[name, 'definition']}

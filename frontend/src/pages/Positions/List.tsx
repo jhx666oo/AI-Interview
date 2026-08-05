@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Table, Button, Space, message, Modal, Form, Input, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert, Checkbox, Collapse } from 'antd';
+import { Table, Button, Space, message, Modal, Form, Input, InputNumber, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert, Checkbox, Collapse } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
@@ -9,6 +9,7 @@ import JDGeneratorModal from '../../components/JDGeneratorModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildPositionCapabilitySave } from './capabilitySave';
+import { WEIGHTED_GATE_DIMENSIONS, WEIGHTED_SCORING_DIMENSIONS, WEIGHTED_SCREENING_DEFAULT_WEIGHTS } from '../../utils/resumeEvaluation';
 
 const { Title, Text } = Typography;
 
@@ -67,6 +68,19 @@ const positionTypeConfig: Record<string, { color: string; text: string }> = {
   contract: { color: 'purple', text: '合同' },
   internship: { color: 'green', text: '实习' },
 };
+
+type CapabilityDimensionValue = { name: string; description?: string; definition?: string; behavior?: string; weight?: number | null };
+
+const isWeightedScoringDimension = (name: string): name is (typeof WEIGHTED_SCORING_DIMENSIONS)[number] =>
+  (WEIGHTED_SCORING_DIMENSIONS as readonly string[]).includes(name);
+
+const isScreeningGateDimension = (name: string) =>
+  (WEIGHTED_GATE_DIMENSIONS as readonly string[]).includes(name);
+
+const defaultCapabilityDimensions = (): CapabilityDimensionValue[] => [
+  ...WEIGHTED_SCORING_DIMENSIONS.map((name) => ({ name, description: '', weight: WEIGHTED_SCREENING_DEFAULT_WEIGHTS[name] })),
+  ...WEIGHTED_GATE_DIMENSIONS.map((name) => ({ name, description: '', weight: null })),
+];
 
 const PositionsList: React.FC = () => {
   const [data, setData] = useState<Position[]>([]);
@@ -249,7 +263,13 @@ const PositionsList: React.FC = () => {
   const handleAdd = () => {
     setEditingId(null);
     form.resetFields();
-    form.setFieldsValue({ status: 'open', urgency: 'medium', position_type: 'full_time', headcount: 1 });
+    form.setFieldsValue({
+      status: 'open',
+      urgency: 'medium',
+      position_type: 'full_time',
+      headcount: 1,
+      capability_dimensions: defaultCapabilityDimensions(),
+    });
     setIsModalVisible(true);
   };
 
@@ -279,8 +299,8 @@ const PositionsList: React.FC = () => {
             }
             if (dims.length > 0) {
               formVals.capability_dimensions = dims.map((d: any) =>
-                typeof d === 'string' ? d : (d.name || '')
-              ).filter(Boolean);
+                typeof d === 'string' ? { name: d, description: '', weight: isWeightedScoringDimension(d) ? WEIGHTED_SCREENING_DEFAULT_WEIGHTS[d] : null } : d
+              ).filter((d: any) => d?.name);
             }
           }
         } catch {}
@@ -453,23 +473,22 @@ const PositionsList: React.FC = () => {
           ? JSON.parse(existingRecord.dimensions_json)
           : parseFullText(existingRecord.full_text || '');
         dimForm.setFieldsValue({
-          dimensions: dims.length > 0 ? dims : [{ name: '', definition: '', behavior: '' }],
+          dimensions: dims.length > 0 ? dims : defaultCapabilityDimensions(),
         });
         // 同时同步到 positions 表的 capability_dimensions 字段
         try {
-          const dimNames = dims.map((d: any) => d.name).filter(Boolean);
           const posRes = await request.get('/positions', { params: { title: dimPositionName } });
           if (Array.isArray(posRes)) {
             for (const pos of posRes) {
-              await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(dimNames) });
+              await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(dims) });
             }
           }
         } catch { /* 同步失败不影响主流程 */ }
       } else {
-        dimForm.setFieldsValue({ dimensions: [{ name: '', definition: '', behavior: '' }] });
+        dimForm.setFieldsValue({ dimensions: defaultCapabilityDimensions() });
       }
     } catch {
-      dimForm.setFieldsValue({ dimensions: [{ name: '', definition: '', behavior: '' }] });
+      dimForm.setFieldsValue({ dimensions: defaultCapabilityDimensions() });
     } finally {
       setDimLoading(false);
     }
@@ -494,11 +513,10 @@ const PositionsList: React.FC = () => {
 
       // 同时同步到 positions 表的 capability_dimensions 字段
       try {
-        const dimNames = dims.map((d: any) => d.name).filter(Boolean);
         const posRes = await request.get('/positions', { params: { title: dimPositionName } });
         if (Array.isArray(posRes)) {
           for (const pos of posRes) {
-            await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(dimNames) });
+            await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(dims) });
           }
         }
       } catch { /* 同步失败不影响主流程 */ }
@@ -1069,6 +1087,20 @@ const PositionsList: React.FC = () => {
                     >
                       <Input placeholder="例：市场洞察能力" />
                     </Form.Item>
+                    {isWeightedScoringDimension(String(dimForm.getFieldValue(['dimensions', name, 'name']) || '')) ? (
+                      <Form.Item
+                        {...restField}
+                        name={[name, 'weight']}
+                        label="评分权重"
+                        extra="仅五项能力计入加权分；总权重不必手动校验。"
+                      >
+                        <InputNumber min={0} max={100} precision={0} addonAfter="%" style={{ width: '100%' }} />
+                      </Form.Item>
+                    ) : (
+                      <Tag color={isScreeningGateDimension(String(dimForm.getFieldValue(['dimensions', name, 'name']) || '')) ? 'orange' : 'default'}>
+                        {isScreeningGateDimension(String(dimForm.getFieldValue(['dimensions', name, 'name']) || '')) ? '硬门槛（不计入加权分）' : '非加权维度'}
+                      </Tag>
+                    )}
                     <Form.Item
                       {...restField}
                       name={[name, 'definition']}
@@ -1269,7 +1301,7 @@ const PositionsList: React.FC = () => {
 // 能力维度编辑器 —— 复选框列表 + 可展开描述
 const CapabilityDimensionEditor: React.FC<{
   value?: any;
-  onChange?: (value: { name: string; description: string }[]) => void;
+  onChange?: (value: CapabilityDimensionValue[]) => void;
   allDimNames: string[];
   setAllDimNames: React.Dispatch<React.SetStateAction<string[]>>;
 }> = ({ value = [], onChange, allDimNames, setAllDimNames }) => {
@@ -1277,10 +1309,19 @@ const CapabilityDimensionEditor: React.FC<{
   const [customName, setCustomName] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
-  const dims: { name: string; description: string }[] = (Array.isArray(value) ? value : []).map((d: any) => {
-    if (typeof d === 'string') return { name: d, description: '' };
+  const dims: CapabilityDimensionValue[] = (Array.isArray(value) ? value : []).map((d: any) => {
+    if (typeof d === 'string') return { name: d, description: '', weight: isWeightedScoringDimension(d) ? WEIGHTED_SCREENING_DEFAULT_WEIGHTS[d] : null };
     const desc = d?.description || [d?.definition, d?.behaviors].filter(Boolean).join('；') || '';
-    return { name: d?.name || d || '', description: desc };
+    const name = String(d?.name || d || '');
+    const weight = Number(d?.weight);
+    return {
+      ...d,
+      name,
+      description: desc,
+      weight: isWeightedScoringDimension(name)
+        ? (Number.isFinite(weight) ? weight : WEIGHTED_SCREENING_DEFAULT_WEIGHTS[name])
+        : null,
+    };
   }).filter(d => d.name);
 
   const checkedNames = new Set(dims.map(d => d.name));
@@ -1288,9 +1329,9 @@ const CapabilityDimensionEditor: React.FC<{
   dims.forEach(d => { descMap[d.name] = d.description || ''; });
 
   const handleToggle = (name: string, checked: boolean) => {
-    let newDims: { name: string; description: string }[];
+    let newDims: CapabilityDimensionValue[];
     if (checked) {
-      newDims = [...dims, { name, description: '' }];
+      newDims = [...dims, { name, description: '', weight: isWeightedScoringDimension(name) ? WEIGHTED_SCREENING_DEFAULT_WEIGHTS[name] : null }];
       setExpanded(prev => new Set(prev).add(name));
     } else {
       newDims = dims.filter(d => d.name !== name);
@@ -1300,6 +1341,10 @@ const CapabilityDimensionEditor: React.FC<{
 
   const handleDescChange = (name: string, desc: string) => {
     onChange?.(dims.map(d => d.name === name ? { ...d, description: desc } : d));
+  };
+
+  const handleWeightChange = (name: string, weight: number | null) => {
+    onChange?.(dims.map(d => d.name === name ? { ...d, weight } : d));
   };
 
   // 删除维度 — 打开确认弹窗
@@ -1333,7 +1378,7 @@ const CapabilityDimensionEditor: React.FC<{
     if (checkedNames.has(name)) { message.warning('该维度已存在'); return; }
     try { await request.post('/capability-dimension-names', { name }); } catch {}
     setAllDimNames(prev => [...new Set([...prev, name])]);
-    onChange?.([...dims, { name, description: '' }]);
+    onChange?.([...dims, { name, description: '', weight: isWeightedScoringDimension(name) ? WEIGHTED_SCREENING_DEFAULT_WEIGHTS[name] : null }]);
     setExpanded(prev => new Set(prev).add(name));
     setCustomName('');
   };
@@ -1341,7 +1386,7 @@ const CapabilityDimensionEditor: React.FC<{
   return (
     <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, padding: '12px 16px', background: '#fafafa', maxHeight: 360, overflow: 'auto' }}>
       {allDimNames.length === 0 && checkedNames.size === 0 && <Text type="secondary" style={{ fontSize: 12 }}>暂无预设维度，请在下方添加</Text>}
-      {[...new Set([...allDimNames, ...dims.map(d => d.name)])].map(name => (
+      {[...new Set([...WEIGHTED_SCORING_DIMENSIONS, ...WEIGHTED_GATE_DIMENSIONS, ...allDimNames, ...dims.map(d => d.name)])].map(name => (
         <div key={name} style={{ marginBottom: 4 }}>
           <Checkbox checked={checkedNames.has(name)} onChange={e => handleToggle(name, e.target.checked)} style={{ fontWeight: 500, marginBottom: 2 }}>{name}</Checkbox>
           {checkedNames.has(name) && (<>
@@ -1350,13 +1395,24 @@ const CapabilityDimensionEditor: React.FC<{
               style={{ fontSize: 11, color: '#ff4d4f', cursor: 'pointer', marginLeft: 4 }} 
               title="删除此维度"
             />
+            {isWeightedScoringDimension(name) ? (
+              <span style={{ marginLeft: 12 }}>
+                <Text type="secondary" style={{ fontSize: 12, marginRight: 6 }}>评分权重</Text>
+                <InputNumber min={0} max={100} precision={0} value={dims.find(d => d.name === name)?.weight ?? WEIGHTED_SCREENING_DEFAULT_WEIGHTS[name]}
+                  onChange={value => handleWeightChange(name, value == null ? null : Number(value))} addonAfter="%" size="small" />
+              </span>
+            ) : isScreeningGateDimension(name) ? (
+              <Tag color="orange" style={{ marginLeft: 8 }}>硬门槛，不计入加权分</Tag>
+            ) : null}
             <div style={{ marginLeft: 24, marginBottom: 8 }}>
               <a onClick={() => toggleExpand(name)} style={{ fontSize: 11, display: 'block', marginBottom: expanded.has(name) ? 6 : 2 }}>
                 {expanded.has(name) ? '收起描述 ▲' : '展开描述 ▼'}
               </a>
               {expanded.has(name) && (
-                <Input.TextArea rows={2} placeholder={`描述「${name}」的具体表现、考察要点或评分标准...`} value={descMap[name] || ''}
-                  onChange={e => handleDescChange(name, e.target.value)} showCount maxLength={500} style={{ fontSize: 12 }} />
+                <>
+                  <Input.TextArea rows={2} placeholder={`描述「${name}」的具体表现、考察要点或评分标准...`} value={descMap[name] || ''}
+                    onChange={e => handleDescChange(name, e.target.value)} showCount maxLength={500} style={{ fontSize: 12 }} />
+                </>
               )}
             </div>
           </>)}
