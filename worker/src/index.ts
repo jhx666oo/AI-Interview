@@ -6020,12 +6020,35 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     // Load capability dimensions for enrichment
     let enrichedEval = merged;
     try {
-      const posName = merged.position || resume.position_applied || '';
+      let posName = merged.position || resume.position_applied || resume.standard_position || '';
+      if (posName) {
+        // 通过岗位映射表解析标准岗位名
+        try {
+          const mapping = await c.env.DB.prepare(
+            'SELECT mapped_name FROM position_mappings WHERE raw_name = ? LIMIT 1'
+          ).bind(posName).first() as any;
+          if (mapping?.mapped_name) posName = mapping.mapped_name;
+        } catch {}
+        // 尝试模糊匹配
+        const resolved = await resolvePositionTitle(c.env.DB, posName).catch(() => posName);
+        if (resolved && resolved !== posName) posName = resolved;
+      }
       if (posName) {
         const posRow = await c.env.DB.prepare(
           'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
         ).bind(posName).first() as any;
-        const configuredDimensions = normalizeCapabilityDimensions(posRow?.capability_dimensions || []);
+        let configuredDimensions = normalizeCapabilityDimensions(posRow?.capability_dimensions || []);
+        // 如果 positions 表没有，从 capability_dimensions 独立表补充
+        if (configuredDimensions.length === 0) {
+          try {
+            const dimRow = await c.env.DB.prepare(
+              'SELECT dimensions_json FROM capability_dimensions WHERE position_name = ? LIMIT 1'
+            ).bind(posName).first() as any;
+            if (dimRow?.dimensions_json) {
+              configuredDimensions = normalizeCapabilityDimensions(dimRow.dimensions_json);
+            }
+          } catch {}
+        }
         enrichedEval = enrichScreeningEvaluation(merged, configuredDimensions, [], {});
       }
     } catch (e: any) {
