@@ -588,7 +588,9 @@ const PositionsList: React.FC = () => {
                 return d;
               });
               if (changed) {
-                await request.put(`/positions/${pos.id}`, { ...pos, capability_dimensions: JSON.stringify(newPosDims) }).catch(() => {});
+                // 只更新能力维度字段，避免把列表投影中的 stats/关联字段一并提交，
+                // 导致通用岗位更新接口因未知列而整次同步失败。
+                await request.put(`/positions/${pos.id}`, { capability_dimensions: JSON.stringify(newPosDims) }).catch(() => {});
               }
             }
           }

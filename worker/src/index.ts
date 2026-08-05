@@ -11,6 +11,7 @@ import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { enqueueResumeReprocess, ResumeNotFoundError } from './resume-processing/reprocess';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
+import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -873,6 +874,33 @@ function prepareValue(v: any): any {
 
 function validCol(name: string): boolean {
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
+}
+
+async function syncCapabilityDimensionsForPosition(db: D1Database, positionName: string, value: unknown): Promise<void> {
+  if (!positionName) return;
+  const dimensions = normalizeCapabilityDimensionsForStorage(value);
+  const dimensionsJson = JSON.stringify(dimensions);
+  const fullText = buildCapabilityDimensionsFullText(dimensions);
+  const existing = await db.prepare(
+    'SELECT id FROM capability_dimensions WHERE position_name = ? LIMIT 1',
+  ).bind(positionName).first() as any;
+  if (existing?.id) {
+    await db.prepare(
+      'UPDATE capability_dimensions SET dimensions_json = ?, full_text = ?, updated_at = ? WHERE id = ?',
+    ).bind(dimensionsJson, fullText, now(), existing.id).run();
+  } else {
+    await db.prepare(
+      'INSERT INTO capability_dimensions (id, position_name, dimensions_json, full_text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(uuid(), positionName, dimensionsJson, fullText, now(), now()).run();
+  }
+}
+
+async function syncPositionDimensionsForCapabilityRecord(db: D1Database, positionName: string, value: unknown): Promise<void> {
+  if (!positionName) return;
+  const dimensions = normalizeCapabilityDimensionsForStorage(value);
+  await db.prepare(
+    'UPDATE positions SET capability_dimensions = ?, updated_at = ? WHERE title = ?',
+  ).bind(JSON.stringify(dimensions), now(), positionName).run();
 }
 
 function uuid(): string {
@@ -2236,6 +2264,12 @@ function makeCreateHandler(table: string) {
     await c.env.DB.prepare(sql).bind(...vals).run();
     const id = vals[0];
     const row = await c.env.DB.prepare(`SELECT * FROM ${table} WHERE id = ?`).bind(id).first();
+    if (table === 'positions' && Object.prototype.hasOwnProperty.call(body, 'capability_dimensions')) {
+      await syncCapabilityDimensionsForPosition(c.env.DB, row?.title || body.title || '', body.capability_dimensions);
+    }
+    if (table === 'capability_dimensions' && Object.prototype.hasOwnProperty.call(body, 'dimensions_json')) {
+      await syncPositionDimensionsForCapabilityRecord(c.env.DB, row?.position_name || body.position_name || '', body.dimensions_json);
+    }
     return c.json(transformRow(row));
   };
 }
@@ -2257,6 +2291,12 @@ function makeUpdateHandler(table: string) {
     const setClause = cols.map(k => `${k} = ?`).join(', ');
     await c.env.DB.prepare(`UPDATE ${table} SET ${setClause} WHERE id = ?`).bind(...vals, id).run();
     const row = await c.env.DB.prepare(`SELECT * FROM ${table} WHERE id = ?`).bind(id).first();
+    if (table === 'positions' && Object.prototype.hasOwnProperty.call(body, 'capability_dimensions')) {
+      await syncCapabilityDimensionsForPosition(c.env.DB, row?.title || body.title || '', body.capability_dimensions);
+    }
+    if (table === 'capability_dimensions' && Object.prototype.hasOwnProperty.call(body, 'dimensions_json')) {
+      await syncPositionDimensionsForCapabilityRecord(c.env.DB, row?.position_name || body.position_name || '', body.dimensions_json);
+    }
     return c.json(transformRow(row));
   };
 }
