@@ -2486,7 +2486,10 @@ function parseD1TalentRow(row: any): Record<string, any> {
     gender: first(row?.gender, parsed.gender),
     city: first(row?.city, parsed.city),
     age: first(row?.age, parsed.age),
-    education: first(row?.education, parsed.highest_degree, parsed.education),
+    education: (() => {
+      const raw = first(row?.education, parsed.highest_degree);
+      return Array.isArray(raw) ? '' : raw;
+    })(),
     hr_review: first(row?.hr_review),
     status: first(row?.status),
     stage: first(row?.stage),
