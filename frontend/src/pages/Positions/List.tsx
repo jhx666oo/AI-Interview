@@ -760,14 +760,6 @@ const PositionsList: React.FC = () => {
       }
     },
     { 
-      title: '个性化需求', 
-      dataIndex: 'personalized_requirements', 
-      key: 'personalized_requirements',
-      width: 170,
-      ellipsis: true,
-      render: (v: string) => v || <Text type="secondary">-</Text>
-    },
-    { 
       title: '创建时间', 
       dataIndex: 'created_at', 
       key: 'created_at',
@@ -987,10 +979,6 @@ const PositionsList: React.FC = () => {
           </div>
           <Form.Item name="description" rules={[{ required: true, message: '请输入岗位职责' }]}>
             <Input.TextArea rows={4} placeholder="请输入详细的岗位职责描述" showCount maxLength={2000} style={{ padding: '8px 12px' }} />
-          </Form.Item>
-
-          <Form.Item name="personalized_requirements" label="个性化需求">
-            <Input.TextArea rows={3} placeholder="如特殊语言要求、特定行业经验等" style={{ padding: '8px 12px' }} />
           </Form.Item>
 
           <Form.Item name="status" label="状态">
@@ -1238,19 +1226,6 @@ const PositionsList: React.FC = () => {
                   } catch {}
                   return viewingRecord.requirements;
                 })()}
-              </div>
-            </div>
-
-            <div style={{ marginBottom: 24 }}>
-              <Title level={5} style={{ marginBottom: 12 }}>个性化需求</Title>
-              <div style={{ 
-                background: '#F8FAFC', 
-                padding: '16px', 
-                borderRadius: '8px', 
-                color: '#334155',
-                lineHeight: 1.8
-              }}>
-                {viewingRecord.personalized_requirements || '暂无'}
               </div>
             </div>
 
