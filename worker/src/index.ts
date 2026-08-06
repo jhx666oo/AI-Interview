@@ -4590,10 +4590,16 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         if (resumeText && resumeText.length >= 20) {
           const posName = resume.position_applied || resume.mapped_position || positionId || parsedPositionName || '';
           const posCtx = await getPositionContext(c.env.DB, posName);
-          const prompt = await getAIPrompt(c.env, 'analyze_resume', {
+          const screenPrompt = await getAIPrompt(c.env, 'resume_screening', {
             system: `你是一位资深的 HR 招聘评估 AI。${WEIGHTED_SCREENING_PROMPT}`,
-            user: '【岗位】' + (posCtx.standardPosition || posName) + '\n' + (posCtx.capabilityDimensions ? '【能力维度】' + posCtx.capabilityDimensions + '\n' : '') + '\n【简历全文】\n' + resumeText,
+            user: '岗位：{position}\n能力维度：{capability_dimensions}\n简历：{resume_text}\n字段：{fields}'
           });
+          const screenUserText = screenPrompt.user
+            .replace('{position}', posCtx.standardPosition || posName)
+            .replace('{capability_dimensions}', posCtx.capabilityDimensions || '')
+            .replace('{resume_text}', resumeText)
+            .replace('{fields}', '{}');
+          const prompt = { system: screenPrompt.system, user: screenUserText };
           const aiResp = await callAI(c.env, prompt.system, prompt.user, 'deepseek-v4-flash');
           if (aiResp) {
             let parsed: any;
@@ -5531,7 +5537,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
 
         // callAI #2 — AI 初筛评分（与 ai-screen 路由完全一致）
         const posCtx = await getPositionContext(c.env.DB, row.position_applied || '');
-        const prompt = await getAIPrompt(c.env, 'analyze_resume', {
+        const prompt = await getAIPrompt(c.env, 'resume_screening', {
           system: `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON 对象：
 
 - match_score: 非权威参考值；${WEIGHTED_SCREENING_PROMPT}
@@ -6081,18 +6087,18 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     if (reparsePosContext.personalizedRequirements) appendContext += `- 个性化要求：${reparsePosContext.personalizedRequirements}\n`;
   }
 
-  // 优先读取数据库中的自定义 prompt，key 为 analyze_resume
-  const customPrompt = await getCustomPrompt(c.env, 'analyze_resume');
+  // 优先读取数据库中的自定义 prompt，key 为 resume_screening
+  const customPrompt = await getCustomPrompt(c.env, 'resume_screening');
   let systemPrompt: string, userPrompt: string;
   // reparse 输入文本：优先 raw_text，其次 parsed_data（飞书同步简历）
   const reparseInputText = rawText || parsedDataText;
   if (customPrompt) {
     let sp = customPrompt.system;
     let up = customPrompt.user;
-    if (sp.includes('{candidate_name}')) sp = sp.replace(/\{candidate_name\}/g, candidateName);
-    if (up.includes('{candidate_name}')) up = up.replace(/\{candidate_name\}/g, candidateName);
+    if (up.includes('{position}')) up = up.replace(/\{position\}/g, candidateName);
     if (up.includes('{resume_text}')) up = up.replace(/\{resume_text\}/g, reparseInputText);
-    if (sp.includes('{resume_text}')) sp = sp.replace(/\{resume_text\}/g, reparseInputText);
+    if (up.includes('{fields}')) up = up.replace(/\{fields\}/g, '{}');
+    if (up.includes('{capability_dimensions}')) up = up.replace(/\{capability_dimensions\}/g, reparsePosContext?.capabilityDimensions || '');
     systemPrompt = sp;
     userPrompt = up;
   } else {
@@ -6330,7 +6336,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
   const posReq = position?.requirements || '';
   const posDept = position?.department || '';
   const posSalary = position?.salary_range || '';
-  const prompt = await getAIPrompt(c.env, 'analyze_resume', {
+  const prompt = await getAIPrompt(c.env, 'resume_screening', {
     system: `你是一位资深的 HR 招聘评估 AI。请基于「候选人结构化信息 + 简历全文 + 岗位要求 + 能力维度 + 个性化要求」进行综合评估，用中文返回 JSON 对象：
 
 - match_score: 非权威参考值；${WEIGHTED_SCREENING_PROMPT}
@@ -6776,15 +6782,7 @@ app.post('/api/positions/:id/ai-match', authMiddleware, async (c) => {
   if (!position) return c.json({ detail: 'Position not found' }, 404);
   const resumes = await c.env.DB.prepare('SELECT id, candidate_name, resume_markdown, raw_text, match_score FROM resumes WHERE position_id = ?').bind(id).all();
   const posInfo = { title: position.title, description: position.description, requirements: position.requirements, department: position.department, salary_range: position.salary_range };
-  const prompt = await getAIPrompt(c.env, 'analyze_resume', {
-    system: `You are an expert HR matching AI. Given a job position and a list of candidates, rank them by suitability. Respond in Chinese. Return a JSON array of objects with:
-- resume_id: the candidate id
-- candidate_name: the candidate name
-- match_score: integer 0-100
-- ranking_reason: brief reason for the ranking in Chinese`,
-    user: ''
-  });
-  const systemPrompt = prompt.system;
+  const systemPrompt = 'You are an expert HR matching AI. Given a job position and a list of candidates, rank them by suitability. Respond in Chinese. Return a JSON array of objects with:\n- resume_id: the candidate id\n- candidate_name: the candidate name\n- match_score: integer 0-100\n- ranking_reason: brief reason for the ranking in Chinese';
   const candidateList = resumes.results.map((r: any) => ({ id: r.id, name: r.candidate_name, resume: (r.resume_markdown || r.raw_text || '').substring(0, 500) }));
   const userPrompt = `Position: ${JSON.stringify(posInfo)}\n\nCandidates:\n${JSON.stringify(candidateList, null, 2)}\n\nRank these candidates by suitability for the position. Return a JSON array.`;
   try {
@@ -6895,11 +6893,7 @@ app.post('/api/talent-pool/:id/ai-recommend', authMiddleware, async (c) => {
   const talent = await c.env.DB.prepare('SELECT * FROM talent_pool WHERE id = ?').bind(id).first() as any;
   if (!talent) return c.json({ detail: 'Talent not found' }, 404);
   const positions = await c.env.DB.prepare("SELECT id, title, department, requirements, salary_range, status FROM positions WHERE status IN ('open','published') ORDER BY created_at DESC LIMIT 20").all();
-  const prompt = await getAIPrompt(c.env, 'analyze_resume', {
-    system: `你是一名资深猎头 AI。根据候选人背景和现有在招岗位,推荐最合适的岗位并说明理由。只用中文回答。返回 JSON 数组,每项含 {"position_id": "岗位ID", "position_title": "岗位名称", "match_score": 0-100整数, "reason": "推荐理由"}。不要包含 markdown 代码块标记或额外说明。`,
-    user: ''
-  });
-  const systemPrompt = prompt.system;
+  const systemPrompt = '你是一名资深猎头 AI。根据候选人背景和现有在招岗位,推荐最合适的岗位并说明理由。只用中文回答。返回 JSON 数组,每项含 {"position_id": "岗位ID", "position_title": "岗位名称", "match_score": 0-100整数, "reason": "推荐理由"}。不要包含 markdown 代码块标记或额外说明。';
   const candidateInfo = { name: talent.candidate_name, current_title: talent.current_title, skills: talent.skills, experience_years: talent.experience_years, education: talent.education, expected_salary: talent.expected_salary, tags: talent.tags };
   const userPrompt = `候选人信息:\n${JSON.stringify(candidateInfo, null, 2)}\n\n在招岗位列表:\n${JSON.stringify(positions.results.map((p: any) => ({ id: p.id, title: p.title, department: p.department, requirements: p.requirements, salary_range: p.salary_range })), null, 2)}\n\n请推荐最匹配的岗位(最多5个),按匹配度从高到低排序。`;
   try {
@@ -7112,12 +7106,7 @@ app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
       { name: 'requirements', description: '岗位要求' },
       { name: 'salary_range', description: '薪资范围' },
     ],
-    analyze_resume: [
-      { name: 'candidate_name', description: '候选人姓名' },
-      { name: 'position', description: '应聘岗位' },
-      { name: 'jd_text', description: '岗位描述' },
-      { name: 'resume_text', description: '简历文本' },
-    ],
+
     generate_resume_markdown: [
       { name: 'candidate_name', description: '候选人姓名' },
       { name: 'resume_text', description: '简历原始文本' },
@@ -7204,10 +7193,7 @@ app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
       system: '你是一位资深的招聘专家和岗位分析师。请根据提供的岗位信息，生成一份专业、详细的职位描述(JD)。',
       user: '请根据以下岗位信息生成JD：\n\n岗位名称：{candidate_name}\n部门：{department}\n\n请包括：岗位职责、任职要求、加分项。'
     },
-    analyze_resume: {
-      system: '你是一位专业的简历分析师和HR专家。请仔细分析候选人简历，提取关键信息并进行专业评估。',
-      user: '请分析以下简历，提取候选人的关键信息：\n\n{resume_text}\n\n请输出姓名、性别、年龄、学历、城市、手机、邮箱、技能列表、工作年限、优势分析、风险点、综合评估。'
-    },
+
     parse_resume_pdf: {
       system: '你是一个PDF简历文本提取助手。请将PDF base64数据转换为结构化Markdown文本，保留所有可读信息。',
       user: '以下是一份PDF简历的base64编码数据，请提取其中所有可读文本并转为Markdown格式（保留所有信息）：\n\n{resume_text}'
@@ -8005,11 +7991,7 @@ app.post('/api/resumes/:id/score-capabilities', authMiddleware, async (c) => {
     }
 
     const dimNames = dims.map((d: any) => d.name || d.dimension_name).filter(Boolean);
-    const prompt = await getAIPrompt(c.env, 'analyze_resume', {
-      system: `你是 HR 评审专家。这个接口只生成能力证据，不作出初筛决策。对候选人逐项评分（0-5分，5分最高）。返回 JSON：{"scores":[{"dimension":"维度名","score":3,"reason":"评分理由"}]}。`,
-      user: ''
-    });
-    const systemPrompt = prompt.system;
+    const systemPrompt = '你是 HR 评审专家。这个接口只生成能力证据，不作出初筛决策。对候选人逐项评分（0-5分，5分最高）。返回 JSON：{"scores":[{"dimension":"维度名","score":3,"reason":"评分理由"}]}。';
     const userPrompt = `能力维度：${dimNames.join('、')}\n简历：${resume.raw_text.slice(0, 3000)}`;
     const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
     const parsed = extractJSON(result);

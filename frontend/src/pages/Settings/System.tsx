@@ -34,7 +34,6 @@ type PromptVariablesResponse = {
 
 const promptNames: Record<string, string> = {
   generate_jd: 'JD 生成',
-  analyze_resume: '简历分析',
   parse_resume_pdf: 'PDF简历解析',
   generate_resume_markdown: '简历 Markdown 生成',
   resume_extract_fields: '简历字段提取',
