@@ -7117,32 +7117,6 @@ app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
       { name: 'resume_text', description: '简历原始文本' },
       { name: 'position', description: '应聘岗位' },
     ],
-    generate_interview_questions: [
-      { name: 'candidate_name', description: '候选人姓名' },
-      { name: 'position', description: '应聘岗位' },
-      { name: 'jd_text', description: '岗位描述' },
-      { name: 'resume_text', description: '简历文本' },
-      { name: 'dimensions', description: '评估维度' },
-    ],
-    generate_interview_evaluation: [
-      { name: 'candidate_name', description: '候选人姓名' },
-      { name: 'position', description: '应聘岗位' },
-      { name: 'questions', description: '面试题目' },
-      { name: 'answers', description: '候选人回答' },
-      { name: 'dimensions', description: '评估维度' },
-    ],
-    generate_interview_evaluation_from_transcript: [
-      { name: 'candidate_name', description: '候选人姓名' },
-      { name: 'position', description: '应聘岗位' },
-      { name: 'transcript', description: '面试转写文本' },
-      { name: 'dimensions', description: '评估维度' },
-    ],
-    generate_coding_test_evaluation: [
-      { name: 'candidate_name', description: '候选人姓名' },
-      { name: 'position', description: '应聘岗位' },
-      { name: 'test_description', description: '笔试题目描述' },
-      { name: 'code', description: '候选人提交的代码' },
-    ],
     parse_resume_pdf: [
       { name: 'candidate_name', description: '候选人姓名（从文件名提取）' },
       { name: 'resume_text', description: '简历PDF的base64文本内容' },
@@ -7254,6 +7228,36 @@ app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
     return c.json({ ok: true, seeded: Object.keys(defaults).length });
   } catch (e: any) {
     return c.json({ detail: '初始化失败: ' + e.message }, 500);
+  }
+});
+
+// 批量删除提示词模板
+app.post('/api/settings/prompts/remove', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json();
+    const keys: string[] = Array.isArray(body.keys) ? body.keys : [];
+    if (keys.length === 0) return c.json({ detail: '请指定要删除的 key' }, 400);
+
+    const row = await c.env.DB.prepare('SELECT id, prompt_configs FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
+    if (!row?.prompt_configs) return c.json({ detail: '未找到提示词配置', removed: 0 });
+
+    let configs: any = {};
+    try { configs = JSON.parse(row.prompt_configs); } catch { configs = {}; }
+    if (!configs.prompts) return c.json({ detail: '未找到提示词配置', removed: 0 });
+
+    let removed = 0;
+    for (const k of keys) {
+      if (configs.prompts[k]) {
+        delete configs.prompts[k];
+        removed++;
+      }
+    }
+
+    await c.env.DB.prepare('UPDATE system_configs SET prompt_configs = ?, updated_at = ? WHERE id = ?')
+      .bind(JSON.stringify(configs), now(), (row as any).id).run();
+    return c.json({ detail: `已删除 ${removed} 个提示词`, removed });
+  } catch (e: any) {
+    return c.json({ detail: '删除失败: ' + e.message }, 500);
   }
 });
 
