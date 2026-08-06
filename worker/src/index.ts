@@ -7093,7 +7093,13 @@ app.get('/api/settings/prompts', authMiddleware, async (c) => {
   try {
     const configs = JSON.parse(row.prompt_configs);
     // 确保返回的结构始终包含 prompts 字段
-    return c.json(typeof configs.prompts === 'object' ? configs : { prompts: configs });
+    const result = typeof configs.prompts === 'object' ? configs : { prompts: configs };
+    // 过滤掉已废弃的提示词 key（不展示在前端）
+    const deprecatedKeys = ['analyze_resume', 'generate_interview_questions', 'generate_interview_evaluation', 'generate_interview_evaluation_from_transcript', 'generate_coding_test_evaluation'];
+    for (const key of deprecatedKeys) {
+      delete result.prompts[key];
+    }
+    return c.json(result);
   } catch { return c.json({ prompts: {} }); }
 });
 
@@ -7245,6 +7251,13 @@ app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
     let configs: any = {};
     if (row?.prompt_configs) {
       try { configs = JSON.parse(row.prompt_configs); } catch { configs = {}; }
+      // 清理已废弃的提示词 key（不再使用的旧 key）
+      const deprecatedKeys = ['analyze_resume', 'generate_interview_questions', 'generate_interview_evaluation', 'generate_interview_evaluation_from_transcript', 'generate_coding_test_evaluation'];
+      if (configs.prompts) {
+        for (const key of deprecatedKeys) {
+          delete configs.prompts[key];
+        }
+      }
       configs.prompts = { ...defaults, ...(configs.prompts || {}) };
       await c.env.DB.prepare('UPDATE system_configs SET prompt_configs = ?, updated_at = ? WHERE id = ?')
         .bind(JSON.stringify(configs), now, row.id).run();
