@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   Button, Card, Divider, Form, Input, InputNumber, Space, Switch, Typography, message,
   Modal, Table, Tag, Tooltip, Checkbox, Select, Row, Col, Spin, Empty, Alert,
+  Statistic,
 } from 'antd';
 import {
   SaveOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, EditOutlined,
