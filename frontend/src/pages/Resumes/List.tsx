@@ -5,7 +5,6 @@ import DOMPurify from 'dompurify';
 import request from '../../utils/request';
 import { downloadExcel } from '../../utils/exportExcel';
 import SimplePagination from '../../components/SimplePagination';
-import { useOwner } from '../../contexts/OwnerContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatWeightedScore, getDimensionScoreTotal, getScreeningGateRows, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
@@ -118,22 +117,14 @@ const ResumesList: React.FC = () => {
   
   const navigate = useNavigate();
 
-  const [searchName, setSearchName] = useState('');
   const [searchStatus, setSearchStatus] = useState<string | undefined>(undefined);
-  const [searchPerson, setSearchPerson] = useState<string | undefined>(undefined);
-  const [responsiblePersons, setResponsiblePersons] = useState<string[]>([]);
+  const [searchScreeningResult, setSearchScreeningResult] = useState<string | undefined>(undefined);
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
   const [searchMajor, setSearchMajor] = useState<string | undefined>(undefined);
   const [minimumAiTotalScore, setMinimumAiTotalScore] = useState<number | null>(null);
   const [minimumAge, setMinimumAge] = useState<number | null>(null);
   const [maximumAge, setMaximumAge] = useState<number | null>(null);
   const [genderFilters, setGenderFilters] = useState<string[]>([]);
-  const { selectedOwner, setSelectedOwner } = useOwner();
-  
-  // 同步：全局筛选变化时同步到本地 searchPerson
-  useEffect(() => {
-    setSearchPerson(selectedOwner);
-  }, [selectedOwner]);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewRecord, setPreviewRecord] = useState<any>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('');
@@ -293,10 +284,8 @@ const ResumesList: React.FC = () => {
     if (!silent) setLoading(true);
     try {
       const params: any = { page: requestedPage, page_size: requestedPageSize };
-      if (searchName) params.candidate_name = searchName;
       if (searchStatus) params.status = searchStatus;
-      const personFilter = searchPerson || selectedOwner;
-      if (personFilter) params.responsible_person = personFilter;
+      if (searchScreeningResult) params.screening_result = searchScreeningResult;
 
       // 不再区分 role，统一显示全部
 
@@ -454,12 +443,7 @@ const ResumesList: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, []);
 
-  // 全局负责人筛选变化时自动刷新
-  useEffect(() => {
-    cardPageRef.current = 1;
-    setCardPage(1);
-    fetchResumes(false, 1, cardPageSizeRef.current);
-  }, [selectedOwner]);
+
 
   const handleSearch = () => {
     cardPageRef.current = 1;
@@ -468,10 +452,8 @@ const ResumesList: React.FC = () => {
   };
 
   const handleReset = () => {
-    setSearchName('');
     setSearchStatus(undefined);
-    setSearchPerson(undefined);
-    setSelectedOwner(undefined);
+    setSearchScreeningResult(undefined);
     setSearchPosition(undefined);
     setMinimumAiTotalScore(null);
     setMinimumAge(null);
@@ -1205,16 +1187,6 @@ const handleUploadClick = () => {
         <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px', overflow: 'visible' } }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
             <Space size={4}>
-              <Text style={{ fontSize: 13, color: '#333' }}>候选人：</Text>
-              <Input
-                placeholder="姓名"
-                value={searchName}
-                onChange={e => setSearchName(e.target.value)}
-                style={{ width: 130 }}
-                allowClear
-              />
-            </Space>
-            <Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>状态：</Text>
               <Select
                 placeholder="全部"
@@ -1229,13 +1201,12 @@ const handleUploadClick = () => {
               </Select>
             </Space>
             <Space size={4}>
-              <Text style={{ fontSize: 13, color: '#333' }}>负责人：</Text>
+              <Text style={{ fontSize: 13, color: '#333' }}>AI 结果：</Text>
               <Select
                 placeholder="全部"
-                value={searchPerson}
+                value={searchScreeningResult}
                 onChange={val => {
-                  setSearchPerson(val);
-                  setSelectedOwner(val);
+                  setSearchScreeningResult(val);
                   cardPageRef.current = 1;
                   setCardPage(1);
                   dataCache.current = [];
@@ -1244,12 +1215,9 @@ const handleUploadClick = () => {
                 }}
                 style={{ width: 120 }}
                 allowClear
-                showSearch
-                optionFilterProp="children"
               >
-                {responsiblePersons.map((name: string) => (
-                  <Select.Option key={name} value={name}>{name}</Select.Option>
-                ))}
+                <Select.Option value="通过">通过</Select.Option>
+                <Select.Option value="不通过">不通过</Select.Option>
               </Select>
             </Space>
             <Space size={4}>

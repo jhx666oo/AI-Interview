@@ -5098,12 +5098,12 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       return item;
     });
 
-    const nameFilter = c.req.query('candidate_name');
     const statusFilter = c.req.query('status');
+    const screeningResultFilter = c.req.query('screening_result');
     const fileSha256Filter = c.req.query('file_sha256');
     let filtered = items;
-    if (nameFilter) filtered = filtered.filter(i => i.candidate_name?.includes(nameFilter));
     if (statusFilter) filtered = filtered.filter(i => i.status === statusFilter);
+    if (screeningResultFilter) filtered = filtered.filter(i => i.screening_result === screeningResultFilter);
     if (fileSha256Filter) filtered = filtered.filter(i => i.file_sha256 === fileSha256Filter);
 
     // 权限隔离：HR 自动只看自己负责的岗位
