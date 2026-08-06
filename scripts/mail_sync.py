@@ -34,6 +34,7 @@ from pathlib import Path
 from email.header import decode_header
 
 import requests
+import hashlib
 
 # ========== 配置（从环境变量读取） ==========
 
@@ -170,11 +171,31 @@ class PlatformClient:
     def _headers(self):
         return {'Authorization': f'Bearer {self.token}'}
 
-    def check_resume_exists(self, candidate_name: str) -> bool:
-        """检查候选人是否已存在（按姓名去重）"""
+    def check_resume_exists(self, candidate_name: str, file_sha256: str = '') -> bool:
+        """检查候选人是否已存在（按文件哈希优先，姓名兜底）"""
         if candidate_name in self._processed_names:
             return True
 
+        # 先通过文件哈希检查（更精确）
+        if file_sha256:
+            try:
+                r = requests.get(
+                    f'{self.api_base}/api/resumes',
+                    headers=self._headers(),
+                    params={'file_sha256': file_sha256},
+                    timeout=15,
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    items = data.get('items', data) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                    for item in items:
+                        if item.get('file_sha256') == file_sha256:
+                            self._processed_names.add(candidate_name)
+                            return True
+            except requests.RequestException:
+                pass
+
+        # 哈希未命中，按姓名兜底
         try:
             r = requests.get(
                 f'{self.api_base}/api/resumes',
@@ -193,19 +214,23 @@ class PlatformClient:
                 items = []
             for item in items:
                 if item.get('candidate_name') == candidate_name:
+                    self._processed_names.add(candidate_name)
                     return True
             return False
         except requests.RequestException:
             return False
 
-    def upload_resume(self, file_bytes: bytes, filename: str) -> bool:
+    def upload_resume(self, file_bytes: bytes, filename: str, file_sha256: str = '') -> bool:
         """上传简历到平台"""
         try:
             files = {'file': (filename, file_bytes, 'application/pdf')}
+            # 传文件哈希供后端去重
+            data = {'file_sha256': file_sha256} if file_sha256 else None
             r = requests.post(
                 f'{self.api_base}/api/resumes',
                 headers=self._headers(),
                 files=files,
+                data=data,
                 timeout=60,
             )
             if r.status_code in (200, 202):
@@ -306,13 +331,16 @@ def main():
                 total_skipped += 1
                 continue
 
-            if client.check_resume_exists(candidate):
-                print(f'  ⏭️  {candidate} 已存在，跳过')
+            # 计算文件 SHA256 用于精确去重
+            file_sha256 = hashlib.sha256(payload).hexdigest()
+
+            if client.check_resume_exists(candidate, file_sha256):
+                print(f'  ⏭️  {candidate} 已存在（哈希/姓名），跳过')
                 total_skipped += 1
                 continue
 
-            print(f'  📤 上传: {safe_name} (姓名: {candidate})')
-            if client.upload_resume(payload, safe_name):
+            print(f'  📤 上传: {safe_name} (姓名: {candidate}, SHA256: {file_sha256[:16]}...)')
+            if client.upload_resume(payload, safe_name, file_sha256):
                 client.mark_processed(candidate)
                 total_uploaded += 1
                 print(f'  ✅ 上传成功')

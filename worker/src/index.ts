@@ -4427,6 +4427,27 @@ app.post('/api/resumes', authMiddleware, async (c) => {
 
     const recordId = crypto.randomUUID();
 
+    // 文件哈希去重（mail_sync.py 等外部调用方传入 file_sha256）
+    const fileSha256 = (formData.get('file_sha256') as string) || '';
+    if (fileSha256) {
+      try {
+        const existingByHash = await c.env.DB.prepare(
+          'SELECT id, candidate_name FROM resumes WHERE file_sha256 = ? LIMIT 1'
+        ).bind(fileSha256).first<any>();
+        if (existingByHash) {
+          logResumeProcessing('upload.legacy.dedup_hit', { existingId: existingByHash.id, fileSha256: fileSha256.substring(0, 16) });
+          return c.json({
+            id: existingByHash.id,
+            candidate_name: existingByHash.candidate_name,
+            dedup: true,
+            detail: '文件已存在，返回已有记录',
+          }, 200);
+        }
+      } catch (e) {
+        logResumeProcessingError('upload.legacy.dedup_check_error', e, { fileSha256: fileSha256.substring(0, 16) });
+      }
+    }
+
     // 2. 保存 PDF：优先 KV（大文件），D1 只留元数据
     try {
       await storeResumeFile(c.env, recordId, file.name, fileSize, fileBuffer);
@@ -4456,7 +4477,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     if (ocrPending && !extractedText) {
       try {
         await c.env.DB.prepare(
-          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, ocr_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, ocr_status, file_sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         ).bind(
           recordId,
           displayName,
@@ -4466,6 +4487,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
           '',
           'ocr_processing',
           'ocr_processing',
+          fileSha256 || null,
           now()
         ).run();
       } catch (dbErr: any) {
@@ -4535,8 +4557,8 @@ app.post('/api/resumes', authMiddleware, async (c) => {
         ).bind(displayName, mappedPos, mappedPos, extractedText?.substring(0, 200000) || '', 'pending_screening', now(), recordId).run();
       } else {
         await c.env.DB.prepare(
-          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(recordId, displayName, mappedPos, mappedPos, JSON.stringify({ name: displayName }), extractedText?.substring(0, 200000) || '', 'pending_screening', now()).run();
+          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, file_sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(recordId, displayName, mappedPos, mappedPos, JSON.stringify({ name: displayName }), extractedText?.substring(0, 200000) || '', 'pending_screening', fileSha256 || null, now()).run();
       }
     } catch (dbErr: any) {
       logResumeProcessingError('upload.legacy.db_error', dbErr, { resumeId: recordId });
@@ -5052,7 +5074,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     await ensureResumeListSchema(c.env.DB);
     // 纯 D1 驱动：直接从 resumes 表读取，不依赖飞书
     const d1Rows = await c.env.DB.prepare(
-      'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY updated_at DESC'
+      'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY updated_at DESC'
     ).all();
     let items = (d1Rows.results || []).map((r: any) => {
       const item: any = { ...r };
@@ -5078,9 +5100,11 @@ app.get('/api/resumes', authMiddleware, async (c) => {
 
     const nameFilter = c.req.query('candidate_name');
     const statusFilter = c.req.query('status');
+    const fileSha256Filter = c.req.query('file_sha256');
     let filtered = items;
     if (nameFilter) filtered = filtered.filter(i => i.candidate_name?.includes(nameFilter));
     if (statusFilter) filtered = filtered.filter(i => i.status === statusFilter);
+    if (fileSha256Filter) filtered = filtered.filter(i => i.file_sha256 === fileSha256Filter);
 
     // 权限隔离：HR 自动只看自己负责的岗位
     let ownerFilter = c.req.query('responsible_person') || getOwnerName(c);
@@ -10498,6 +10522,22 @@ app.notFound(async (c) => {
 
 // Worker Cron 触发器：每天北京时间 9:00（UTC 1:00）
 // 1. 清除内存缓存  2. 检查待审核候选人，>0 则发飞书提醒
+
+// 数据库迁移端点：添加 file_sha256 列（幂等，列已存在时忽略）
+app.post('/api/admin/migrate/file-sha256', async (c) => {
+  try {
+    await c.env.DB.prepare('ALTER TABLE resumes ADD COLUMN file_sha256 TEXT;').run();
+    return c.json({ ok: true, message: 'file_sha256 列已添加' });
+  } catch (e: any) {
+    // 列已存在时 D1 会抛错，忽略
+    if (e.message?.includes('duplicate column') || e.message?.includes('already exists')) {
+      return c.json({ ok: true, message: 'file_sha256 列已存在' });
+    }
+    return c.json({ ok: false, error: e.message }, 500);
+  }
+});
+
+
 export default {
   fetch: app.fetch,
   async scheduled(event: any, env: any, ctx: any) {
