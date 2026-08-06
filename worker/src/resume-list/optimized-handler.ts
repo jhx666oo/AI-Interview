@@ -34,8 +34,13 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     params.push(`%${nameFilter}%`);
   }
   if (statusFilter) {
-    whereClause += ' AND r.status = ?';
-    params.push(statusFilter);
+    if (statusFilter === 'pending_screening') {
+      // 待初筛：筛选 AI 尚未完成评分的简历（screening_result 为空）
+      whereClause += " AND (r.screening_result IS NULL OR r.screening_result = '')";
+    } else {
+      whereClause += ' AND r.status = ?';
+      params.push(statusFilter);
+    }
   }
   if (screeningResultFilter) {
     whereClause += ' AND r.screening_result = ?';

@@ -5102,7 +5102,13 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     const screeningResultFilter = c.req.query('screening_result');
     const fileSha256Filter = c.req.query('file_sha256');
     let filtered = items;
-    if (statusFilter) filtered = filtered.filter(i => i.status === statusFilter);
+    if (statusFilter) {
+      if (statusFilter === 'pending_screening') {
+        filtered = filtered.filter(i => !i.screening_result || i.screening_result === '');
+      } else {
+        filtered = filtered.filter(i => i.status === statusFilter);
+      }
+    }
     if (screeningResultFilter) filtered = filtered.filter(i => i.screening_result === screeningResultFilter);
     if (fileSha256Filter) filtered = filtered.filter(i => i.file_sha256 === fileSha256Filter);
 
