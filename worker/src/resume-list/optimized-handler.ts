@@ -57,8 +57,10 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     params.push(screeningResultFilter);
   }
   if (positionFilter) {
-    whereClause += ' AND r.mapped_position = ?';
-    params.push(positionFilter);
+    // position 参数为标准岗位名（mapped_name）：匹配映射表里对应的所有原始岗位名，
+    // 同时也匹配已直接存储标准岗位名的简历。
+    whereClause += ` AND (r.mapped_position IN (SELECT raw_name FROM position_mappings WHERE mapped_name = ?) OR r.mapped_position = ?)`;
+    params.push(positionFilter, positionFilter);
   }
   if (majorFilter) {
     whereClause += " AND json_extract(r.parsed_data, '$.major') LIKE ?";
@@ -132,6 +134,15 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     }
   }
 
+  // 加载岗位映射（raw_name → mapped_name），用于返回标准岗位名
+  const positionMap = new Map<string, string>();
+  try {
+    const pmRes = await c.env.DB.prepare('SELECT raw_name, mapped_name FROM position_mappings').all();
+    for (const m of (pmRes.results || [])) {
+      if ((m as any).raw_name && (m as any).mapped_name) positionMap.set((m as any).raw_name, (m as any).mapped_name);
+    }
+  } catch {}
+
   const countSql = `SELECT
     COUNT(*) as total,
     SUM(CASE WHEN r.status = 'pending_screening' THEN 1 ELSE 0 END) as pending_screening,
@@ -178,6 +189,9 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
       item.screening_label = item.screening_result;
     }
     applyParsedResumeFields(item);
+    // 岗位显示用标准岗位名（岗位映射 raw_name → mapped_name），未映射时保留原岗位名
+    const rawPosition = item.mapped_position || item.position_applied || '';
+    item.standard_position = rawPosition ? (positionMap.get(rawPosition) || rawPosition) : '';
     return item;
   });
 

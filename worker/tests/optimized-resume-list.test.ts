@@ -15,6 +15,7 @@ function makeContext() {
   const db = {
     prepare(sql: string) {
       return {
+        all: async () => ({ results: rows }),
         bind: (..._params: unknown[]) => ({
           first: async () => sql.includes('COUNT(*)')
             ? { total: 250, pending_screening: 201, approved: 30, rejected: 19 }
@@ -49,6 +50,7 @@ describe('optimized resume list response', () => {
   it('uses the structured weighted score and exposes screening gate details', async () => {
     const context = makeContext();
     context.env.DB.prepare = (sql: string) => ({
+      all: async () => ({ results: [] }),
       bind: (..._params: unknown[]) => ({
         first: async () => sql.includes('COUNT(*)') ? { total: 1 } : null,
         all: async () => ({ results: [{
@@ -80,6 +82,7 @@ describe('optimized resume list response', () => {
     const context = makeContext();
     const captured: { sql: string; params: unknown[] }[] = [];
     context.env.DB.prepare = (sql: string) => ({
+      all: async () => ({ results: [] }),
       bind: (...params: unknown[]) => {
         captured.push({ sql, params });
         return {
@@ -98,12 +101,41 @@ describe('optimized resume list response', () => {
 
     const dataSql = captured.find(c => c.sql.includes('ORDER BY r.updated_at DESC'));
     expect(dataSql!.sql).toContain('r.mapped_position = ?');
+    expect(dataSql!.sql).toContain('r.mapped_position IN (SELECT raw_name FROM position_mappings WHERE mapped_name = ?)');
     expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.major') LIKE ?");
     expect(dataSql!.sql).toContain("strftime('%Y%m', 'now')");
     expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.birthday')");
     expect(dataSql!.sql).toContain("LIKE '%岁%'");
     expect(dataSql!.sql).toContain("COALESCE(NULLIF(r.gender, '')");
-    expect(dataSql!.params.slice(0, 4)).toEqual(['软件工程师', '%计算机%', 25, 35]);
-    expect(dataSql!.params.slice(4, 5)).toEqual(['男']);
+    expect(dataSql!.params.slice(0, 4)).toEqual(['软件工程师', '软件工程师', '%计算机%', 25]);
+    expect(dataSql!.params.slice(4, 6)).toEqual([35, '男']);
+  });
+
+  it('maps raw position names to standard position names for display', async () => {
+    const context = makeContext();
+    const mappings = [{ raw_name: 'IoT产品经理（双休｜入职五险一金）', mapped_name: '软件产品经理（智能硬件方向）' }];
+    const resumeRow = [{
+      id: 'resume-mapped',
+      candidate_name: '候选人',
+      status: 'approved',
+      mapped_position: 'IoT产品经理（双休｜入职五险一金）',
+      position_applied: 'IoT产品经理（双休｜入职五险一金）',
+      parsed_data: JSON.stringify({ name: '候选人' }),
+    }];
+    context.env.DB.prepare = (sql: string) => {
+      const isMapping = sql.includes('FROM position_mappings');
+      return {
+        all: async () => ({ results: isMapping ? mappings : [] }),
+        bind: (..._params: unknown[]) => ({
+          first: async () => sql.includes('COUNT(*)') ? { total: 1, pending_screening: 0, approved: 1, rejected: 0 } : null,
+          all: async () => ({ results: isMapping ? mappings : resumeRow }),
+        }),
+      };
+    };
+
+    const response = await handleOptimizedResumeList(context);
+    const item = (await response.json() as any).items[0];
+    expect(item.standard_position).toBe('软件产品经理（智能硬件方向）');
+    expect(item.mapped_position).toBe('IoT产品经理（双休｜入职五险一金）');
   });
 });

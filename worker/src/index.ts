@@ -5121,7 +5121,24 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     }
     if (screeningResultFilter) filtered = filtered.filter(i => i.screening_result === screeningResultFilter);
     if (fileSha256Filter) filtered = filtered.filter(i => i.file_sha256 === fileSha256Filter);
-    if (positionFilter) filtered = filtered.filter(i => i.mapped_position === positionFilter);
+    // 列表返回标准岗位名：优先岗位映射（raw_name → mapped_name），未映射时保留原岗位名
+    try {
+      const positionMap = await buildPositionMapping(c.env.DB);
+      filtered = filtered.map((i: any) => {
+        const raw = i.mapped_position || i.position_applied || '';
+        i.standard_position = raw ? (positionMap.get(raw) || raw) : '';
+        return i;
+      });
+    } catch {}
+    // position 参数为标准岗位名（mapped_name）：匹配映射表里对应的所有原始岗位名，
+    // 同时也匹配已直接存储标准岗位名的简历。
+    if (positionFilter) {
+      const positionMap = await buildPositionMapping(c.env.DB);
+      filtered = filtered.filter((i: any) => {
+        const raw = i.mapped_position || i.position_applied || '';
+        return raw === positionFilter || positionMap.get(raw) === positionFilter;
+      });
+    }
     if (majorFilter) filtered = filtered.filter(i => (i.major || '').includes(majorFilter));
     if (minAge !== null || maxAge !== null) {
       filtered = filtered.filter((i: any) => {
