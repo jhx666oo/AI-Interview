@@ -1360,8 +1360,7 @@ const CapabilityDimensionEditor: React.FC<{
 
   return (
     <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, padding: '12px 16px', background: '#fafafa', maxHeight: 360, overflow: 'auto' }}>
-      {allDimNames.length === 0 && checkedNames.size === 0 && <Text type="secondary" style={{ fontSize: 12 }}>暂无预设维度，请在下方添加</Text>}
-      {[...new Set([...WEIGHTED_SCORING_DIMENSIONS, ...WEIGHTED_GATE_DIMENSIONS, ...allDimNames, ...dims.map(d => d.name)])].map(name => (
+      {[...new Set([...WEIGHTED_SCORING_DIMENSIONS, ...WEIGHTED_GATE_DIMENSIONS, ...dims.map(d => d.name)])].map(name => (
         <div key={name} style={{ marginBottom: 4 }}>
           <Checkbox checked={checkedNames.has(name)} onChange={e => handleToggle(name, e.target.checked)} style={{ fontWeight: 500, marginBottom: 2 }}>{name}</Checkbox>
           {checkedNames.has(name) && (<>
