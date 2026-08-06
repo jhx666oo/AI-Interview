@@ -2477,7 +2477,9 @@ function parseD1TalentRow(row: any): Record<string, any> {
   }
 
   const first = (...values: any[]) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '') || '';
-  const createdAt = row?.created_at ? Date.parse(String(row.created_at)) : NaN;
+  // 排序时间用 updated_at（入库/审批操作会更新它），让最新入库的简历排最前
+  const timeSrc = row?.updated_at || row?.created_at || '';
+  const createdAt = timeSrc ? Date.parse(String(timeSrc)) : NaN;
   const item: Record<string, any> = {
     id: row?.id || '',
     candidate_name: first(row?.candidate_name, parsed.name, parsed.candidate_name),
