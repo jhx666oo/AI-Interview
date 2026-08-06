@@ -8,7 +8,6 @@ import SimplePagination from '../../components/SimplePagination';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatWeightedScore, getDimensionScoreTotal, getScreeningGateRows, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
-import { filterResumesByDemographics } from '../../utils/resumeFilters';
 import { sortResumesNewestFirst } from '../../utils/resumeSort';
 import { getCurrentPageSelectionState, toggleCurrentPageSelection } from '../../utils/resumeSelection';
 import { createRefreshVersion } from '../../utils/resumeRefresh';
@@ -275,6 +274,25 @@ const ResumesList: React.FC = () => {
     });
   };
 
+  const buildListParams = (page: number, pageSize: number) => {
+    const params: any = { page, page_size: pageSize };
+    if (searchStatus) {
+      if (searchStatus === 'screening_passed') {
+        params.screening_result = '通过';
+      } else if (searchStatus === 'screening_failed') {
+        params.screening_result = '不通过';
+      } else {
+        params.status = searchStatus;
+      }
+    }
+    if (searchPosition) params.position = searchPosition;
+    if (searchMajor) params.major = searchMajor;
+    if (minimumAge !== null) params.min_age = minimumAge;
+    if (maximumAge !== null) params.max_age = maximumAge;
+    if (genderFilters.length > 0) params.genders = genderFilters.join(',');
+    return params;
+  };
+
   const fetchResumes = async (
     silent = false,
     requestedPage = cardPageRef.current,
@@ -283,39 +301,12 @@ const ResumesList: React.FC = () => {
     const requestVersion = resumeRefreshVersion.current.capture();
     if (!silent) setLoading(true);
     try {
-      const params: any = { page: requestedPage, page_size: requestedPageSize };
-      if (searchStatus) {
-        if (searchStatus === 'screening_passed') {
-          params.screening_result = '通过';
-        } else if (searchStatus === 'screening_failed') {
-          params.screening_result = '不通过';
-        } else {
-          params.status = searchStatus;
-        }
-      }
-
-      // 不再区分 role，统一显示全部
-
-      // 始终从 API 拉取最新数据（避免缓存导致删除/上传后看不到变化）
+      const params = buildListParams(requestedPage, requestedPageSize);
       const res = await request.get('/resumes', { params });
       if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return res;
       const items = Array.isArray(res) ? res : (res.items || []);
-      let filtered = items;
-      // 岗位筛选（客户端过滤，因为 API 不支持岗位参数）
-      if (searchPosition) {
-        filtered = items.filter((r: any) => r.mapped_position === searchPosition);
-      }
-      // 专业筛选（客户端过滤，专业字段来自 parsed_data 提取）
-      if (searchMajor) {
-        filtered = filtered.filter((r: any) => (r.major || '').includes(searchMajor));
-      }
-
-      filtered = filterResumesByDemographics(filtered, {
-        minAge: minimumAge,
-        maxAge: maximumAge,
-        genders: genderFilters,
-      });
-      const sorted = sortResumesNewestFirst(filtered);
+      // 岗位/专业/年龄/性别筛选已由服务端 SQL 完成（支持跨页 + 分页统计）
+      const sorted = sortResumesNewestFirst(items);
       setData(sorted);
       const nextStats = getResumeListStats(res, items);
       const lastPage = Math.max(1, Math.ceil(nextStats.total / requestedPageSize));
@@ -347,7 +338,7 @@ const ResumesList: React.FC = () => {
         const requestVersion = resumeRefreshVersion.current.capture();
         try {
           const res = await request.get('/resumes', {
-            params: { page: cardPageRef.current, page_size: cardPageSizeRef.current },
+            params: buildListParams(cardPageRef.current, cardPageSizeRef.current),
           });
           if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return;
           const pollItems = Array.isArray(res) ? res : (res.items || []);
@@ -382,7 +373,7 @@ const ResumesList: React.FC = () => {
         pollingRef.current = null;
       }
     };
-  }, [pollingEnabled]);
+  }, [pollingEnabled, searchStatus, searchPosition, searchMajor, minimumAge, maximumAge, genderFilters]);
 
   const fetchPositions = async () => {
     try {
@@ -459,8 +450,8 @@ const ResumesList: React.FC = () => {
 
   const handleReset = () => {
     setSearchStatus(undefined);
-    setSearchStatus(undefined);
     setSearchPosition(undefined);
+    setSearchMajor(undefined);
     setMinimumAge(null);
     setMaximumAge(null);
     setGenderFilters([]);

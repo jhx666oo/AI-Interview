@@ -5101,6 +5101,16 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     const statusFilter = c.req.query('status');
     const screeningResultFilter = c.req.query('screening_result');
     const fileSha256Filter = c.req.query('file_sha256');
+    const positionFilter = c.req.query('position');
+    const majorFilter = c.req.query('major');
+    const minAgeRaw = parseInt(c.req.query('min_age') || '', 10);
+    const maxAgeRaw = parseInt(c.req.query('max_age') || '', 10);
+    const minAge = Number.isFinite(minAgeRaw) ? minAgeRaw : null;
+    const maxAge = Number.isFinite(maxAgeRaw) ? maxAgeRaw : null;
+    const genders = (c.req.query('genders') || '')
+      .split(',')
+      .map((s: string) => s.trim())
+      .filter(Boolean);
     let filtered = items;
     if (statusFilter) {
       if (statusFilter === 'pending_screening') {
@@ -5111,6 +5121,25 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     }
     if (screeningResultFilter) filtered = filtered.filter(i => i.screening_result === screeningResultFilter);
     if (fileSha256Filter) filtered = filtered.filter(i => i.file_sha256 === fileSha256Filter);
+    if (positionFilter) filtered = filtered.filter(i => i.mapped_position === positionFilter);
+    if (majorFilter) filtered = filtered.filter(i => (i.major || '').includes(majorFilter));
+    if (minAge !== null || maxAge !== null) {
+      filtered = filtered.filter((i: any) => {
+        const age = typeof i.age === 'number' && Number.isFinite(i.age)
+          ? i.age
+          : (i.age != null && i.age !== '' ? Number(String(i.age).match(/\d+(?:\.\d+)?/)?.[0]) : null);
+        if (age === null || !Number.isFinite(age)) return false;
+        if (minAge !== null && age < minAge) return false;
+        if (maxAge !== null && age > maxAge) return false;
+        return true;
+      });
+    }
+    if (genders.length > 0) {
+      filtered = filtered.filter((i: any) => {
+        const gender = i.gender === '男' || i.gender === '女' ? i.gender : '未识别';
+        return genders.includes(gender);
+      });
+    }
 
     // 权限隔离：HR 自动只看自己负责的岗位
     let ownerFilter = c.req.query('responsible_person') || getOwnerName(c);

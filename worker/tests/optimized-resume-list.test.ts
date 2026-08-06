@@ -75,4 +75,33 @@ describe('optimized resume list response', () => {
     expect(item.screening_reason).toBe('五项能力加权分未达到 4 分');
     expect(item.screening_result).toBe('不通过');
   });
+
+  it('passes position / major / age / gender filters into SQL and keeps pagination stats', async () => {
+    const context = makeContext();
+    const captured: { sql: string; params: unknown[] }[] = [];
+    context.env.DB.prepare = (sql: string) => ({
+      bind: (...params: unknown[]) => {
+        captured.push({ sql, params });
+        return {
+          first: async () => sql.includes('COUNT(*)') ? { total: 3, pending_screening: 0, approved: 2, rejected: 1 } : null,
+          all: async () => ({ results: [] }),
+        };
+      },
+    });
+    const queries = (key: string) => ({ position: '软件工程师', major: '计算机', min_age: '25', max_age: '35', genders: '男,未识别' } as Record<string, string>)[key];
+    context.req = { query: (name: string) => name === 'page' ? '1' : name === 'page_size' ? '20' : queries(name) };
+
+    const response = await handleOptimizedResumeList(context);
+    const payload = await response.json() as any;
+    expect(payload.total).toBe(3);
+    expect(payload.stats).toMatchObject({ total: 3, approved: 2, rejected: 1 });
+
+    const dataSql = captured.find(c => c.sql.includes('ORDER BY r.updated_at DESC'));
+    expect(dataSql!.sql).toContain('r.mapped_position = ?');
+    expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.major') LIKE ?");
+    expect(dataSql!.sql).toContain('julianday(r.birthday)');
+    expect(dataSql!.sql).toContain("COALESCE(NULLIF(r.gender, '')");
+    expect(dataSql!.params.slice(0, 4)).toEqual(['软件工程师', '%计算机%', 25, 35]);
+    expect(dataSql!.params.slice(4, 5)).toEqual(['男']);
+  });
 });

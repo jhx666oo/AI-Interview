@@ -25,6 +25,16 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   const nameFilter = c.req.query('candidate_name');
   const statusFilter = c.req.query('status');
   const screeningResultFilter = c.req.query('screening_result');
+  const positionFilter = c.req.query('position');
+  const majorFilter = c.req.query('major');
+  const minAgeRaw = parseInt(c.req.query('min_age') || '', 10);
+  const maxAgeRaw = parseInt(c.req.query('max_age') || '', 10);
+  const minAge = Number.isFinite(minAgeRaw) ? minAgeRaw : null;
+  const maxAge = Number.isFinite(maxAgeRaw) ? maxAgeRaw : null;
+  const genders = (c.req.query('genders') || '')
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
 
   let whereClause = 'WHERE 1=1';
   const params: any[] = [];
@@ -45,6 +55,45 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   if (screeningResultFilter) {
     whereClause += ' AND r.screening_result = ?';
     params.push(screeningResultFilter);
+  }
+  if (positionFilter) {
+    whereClause += ' AND r.mapped_position = ?';
+    params.push(positionFilter);
+  }
+  if (majorFilter) {
+    whereClause += " AND json_extract(r.parsed_data, '$.major') LIKE ?";
+    params.push(`%${majorFilter}%`);
+  }
+  // 年龄优先取 parsed_data.age（与前端展示一致），缺失时按 birthday 推算
+  const ageExpr = `CASE
+    WHEN json_valid(r.parsed_data)
+      AND json_extract(r.parsed_data, '$.age') IS NOT NULL
+      AND CAST(json_extract(r.parsed_data, '$.age') AS INTEGER) > 0
+      THEN CAST(json_extract(r.parsed_data, '$.age') AS INTEGER)
+    WHEN r.birthday IS NOT NULL AND r.birthday != ''
+      THEN CAST((julianday('now') - julianday(r.birthday)) / 365.25 AS INTEGER)
+  END`;
+  if (minAge !== null) {
+    whereClause += ` AND ${ageExpr} >= ?`;
+    params.push(minAge);
+  }
+  if (maxAge !== null) {
+    whereClause += ` AND ${ageExpr} <= ?`;
+    params.push(maxAge);
+  }
+  if (genders.length > 0) {
+    // 与前端展示一致：性别取 gender 列，缺失时回退 parsed_data.gender，均非男/女视为「未识别」
+    const genderExpr = `COALESCE(NULLIF(r.gender, ''), json_extract(r.parsed_data, '$.gender'), '')`;
+    const parts: string[] = [];
+    for (const g of genders) {
+      if (g === '未识别') {
+        parts.push(`${genderExpr} NOT IN ('男', '女')`);
+      } else {
+        parts.push(`${genderExpr} = ?`);
+        params.push(g);
+      }
+    }
+    whereClause += ` AND (${parts.join(' OR ')})`;
   }
 
   const ownerFilter = c.req.query('responsible_person') || getOwnerName(c);
