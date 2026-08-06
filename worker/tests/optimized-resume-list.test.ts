@@ -101,6 +101,7 @@ describe('optimized resume list response', () => {
     expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.major') LIKE ?");
     expect(dataSql!.sql).toContain("strftime('%Y%m', 'now')");
     expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.birthday')");
+    expect(dataSql!.sql).toContain("LIKE '%岁%'");
     expect(dataSql!.sql).toContain("COALESCE(NULLIF(r.gender, '')");
     expect(dataSql!.params.slice(0, 4)).toEqual(['软件工程师', '%计算机%', 25, 35]);
     expect(dataSql!.params.slice(4, 5)).toEqual(['男']);

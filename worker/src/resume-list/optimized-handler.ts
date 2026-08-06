@@ -74,10 +74,16 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
       THEN CAST(json_extract(r.parsed_data, '$.age') AS INTEGER)
     WHEN json_valid(r.parsed_data)
       AND json_extract(r.parsed_data, '$.birthday') IS NOT NULL
+      AND json_extract(r.parsed_data, '$.birthday') LIKE '%岁%'
+      THEN CAST(json_extract(r.parsed_data, '$.birthday') AS INTEGER)
+    WHEN json_valid(r.parsed_data)
+      AND json_extract(r.parsed_data, '$.birthday') IS NOT NULL
       AND json_extract(r.parsed_data, '$.birthday') != ''
       THEN CAST((CAST(strftime('%Y%m', 'now') AS INTEGER)
         - CAST(substr(REPLACE(REPLACE(json_extract(r.parsed_data, '$.birthday'), '.', '-'), '/', '-'), 1, 4) AS INTEGER) * 100
         - CAST(substr(REPLACE(REPLACE(json_extract(r.parsed_data, '$.birthday'), '.', '-'), '/', '-'), 6, 2) AS INTEGER)) / 100.0 AS INTEGER)
+    WHEN r.birthday IS NOT NULL AND r.birthday LIKE '%岁%'
+      THEN CAST(r.birthday AS INTEGER)
     WHEN r.birthday IS NOT NULL AND r.birthday != ''
       THEN CAST((CAST(strftime('%Y%m', 'now') AS INTEGER)
         - CAST(substr(REPLACE(REPLACE(r.birthday, '.', '-'), '/', '-'), 1, 4) AS INTEGER) * 100
