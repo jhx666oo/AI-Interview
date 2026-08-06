@@ -24,6 +24,7 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   const pageSize = Math.min(200, Math.max(1, parseInt(c.req.query('page_size') || '20', 10) || 20));
   const nameFilter = c.req.query('candidate_name');
   const statusFilter = c.req.query('status');
+  const screeningResultFilter = c.req.query('screening_result');
 
   let whereClause = 'WHERE 1=1';
   const params: any[] = [];
@@ -35,6 +36,10 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   if (statusFilter) {
     whereClause += ' AND r.status = ?';
     params.push(statusFilter);
+  }
+  if (screeningResultFilter) {
+    whereClause += ' AND r.screening_result = ?';
+    params.push(screeningResultFilter);
   }
 
   const ownerFilter = c.req.query('responsible_person') || getOwnerName(c);
