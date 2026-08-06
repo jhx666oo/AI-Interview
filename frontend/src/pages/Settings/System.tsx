@@ -37,10 +37,9 @@ const promptNames: Record<string, string> = {
   analyze_resume: '简历分析',
   parse_resume_pdf: 'PDF简历解析',
   generate_resume_markdown: '简历 Markdown 生成',
-  generate_interview_questions: '面试题目生成',
-  generate_interview_evaluation: '面试评价生成',
-  generate_interview_evaluation_from_transcript: '转写评价生成',
-  generate_coding_test_evaluation: '笔试代码评价',
+  resume_extract_fields: '简历字段提取',
+  resume_screening: '简历初筛',
+  resume_screening_supplement: '简历初筛补充评分',
 };
 
 const SystemSettingsPage: React.FC = () => {
