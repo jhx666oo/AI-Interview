@@ -64,14 +64,24 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     whereClause += " AND json_extract(r.parsed_data, '$.major') LIKE ?";
     params.push(`%${majorFilter}%`);
   }
-  // 年龄优先取 parsed_data.age（与前端展示一致），缺失时按 birthday 推算
+  // 年龄优先取 parsed_data.age（与前端展示一致），缺失时按生日推算。
+  // 生日字段格式多样（1998-12 / 2004.7 / 1996.05.20 / 2004-07-15），
+  // SQLite 的 julianday 无法解析这些格式，故统一转成 YYYYMM 整数再比较。
   const ageExpr = `CASE
     WHEN json_valid(r.parsed_data)
       AND json_extract(r.parsed_data, '$.age') IS NOT NULL
       AND CAST(json_extract(r.parsed_data, '$.age') AS INTEGER) > 0
       THEN CAST(json_extract(r.parsed_data, '$.age') AS INTEGER)
+    WHEN json_valid(r.parsed_data)
+      AND json_extract(r.parsed_data, '$.birthday') IS NOT NULL
+      AND json_extract(r.parsed_data, '$.birthday') != ''
+      THEN CAST((CAST(strftime('%Y%m', 'now') AS INTEGER)
+        - CAST(substr(REPLACE(REPLACE(json_extract(r.parsed_data, '$.birthday'), '.', '-'), '/', '-'), 1, 4) AS INTEGER) * 100
+        - CAST(substr(REPLACE(REPLACE(json_extract(r.parsed_data, '$.birthday'), '.', '-'), '/', '-'), 6, 2) AS INTEGER)) / 100.0 AS INTEGER)
     WHEN r.birthday IS NOT NULL AND r.birthday != ''
-      THEN CAST((julianday('now') - julianday(r.birthday)) / 365.25 AS INTEGER)
+      THEN CAST((CAST(strftime('%Y%m', 'now') AS INTEGER)
+        - CAST(substr(REPLACE(REPLACE(r.birthday, '.', '-'), '/', '-'), 1, 4) AS INTEGER) * 100
+        - CAST(substr(REPLACE(REPLACE(r.birthday, '.', '-'), '/', '-'), 6, 2) AS INTEGER)) / 100.0 AS INTEGER)
   END`;
   if (minAge !== null) {
     whereClause += ` AND ${ageExpr} >= ?`;

@@ -99,7 +99,8 @@ describe('optimized resume list response', () => {
     const dataSql = captured.find(c => c.sql.includes('ORDER BY r.updated_at DESC'));
     expect(dataSql!.sql).toContain('r.mapped_position = ?');
     expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.major') LIKE ?");
-    expect(dataSql!.sql).toContain('julianday(r.birthday)');
+    expect(dataSql!.sql).toContain("strftime('%Y%m', 'now')");
+    expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.birthday')");
     expect(dataSql!.sql).toContain("COALESCE(NULLIF(r.gender, '')");
     expect(dataSql!.params.slice(0, 4)).toEqual(['软件工程师', '%计算机%', 25, 35]);
     expect(dataSql!.params.slice(4, 5)).toEqual(['男']);
