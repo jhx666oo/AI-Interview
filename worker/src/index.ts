@@ -7121,6 +7121,22 @@ app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
       { name: 'candidate_name', description: '候选人姓名（从文件名提取）' },
       { name: 'resume_text', description: '简历PDF的base64文本内容' },
     ],
+    resume_extract_fields: [
+      { name: 'resume_text', description: '简历原始文本' },
+    ],
+    resume_screening: [
+      { name: 'position', description: '应聘岗位' },
+      { name: 'resume_text', description: '简历原始文本' },
+      { name: 'fields', description: '已提取的简历字段（JSON格式）' },
+    ],
+    resume_screening_supplement: [
+      { name: 'resume_text', description: '简历原始文本' },
+      { name: 'fields', description: '已提取的简历字段（JSON格式）' },
+      { name: 'position', description: '应聘岗位' },
+      { name: 'capability_dimensions', description: '能力维度清单（含描述）' },
+      { name: 'job_description', description: '岗位职责与要求' },
+      { name: 'personalized_requirements', description: '个性化需求' },
+    ],
   };
   const all_variables: Record<string, string> = {};
   for (const [, vars] of Object.entries(variables_by_prompt)) {
@@ -7208,6 +7224,18 @@ app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
     generate_coding_test_evaluation: {
       system: '你是一位资深的技术面试官和代码评审专家。请根据候选人的笔试代码，给出专业的代码评价。',
       user: '请评价以下代码：\n\n{resume_text}\n\n请从代码质量、算法思路、时间复杂度、改进建议等方面评价。'
+    },
+    resume_extract_fields: {
+      system: '你是简历字段提取助手，只返回 JSON。',
+      user: '从以下简历提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。找不到填 null；skills、certifications、work_experience、education 使用数组。\n\n{resume_text}'
+    },
+    resume_screening: {
+      system: '你是资深招聘评估AI，只返回JSON。初筛必须且只能返回以下七个能力维度，每项 score 为 0-5 整数并提供中文依据：任职要求、企业背景、关键词匹配、加分项、核心画像、核心职责、避坑雷区。其中「关键词匹配」与「避坑雷区」是硬门槛，只有各自为 5 分才通过；其余五项用于计算加权分。match_score 不具权威性，仅可作为非决策参考；最终结果由服务端按七维评分计算。',
+      user: '岗位：{position}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}'
+    },
+    resume_screening_supplement: {
+      system: '你是专业人才能力量化评估专家，只返回JSON。初筛必须且只能返回以下七个能力维度，每项 score 为 0-5 整数并提供中文依据：任职要求、企业背景、关键词匹配、加分项、核心画像、核心职责、避坑雷区。其中「关键词匹配」与「避坑雷区」是硬门槛，只有各自为 5 分才通过；其余五项用于计算加权分。match_score 不具权威性，仅可作为非决策参考；最终结果由服务端按七维评分计算。',
+      user: '# 人才能力评估AI打分提示词\n\n## 角色定位\n你是一名专业的人才能力量化评估专家，具备严谨客观的评分准则与标准化输出能力。你的核心任务是**100%基于PDF解析后的原文内容**，对照指定的能力维度清单逐项打分，评分需紧密结合岗位职责要求与招聘方个性化需求，最终输出**可直接用于前端页面渲染的标准化结构化数据**，禁止输出任何无依据的主观推断与补充信息。\n\n## 核心评分规则\n### 基础准则\n- **原文唯一依据原则**：仅以简历文本中明确表述的经历、成果、技能、资质为评分依据；原文未提及的维度，统一标记为「信息不足」，不得随意赋分或主观推断。\n- **岗位对标原则**：每项能力的评分高低，需结合岗位职责对该能力的要求层级与应用场景判断。\n- **需求加权原则**：个性化需求中明确强调的核心维度，需严格提高评估标准，并在评分说明中重点标注匹配程度。\n- **统一分制规则**：全程采用1-5分整数评分制\n  - 5分：远超岗位要求，具备深度经验与可验证的突出成果\n  - 4分：完全满足岗位要求，具备明确的相关实践经验\n  - 3分：基本符合岗位要求，有一定基础但经验深度不足\n  - 2分：仅部分匹配要求，相关经验薄弱\n  - 1分：完全不符合岗位要求\n  - N/A：原文无对应信息，无法评估\n\n## 输入材料\n### 简历原文\n{resume_text}\n\n### 已提取字段\n{fields}\n\n### 能力维度清单（需逐项评估）\n{capability_dimensions}\n\n### 岗位职责与要求\n{job_description}\n\n### 个性化需求\n{personalized_requirements}'
     },
   };
 
