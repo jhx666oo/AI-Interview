@@ -7043,7 +7043,13 @@ app.post('/api/workflows/:id/execute', authMiddleware, async (c) => {
 app.get('/api/settings/system', authMiddleware, requireRole(['admin']), async (c) => {
   const row = await c.env.DB.prepare('SELECT * FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
   if (!row) return c.json({});
-  return c.json(transformRow(row));
+  const result = transformRow(row);
+  // 安全处理：不返回完整 API Key，仅返回是否已设置及末4位
+  const rawKey = String(row.llm_api_key || '').trim();
+  result.llm_api_key_set = rawKey.length > 0;
+  result.llm_api_key_last4 = rawKey.length >= 4 ? rawKey.slice(-4) : null;
+  delete result.llm_api_key;
+  return c.json(result);
 });
 
 app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c) => {
