@@ -1383,11 +1383,12 @@ const handleUploadClick = () => {
                     {record.position_applied && (
                       <Tag style={{ margin: 0 }}>{record.standard_position || record.position_applied}</Tag>
                     )}
-                    {statusTag(record.status)}
-                    {record.screening_label && (
+                    {record.screening_label ? (
                       <Tag color={record.screening_label === '通过' ? 'green' : 'red'} style={{ margin: 0 }}>
                         AI{record.screening_label}
                       </Tag>
+                    ) : (
+                      statusTag(record.status)
                     )}
                     {hasGateResults && gateRows.map((gate) => (
                       <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
