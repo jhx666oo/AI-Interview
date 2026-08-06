@@ -7128,14 +7128,15 @@ app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
       { name: 'position', description: '应聘岗位' },
       { name: 'resume_text', description: '简历原始文本' },
       { name: 'fields', description: '已提取的简历字段（JSON格式）' },
+      { name: 'capability_dimensions', description: '能力维度清单（含描述）' },
     ],
     resume_screening_supplement: [
       { name: 'resume_text', description: '简历原始文本' },
       { name: 'fields', description: '已提取的简历字段（JSON格式）' },
-      { name: 'position', description: '应聘岗位' },
       { name: 'capability_dimensions', description: '能力维度清单（含描述）' },
       { name: 'job_description', description: '岗位职责与要求' },
       { name: 'personalized_requirements', description: '个性化需求' },
+      { name: 'missing_dimensions', description: '缺失待补充的能力维度名称' },
     ],
   };
   const all_variables: Record<string, string> = {};
