@@ -7116,6 +7116,10 @@ app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
       { name: 'candidate_name', description: '候选人姓名（从文件名提取）' },
       { name: 'resume_text', description: '简历PDF的base64文本内容' },
     ],
+    generate_daily_report: [
+      { name: 'report_date', description: '日报日期' },
+      { name: 'stats_data', description: '统计数据（JSON格式）' },
+    ],
     resume_extract_fields: [
       { name: 'resume_text', description: '简历原始文本' },
     ],
@@ -7201,6 +7205,10 @@ app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
     generate_resume_markdown: {
       system: '你是一位专业的简历格式化专家。请将简历信息整理为清晰美观的Markdown格式。',
       user: '请将以下候选人信息整理为Markdown格式的简历：\n\n姓名：{candidate_name}\n{resume_text}'
+    },
+    generate_daily_report: {
+      system: '你是招聘数据分析专家。根据招聘统计数据生成一份简洁的日报摘要（中文），包含：整体进展概述、关键指标分析、风险提示、明日建议。控制在300字以内。',
+      user: '日期：{report_date}\n统计数据：{stats_data}'
     },
     generate_interview_questions: {
       system: '你是一位资深的面试官和技术专家。请根据岗位要求和候选人背景，生成专业、有针对性的面试题目。',
@@ -8261,10 +8269,14 @@ app.post('/api/daily-reports/generate', authMiddleware, async (c) => {
   // Generate AI summary
   let aiSummary = '';
   try {
-    aiSummary = await callAI(c.env,
-      '你是招聘数据分析专家。根据招聘统计数据生成一份简洁的日报摘要（中文），包含：整体进展概述、关键指标分析、风险提示、明日建议。控制在300字以内。',
-      `日期：${reportDate}\n统计数据：${JSON.stringify(stats, null, 2)}`
-    );
+    const dailyPrompt = await getAIPrompt(c.env, 'generate_daily_report', {
+      system: '你是招聘数据分析专家。根据招聘统计数据生成一份简洁的日报摘要（中文），包含：整体进展概述、关键指标分析、风险提示、明日建议。控制在300字以内。',
+      user: '日期：{report_date}\n统计数据：{stats_data}'
+    });
+    const dailyUserText = dailyPrompt.user
+      .replace('{report_date}', reportDate)
+      .replace('{stats_data}', JSON.stringify(stats, null, 2));
+    aiSummary = await callAI(c.env, dailyPrompt.system, dailyUserText);
   } catch (e: any) {
     console.error('[daily-report] AI summary failed:', e?.message);
     aiSummary = '(AI摘要生成失败)';

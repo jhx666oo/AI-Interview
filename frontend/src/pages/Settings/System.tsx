@@ -36,6 +36,7 @@ const promptNames: Record<string, string> = {
   generate_jd: 'JD 生成',
   parse_resume_pdf: 'PDF简历解析',
   generate_resume_markdown: '简历 Markdown 生成',
+  generate_daily_report: '招聘日报生成',
   resume_extract_fields: '简历字段提取',
   resume_screening: '简历初筛',
   resume_screening_supplement: '简历初筛补充评分',
