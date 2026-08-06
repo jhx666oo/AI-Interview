@@ -6,7 +6,7 @@ import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { mergeConfiguredDimensionScores, missingDimensionNames, normalizeDimensionScores } from './resume-processing/dimension-scores';
-import { callAI, enrichScreeningEvaluation, extractJSON, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './index';
+import { callAI, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './index';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
 import { EventRepository } from './recruitment-events/repository';
 import { ResumeSearchDocumentGenerator } from './resume-search/document-generator';
@@ -194,18 +194,27 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       return resolved.text.slice(0, 80000);
     },
     extractFields: async (text) => {
-      const response = await callAI(env as any, '你是简历字段提取助手，只返回 JSON。', `从以下简历提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。找不到填 null；skills、certifications、work_experience、education 使用数组。\n${text}`, 'deepseek-v4-flash');
+      const extractPrompt = await getAIPrompt(env as any, 'resume_extract_fields', {
+        system: '你是简历字段提取助手，只返回 JSON。',
+        user: '从以下简历提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。找不到填 null；skills、certifications、work_experience、education 使用数组。\n\n{resume_text}'
+      });
+      const userText = extractPrompt.user.replace('{resume_text}', text);
+      const response = await callAI(env as any, extractPrompt.system, userText, 'deepseek-v4-flash');
       return normalizeResumeFields(extractJSON(response));
     },
     screen: async (text, fields, resume) => {
       const position = String(resume.position_applied || resume.mapped_position || '');
       const context = await getPositionContext(env.DB, position);
       // 第一步：基础筛选（match_score + recommendation + summary + strengths + risks）
-      const screeningResponse = await callAI(env as any,
-        `你是资深招聘评估AI，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
-        `岗位：${context.standardPosition || position}\n简历：${text}\n字段：${JSON.stringify(fields)}\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}`,
-        'deepseek-v4-flash'
-      );
+      const screenPrompt = await getAIPrompt(env as any, 'resume_screening', {
+        system: `你是资深招聘评估AI，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
+        user: '岗位：{position}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}'
+      });
+      const screenUserText = screenPrompt.user
+        .replace('{position}', context.standardPosition || position)
+        .replace('{resume_text}', text)
+        .replace('{fields}', JSON.stringify(fields));
+      const screeningResponse = await callAI(env as any, screenPrompt.system, screenUserText, 'deepseek-v4-flash');
       const parsed = extractJSON(screeningResponse);
       const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? parsed as Record<string, unknown>
@@ -284,10 +293,21 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             '### 岗位职责与要求\n' + dutyText + '\n\n' +
             '### 个性化需求\n' + (personalizedReqs || '无');
 
+          const supplementPrompt = await getAIPrompt(env as any, 'resume_screening_supplement', {
+            system: `你是专业人才能力量化评估专家，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
+            user: dimensionPrompt
+          });
+          // 替换自定义提示词中的变量标签
+          let supUserText = supplementPrompt.user;
+          if (supUserText.includes('{resume_text}')) supUserText = supUserText.replace('{resume_text}', text);
+          if (supUserText.includes('{fields}')) supUserText = supUserText.replace('{fields}', JSON.stringify(fields, null, 2));
+          if (supUserText.includes('{capability_dimensions}')) supUserText = supUserText.replace('{capability_dimensions}', dimsText);
+          if (supUserText.includes('{job_description}')) supUserText = supUserText.replace('{job_description}', dutyText);
+          if (supUserText.includes('{personalized_requirements}')) supUserText = supUserText.replace('{personalized_requirements}', personalizedReqs || '无');
           const dimResponse = await callAI(
             env as any,
-            `你是专业人才能力量化评估专家，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
-            dimensionPrompt,
+            supplementPrompt.system,
+            supUserText,
             'deepseek-v4-flash',
           );
           const dimParsed = extractJSON(dimResponse);
@@ -304,10 +324,17 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       const missingDimensions = missingDimensionNames([...WEIGHTED_SCREENING_DIMENSION_NAMES], evaluation);
       if (missingDimensions.length > 0) {
         try {
+          const supplementPrompt = await getAIPrompt(env as any, 'resume_screening_supplement', {
+            system: `你是招聘评估专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
+            user: '候选人简历原文：\n{resume_text}\n\n请只返回 {"dimensions":[{"name":"维度名","score":1-5,"reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：{missing_dimensions}。'
+          });
+          const supUserText = supplementPrompt.user
+            .replace('{resume_text}', text)
+            .replace('{missing_dimensions}', missingDimensions.join('、'));
           const supplemental = await callAI(
             env as any,
-            `你是招聘评估专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
-            '候选人简历原文：\n' + text + '\n\n请只返回 {"dimensions":[{"name":"维度名","score":1-5,"reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：' + missingDimensions.join('、') + '。',
+            supplementPrompt.system,
+            supUserText,
             'deepseek-v4-flash',
           );
           const scores = normalizeDimensionScores(extractJSON(supplemental));
@@ -422,18 +449,27 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       return resolved.text;
     },
     extractFields: async (text, resume) => {
-      const response = await callAI(env as any, '你是一个简历解析专家。请从简历文本中提取结构化字段，只返回 JSON。', buildR2ExtractionPrompt(text), 'deepseek-v4-flash');
+      const r2ExtractPrompt = await getAIPrompt(env as any, 'resume_extract_fields', {
+        system: '你是一个简历解析专家。请从简历文本中提取结构化字段，只返回 JSON。',
+        user: '从以下简历文本中提取字段：姓名、最高学历、学校、专业、工作年限、性别、年龄、技能列表、期望职位、期望薪资、工作经历摘要、证书。只返回 JSON 对象，不要包含其他文字。\n\n{resume_text}'
+      });
+      const r2ExtractUser = r2ExtractPrompt.user.replace('{resume_text}', text);
+      const response = await callAI(env as any, r2ExtractPrompt.system, r2ExtractUser, 'deepseek-v4-flash');
       return normalizeResumeFields(extractJSON(response));
     },
     screen: async (text, fields, resume) => {
       const position = String(resume.position_applied || resume.mapped_position || '');
       const context = await getPositionContext(env.DB, position);
-      const response = await callAI(env as any, `你是资深招聘评估 AI，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`, buildR2ScreeningPrompt({
-        position: context.standardPosition || position,
-        capabilityDimensions: context.capabilityDimensions,
-        fields,
-        text,
-      }), 'deepseek-v4-flash');
+      const r2ScreenPrompt = await getAIPrompt(env as any, 'resume_screening', {
+        system: `你是资深招聘评估 AI，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
+        user: '岗位：{position}\n能力维度：{capability_dimensions}\n字段：{fields}\n简历：{resume_text}'
+      });
+      const r2ScreenUser = r2ScreenPrompt.user
+        .replace('{position}', context.standardPosition || position)
+        .replace('{capability_dimensions}', context.capabilityDimensions)
+        .replace('{fields}', JSON.stringify(fields))
+        .replace('{resume_text}', text);
+      const response = await callAI(env as any, r2ScreenPrompt.system, r2ScreenUser, 'deepseek-v4-flash');
       const parsed = extractJSON(response);
       const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? parsed as Record<string, unknown>
@@ -446,10 +482,17 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       const missingDimensions = missingDimensionNames([...WEIGHTED_SCREENING_DIMENSION_NAMES], evaluation);
       if (missingDimensions.length > 0) {
         try {
+          const r2SupplementPrompt = await getAIPrompt(env as any, 'resume_screening_supplement', {
+            system: `你是招聘评估专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
+            user: '候选人简历：\n{resume_text}\n\n请只返回 {"dimensions":[{"name":"维度名","score":0-5,"reason":"一句中文依据"}]}。必须且只能逐项评分以下维度：{missing_dimensions}。'
+          });
+          const r2SupUser = r2SupplementPrompt.user
+            .replace('{resume_text}', text)
+            .replace('{missing_dimensions}', missingDimensions.join('、'));
           const supplemental = await callAI(
             env as any,
-            `你是招聘评估专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
-            buildR2SupplementalPrompt(text, missingDimensions),
+            r2SupplementPrompt.system,
+            r2SupUser,
             'deepseek-v4-flash',
           );
           const scores = normalizeDimensionScores(extractJSON(supplemental));

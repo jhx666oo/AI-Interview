@@ -272,7 +272,7 @@ async function verifyPassword(secretKey: string, password: string, hash: string)
 // ==================== AI Helper ====================
 
 // 从 system_configs 读取自定义 prompt，没有则返回 null
-async function getCustomPrompt(env: Env, key: string): Promise<{ system: string; user: string } | null> {
+export async function getCustomPrompt(env: Env, key: string): Promise<{ system: string; user: string } | null> {
   try {
     const row = await env.DB.prepare(
       'SELECT prompt_configs FROM system_configs ORDER BY updated_at DESC LIMIT 1'
@@ -287,7 +287,7 @@ async function getCustomPrompt(env: Env, key: string): Promise<{ system: string;
 }
 
 // 获取 AI prompt：优先读取用户自定义模板，否则返回默认值
-async function getAIPrompt(env: Env, key: string, defaultPrompt: { system: string; user: string }): Promise<{ system: string; user: string }> {
+export async function getAIPrompt(env: Env, key: string, defaultPrompt: { system: string; user: string }): Promise<{ system: string; user: string }> {
   const custom = await getCustomPrompt(env, key);
   if (custom?.system && custom?.user) return { system: custom.system, user: custom.user };
   return defaultPrompt;
