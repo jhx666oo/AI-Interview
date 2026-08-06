@@ -433,6 +433,7 @@ const ResumesList: React.FC = () => {
 
   useEffect(() => {
     fetchPositions();
+    fetchResumes(false, 1, cardPageSizeRef.current);
     const loadDeferredConfig = () => {
       fetchQuestionBanks();
       fetchInterviewers();
