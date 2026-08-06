@@ -8,7 +8,7 @@ import SimplePagination from '../../components/SimplePagination';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatWeightedScore, getDimensionScoreTotal, getScreeningGateRows, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
-import { filterResumesByDemographics, filterResumesByMinimumDimensionScore } from '../../utils/resumeFilters';
+import { filterResumesByDemographics } from '../../utils/resumeFilters';
 import { sortResumesNewestFirst } from '../../utils/resumeSort';
 import { getCurrentPageSelectionState, toggleCurrentPageSelection } from '../../utils/resumeSelection';
 import { createRefreshVersion } from '../../utils/resumeRefresh';
@@ -118,10 +118,10 @@ const ResumesList: React.FC = () => {
   const navigate = useNavigate();
 
   const [searchStatus, setSearchStatus] = useState<string | undefined>(undefined);
-  const [searchScreeningResult, setSearchScreeningResult] = useState<string | undefined>(undefined);
+
   const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
   const [searchMajor, setSearchMajor] = useState<string | undefined>(undefined);
-  const [minimumAiTotalScore, setMinimumAiTotalScore] = useState<number | null>(null);
+
   const [minimumAge, setMinimumAge] = useState<number | null>(null);
   const [maximumAge, setMaximumAge] = useState<number | null>(null);
   const [genderFilters, setGenderFilters] = useState<string[]>([]);
@@ -284,8 +284,15 @@ const ResumesList: React.FC = () => {
     if (!silent) setLoading(true);
     try {
       const params: any = { page: requestedPage, page_size: requestedPageSize };
-      if (searchStatus) params.status = searchStatus;
-      if (searchScreeningResult) params.screening_result = searchScreeningResult;
+      if (searchStatus) {
+        if (searchStatus === 'screening_passed') {
+          params.screening_result = '通过';
+        } else if (searchStatus === 'screening_failed') {
+          params.screening_result = '不通过';
+        } else {
+          params.status = searchStatus;
+        }
+      }
 
       // 不再区分 role，统一显示全部
 
@@ -302,7 +309,7 @@ const ResumesList: React.FC = () => {
       if (searchMajor) {
         filtered = filtered.filter((r: any) => (r.major || '').includes(searchMajor));
       }
-      filtered = filterResumesByMinimumDimensionScore(filtered, minimumAiTotalScore);
+
       filtered = filterResumesByDemographics(filtered, {
         minAge: minimumAge,
         maxAge: maximumAge,
@@ -384,8 +391,6 @@ const ResumesList: React.FC = () => {
       const list = Array.isArray(res) ? res : (res?.positions || []);
       if (list && list.length > 0) {
         setPositions(list.map((r: any) => ({ id: r.id, title: r.title })));
-        const names: string[] = list.map((r: any) => r.responsible_person).filter(Boolean) as string[];
-        setResponsiblePersons([...new Set(names)].sort());
         return;
       }
       // 回退：从岗位映射表获取
@@ -453,9 +458,8 @@ const ResumesList: React.FC = () => {
 
   const handleReset = () => {
     setSearchStatus(undefined);
-    setSearchScreeningResult(undefined);
+    setSearchStatus(undefined);
     setSearchPosition(undefined);
-    setMinimumAiTotalScore(null);
     setMinimumAge(null);
     setMaximumAge(null);
     setGenderFilters([]);
@@ -1187,37 +1191,19 @@ const handleUploadClick = () => {
         <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px', overflow: 'visible' } }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
             <Space size={4}>
-              <Text style={{ fontSize: 13, color: '#333' }}>状态：</Text>
+              <Text style={{ fontSize: 13, color: '#333' }}>筛选：</Text>
               <Select
                 placeholder="全部"
                 value={searchStatus}
                 onChange={val => setSearchStatus(val)}
-                style={{ width: 120 }}
+                style={{ width: 140 }}
                 allowClear
               >
                 <Select.Option value="pending_screening">待初筛</Select.Option>
                 <Select.Option value="approved">已入库</Select.Option>
                 <Select.Option value="rejected">已淘汰</Select.Option>
-              </Select>
-            </Space>
-            <Space size={4}>
-              <Text style={{ fontSize: 13, color: '#333' }}>AI 结果：</Text>
-              <Select
-                placeholder="全部"
-                value={searchScreeningResult}
-                onChange={val => {
-                  setSearchScreeningResult(val);
-                  cardPageRef.current = 1;
-                  setCardPage(1);
-                  dataCache.current = [];
-                  loadedRef.current = false;
-                  fetchResumes(false, 1, cardPageSizeRef.current);
-                }}
-                style={{ width: 120 }}
-                allowClear
-              >
-                <Select.Option value="通过">通过</Select.Option>
-                <Select.Option value="不通过">不通过</Select.Option>
+                <Select.Option value="screening_passed">AI 通过</Select.Option>
+                <Select.Option value="screening_failed">AI 不通过</Select.Option>
               </Select>
             </Space>
             <Space size={4}>
@@ -1252,10 +1238,7 @@ const handleUploadClick = () => {
                 ))}
               </Select>
             </Space>
-            <Space size={4}>
-              <Text style={{ fontSize: 13, color: '#333' }}>AI 总分 ≥</Text>
-              <InputNumber min={0} value={minimumAiTotalScore} onChange={value => setMinimumAiTotalScore(value == null ? null : Number(value))} placeholder="不限" style={{ width: 88 }} />
-            </Space>
+
             <Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>年龄：</Text>
               <InputNumber min={0} max={100} value={minimumAge} onChange={value => setMinimumAge(value == null ? null : Number(value))} placeholder="最小" style={{ width: 70 }} />
