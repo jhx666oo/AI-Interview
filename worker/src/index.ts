@@ -1966,12 +1966,13 @@ app.get('/api/settings/evaluation-dimensions', authMiddleware, async (c) => {
     if (row?.value) return c.json(JSON.parse(row.value));
   } catch (e) { /* ignore */ }
   return c.json([
-    { key: 'skill_match', label: '技能匹配度', weight: 30 },
-    { key: 'experience', label: '项目经验', weight: 25 },
-    { key: 'education', label: '教育背景', weight: 10 },
-    { key: 'communication', label: '沟通表达', weight: 15 },
-    { key: 'stability', label: '职业稳定性', weight: 10 },
-    { key: 'potential', label: '发展潜力', weight: 10 },
+    { key: '核心画像', label: '核心画像', weight: 25 },
+    { key: '核心职责', label: '核心职责', weight: 22 },
+    { key: '任职要求', label: '任职要求', weight: 22 },
+    { key: '企业背景', label: '企业背景', weight: 13 },
+    { key: '加分项', label: '加分项', weight: 10 },
+    { key: '关键词匹配', label: '关键词匹配', weight: 0, isGate: true },
+    { key: '避坑雷区', label: '避坑雷区', weight: 0, isGate: true },
   ]);
 });
 
