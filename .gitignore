@@ -126,3 +126,4 @@ xiaoqi/
 
 # Local Git worktrees
 .worktrees/
+worker/src/index.ts.bak*
