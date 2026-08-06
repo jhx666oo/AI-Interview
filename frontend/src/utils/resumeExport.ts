@@ -18,9 +18,10 @@ export function buildResumeExportRows(resumes: any[]): Array<Record<string, unkn
     const screeningResult = resume.screening_result === '通过'
       ? '通过'
       : resume.screening_result ? '不通过' : '待初筛';
+    // HR 复合结果：入库(approved)为通过、淘汰(rejected)为不通过、未点击为 0
     let hrResult = '0';
-    if (resume.hr_review === '通过') hrResult = '通过';
-    else if (resume.hr_review === '未通过' || resume.status === 'rejected') hrResult = '不通过';
+    if (resume.status === 'approved' || resume.hr_review === '通过') hrResult = '通过';
+    else if (resume.status === 'rejected' || resume.hr_review === '未通过') hrResult = '不通过';
     return {
       '姓名': parsed.name || resume.candidate_name || '',
       '性别': parsed.gender || '',
