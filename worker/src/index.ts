@@ -7307,6 +7307,198 @@ app.post('/api/settings/mail/test', authMiddleware, async (c) => {
   return c.json({ detail: 'Mail sending not available in serverless mode' });
 });
 
+// ==================== 邮箱简历同步（妙搭 OpenAPI 代理） ====================
+// 妙搭邮箱管理助手 Base URL 和 API Key
+const MIAODA_BASE = 'https://miaoda.feishu.cn/app/app_17bcx89zuke/openapi/mail-sync';
+const MIAODA_API_KEY = 'Bj91t_iGuaj8m43T27yraWKK7HzKKvULEwJMpLi4ejQ';
+
+async function callMiaoda(c: any, path: string, options?: { method?: string; body?: any }): Promise<Response> {
+  const url = `${MIAODA_BASE}${path}`;
+  const headers: Record<string, string> = {
+    'x-api-key': MIAODA_API_KEY,
+  };
+  if (options?.body) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return fetch(url, {
+    method: options?.method || 'GET',
+    headers,
+    body: options?.body ? JSON.stringify(options.body) : undefined,
+  });
+}
+
+// 获取所有邮箱配置
+app.get('/api/settings/mail/sync', authMiddleware, async (c) => {
+  try {
+    const res = await callMiaoda(c, '/configs');
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '获取邮箱配置失败: ' + e.message }, 500);
+  }
+});
+
+// 创建邮箱配置
+app.post('/api/settings/mail/sync', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json();
+    const res = await callMiaoda(c, '/configs', { method: 'POST', body });
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '创建邮箱配置失败: ' + e.message }, 500);
+  }
+});
+
+// 更新邮箱配置
+app.put('/api/settings/mail/sync/:id', authMiddleware, async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const res = await callMiaoda(c, '/configs/' + id, { method: 'PUT', body });
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '更新邮箱配置失败: ' + e.message }, 500);
+  }
+});
+
+// 删除邮箱配置
+app.delete('/api/settings/mail/sync/:id', authMiddleware, async (c) => {
+  try {
+    const id = c.req.param('id');
+    const res = await callMiaoda(c, '/configs/' + id, { method: 'DELETE' });
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '删除邮箱配置失败: ' + e.message }, 500);
+  }
+});
+
+// 测试连接
+app.post('/api/mail/sync/test', authMiddleware, async (c) => {
+  try {
+    const { configId } = await c.req.json();
+    const res = await callMiaoda(c, '/test-connection', { method: 'POST', body: { configId } });
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '测试连接失败: ' + e.message }, 500);
+  }
+});
+
+// 启用/停用邮箱配置
+app.post('/api/mail/sync/toggle', authMiddleware, async (c) => {
+  try {
+    const { configId, enabled } = await c.req.json();
+    const res = await callMiaoda(c, '/toggle', { method: 'POST', body: { configId, enabled } });
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '操作失败: ' + e.message }, 500);
+  }
+});
+
+// 触发扫描（支持单个 configId 或批量 configIds）
+app.post('/api/mail/sync/trigger', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json();
+    const configIds: string[] = body.configIds || (body.configId ? [body.configId] : []);
+    if (configIds.length === 0) {
+      return c.json({ detail: '请指定 configId 或 configIds' }, 400);
+    }
+    const results = [];
+    for (const configId of configIds) {
+      const res = await callMiaoda(c, '/trigger', { method: 'POST', body: { configId } });
+      const data = await res.json();
+      results.push({ configId, ...data });
+    }
+    return c.json({ results });
+  } catch (e: any) {
+    return c.json({ detail: '触发扫描失败: ' + e.message }, 500);
+  }
+});
+
+// 查询扫描进度
+app.get('/api/mail/sync/status/:configId', authMiddleware, async (c) => {
+  try {
+    const configId = c.req.param('configId');
+    const res = await callMiaoda(c, '/scan-status/' + configId);
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '查询扫描状态失败: ' + e.message }, 500);
+  }
+});
+
+// 取消扫描
+app.post('/api/mail/sync/cancel', authMiddleware, async (c) => {
+  try {
+    const { configId } = await c.req.json();
+    const res = await callMiaoda(c, '/scan-status/' + configId + '/cancel', { method: 'POST' });
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '取消扫描失败: ' + e.message }, 500);
+  }
+});
+
+// 获取同步日志
+app.get('/api/mail/sync/logs', authMiddleware, async (c) => {
+  try {
+    const configId = c.req.query('configId') || '';
+    const page = c.req.query('page') || '1';
+    const pageSize = c.req.query('pageSize') || '20';
+    const status = c.req.query('status') || '';
+    let path = '/logs?page=' + page + '&pageSize=' + pageSize;
+    if (configId) path += '&configId=' + encodeURIComponent(configId);
+    if (status) path += '&status=' + encodeURIComponent(status);
+    const res = await callMiaoda(c, path);
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '获取同步日志失败: ' + e.message }, 500);
+  }
+});
+
+// 获取同步统计
+app.get('/api/mail/sync/logs/stats', authMiddleware, async (c) => {
+  try {
+    const configId = c.req.query('configId') || '';
+    let path = '/logs/stats';
+    if (configId) path += '?configId=' + encodeURIComponent(configId);
+    const res = await callMiaoda(c, path);
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '获取同步统计失败: ' + e.message }, 500);
+  }
+});
+
+// 重试失败记录
+app.post('/api/mail/sync/retry-failed', authMiddleware, async (c) => {
+  try {
+    const { configId } = await c.req.json();
+    const res = await callMiaoda(c, '/retry-failed', { method: 'POST', body: { configId } });
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '重试失败: ' + e.message }, 500);
+  }
+});
+
+// 重试单条失败记录
+app.post('/api/mail/sync/retry-single', authMiddleware, async (c) => {
+  try {
+    const { logId } = await c.req.json();
+    const res = await callMiaoda(c, '/retry-single', { method: 'POST', body: { logId } });
+    const data = await res.json();
+    return c.json(data);
+  } catch (e: any) {
+    return c.json({ detail: '重试失败: ' + e.message }, 500);
+  }
+});
+
 // ==================== 面试官映射管理 ====================
 
 app.get('/api/settings/interviewers', authMiddleware, async (c) => {
