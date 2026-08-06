@@ -5971,18 +5971,8 @@ app.post('/api/resumes/batch-reprocess', authMiddleware, handleBatchResumeReproc
 // 批量清除已淘汰（HR复核结果='未通过'）
 app.post('/api/resumes/clear-rejected', authMiddleware, async (c) => {
   try {
-    const tableId = getBitableTableId(c.env, 'talent');
-    const records = await bitableListRecords(c.env, tableId);
-    const rejected = records.filter((r: any) => {
-      const hrResult = r.fields?.['HR复核结果'];
-      return hrResult === '未通过';
-    });
-    let deleted = 0;
-    for (const r of rejected) {
-      await bitableDeleteRecord(c.env, tableId, r.record_id);
-      deleted++;
-    }
-    return c.json({ deleted });
+    const result = await c.env.DB.prepare("DELETE FROM resumes WHERE status = 'rejected'").run();
+    return c.json({ deleted: (result as any)?.meta?.changes || 0 });
   } catch (e: any) {
     return c.json({ detail: '清除失败: ' + e.message }, 500);
   }
@@ -6521,25 +6511,15 @@ app.post('/api/resumes/batch-approve-to-talent-pool', authMiddleware, requireRol
 
 app.post('/api/resumes/:id/reject-from-screening', authMiddleware, async (c) => {
   const id = c.req.param('id');
-  const talentTableId = getBitableTableId(c.env, 'talent');
-  let record = await bitableGetRecord(c.env, talentTableId, id);
-  if (!record) return c.json({ detail: 'Candidate not found in Bitable' }, 404);
-
-  await bitableUpdateRecord(c.env, talentTableId, id, { 'HR复核结果': '未通过' });
-  record = await bitableGetRecord(c.env, talentTableId, id);
-  return c.json(parseTalentRecord(record));
+  await c.env.DB.prepare("UPDATE resumes SET status = 'rejected', stage = 'rejected', updated_at = ? WHERE id = ?").bind(now(), id).run();
+  return c.json({ status: 'rejected' });
 });
 
 // 重置简历到待初筛状态（清除 HR复核结果）
 app.post('/api/resumes/:id/reset-to-pending', authMiddleware, async (c) => {
   const id = c.req.param('id');
-  const talentTableId = getBitableTableId(c.env, 'talent');
-  let record = await bitableGetRecord(c.env, talentTableId, id);
-  if (!record) return c.json({ detail: 'Candidate not found in Bitable' }, 404);
-
-  await bitableUpdateRecord(c.env, talentTableId, id, { 'HR复核结果': '' });
-  record = await bitableGetRecord(c.env, talentTableId, id);
-  return c.json(parseTalentRecord(record));
+  await c.env.DB.prepare("UPDATE resumes SET status = 'pending_screening', stage = 'new', screening_result = '', updated_at = ? WHERE id = ?").bind(now(), id).run();
+  return c.json({ status: 'pending_screening' });
 });
 
 
