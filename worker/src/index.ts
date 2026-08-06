@@ -7320,18 +7320,22 @@ async function callMiaoda(c: any, path: string, options?: { method?: string; bod
   if (options?.body) {
     headers['Content-Type'] = 'application/json';
   }
-  return fetch(url, {
+  const response = await fetch(url, {
     method: options?.method || 'GET',
     headers,
     body: options?.body ? JSON.stringify(options.body) : undefined,
   });
+  console.log('[Miaoda]', options?.method || 'GET', path, '->', response.status);
+  return response;
 }
 
 // 获取所有邮箱配置
 app.get('/api/settings/mail/sync', authMiddleware, async (c) => {
   try {
     const res = await callMiaoda(c, '/configs');
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }
     return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '获取邮箱配置失败: ' + e.message }, 500);
@@ -7343,7 +7347,14 @@ app.post('/api/settings/mail/sync', authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
     const res = await callMiaoda(c, '/configs', { method: 'POST', body });
-    const data = await res.json();
+    const text = await res.text();
+    // 尝试解析 JSON，失败则返回原始文本
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502);
+    }
     return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '创建邮箱配置失败: ' + e.message }, 500);
@@ -7356,7 +7367,9 @@ app.put('/api/settings/mail/sync/:id', authMiddleware, async (c) => {
     const id = c.req.param('id');
     const body = await c.req.json();
     const res = await callMiaoda(c, '/configs/' + id, { method: 'PUT', body });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }
     return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '更新邮箱配置失败: ' + e.message }, 500);
@@ -7368,7 +7381,9 @@ app.delete('/api/settings/mail/sync/:id', authMiddleware, async (c) => {
   try {
     const id = c.req.param('id');
     const res = await callMiaoda(c, '/configs/' + id, { method: 'DELETE' });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }
     return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '删除邮箱配置失败: ' + e.message }, 500);
@@ -7380,7 +7395,9 @@ app.post('/api/mail/sync/test', authMiddleware, async (c) => {
   try {
     const { configId } = await c.req.json();
     const res = await callMiaoda(c, '/test-connection', { method: 'POST', body: { configId } });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }
     return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '测试连接失败: ' + e.message }, 500);
@@ -7392,7 +7409,9 @@ app.post('/api/mail/sync/toggle', authMiddleware, async (c) => {
   try {
     const { configId, enabled } = await c.req.json();
     const res = await callMiaoda(c, '/toggle', { method: 'POST', body: { configId, enabled } });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }
     return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '操作失败: ' + e.message }, 500);
@@ -7410,7 +7429,9 @@ app.post('/api/mail/sync/trigger', authMiddleware, async (c) => {
     const results = [];
     for (const configId of configIds) {
       const res = await callMiaoda(c, '/trigger', { method: 'POST', body: { configId } });
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 200) }; }
       results.push({ configId, ...data });
     }
     return c.json({ results });
@@ -7424,8 +7445,9 @@ app.get('/api/mail/sync/status/:configId', authMiddleware, async (c) => {
   try {
     const configId = c.req.param('configId');
     const res = await callMiaoda(c, '/scan-status/' + configId);
-    const data = await res.json();
-    return c.json(data);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }  return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '查询扫描状态失败: ' + e.message }, 500);
   }
@@ -7436,8 +7458,9 @@ app.post('/api/mail/sync/cancel', authMiddleware, async (c) => {
   try {
     const { configId } = await c.req.json();
     const res = await callMiaoda(c, '/scan-status/' + configId + '/cancel', { method: 'POST' });
-    const data = await res.json();
-    return c.json(data);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }  return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '取消扫描失败: ' + e.message }, 500);
   }
@@ -7454,8 +7477,9 @@ app.get('/api/mail/sync/logs', authMiddleware, async (c) => {
     if (configId) path += '&configId=' + encodeURIComponent(configId);
     if (status) path += '&status=' + encodeURIComponent(status);
     const res = await callMiaoda(c, path);
-    const data = await res.json();
-    return c.json(data);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }  return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '获取同步日志失败: ' + e.message }, 500);
   }
@@ -7468,8 +7492,9 @@ app.get('/api/mail/sync/logs/stats', authMiddleware, async (c) => {
     let path = '/logs/stats';
     if (configId) path += '?configId=' + encodeURIComponent(configId);
     const res = await callMiaoda(c, path);
-    const data = await res.json();
-    return c.json(data);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }  return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '获取同步统计失败: ' + e.message }, 500);
   }
@@ -7480,8 +7505,9 @@ app.post('/api/mail/sync/retry-failed', authMiddleware, async (c) => {
   try {
     const { configId } = await c.req.json();
     const res = await callMiaoda(c, '/retry-failed', { method: 'POST', body: { configId } });
-    const data = await res.json();
-    return c.json(data);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }  return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '重试失败: ' + e.message }, 500);
   }
@@ -7492,8 +7518,9 @@ app.post('/api/mail/sync/retry-single', authMiddleware, async (c) => {
   try {
     const { logId } = await c.req.json();
     const res = await callMiaoda(c, '/retry-single', { method: 'POST', body: { logId } });
-    const data = await res.json();
-    return c.json(data);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { return c.json({ detail: '妙搭返回非JSON: ' + text.slice(0, 200) }, 502); }  return c.json(data);
   } catch (e: any) {
     return c.json({ detail: '重试失败: ' + e.message }, 500);
   }
