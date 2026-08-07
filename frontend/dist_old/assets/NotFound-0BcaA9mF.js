@@ -1,0 +1,1 @@
+import{j as t}from"./index-Cd4n-Sku.js";import{u as r}from"./react-core-CxUcn2b-.js";import{aI as s,B as a}from"./antd-BMZt5IyQ.js";import"./xlsx-CNerDvZX.js";import"./charts-BIVmjQUu.js";const p=()=>{const o=r();return t.jsx(s,{status:"404",title:"404",subTitle:"页面不存在",extra:t.jsx(a,{type:"primary",onClick:()=>o("/"),children:"返回首页"})})};export{p as default};

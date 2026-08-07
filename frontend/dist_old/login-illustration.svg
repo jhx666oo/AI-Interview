@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 960" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="50%" stop-color="#1E3A5F"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="card1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#fff" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0.06"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="720" height="960" fill="url(#bg)"/>
+
+  <!-- 点阵背景 -->
+  <g opacity="0.04">
+    <pattern id="dots" x="0" y="0" width="30" height="30" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="white"/>
+    </pattern>
+    <rect width="720" height="960" fill="url(#dots)"/>
+  </g>
+
+  <!-- 抽象人物 - 左侧 -->
+  <g opacity="0.08">
+    <circle cx="180" cy="320" r="90" fill="white"/>
+    <rect x="120" y="420" width="120" height="160" rx="60" fill="white"/>
+  </g>
+
+  <!-- 大圆形卡 -->
+  <rect x="340" y="180" width="340" height="220" rx="24" fill="url(#card1)" stroke="white" stroke-opacity="0.08"/>
+  <circle cx="420" cy="260" r="32" fill="white" opacity="0.1"/>
+  <rect x="470" y="240" width="140" height="12" rx="6" fill="white" opacity="0.12"/>
+  <rect x="470" y="262" width="100" height="8" rx="4" fill="white" opacity="0.08"/>
+
+  <!-- 柱状图装饰 -->
+  <g opacity="0.1">
+    <rect x="400" y="310" width="24" height="60" rx="4" fill="white"/>
+    <rect x="434" y="280" width="24" height="90" rx="4" fill="white"/>
+    <rect x="468" y="300" width="24" height="70" rx="4" fill="white"/>
+    <rect x="502" y="340" width="24" height="30" rx="4" fill="white"/>
+    <rect x="536" y="320" width="24" height="50" rx="4" fill="white"/>
+  </g>
+
+  <!-- 文档卡片 -->
+  <rect x="80" y="560" width="280" height="200" rx="20" fill="url(#card1)" stroke="white" stroke-opacity="0.08"/>
+  <rect x="110" y="590" width="160" height="10" rx="5" fill="white" opacity="0.12"/>
+  <rect x="110" y="614" width="120" height="8" rx="4" fill="white" opacity="0.08"/>
+  <rect x="110" y="636" width="200" height="8" rx="4" fill="white" opacity="0.08"/>
+  <rect x="110" y="658" width="140" height="8" rx="4" fill="white" opacity="0.08"/>
+  <rect x="110" y="680" width="180" height="8" rx="4" fill="white" opacity="0.08"/>
+
+  <!-- 折线图 -->
+  <g opacity="0.1">
+    <polyline points="340,640 380,610 420,630 460,580 500,600 540,560 580,590 620,550" 
+      fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 检查图标 -->
+  <g opacity="0.15" transform="translate(500, 700)">
+    <circle cx="60" cy="60" r="48" fill="none" stroke="white" stroke-width="4"/>
+    <path d="M36 60 L52 76 L84 44" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 浮动圆点 -->
+  <circle cx="640" cy="120" r="14" fill="white" opacity="0.06"/>
+  <circle cx="80" cy="180" r="10" fill="white" opacity="0.05"/>
+  <circle cx="300" cy="800" r="18" fill="white" opacity="0.04"/>
+  <circle cx="620" cy="850" r="12" fill="white" opacity="0.06"/>
+</svg>

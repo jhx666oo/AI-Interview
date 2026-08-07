@@ -2175,7 +2175,7 @@ app.get('/api/dashboard/ai-insights', authMiddleware, async (c) => {
 - predictions: array of { metric, prediction } in Chinese`;
   const userPrompt = `Recruitment Data:\n${JSON.stringify(stats, null, 2)}\n\nDepartment Distribution:\n${JSON.stringify(departmentDist, null, 2)}\n\nResume Stage Distribution:\n${JSON.stringify(stageDist, null, 2)}\n\nPlease analyze and provide insights.`;
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     let insights: any;
     try { insights = extractJSON(result); } catch { insights = { summary: result, bottlenecks: [], recommendations: [], predictions: [] }; }
     return c.json(insights);
@@ -4600,7 +4600,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
             .replace('{resume_text}', resumeText)
             .replace('{fields}', '{}');
           const prompt = { system: screenPrompt.system, user: screenUserText };
-          const aiResp = await callAI(c.env, prompt.system, prompt.user, 'deepseek-v4-flash');
+          const aiResp = await callAI(c.env, prompt.system, prompt.user);
           if (aiResp) {
             let parsed: any;
             try { parsed = extractJSON(aiResp); } catch { parsed = { summary: aiResp }; }
@@ -4946,7 +4946,7 @@ app.post('/api/resumes/:id/ocr-parse', authMiddleware, async (c) => {
 }`;
       userPrompt = `以下是一份简历的文本内容，请从中提取所有字段信息：\n\n${markdown}`;
     }
-    const aiResp = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const aiResp = await callAI(c.env, systemPrompt, userPrompt);
     if (aiResp) {
       const parsed: any = JSON.parse(extractJSON(aiResp) || '{}');
       parsedName = parsed.name || parsedName;
@@ -5429,7 +5429,7 @@ app.post('/api/resumes/batch-ocr-mineru', authMiddleware, async (c) => {
             systemPrompt = `你是一个专业的简历解析助手。请从以下 OCR 文本中提取所有字段，用 JSON 返回：{name, gender, age, highest_degree, school, major, years_of_experience, recent_company, current_position, phone, email, skills:[], work_experience:[{company,title,start,end}], education:[{school,degree,major,start,end}], certifications:[], self_evaluation, advantage, risk, evaluation}`;
             userPrompt = `简历文本：\n\n${markdown}`;
           }
-          const aiResp = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+          const aiResp = await callAI(c.env, systemPrompt, userPrompt);
           if (aiResp) {
             const parsed: any = JSON.parse(extractJSON(aiResp) || '{}');
             // 合并：保留飞书原有元数据 + OCR 解析字段
@@ -5513,7 +5513,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
           const parseSysPrompt = `你是一个简历解析助手。请从简历文本中提取以下字段，用 JSON 返回。重视教育背景部分。找不到的设为 null。
 
 {"highest_degree":"最高学历(本科/硕士/博士)","school":"毕业院校全称","major":"专业全称","years_of_experience":"工作年限数字","recent_company":"最近公司","current_position":"最近职位","phone":"手机号","email":"邮箱","skills":["技能1","技能2"],"self_evaluation":"自我评价"}`;
-          parseResp = await callAI(c.env, parseSysPrompt, resumeText, 'deepseek-chat');
+          parseResp = await callAI(c.env, parseSysPrompt, resumeText);
           if (parseResp) {
             const parsed: any = JSON.parse(extractJSON(parseResp) || '{}');
             enrichedParsedData = {
@@ -5578,7 +5578,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
           structuredBlock +
           `\nCandidate Resume (full text):\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
 
-        const result = await callAI(c.env, prompt.system, userPrompt, 'deepseek-v4-flash');
+        const result = await callAI(c.env, prompt.system, userPrompt);
         if (!result || result.length < 10) {
           results.push({ id: rid, candidate_name: name, status: 'no_response' });
           continue;
@@ -6214,7 +6214,7 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     return c.json({ detail: '找不到简历 PDF，无法提取文本重新解析。请重新上传 PDF 再试', need_manual: true }, 400);
   }
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     let parsed: any;
     try { parsed = extractJSON(result); } catch { parsed = { raw_response: result }; }
     // Flatten nested structure (some AI models wrap Basic Info / AI Screening as sub-objects)
@@ -6383,7 +6383,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
     structuredBlock +
     `\nCandidate Resume (full text):\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     let parsed: any;
     try { parsed = extractJSON(result); } catch { parsed = { raw_response: result, summary: result }; }
     const positionRequirements = await getPositionRequirements(c.env, posTitle);
@@ -6790,7 +6790,7 @@ app.post('/api/positions/:id/ai-match', authMiddleware, async (c) => {
   const candidateList = resumes.results.map((r: any) => ({ id: r.id, name: r.candidate_name, resume: (r.resume_markdown || r.raw_text || '').substring(0, 500) }));
   const userPrompt = `Position: ${JSON.stringify(posInfo)}\n\nCandidates:\n${JSON.stringify(candidateList, null, 2)}\n\nRank these candidates by suitability for the position. Return a JSON array.`;
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     let ranking: any[];
     try { ranking = extractJSON(result); if (!Array.isArray(ranking)) ranking = [ranking]; } catch { ranking = []; }
     return c.json({ position_id: id, rankings: ranking });
@@ -6818,7 +6818,7 @@ app.post('/api/positions/generate-jd-stream', authMiddleware, async (c) => {
   const systemPrompt = prompt.system;
   const userPrompt = `职位名称: ${title}\n部门: ${department || '未指定'}\n工作地点: ${location || '未指定'}\n薪资范围: ${salary_range || '面议'}\n\n请生成该职位的详细职责描述和任职要求。`;
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     return new Response(jdSSEBody(result), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
   } catch (err: any) {
     return new Response(`data: ${JSON.stringify({ error: err.message })}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
@@ -6839,7 +6839,7 @@ app.post('/api/positions/chat-jd-stream', authMiddleware, async (c) => {
   const systemPrompt = prompt.system;
   const userPrompt = `当前职位描述:\n${currentDesc}\n\n当前任职要求:\n${currentReq}\n\n用户修改意见:\n${userMsgs || '请优化完善'}\n\n请据此修改 JD 并返回完整 JSON。`;
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     return new Response(jdSSEBody(result), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } });
   } catch (err: any) {
     return new Response(`data: ${JSON.stringify({ error: err.message })}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
@@ -6877,7 +6877,7 @@ app.post('/api/interviews/:id/ai-analysis', authMiddleware, async (c) => {
   const userPrompt = `候选人: ${resume?.candidate_name || '未知'}\n应聘岗位: ${position?.title || '未知'}\n岗位要求: ${position?.requirements || '无'}\n平均得分: ${avg}/10\n\n面试题:\n${questionList || '无'}\n\n评分明细: ${scoreList || '无'}\n\n面试官评语:\n${commentList || '无'}\n\n候选人简历摘要:\n${(resume?.resume_markdown || resume?.raw_text || '').substring(0, 800)}\n\n请生成综合评估报告。`;
 
   try {
-    const evaluation = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const evaluation = await callAI(c.env, systemPrompt, userPrompt);
     let suggestion = '';
     const m = evaluation.match(/录用建议[：:]*\s*([^\n]+)/);
     if (m) suggestion = m[1].trim();
@@ -6901,7 +6901,7 @@ app.post('/api/talent-pool/:id/ai-recommend', authMiddleware, async (c) => {
   const candidateInfo = { name: talent.candidate_name, current_title: talent.current_title, skills: talent.skills, experience_years: talent.experience_years, education: talent.education, expected_salary: talent.expected_salary, tags: talent.tags };
   const userPrompt = `候选人信息:\n${JSON.stringify(candidateInfo, null, 2)}\n\n在招岗位列表:\n${JSON.stringify(positions.results.map((p: any) => ({ id: p.id, title: p.title, department: p.department, requirements: p.requirements, salary_range: p.salary_range })), null, 2)}\n\n请推荐最匹配的岗位(最多5个),按匹配度从高到低排序。`;
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     let recommendations: any[];
     try { recommendations = extractJSON(result); if (!Array.isArray(recommendations)) recommendations = [recommendations]; } catch { recommendations = []; }
     return c.json({ talent_id: id, recommendations });
@@ -6926,7 +6926,7 @@ app.post('/api/probation/:id/ai-assessment', authMiddleware, async (c) => {
   const systemPrompt = prompt.system;
   const userPrompt = `员工: ${record.employee_name}\n岗位: ${position?.title || '未知'}\n岗位要求: ${position?.requirements || '无'}\n试用期月数: ${record.probation_months || 3}\n\n月度评审记录:\n${reviews.length > 0 ? JSON.stringify(reviews, null, 2) : '暂无月度评审记录'}\n\n请生成试用期综合评估报告。`;
   try {
-    const assessment = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const assessment = await callAI(c.env, systemPrompt, userPrompt);
     await c.env.DB.prepare('UPDATE probation_records SET final_assessment = ?, updated_at = ? WHERE id = ?')
       .bind(assessment, now(), id).run();
     const row = await c.env.DB.prepare('SELECT * FROM probation_records WHERE id = ?').bind(id).first();
@@ -6948,7 +6948,7 @@ app.post('/api/requisitions/:id/ai-jd', authMiddleware, async (c) => {
   const systemPrompt = prompt.system;
   const userPrompt = `职位名称: ${req.title}\n部门: ${req.department}\n招聘人数: ${req.headcount || 1}\n用工类型: ${req.employment_type || 'full_time'}\n薪资范围: ${req.salary_range || '面议'}\n紧急程度: ${req.urgency || 'medium'}\n现有描述: ${req.description || '无'}\n现有要求: ${req.requirements || '无'}\n\n请生成或完善该职位的描述和任职要求。`;
   try {
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     if (!result || !result.trim()) {
       return c.json({ detail: 'AI 未返回有效内容，请检查「AI 模型配置」中的 API Key 是否有效（DeepSeek key 失效或额度不足会导致此问题）' }, 500);
     }
@@ -7990,7 +7990,7 @@ app.post('/api/jd-management/:id/evaluate', authMiddleware, async (c) => {
     });
     const systemPrompt = prompt.system;
     const userPrompt = `岗位：${pos.title}\n部门：${pos.department}\nJD：${pos.description}\n要求：${pos.requirements || ''}`;
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     return c.json(extractJSON(result));
   } catch (e: any) {
     return c.json({ detail: 'AI 评估失败: ' + e.message }, 500);
@@ -8238,7 +8238,7 @@ app.post('/api/resumes/:id/score-capabilities', authMiddleware, async (c) => {
     const dimNames = dims.map((d: any) => d.name || d.dimension_name).filter(Boolean);
     const systemPrompt = '你是 HR 评审专家。这个接口只生成能力证据，不作出初筛决策。对候选人逐项评分（0-5分，5分最高）。返回 JSON：{"scores":[{"dimension":"维度名","score":3,"reason":"评分理由"}]}。';
     const userPrompt = `能力维度：${dimNames.join('、')}\n简历：${resume.raw_text.slice(0, 3000)}`;
-    const result = await callAI(c.env, systemPrompt, userPrompt, 'deepseek-v4-flash');
+    const result = await callAI(c.env, systemPrompt, userPrompt);
     const parsed = extractJSON(result);
 
     const evidence = { ...parsed, screening_decision: null, decision_source: 'evidence_only' };
@@ -9972,9 +9972,7 @@ async function getResumeText(env: Env, candidateName: string): Promise<string> {
         try {
           const extraction = await callAI(env,
             'You are a PDF text extractor. Extract ALL readable text from this base64 PDF content. Return ONLY the extracted text, no explanations.',
-            'Extract resume text from this base64 PDF (' + (file.fileName || 'resume.pdf') + '):\n\n' + base64Content,
-            'deepseek-v4-flash'
-          );
+            'Extract resume text from this base64 PDF (' + (file.fileName || 'resume.pdf') + '):\n\n' + base64Content);
           if (extraction && extraction.length > 50) {
             try {
               await env.DB.prepare('UPDATE resumes SET raw_text = ? WHERE id = ?')
@@ -10739,9 +10737,7 @@ app.post('/api/resumes/fix-missing-fields', authMiddleware, requireRole(['admin'
         });
         const aiResult = await callAI(c.env,
           parsePrompt.system,
-          '评估文本：\n' + evalText.substring(0, 5000),
-          'deepseek-v4-flash'
-        );
+          '评估文本：\n' + evalText.substring(0, 5000));
 
         if (!aiResult) { skipped++; continue; }
 
@@ -10765,9 +10761,7 @@ app.post('/api/resumes/fix-missing-fields', authMiddleware, requireRole(['admin'
               });
               const pdfExtract = await callAI(c.env,
                 pdfParsePrompt.system,
-                '简历原文：\n' + resumeText.substring(0, 4000),
-                'deepseek-v4-flash'
-              );
+                '简历原文：\n' + resumeText.substring(0, 4000));
               if (pdfExtract) {
                 const pm = pdfExtract.match(/\{[\s\S]*\}/);
                 if (pm) try { const pp = JSON.parse(pm[0]); if (pp.major && pp.major !== '无') major = pp.major; } catch {}

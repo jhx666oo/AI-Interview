@@ -1,0 +1,21 @@
+# 静态资源长期缓存（带 hash 的 assets）
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 图片缓存 1 天
+/*.jpg
+  Cache-Control: public, max-age=86400
+/*.png
+  Cache-Control: public, max-age=86400
+/*.svg
+  Cache-Control: public, max-age=86400
+/*.webp
+  Cache-Control: public, max-age=86400
+
+# HTML 不缓存（确保用户拿到最新版本）
+/index.html
+  Cache-Control: no-cache
+
+# Worker 不缓存
+/_worker.js
+  Cache-Control: no-cache

@@ -196,7 +196,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         user: '从以下简历提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。找不到填 null；skills、certifications、work_experience、education 使用数组。\n\n{resume_text}'
       });
       const userText = extractPrompt.user.replace('{resume_text}', text);
-      const response = await callAI(env as any, extractPrompt.system, userText, 'deepseek-v4-flash');
+      const response = await callAI(env as any, extractPrompt.system, userText);
       return normalizeResumeFields(extractJSON(response));
     },
     screen: async (text, fields, resume) => {
@@ -211,7 +211,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{position}', context.standardPosition || position)
         .replace('{resume_text}', text)
         .replace('{fields}', JSON.stringify(fields));
-      const screeningResponse = await callAI(env as any, screenPrompt.system, screenUserText, 'deepseek-v4-flash');
+      const screeningResponse = await callAI(env as any, screenPrompt.system, screenUserText);
       const parsed = extractJSON(screeningResponse);
       const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? parsed as Record<string, unknown>
@@ -448,7 +448,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         user: '从以下简历文本中提取字段：姓名、最高学历、学校、专业、工作年限、性别、年龄、技能列表、期望职位、期望薪资、工作经历摘要、证书。只返回 JSON 对象，不要包含其他文字。\n\n{resume_text}'
       });
       const r2ExtractUser = r2ExtractPrompt.user.replace('{resume_text}', text);
-      const response = await callAI(env as any, r2ExtractPrompt.system, r2ExtractUser, 'deepseek-v4-flash');
+      const response = await callAI(env as any, r2ExtractPrompt.system, r2ExtractUser);
       return normalizeResumeFields(extractJSON(response));
     },
     screen: async (text, fields, resume) => {
@@ -463,7 +463,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{capability_dimensions}', context.capabilityDimensions)
         .replace('{fields}', JSON.stringify(fields))
         .replace('{resume_text}', text);
-      const response = await callAI(env as any, r2ScreenPrompt.system, r2ScreenUser, 'deepseek-v4-flash');
+      const response = await callAI(env as any, r2ScreenPrompt.system, r2ScreenUser);
       const parsed = extractJSON(response);
       const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? parsed as Record<string, unknown>
