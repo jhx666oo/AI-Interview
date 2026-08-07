@@ -7313,13 +7313,14 @@ app.post('/api/settings/mail/test', authMiddleware, async (c) => {
 
 // ==================== 邮箱简历同步（妙搭 OpenAPI 代理） ====================
 // 妙搭邮箱管理助手 Base URL 和 API Key
-const MIAODA_BASE = 'https://miaoda.feishu.cn/app/app_17bcx89zuke/openapi/mail-sync';
-const MIAODA_API_KEY = 'Bj91t_iGuaj8m43T27yraWKK7HzKKvULEwJMpLi4ejQ';
+const MIAODA_BASE = 'https://ywwlaii6ga7.feishuapp.com/app/app_17bcx89zuke/openapi/mail-sync';
+const MIAODA_API_KEY = 'AlomdyIwCuEpOwgaK1LKMphKdwaAWVdSML3NPqE-X2w';
 
 async function callMiaoda(c: any, path: string, options?: { method?: string; body?: any }): Promise<Response> {
   const url = `${MIAODA_BASE}${path}`;
   const headers: Record<string, string> = {
-    'x-api-key': MIAODA_API_KEY,
+    'Authorization': 'Bearer ' + MIAODA_API_KEY,
+    'Accept': 'application/json',
   };
   if (options?.body) {
     headers['Content-Type'] = 'application/json';
