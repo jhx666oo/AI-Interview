@@ -9,8 +9,7 @@ import { createMaintenanceRoutes } from './resume-maintenance/routes';
 import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
-import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES } from './resume-processing/weighted-screening';
-export { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES } from './resume-processing/weighted-screening';
+import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess } from './resume-processing/reprocess';
 import type { ResumeProcessingQueueMessage } from './resume-processing/types';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
@@ -642,7 +641,7 @@ export function enrichScreeningEvaluation(
   };
 }
 
-const WEIGHTED_SCREENING_PROMPT = `初筛必须且只能返回以下七个能力维度，每项 score 为 0-5 整数并提供中文依据：${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}。其中「关键词匹配」与「避坑雷区」是硬门槛，只有各自为 5 分才通过；其余五项用于计算加权分。match_score 不具权威性，仅可作为非决策参考；最终结果由服务端按七维评分计算。`;
+// WEIGHTED_SCREENING_PROMPT imported from ./resume-processing/weighted-screening
 
 // 构建 AI 初筛 prompt（移植自 zpzt 项目）
 function buildAIScreeningPrompt(resumeText: string, positionReq: any | null, extraContext?: { location?: string, salary?: string, metaInfo?: string }): { systemPrompt: string, userPrompt: string } {
