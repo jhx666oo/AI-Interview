@@ -7,7 +7,7 @@
     "R2_ARTIFACT_WRITE": "false",
     "R2_ARTIFACT_READ": "false",
     "DIRECT_R2_UPLOAD": "false",
-    "RESUME_SQL_LIST": "false",
+    "RESUME_SQL_LIST": "true",
     "RESUME_HYBRID_SEARCH": "false",
     "RECRUITMENT_EVENTS": "false",
     "RECRUITMENT_EVENT_METRICS": "false"
