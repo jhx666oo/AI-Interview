@@ -154,9 +154,6 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
   await processResume(message, {
     getResume: async (id) => await env.DB.prepare('SELECT * FROM resumes WHERE id=?').bind(id).first() as any,
     getText: async (resume) => {
-      if (message.reprocess && !((resume.ocr_markdown && String(resume.ocr_markdown).length >= 20) || (resume.raw_text && String(resume.raw_text).length >= 20))) {
-        throw new Error('RESUME_TEXT_UNAVAILABLE');
-      }
       const baseUrl = (env.MINERU_BASE || 'https://mineru.net').replace(/\/$/, '');
       const resolved = await resolveResumeText(resume as any, {
         getFile: (resumeId) => getResumeFileContent(env, resumeId),
@@ -389,9 +386,6 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
   await processResume(message, {
     getResume: async (id) => await env.DB.prepare('SELECT * FROM resumes WHERE id=?').bind(id).first() as any,
     getText: async (resume) => {
-      if (message.reprocess && !((resume.ocr_markdown && String(resume.ocr_markdown).length >= 20) || (resume.raw_text && String(resume.raw_text).length >= 20))) {
-        throw new Error('RESUME_TEXT_UNAVAILABLE');
-      }
       const baseUrl = (env.MINERU_BASE || 'https://mineru.net').replace(/\/$/, '');
       const artifactRepo = new ArtifactRepository(env.DB);
       const r2Store = new R2ArtifactStore((env as any).RESUME_ARTIFACTS);
