@@ -766,18 +766,19 @@ const ResumesList: React.FC = () => {
   };
 
   const handleApproveToTalentPool = async (record: any) => {
-    // 让已经发出的轮询请求失效，避免旧的 pending 状态覆盖入库结果。
+    // 乐观更新：立即更新本地卡片状态，不等后端返回
     resumeRefreshVersion.current.invalidate();
+    setData(prev => prev.map(r => r.id === record.id ? { ...r, status: 'approved', screening_result: '通过' } : r));
+    dataCache.current = [];
+    loadedRef.current = false;
     try {
       await request.post(`/resumes/${record.id}/approve-to-talent-pool`);
       message.success(`${record.candidate_name} 已入库`);
-      dataCache.current = [];
-      loadedRef.current = false;
-      await fetchResumes(true);
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '入库失败');
-      await fetchResumes(true);
     }
+    // 后台刷新，不阻塞 UI
+    fetchResumes(true);
   };
 
   // 从 PDF 文件提取纯文本（零 Token，带超时保护）
