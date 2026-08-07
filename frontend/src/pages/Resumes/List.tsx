@@ -5,7 +5,7 @@ import DOMPurify from 'dompurify';
 import request from '../../utils/request';
 import { downloadExcel } from '../../utils/exportExcel';
 import SimplePagination from '../../components/SimplePagination';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatWeightedScore, getDimensionScoreTotal, getScreeningGateRows, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 import { sortResumesNewestFirst } from '../../utils/resumeSort';
@@ -116,14 +116,31 @@ const ResumesList: React.FC = () => {
   
   const navigate = useNavigate();
 
-  const [searchStatus, setSearchStatus] = useState<string | undefined>(undefined);
-
-  const [searchPosition, setSearchPosition] = useState<string | undefined>(undefined);
-  const [searchMajor, setSearchMajor] = useState<string | undefined>(undefined);
-
-  const [minimumAge, setMinimumAge] = useState<number | null>(null);
-  const [maximumAge, setMaximumAge] = useState<number | null>(null);
-  const [genderFilters, setGenderFilters] = useState<string[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const searchStatus = searchParams.get('status') || undefined;
+  const setSearchStatus = (v: string | undefined) => {
+    setSearchParams(prev => { if (v) prev.set('status', v); else prev.delete('status'); return prev; }, { replace: true });
+  };
+  const searchPosition = searchParams.get('position') || undefined;
+  const setSearchPosition = (v: string | undefined) => {
+    setSearchParams(prev => { if (v) prev.set('position', v); else prev.delete('position'); return prev; }, { replace: true });
+  };
+  const searchMajor = searchParams.get('major') || undefined;
+  const setSearchMajor = (v: string | undefined) => {
+    setSearchParams(prev => { if (v) prev.set('major', v); else prev.delete('major'); return prev; }, { replace: true });
+  };
+  const minimumAge = searchParams.get('min_age') ? Number(searchParams.get('min_age')) : null;
+  const setMinimumAge = (v: number | null) => {
+    setSearchParams(prev => { if (v !== null) prev.set('min_age', String(v)); else prev.delete('min_age'); return prev; }, { replace: true });
+  };
+  const maximumAge = searchParams.get('max_age') ? Number(searchParams.get('max_age')) : null;
+  const setMaximumAge = (v: number | null) => {
+    setSearchParams(prev => { if (v !== null) prev.set('max_age', String(v)); else prev.delete('max_age'); return prev; }, { replace: true });
+  };
+  const genderFilters = searchParams.get('genders') ? searchParams.get('genders')!.split(',') : [];
+  const setGenderFilters = (v: string[]) => {
+    setSearchParams(prev => { if (v.length > 0) prev.set('genders', v.join(',')); else prev.delete('genders'); return prev; }, { replace: true });
+  };
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewRecord, setPreviewRecord] = useState<any>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('');
