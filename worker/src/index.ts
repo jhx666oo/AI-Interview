@@ -457,13 +457,18 @@ export async function callAI(env: Env, systemPrompt: string, userPrompt: string,
   if (!env.AI) throw new Error('AI 未配置：请在系统设置中填写 API Key，或在 wrangler.toml 中启用 [ai] 绑定以使用 Cloudflare Workers AI（免费）');
   const aiModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
   async function runModel(name: string): Promise<string> {
-    const result: any = await env.AI!.run(name, {
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      max_tokens: 4096,
-    });
+    const result: any = await Promise.race([
+      env.AI!.run(name, {
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: 4096,
+      }),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error('Workers AI 调用超时（30s）')), 30000)
+      ),
+    ]);
     // Handle various response formats from Workers AI
     if (typeof result === 'string') return result;
     if (result?.choices?.[0]?.message?.content) return result.choices[0].message.content;
@@ -8613,7 +8618,7 @@ app.post('/api/daily-reports/generate', authMiddleware, async (c) => {
       .replace('{stats_data}', JSON.stringify(stats, null, 2));
     aiSummary = await callAI(c.env, dailyPrompt.system, dailyUserText);
   } catch (e: any) {
-    console.error('[daily-report] AI summary failed:', e?.message);
+    console.error('[daily-report] AI summary failed:', e?.message, e?.stack);
     aiSummary = '(AI摘要生成失败)';
   }
 
