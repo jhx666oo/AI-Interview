@@ -332,12 +332,20 @@ const DailyReportsList: React.FC = () => {
                                   <>
                                     <Divider>统计数据</Divider>
                                     <Row gutter={16}>
-                                      {Object.entries(stats).map(([key, val]: [string, any]) => (
-                                        <Col key={key} span={6} style={{ marginBottom: 12 }}>
+                                      {[
+                                        { label: '开放职位', key: 'open_requisitions', color: '#eb2f96' },
+                                        { label: '简历总量', key: 'total_resumes', color: '#fa8c16' },
+                                        { label: '待初筛', key: 'pending_screening', color: '#1677ff' },
+                                        { label: '已通过', key: 'approved_candidates', color: '#52c41a' },
+                                        { label: '已淘汰', key: 'rejected_candidates', color: '#ff4d4f' },
+                                        { label: '面试中', key: 'active_interviews', color: '#722ed1' },
+                                        { label: '入职中', key: 'onboarding_count', color: '#13c2c2' },
+                                      ].map(item => (
+                                        <Col key={item.key} span={6} style={{ marginBottom: 12 }}>
                                           <Statistic
-                                            title={key.replace(/_/g, ' ')}
-                                            value={val}
-                                            valueStyle={{ fontSize: 16 }}
+                                            title={item.label}
+                                            value={stats[item.key] ?? '-'}
+                                            valueStyle={{ fontSize: 16, color: item.color }}
                                           />
                                         </Col>
                                       ))}
