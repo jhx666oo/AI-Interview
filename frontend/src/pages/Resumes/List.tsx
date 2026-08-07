@@ -1106,10 +1106,18 @@ const handleUploadClick = () => {
     [selectedRowKeys, currentPageIds],
   );
 
-  // 专业筛选选项：从全部加载数据中提取去重
-  const majorOptions = Array.from(new Set((dataCache.current || []).map((r: any) => (r.major || '').trim()).filter(Boolean)));
-  // 学历筛选选项：从全部加载数据中提取去重
-  const educationOptions = Array.from(new Set((dataCache.current || []).map((r: any) => (r.education || '').trim()).filter(Boolean)));
+  // 专业筛选选项：从全部加载数据中提取去重（兼容数组和字符串）
+  const majorOptions = Array.from(new Set((dataCache.current || []).map((r: any) => {
+    const v = r.major;
+    if (Array.isArray(v)) return v.filter(Boolean).join('、');
+    return (v || '').toString().trim();
+  }).filter(Boolean)));
+  // 学历筛选选项：从全部加载数据中提取去重（兼容数组和字符串）
+  const educationOptions = Array.from(new Set((dataCache.current || []).map((r: any) => {
+    const v = r.education;
+    if (Array.isArray(v)) return v.filter(Boolean).join('、');
+    return (v || '').toString().trim();
+  }).filter(Boolean)));
 
   return (
     <div style={{ maxWidth: '100%' }}>
