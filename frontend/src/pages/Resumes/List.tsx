@@ -5,7 +5,7 @@ import DOMPurify from 'dompurify';
 import request from '../../utils/request';
 import { downloadExcel } from '../../utils/exportExcel';
 import SimplePagination from '../../components/SimplePagination';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatWeightedScore, getDimensionScoreTotal, getScreeningGateRows, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 import { sortResumesNewestFirst } from '../../utils/resumeSort';
@@ -116,31 +116,34 @@ const ResumesList: React.FC = () => {
   
   const navigate = useNavigate();
 
-  const [searchParams, setSearchParams] = useSearchParams();
-  const searchStatus = searchParams.get('status') || undefined;
-  const setSearchStatus = (v: string | undefined) => {
-    setSearchParams(prev => { if (v) prev.set('status', v); else prev.delete('status'); return prev; }, { replace: true });
+  // 筛选条件持久化到 sessionStorage，从详情页返回后自动恢复
+  const FILTER_KEY = 'resume_list_filters';
+  const loadFilters = (): Record<string, string> => {
+    try { return JSON.parse(sessionStorage.getItem(FILTER_KEY) || '{}'); } catch { return {}; }
   };
-  const searchPosition = searchParams.get('position') || undefined;
-  const setSearchPosition = (v: string | undefined) => {
-    setSearchParams(prev => { if (v) prev.set('position', v); else prev.delete('position'); return prev; }, { replace: true });
+  const saveFilters = (f: Record<string, string>) => {
+    try { sessionStorage.setItem(FILTER_KEY, JSON.stringify(f)); } catch {}
   };
-  const searchMajor = searchParams.get('major') || undefined;
-  const setSearchMajor = (v: string | undefined) => {
-    setSearchParams(prev => { if (v) prev.set('major', v); else prev.delete('major'); return prev; }, { replace: true });
+  const [filters, setFiltersState] = useState<Record<string, string>>(loadFilters);
+  const setFilters = (f: Record<string, string>) => { setFiltersState(f); saveFilters(f); };
+  const filterVal = (key: string) => filters[key] || undefined;
+  const setFilter = (key: string, v: string | undefined) => {
+    const next = { ...filters };
+    if (v) next[key] = v; else delete next[key];
+    setFilters(next);
   };
-  const minimumAge = searchParams.get('min_age') ? Number(searchParams.get('min_age')) : null;
-  const setMinimumAge = (v: number | null) => {
-    setSearchParams(prev => { if (v !== null) prev.set('min_age', String(v)); else prev.delete('min_age'); return prev; }, { replace: true });
-  };
-  const maximumAge = searchParams.get('max_age') ? Number(searchParams.get('max_age')) : null;
-  const setMaximumAge = (v: number | null) => {
-    setSearchParams(prev => { if (v !== null) prev.set('max_age', String(v)); else prev.delete('max_age'); return prev; }, { replace: true });
-  };
-  const genderFilters = searchParams.get('genders') ? searchParams.get('genders')!.split(',') : [];
-  const setGenderFilters = (v: string[]) => {
-    setSearchParams(prev => { if (v.length > 0) prev.set('genders', v.join(',')); else prev.delete('genders'); return prev; }, { replace: true });
-  };
+  const searchStatus = filterVal('status');
+  const setSearchStatus = (v: string | undefined) => setFilter('status', v);
+  const searchPosition = filterVal('position');
+  const setSearchPosition = (v: string | undefined) => setFilter('position', v);
+  const searchMajor = filterVal('major');
+  const setSearchMajor = (v: string | undefined) => setFilter('major', v);
+  const minimumAge = filterVal('min_age') ? Number(filterVal('min_age')) : null;
+  const setMinimumAge = (v: number | null) => setFilter('min_age', v !== null ? String(v) : undefined);
+  const maximumAge = filterVal('max_age') ? Number(filterVal('max_age')) : null;
+  const setMaximumAge = (v: number | null) => setFilter('max_age', v !== null ? String(v) : undefined);
+  const genderFilters = filterVal('genders') ? filterVal('genders')!.split(',') : [];
+  const setGenderFilters = (v: string[]) => setFilter('genders', v.length > 0 ? v.join(',') : undefined);
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewRecord, setPreviewRecord] = useState<any>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('');
