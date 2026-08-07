@@ -876,6 +876,105 @@ function transformRow(row: Record<string, any>): Record<string, any> {
   return result;
 }
 
+
+
+// ==================== 日报详情：按负责人分组查询候选人 ====================
+/**
+ * 按负责人分组查询当日通过 AI 初筛的候选人明细
+ * 用于日报表格展示和飞书卡片发送
+ */
+async function queryDailyCandidatesByOwner(db: D1Database, reportDate?: string): Promise<{
+  groups: Array<{
+    responsible_person: string;
+    candidates: Array<{
+      name: string;
+      education: string;
+      age: number | null;
+      gender: string;
+      position: string;
+      city: string;
+      ai_summary: string;
+      recommendation: string;
+      resume_id: string;
+    }>;
+  }>;
+  stats: { total: number; by_person: Record<string, number> };
+}> {
+  const dateFilter = reportDate 
+    ? `AND datetime(r.created_at) >= datetime('${reportDate} 00:00:00') AND datetime(r.created_at) <= datetime('${reportDate} 23:59:59')`
+    : '';
+
+  // 查询通过 AI 初筛的简历，关联负责人
+  const sql = `
+    SELECT r.id, r.candidate_name, r.mapped_position, r.position_applied, r.screening_result,
+           r.ai_evaluation, r.parsed_data, r.gender, r.education, r.birthday, r.created_at,
+           COALESCE(pm.responsible_person, '') as responsible_person
+    FROM resumes r
+    LEFT JOIN position_mappings pm ON (r.mapped_position = pm.mapped_name OR r.position_applied = pm.raw_name)
+    WHERE r.screening_result = '通过' ${dateFilter}
+    ORDER BY r.created_at DESC
+  `;
+  const result = await db.prepare(sql).all();
+  const rows = result.results || [];
+
+  const groupMap = new Map<string, any[]>();
+  const personOrder = ['何雨菱', '杜雁玲', '魏秋柠'];
+
+  for (const row of rows) {
+    const r = row as any;
+    const person = r.responsible_person || '未分配';
+    if (!groupMap.has(person)) groupMap.set(person, []);
+
+    let parsed: any = {};
+    try { parsed = typeof r.parsed_data === 'string' ? JSON.parse(r.parsed_data) : (r.parsed_data || {}); } catch {}
+
+    let evaluation: any = {};
+    try { evaluation = typeof r.ai_evaluation === 'string' ? JSON.parse(r.ai_evaluation) : (r.ai_evaluation || {}); } catch {}
+
+    // 计算年龄
+    let age: number | null = null;
+    if (parsed.age) {
+      age = parseInt(parsed.age) || null;
+    } else if (r.birthday) {
+      try { const b = new Date(r.birthday); const diff = Date.now() - b.getTime(); age = Math.floor(diff / (365.25 * 24 * 3600 * 1000)); } catch {}
+    }
+
+    // 城市优先从 parsed_data.city 取，其次从 position_applied 取（部分简历岗位名存的是城市）
+    let city = parsed.city || '';
+    if (!city && r.position_applied && !r.mapped_position) city = r.position_applied;
+
+    groupMap.get(person)!.push({
+      name: r.candidate_name || '',
+      education: parsed.highest_degree || r.education || '',
+      age,
+      gender: parsed.gender || r.gender || '',
+      position: r.mapped_position || r.position_applied || '',
+      city,
+      ai_summary: evaluation.summary || '',
+      recommendation: evaluation.recommendation || '',
+      resume_id: r.id,
+    });
+  }
+
+  // 按指定顺序排序负责人
+  const groups = personOrder
+    .filter(p => groupMap.has(p))
+    .map(p => ({ responsible_person: p, candidates: groupMap.get(p)! }));
+
+  // 添加未分配的
+  if (groupMap.has('未分配')) {
+    groups.push({ responsible_person: '未分配', candidates: groupMap.get('未分配')! });
+  }
+
+  const total = rows.length;
+  const by_person: Record<string, number> = {};
+  for (const [person, candidates] of groupMap) {
+    by_person[person] = candidates.length;
+  }
+
+  return { groups, stats: { total, by_person } };
+}
+
 function prepareValue(v: any): any {
   if (v === null || v === undefined) return null;
   if (typeof v === 'boolean') return v ? 1 : 0;
@@ -2711,7 +2810,7 @@ export async function getPositionContext(db: any, positionName: string): Promise
     if (pos) {
       if (pos.capability_dimensions) {
         let dims = pos.capability_dimensions;
-        try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? (d.name || d.title || '') : String(d)).join('、'); } catch {}
+        try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? ((d.name || d.title || '') + '：' + (d.description || d.definition || '')) : String(d)).join('\n\n'); } catch {}
         result.capabilityDimensions = String(dims);
       }
       if (pos.salary_range) result.salaryRange = pos.salary_range;
@@ -2725,7 +2824,7 @@ export async function getPositionContext(db: any, positionName: string): Promise
     ).bind(lookupName).first() as any;
     if (dimRow?.dimensions_json) {
       let dims = dimRow.dimensions_json;
-      try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? (d.name || d.title || '') : String(d)).join('、'); } catch {}
+      try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? ((d.name || d.title || '') + '：' + (d.description || d.definition || '')) : String(d)).join('\n\n'); } catch {}
       if (dims && String(dims) !== '[]') result.capabilityDimensions = String(dims);
     }
     if (dimRow?.personalized_requirements && !result.personalizedRequirements) {
@@ -8544,6 +8643,31 @@ app.delete('/api/daily-reports/:id', authMiddleware, async (c) => {
   return c.json({ detail: 'Report deleted' });
 });
 
+// 日报详情：按负责人分组返回候选人明细
+app.get('/api/daily-reports/:id/details', authMiddleware, async (c) => {
+  try {
+    const id = c.req.param('id');
+    const row = await c.env.DB.prepare('SELECT * FROM daily_reports WHERE id = ?').bind(id).first();
+    if (!row) return c.json({ detail: '日报不存在' }, 404);
+    const r: any = transformRow(row);
+    
+    // 如果有缓存的数据直接返回
+    if (r.candidate_details) {
+      try {
+        const details = typeof r.candidate_details === 'string' ? JSON.parse(r.candidate_details) : r.candidate_details;
+        return c.json(details);
+      } catch {}
+    }
+    
+    // 没有缓存则实时查询
+    const reportDate = r.report_date || '';
+    const detail = await queryDailyCandidatesByOwner(c.env.DB, reportDate);
+    return c.json(detail);
+  } catch (e: any) {
+    return c.json({ detail: '获取日报详情失败: ' + e.message }, 500);
+  }
+});
+
 // 发送日报到飞书
 app.post('/api/daily-reports/:id/send', authMiddleware, async (c) => {
   try {
@@ -9660,13 +9784,34 @@ app.post('/api/cron/daily-report', async (c) => {
 app.post('/api/cron/interview-reminder', async (c) => {
   try {
     const pending = await c.env.DB.prepare(
-      "SELECT COUNT(*) as c FROM resume_screening_queue WHERE status = 'pending'"
+      "SELECT COUNT(*) as c FROM resumes WHERE screening_result = '通过' AND status = 'pending_screening'"
     ).first() as any;
     const count = pending?.c || 0;
 
     if (count > 0) {
+      // 查询候选人明细
+      const candidateRows = await c.env.DB.prepare(
+        "SELECT r.id, r.candidate_name, r.mapped_position, r.position_applied, r.gender, r.education, r.birthday, r.ai_evaluation, r.parsed_data FROM resumes r WHERE r.screening_result = '通过' AND r.status = 'pending_screening' ORDER BY r.updated_at DESC LIMIT 20"
+      ).all();
+      const candidates = (candidateRows.results || []).map((r: any) => {
+        let parsed: any = {}, evaluation: any = {};
+        try { parsed = typeof r.parsed_data === 'string' ? JSON.parse(r.parsed_data) : (r.parsed_data || {}); } catch {}
+        try { evaluation = typeof r.ai_evaluation === 'string' ? JSON.parse(r.ai_evaluation) : (r.ai_evaluation || {}); } catch {}
+        let age: number | null = null;
+        if (parsed.age) age = parseInt(parsed.age) || null;
+        else if (r.birthday) { try { const b = new Date(r.birthday); age = Math.floor((Date.now() - b.getTime()) / (365.25 * 24 * 3600 * 1000)); } catch {} }
+        return {
+          name: r.candidate_name || '',
+          education: parsed.highest_degree || r.education || '',
+          age,
+          gender: parsed.gender || r.gender || '',
+          position: r.mapped_position || r.position_applied || '',
+          city: parsed.city || '',
+          ai_summary: evaluation.summary || '',
+        };
+      });
       const token = await getFeishuToken(c.env);
-      const card = buildReminderCard(count);
+      const card = buildReminderCard(count, candidates);
       const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
       if (chatId) {
         await sendFeishuMessageToChat(token, chatId, card);

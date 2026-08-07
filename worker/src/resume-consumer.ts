@@ -205,13 +205,14 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       // 第一步：基础筛选（match_score + recommendation + summary + strengths + risks）
       const screenPrompt = await getAIPrompt(env as any, 'resume_screening', {
         system: `你是资深招聘评估AI，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
-        user: '岗位：{position}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}'
+        user: '岗位：{position}\n能力维度：{capability_dimensions}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}'
       });
       const screenUserText = screenPrompt.user
         .replace('{position}', context.standardPosition || position)
         .replace('{resume_text}', text)
-        .replace('{fields}', JSON.stringify(fields));
-      const screeningResponse = await callAI(env as any, screenPrompt.system, screenUserText);
+        .replace('{fields}', JSON.stringify(fields))
+        .replace('{capability_dimensions}', context.capabilityDimensions || '');
+      const screeningResponse = await callAI(env as any, screenPrompt.system, screenUserText, 'deepseek-v4-flash');
       const parsed = extractJSON(screeningResponse);
       const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? parsed as Record<string, unknown>

@@ -40,6 +40,10 @@ const DailyReportsList: React.FC = () => {
   // 联系人列表
   const [contacts, setContacts] = useState<{ groups: ContactItem[]; users: ContactItem[] }>({ groups: [], users: [] });
   const [contactsLoading, setContactsLoading] = useState(false);
+  // 日报详情（按负责人分组的候选人）
+  const [detailModal, setDetailModal] = useState<any>(null);
+  const [detailData, setDetailData] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -86,6 +90,21 @@ const DailyReportsList: React.FC = () => {
       message.error(e?.response?.data?.detail || '删除失败');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  // 查看日报详情（按负责人分组候选人）
+  const handleViewDetail = async (record: any) => {
+    setDetailModal(record);
+    setDetailLoading(true);
+    setDetailData(null);
+    try {
+      const res = await request.get(`/daily-reports/${record.id}/details`);
+      setDetailData(res);
+    } catch {
+      message.error('获取日报详情失败');
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -366,6 +385,110 @@ const DailyReportsList: React.FC = () => {
           })}
         </Row>
       )}
+
+      {/* 日报详情对话框（按负责人分组表格） */}
+      <Modal
+        title={
+          <Space>
+            <FileTextOutlined />
+            <span>招聘日报详情 · {detailModal?.report_date || '-'}</span>
+          </Space>
+        }
+        open={!!detailModal}
+        onCancel={() => { setDetailModal(null); setDetailData(null); }}
+        footer={[
+          <Button key="close" onClick={() => { setDetailModal(null); setDetailData(null); }}>关闭</Button>,
+          detailData && (
+            <Button key="send" type="primary" icon={<SendOutlined />} onClick={() => detailModal && handleOpenSend(detailModal)}>
+              发送到飞书
+            </Button>
+          ),
+        ]}
+        width={900}
+      >
+        {detailLoading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}><Spin /><p style={{ marginTop: 12, color: '#999' }}>加载候选人数据...</p></div>
+        ) : detailData ? (
+          <div>
+            {/* 汇总统计 */}
+            <div style={{ marginBottom: 16, padding: '12px 16px', background: '#f0f5ff', borderRadius: 6 }}>
+              <Text strong>📋 今日通过初筛：{detailData.stats?.total || 0} 人</Text>
+            </div>
+
+            {/* 按负责人分组表格 */}
+            {(detailData.groups || []).map((group: any) => (
+              <div key={group.responsible_person} style={{ marginBottom: 20 }}>
+                <div style={{
+                  padding: '8px 12px',
+                  background: group.responsible_person === '何雨菱' ? '#fff7e6' : group.responsible_person === '杜雁玲' ? '#f6ffed' : group.responsible_person === '魏秋柠' ? '#fff0f6' : '#f5f5f5',
+                  borderRadius: '6px 6px 0 0',
+                  fontWeight: 600,
+                  fontSize: 14,
+                  border: '1px solid #f0f0f0',
+                  borderBottom: 'none',
+                }}>
+                  {group.responsible_person === '何雨菱' ? '🌸' : group.responsible_person === '杜雁玲' ? '🌻' : group.responsible_person === '魏秋柠' ? '🌺' : '📋'} {group.responsible_person}
+                  <Tag style={{ marginLeft: 8 }}>{group.candidates.length} 人</Tag>
+                </div>
+                <div style={{ overflowX: 'auto', border: '1px solid #f0f0f0', borderRadius: '0 0 6px 6px' }}>
+                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: '#fafafa' }}>
+                        <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', whiteSpace: 'nowrap' }}>姓名</th>
+                        <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', whiteSpace: 'nowrap' }}>学历</th>
+                        <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', whiteSpace: 'nowrap' }}>年龄</th>
+                        <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', whiteSpace: 'nowrap' }}>性别</th>
+                        <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', whiteSpace: 'nowrap' }}>岗位</th>
+                        <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', whiteSpace: 'nowrap' }}>城市</th>
+                        <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', minWidth: 200 }}>AI 建议</th>
+                        <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'center', whiteSpace: 'nowrap' }}>简历</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.candidates.map((c: any, idx: number) => (
+                        <tr key={c.resume_id || idx} style={{ background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
+                          <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5', fontWeight: 500 }}>{c.name}</td>
+                          <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5' }}>{c.education || '-'}</td>
+                          <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5' }}>{c.age ? c.age + '岁' : '-'}</td>
+                          <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5' }}>{c.gender || '-'}</td>
+                          <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.position || '-'}</td>
+                          <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5' }}>{c.city || '-'}</td>
+                          <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5', fontSize: 11, color: '#666', maxWidth: 250 }}>
+                            <Tooltip title={c.ai_summary}>
+                              <span>{c.recommendation === 'strongly_recommend' ? '🟢' : c.recommendation === 'recommend' ? '🔵' : c.recommendation === 'neutral' ? '🟡' : '⚪'} {c.ai_summary ? c.ai_summary.slice(0, 60) + (c.ai_summary.length > 60 ? '...' : '') : '-'}</span>
+                            </Tooltip>
+                          </td>
+                          <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5', textAlign: 'center' }}>
+                            {c.resume_id ? (
+                              <a href={`/resumes/${c.resume_id}`} target="_blank" rel="noopener noreferrer">
+                                <Button type="link" size="small" icon={<FileTextOutlined />}>查看</Button>
+                              </a>
+                            ) : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+
+            {/* 底部 AI 分析 */}
+            <div style={{ marginTop: 16, padding: 12, background: '#f5f5f5', borderRadius: 6, fontSize: 13, lineHeight: 1.8 }}>
+              <Text strong><RobotOutlined /> 整体 AI 分析</Text>
+              {detailModal?.ai_summary ? (
+                <div style={{ marginTop: 8 }}>
+                  <ReactMarkdown>{String(detailModal.ai_summary)}</ReactMarkdown>
+                </div>
+              ) : (
+                <Text type="secondary" style={{ marginTop: 8, display: 'block' }}>无 AI 分析</Text>
+              )}
+            </div>
+          </div>
+        ) : (
+          <Empty description="暂无数据" />
+        )}
+      </Modal>
 
       {/* 发送到飞书对话框 */}
       <Modal
