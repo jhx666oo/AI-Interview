@@ -66,7 +66,7 @@ const DailyReportsList: React.FC = () => {
         report_date: selectedDate.format('YYYY-MM-DD'),
         report_type: 'progress',
         responsible_person: selectedOwner || undefined,
-      }) as any;
+      }, { timeout: 120000 }) as any;
       if (res && !res.detail) {
         message.success('日报已生成');
         fetchData();
