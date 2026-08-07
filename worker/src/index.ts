@@ -445,7 +445,7 @@ async function callConfiguredAI(
   if (aiModel === 'deepseek-v4-flash' && baseUrl.includes('api.deepseek.com')) aiModel = 'deepseek-chat';
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 90000);
   let resp: Response;
   try {
     const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
