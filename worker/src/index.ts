@@ -375,86 +375,22 @@ export async function callAI(env: Env, systemPrompt: string, userPrompt: string,
   // 优先读取网站「AI 模型配置」页存的 system_configs，fallback 到 Worker 环境变量
   const llm = await getLLMConfig(env);
   if (llm.apiKey) {
-    // —— 每日 token 限额检查（防止调试耗光额度）——
-    await ensureAiUsageTable(env);
-    const limit = getDailyTokenLimit(env);
-    const usedToday = await getTodayTokenUsage(env);
-    if (limit !== null && usedToday >= limit) {
-      throw new Error(`AI 已达每日 token 限额（上限 ${limit}，今日已用 ${usedToday}）。为防止额度被耗光已暂停调用，请明日再试，或调高 AI_DAILY_TOKEN_LIMIT。`);
+    // —— 尝试使用配置的 API，失败时降级到 Workers AI ——
+    try {
+      return await callConfiguredAI(env, llm, systemPrompt, userPrompt, model);
+    } catch (e: any) {
+      console.warn(`[AI] 配置的 API 调用失败，降级到 Workers AI: ${e.message}`);
+      // 降级到 Workers AI
     }
-
-    const baseUrl = llm.baseUrl.replace(/\/+$/, '');
-    // 模型映射：deepseek-v4-flash 是内部别名，仅 DeepSeek 官方 API 需要映射为 deepseek-chat；
-    // 其他网关（如公司代理 sublink.daojia-inc.com）按配置模型名原样使用
-    let aiModel = llm.model || model || 'deepseek-chat';
-    if (aiModel === 'deepseek-v4-flash' && baseUrl.includes('api.deepseek.com')) aiModel = 'deepseek-chat';
-    // 503 自动重试（DeepSeek 繁忙时自动恢复，最多重试 3 次）
-    const MAX_RETRIES = 3;
-    const RETRY_DELAYS = [5_000, 15_000, 30_000];
-    let lastError: Error | null = null;
-    let resp: Response;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      if (attempt > 0) {
-        const delay = RETRY_DELAYS[attempt - 1];
-        console.log(`[AI] 503 重试 ${attempt}/${MAX_RETRIES}，等待 ${delay}ms`);
-        await new Promise(r => setTimeout(r, delay));
-      }
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 90000);
-      try {
-        const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
-        resp = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${llm.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: aiModel,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt },
-            ],
-            max_tokens: 4096,
-          }),
-          signal: controller.signal,
-        });
-      } catch (e: any) {
-        clearTimeout(timeoutId);
-        if (e.name === 'AbortError') throw new Error('AI API 调用超时（90s），请稍后重试');
-        throw e;
-      }
-      clearTimeout(timeoutId);
-      if (!resp.ok) {
-        const errText = await resp.text();
-        if (resp.status === 503 && attempt < MAX_RETRIES) {
-          console.warn(`[AI] DeepSeek 503 繁忙，${MAX_RETRIES - attempt} 次重试机会: ${errText.slice(0, 100)}`);
-          lastError = new Error(`DeepSeek API error ${resp.status}: ${errText}`);
-          continue;
-        }
-        throw new Error(`DeepSeek API error ${resp.status}: ${errText}`);
-      }
-      break;  // 成功则跳出重试循环
-    }
-    if (lastError && !resp?.ok) {
-      throw lastError;
-    }
-    const data: any = await resp.json();
-    // —— 记录本次 token 用量 ——
-    const totalTokens = data?.usage?.total_tokens || 0;
-    if (totalTokens > 0) await addTokenUsage(env, totalTokens);
-    if (data?.choices?.[0]?.message?.content) {
-      return data.choices[0].message.content;
-    }
-    // deepseek-v4-flash 推理模型可能返回空 content，用 reasoning_content
-    if (data?.choices?.[0]?.message?.reasoning_content) {
-      return data.choices[0].message.reasoning_content;
-    }
-    throw new Error(`DeepSeek API response format unexpected: ${JSON.stringify(data)}`);
   }
 
   // 降级：Cloudflare Workers AI
-  if (!env.AI) throw new Error('AI 未配置：请在系统设置中填写 API Key，或在 wrangler.toml 中启用 [ai] 绑定以使用 Cloudflare Workers AI（免费）');
+  if (!env.AI) {
+    if (llm.apiKey) {
+      throw new Error('AI API 调用失败且 Workers AI 不可用，请检查 API 配置或 Cloudflare 绑定');
+    }
+    throw new Error('AI 未配置：请在系统设置中填写 API Key，或在 wrangler.toml 中启用 [ai] 绑定以使用 Cloudflare Workers AI（免费）');
+  }
   const aiModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
   async function runModel(name: string): Promise<string> {
     const result: any = await Promise.race([
@@ -490,6 +426,69 @@ export async function callAI(env: Env, systemPrompt: string, userPrompt: string,
     }
   }
 }
+
+// 调用配置的 API（15 秒超时，失败时直接抛出异常由 callAI 降级处理）
+async function callConfiguredAI(
+  env: Env, llm: { apiKey: string; baseUrl: string; model: string },
+  systemPrompt: string, userPrompt: string, model?: string
+): Promise<string> {
+  // —— 每日 token 限额检查（防止调试耗光额度）——
+  await ensureAiUsageTable(env);
+  const limit = getDailyTokenLimit(env);
+  const usedToday = await getTodayTokenUsage(env);
+  if (limit !== null && usedToday >= limit) {
+    throw new Error(`AI 已达每日 token 限额（上限 ${limit}，今日已用 ${usedToday}）。为防止额度被耗光已暂停调用，请明日再试，或调高 AI_DAILY_TOKEN_LIMIT。`);
+  }
+
+  const baseUrl = llm.baseUrl.replace(/\/+$/, '');
+  let aiModel = llm.model || model || 'deepseek-chat';
+  if (aiModel === 'deepseek-v4-flash' && baseUrl.includes('api.deepseek.com')) aiModel = 'deepseek-chat';
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  let resp: Response;
+  try {
+    const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${llm.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: aiModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: 4096,
+      }),
+      signal: controller.signal,
+    });
+  } catch (e: any) {
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') throw new Error('AI API 调用超时（15s），降级到 Workers AI');
+    throw e;
+  }
+  clearTimeout(timeoutId);
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`AI API error ${resp.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const data: any = await resp.json();
+  const totalTokens = data?.usage?.total_tokens || 0;
+  if (totalTokens > 0) await addTokenUsage(env, totalTokens);
+  if (data?.choices?.[0]?.message?.content) {
+    return data.choices[0].message.content;
+  }
+  if (data?.choices?.[0]?.message?.reasoning_content) {
+    return data.choices[0].message.reasoning_content;
+  }
+  throw new Error(`AI API response format unexpected: ${JSON.stringify(data)}`);
+}
+
 
 // 获取岗位要求（从 position_mappings → positions 链路）
 async function getPositionRequirements(env: Env, positionName: string): Promise<any> {
