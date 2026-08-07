@@ -138,6 +138,8 @@ const ResumesList: React.FC = () => {
   const setSearchPosition = (v: string | undefined) => setFilter('position', v);
   const searchMajor = filterVal('major');
   const setSearchMajor = (v: string | undefined) => setFilter('major', v);
+  const searchEducation = filterVal('education');
+  const setSearchEducation = (v: string | undefined) => setFilter('education', v);
   const minimumAge = filterVal('min_age') ? Number(filterVal('min_age')) : null;
   const setMinimumAge = (v: number | null) => setFilter('min_age', v !== null ? String(v) : undefined);
   const maximumAge = filterVal('max_age') ? Number(filterVal('max_age')) : null;
@@ -307,6 +309,7 @@ const ResumesList: React.FC = () => {
     }
     if (searchPosition) params.position = searchPosition;
     if (searchMajor) params.major = searchMajor;
+    if (searchEducation) params.education = searchEducation;
     if (minimumAge !== null) params.min_age = minimumAge;
     if (maximumAge !== null) params.max_age = maximumAge;
     if (genderFilters.length > 0) params.genders = genderFilters.join(',');
@@ -393,7 +396,7 @@ const ResumesList: React.FC = () => {
         pollingRef.current = null;
       }
     };
-  }, [pollingEnabled, searchStatus, searchPosition, searchMajor, minimumAge, maximumAge, genderFilters]);
+  }, [pollingEnabled, searchStatus, searchPosition, searchMajor, searchEducation, minimumAge, maximumAge, genderFilters]);
 
   const fetchPositions = async () => {
     try {
@@ -1105,6 +1108,8 @@ const handleUploadClick = () => {
 
   // 专业筛选选项：从全部加载数据中提取去重
   const majorOptions = Array.from(new Set((dataCache.current || []).map((r: any) => (r.major || '').trim()).filter(Boolean)));
+  // 学历筛选选项：从全部加载数据中提取去重
+  const educationOptions = Array.from(new Set((dataCache.current || []).map((r: any) => (r.education || '').trim()).filter(Boolean)));
 
   return (
     <div style={{ maxWidth: '100%' }}>
@@ -1224,6 +1229,23 @@ const handleUploadClick = () => {
               >
                 {majorOptions.map((m: string) => (
                   <Select.Option key={m} value={m}>{m}</Select.Option>
+                ))}
+              </Select>
+            </Space>
+
+            <Space size={4}>
+              <Text style={{ fontSize: 13, color: '#333' }}>学历：</Text>
+              <Select
+                placeholder="全部"
+                value={searchEducation}
+                onChange={val => setSearchEducation(val)}
+                style={{ width: 110 }}
+                allowClear
+                showSearch
+                optionFilterProp="children"
+              >
+                {educationOptions.map((e: string) => (
+                  <Select.Option key={e} value={e}>{e}</Select.Option>
                 ))}
               </Select>
             </Space>

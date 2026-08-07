@@ -5151,6 +5151,10 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       });
     }
     if (majorFilter) filtered = filtered.filter(i => (i.major || '').includes(majorFilter));
+    if (c.req.query('education')) {
+      const eduFilter = c.req.query('education');
+      filtered = filtered.filter(i => (i.education || '').includes(eduFilter));
+    }
     if (minAge !== null || maxAge !== null) {
       filtered = filtered.filter((i: any) => {
         const age = typeof i.age === 'number' && Number.isFinite(i.age)

@@ -27,6 +27,7 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   const screeningResultFilter = c.req.query('screening_result');
   const positionFilter = c.req.query('position');
   const majorFilter = c.req.query('major');
+  const educationFilter = c.req.query('education');
   const minAgeRaw = parseInt(c.req.query('min_age') || '', 10);
   const maxAgeRaw = parseInt(c.req.query('max_age') || '', 10);
   const minAge = Number.isFinite(minAgeRaw) ? minAgeRaw : null;
@@ -65,6 +66,10 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   if (majorFilter) {
     whereClause += " AND json_extract(r.parsed_data, '$.major') LIKE ?";
     params.push(`%${majorFilter}%`);
+  }
+  if (educationFilter) {
+    whereClause += " AND json_extract(r.parsed_data, '$.highest_degree') LIKE ?";
+    params.push(`%${educationFilter}%`);
   }
   // 年龄优先取 parsed_data.age（与前端展示一致），缺失时按生日推算。
   // 生日字段格式多样（1998-12 / 2004.7 / 1996.05.20 / 2004-07-15），
