@@ -1,1 +1,0 @@
-const r=t=>{if(!t)return"";const[s,a=""]=t.split("#"),e=new URLSearchParams(a);return e.set("toolbar","0"),e.set("navpanes","0"),e.set("scrollbar","0"),e.set("pagemode","none"),e.set("view","FitH"),e.set("zoom","page-width"),`${s}#${e.toString()}`};export{r as g};
