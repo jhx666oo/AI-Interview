@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress } from 'antd';
-import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, StarOutlined, StarFilled, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, ThunderboltOutlined, CloudUploadOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import DOMPurify from 'dompurify';
 import request from '../../utils/request';
 import { downloadExcel } from '../../utils/exportExcel';
@@ -1000,34 +1000,10 @@ const handleUploadClick = () => {
     const hardResult = record.hard_requirement_result ? (typeof record.hard_requirement_result === 'string' ? JSON.parse(record.hard_requirement_result) : record.hard_requirement_result) : null;
     const capScores = record.capability_scores ? (typeof record.capability_scores === 'string' ? JSON.parse(record.capability_scores) : record.capability_scores) : null;
 
-    const handleCheckHard = async () => {
-      try {
-        message.loading({ content: '硬性要求检查中...', key: 'hard' });
-        const res = await request.post(`/resumes/${record.id}/check-hard-requirements`) as any;
-        message.success({ content: '硬性检查完成', key: 'hard' });
-        fetchResumes();
-      } catch (e: any) {
-        message.error({ content: e.response?.data?.detail || '检查失败', key: 'hard' });
-      }
-    };
-
-    const handleScoreCap = async () => {
-      try {
-        message.loading({ content: '能力评分中...', key: 'score' });
-        const res = await request.post(`/resumes/${record.id}/score-capabilities`) as any;
-        message.success({ content: '能力评分完成', key: 'score' });
-        fetchResumes();
-      } catch (e: any) {
-        message.error({ content: e.response?.data?.detail || '评分失败', key: 'score' });
-      }
-    };
-
     return (
       <Space size="small" wrap>
         <Tooltip title="预览"><Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handlePreview(record)} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
-        <Tooltip title="硬性要求检查"><Button type="text" size="small" icon={<ThunderboltOutlined style={{ color: '#F59E0B' }} />} onClick={handleCheckHard} /></Tooltip>
-        <Tooltip title="能力维度评分"><Button type="text" size="small" icon={<StarOutlined style={{ color: '#8B5CF6' }} />} onClick={handleScoreCap} /></Tooltip>
         {hardResult?.passed === false && <Tag color="error">❌ 硬性不通过</Tag>}
         {isPending && (
           <>
