@@ -13,12 +13,12 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 
 ---
 
-## 当前开发状态 (2026-08-02)
+## 当前开发状态 (2026-08-07)
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | 仪表盘 | ✅ 运行中 | 实时/历史快照、7 项 KPI、招聘诊断、全链路漏斗、事业部与 HRBP 效能、岗位明细、只读分享 |
-| 简历管理 | ✅ 运行中 | 飞书导入、BOSS 导入、异步上传、字段提取、AI 初筛与能力维度评分 |
+| 简历管理 | ✅ 运行中 | 飞书导入、BOSS 导入、邮箱同步、异步上传（队列并发）、字段提取、AI 初筛与能力维度评分、Excel 导出、学历/专业/年龄/性别/岗位筛选 |
 | 岗位管理 | ✅ 运行中 | 飞书同步、能力维度定义（AI 初筛依据）、AI 生成 JD |
 | 面试管理 | ✅ 运行中 | 飞书同步、一面/二面面试官、提醒、评价流转 |
 | 面试官管理 | ✅ 运行中 | 手动添加 open_id，飞书搜索（待权限审批） |
@@ -27,194 +27,50 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 | 招聘日报 | ✅ 运行中 | Workers AI 自动生成摘要，字段映射已修复 |
 | 需求管理 | ✅ 运行中 | |
 | **AI 能力维度初筛** | ✅ 已完成 | 批量自动初筛，按岗位能力维度逐项 0-5 打分，卡片联动展示 |
-| **D1 ↔ 飞书联动** | ✅ 已修复 | 列表/详情页合并 D1 AI 初筛数据，卡片显示维度标签 + 匹配度 |
-| 飞书集成 | ✅ 已接入 | 多维表格数据同步 + 机器人卡片消息、token D1 缓存 |
+| **D1 独立运行** | ✅ 已完成 | 简历管理、面试管理、淘汰/入库等操作完全脱离飞书，飞书同步仅保留手动触发 |
+| 飞书集成 | ✅ 已接入 | 多维表格数据同步（手动触发）+ 机器人卡片消息、token D1 缓存 |
 | 飞书 OAuth 绑定 | ✅ 运行中 | 登录用户绑定飞书身份，本地自动判断回调地址 |
 | AI 三层降级 | ✅ 已启用 | DeepSeek V4 Flash → Workers AI Llama 3.3 70B → Llama 3.1 8B |
-| MinerU OCR | ✅ 已接入 | 飞书 PDF → MinerU API → Markdown 文本提取 |
+| 系统设置 | ✅ 已完善 | AI 提示词模板（JD/简历分析/字段提取/初筛/补充评分/招聘日报）可在线编辑，AI 模型配置前后端打通 |
+| 提示词管理 | ✅ 已完成 | 所有提示词通过 getAIPrompt 统一管理，系统设置修改即时生效 |
+| MinerU OCR | ✅ 已接入 | 飞书 PDF → MinerU Agent API → Markdown 文本提取，队列异步处理 |
 | 安全加固 | ✅ 已完成 | 明文密码移除、timing-safe 比较、CORS 白名单、DOMPurify、密钥 Pages Secrets |
 | 性能优化 | ✅ 已完成 | N+1 修复、静态资源缓存、图片压缩、chunk 拆分、D1 索引 |
 | 日志审计 | ✅ 已完成 | operation_logs 表 8 处核心埋点，上线自检 5 项全绿 |
 
-### 最近更新 (2026-08-02)
+### 最近更新 (2026-08-07)
 
-**招聘运营看板实时与快照能力：**
+**飞书妙搭邮箱简历同步：**
 
-- `/dashboard` 支持最新实时数据与按日期保存的不可变快照；切换版本后，KPI、招聘诊断、全局漏斗、事业部、HRBP 和岗位明细使用同一份聚合数据。
-- 管理员可保存当日快照，系统也会按上海时区每日自动留存；已保存快照不会随简历、面试或入职数据的后续变化而改变。
-- 分享链接可选择实时模式或固定快照模式，并支持有效期与撤销；匿名访问复用完整招聘运营看板，但不展示筛选、刷新、保存快照、分享等内部操作。
-- 公共接口只返回聚合后的 v2 看板字段。固定快照链接直接读取已存 JSON，实时链接在访问时重新汇总，二者均执行负责人/事业部范围限制与候选人字段白名单过滤。
+- 集成飞书妙搭邮箱简历同步，支持多邮箱管理。
+- 外部邮箱拉取的简历自动进入队列处理流程：OCR 文本提取 → 字段提取 → AI 初筛 → 能力维度评分。
+- 简历管理页完全脱离飞书依赖，淘汰/入库/重置等操作只操作 D1 数据库。
 
-### 历史更新 (2026-08-01)
+**AI 提示词系统完善：**
 
-**简历异步处理与前端展示：**
+- 系统设置页可编辑所有 AI 提示词模板：JD 生成、简历分析、PDF 简历解析、简历 Markdown 生成、简历字段提取、简历初筛、简历初筛补充评分、招聘日报。
+- 提示词通过 `getAIPrompt()` 统一管理，修改保存后下次调用对应功能即时生效。
+- 删除冗余提示词（面试题目/评价/转写/笔试代码），合并旧 `analyze_resume` 路径到新提示词体系。
+- 变量名与实际代码统一：`{position}`, `{resume_text}`, `{fields}`, `{capability_dimensions}`, `{job_description}`, `{personalized_requirements}`。
 
-- 上传后先创建 D1 简历记录，再投递至 Cloudflare Queue；关闭或刷新页面不会中断 OCR、字段提取和 AI 初筛。
-- 队列消费者按 `resumeId` 完成文本/OCR 解析、标准字段提取和人岗初筛；并发上限为 3。
-- 解析字段统一为 `highest_degree`、`school`、`major`、`years_of_experience`、`gender`、`birthday`、`skills` 等标准键，同时兼容历史中文字段。
-- 简历卡片按 D1 `created_at` 倒序，刚上传的简历立即在最前；AI 评分显示为能力维度累计的“总分 X/Y”。
-- 若初筛模型遗漏已配置的能力维度，消费者会自动补做一次仅针对缺失维度的评分，避免卡片没有维度结果。
-- 详情页兼容 AI 将优势、风险、建议问题返回为字符串或数组，避免不规范模型输出造成页面崩溃。
+**简历管理增强：**
 
-### 历史更新 (2026-07-29)
+- 新增学历筛选条件，筛选条件持久化到 URL/`sessionStorage`，跨页面导航后自动保留。
+- 岗位筛选使用标准岗位名（岗位映射），年龄/专业/性别/岗位筛选移到服务端支持跨页。
+- SQL 分页查询优化加载速度，入库按钮点击后立即更新卡片状态（异步）。
+- 移除简历卡片冗余按钮（硬性要求检查/能力维度评分）。
+- 导出 Excel 支持，HR 复合结果基于 status 映射（通过/不通过/0）。
 
-**AI 能力维度初筛 — 全链路落地：**
-- **`POST /api/resumes/batch-auto-screen`**：批量 AI 初筛，每次处理 5 条 `pending_screening` 简历
-  - 两次 callAI：①字段解析（从 OCR 文本提取学历/学校/专业/技能）②能力维度评分（按岗位定义的维度逐项 0-5 打分）
-  - 三级文本降级：`ocr_markdown` → `raw_text` → 飞书下载 PDF + MinerU OCR → `parsed_data` 摘要兜底
-  - `sync-from-feishu` 自动检测缺失 AI 评估的简历，标记 `parse_status='pending_screening'`
-- **`POST /api/resumes/:id/ai-screen`**：单条 AI 初筛（编辑页按钮触发）
-  - 自动查找候选人岗位的能力维度 → 按维度匹配评分
-  - 结果写入 D1 并回写飞书 Bitable
-- **`getPositionContext` 多表查询**：
-  - 先查 `positions.capability_dimensions`，再查 `capability_dimensions` 独立表
-  - 修复维度 JSON 解析 bug + 独立表查询被跳过的守卫问题
-- **`callAI` 推理模型兼容**：`deepseek-v4-flash` 返回空 `content` 时 fallback 到 `reasoning_content`
-- **D1 数据合并 — 列表/详情 API**：飞书 Bitable 记录 + D1 的 `match_score / ai_review / ai_evaluation / screening_result / parsed_data`
-- **卡片联动展示**：列表卡片新增 `AI通过/存疑/淘汰` 标签 + 维度评分标签；详情页按岗位维度逐项展示
+**修复：**
 
-**MinerU OCR 接入：**
-- `batch-ocr-mineru` 路由：飞书下载 PDF → MinerU API OCR → Markdown 文本，缓存至 `ocr_markdown` 列
-- 与 batch-auto-screen 组合使用：先 OCR 提取文本 → 再 auto-screen 解析字段 + 评分
-
-**本地开发修复：**
-- `vite.config.ts` proxy 端口 8000 → 8788
-- `getLLMConfig` 恢复 `env.AI_API_KEY` fallback（本地 dev 可用）
-- 飞书 token D1 缓存过期自动清理
-
-**安全与运维：**
-- 密钥管理改造：生产密钥全迁入 Cloudflare Pages Secrets
-- cron 鉴权：`/api/cron/*` 需 `X-Cron-Secret` header
-- `scripts/pre-deploy-check.mjs`：上线前 5 项自检
-- `GET /health` 增加 `ai_binding` 诊断字段
-
-### 历史更新 (2026-07-23)
-
-**安全修复（第二批）：**
-- 移除明文密码存储（DB 不再保留 plain_password）
-- verifyPassword 改为常量时间比较（防时序侧信道攻击）
-- CORS 从 `*` 改为白名单模式
-- 前端引入 DOMPurify，邮件预览 HTML 净化
-
-**性能优化（第三批）：**
-- Dashboard 3 处 N+1 查询修复
-- 静态资源缓存（assets 1年 immutable）+ SPA 路由回退
-- D1 新增 38 个索引覆盖高频查询表
-- login-bg.jpg 755K → 194K（74% 减少）
-- Vite manualChunks 拆分
-
-**JD 生成修复（2026-07-24）：**
-- JD 编辑页接入 AI 生成 JD（JDGeneratorModal）
-- 需求/岗位管理 AI 生成 JD 静默写空修复
-- PUT /api/requisitions/:id 崩溃修复（D1 优先保存）
-
----
-
-## 部署
-
-### GitHub Actions 自动部署
-
-推送到 `main` 会自动运行 `.github/workflows/deploy.yml`：先构建并自检前端，再部署 `ai-interview` Pages 和 `resume-consumer` Queue Worker，最后请求生产 `/health` 做冒烟检查。Pull Request 和其他分支只运行 CI，不会发布生产。
-
-本仓库不再部署旧的 `hiring-platform` Pages 项目；该同构项目已迁移到 [AI-interview-plus](https://github.com/jhx666oo/AI-interview-plus)。
-
-仓库需要配置以下 GitHub Actions 配置：
-
-- Secret：`CLOUDFLARE_API_TOKEN`
-- Repository Variable：`CLOUDFLARE_ACCOUNT_ID`
-
-定时任务（日报、面试提醒、邮箱同步、飞书 token 刷新）仍由各自的 schedule workflow 独立运行。
-
-```bash
-# 构建（tsc + vite + esbuild Worker 编译，一步到位）
-cd frontend && rm -rf dist node_modules/.vite && npm run build
-
-# 上线前自检（失败禁止部署）
-node ../scripts/pre-deploy-check.mjs
-
-# 部署到 Cloudflare Pages
-cd frontend && CLOUDFLARE_ACCOUNT_ID=ed758fc82ca4400593ddb447d3db57a4 \
-  npx wrangler pages deploy dist --project-name ai-interview --branch main
-
-# 若修改 worker/src/resume-consumer.ts 或 worker/src/resume-processing/，
-# 还必须部署 Queue 消费者（新上传简历的异步解析与评分由它执行）
-cd ../worker && npx wrangler deploy --config wrangler.resume-consumer.toml
-```
-
-> ⚠️ **部署缓存坑**：若只改源码重新 `wrangler pages deploy` 却提示 `0 files uploaded`，是 Vite 构建缓存（`node_modules/.vite`）导致产物 hash 不变。先 `rm -rf dist node_modules/.vite` 再 `npm run build` 即可强制生成新 hash。
->
-> ⚠️ **账号坑**：`wrangler` 可能从缓存解析到错误 Cloudflare ��号，必须显式传 `CLOUDFLARE_ACCOUNT_ID=ed758fc82ca4400593ddb447d3db57a4`。
-
----
-
-## 技术架构
-
-| 环境 | 前端 | 后端 | 数据库 |
-|------|------|------|--------|
-| **本地开发** | React 19 + Vite 7 | Cloudflare Workers (wrangler dev) | D1 (本地 SQLite) |
-| **生产环境** | Cloudflare Pages | Cloudflare Workers (Hono) | Cloudflare D1 |
-
-| 层 | 技术选型 |
-|---|---|
-| 前端框架 | React 19, TypeScript 5.9, Ant Design 6, React Router 7 |
-| 可视化 | Recharts (图表) |
-| 状态管理 | React Context (AuthContext) |
-| HTTP 客户端 | Axios |
-| 后端 | Cloudflare Workers, Hono, TypeScript, esbuild |
-| 数据库 | Cloudflare D1 (SQLite) |
-| AI 引擎 | DeepSeek V4 Flash / DeepSeek Chat（可降级 Workers AI Llama） |
-| OCR | MinerU API |
-| 认证 | JWT (Bearer Token) |
-| 外部集成 | 飞书 Bitable API、飞书 IM API、飞书 OAuth |
-| 部署 | Cloudflare Pages + wrangler CLI |
-
----
-
-## 功能模块
-
-| 模块 | 路由 | 说明 |
-|------|------|------|
-| 仪表盘 | `/dashboard` | 实时/快照招聘运营看板、聚合分析、版本切换与只读分享 |
-| 匿名看板 | `/shared/dashboard/:token` | 完整聚合看板；支持实时或固定快照，不含内部操作与候选人明细 |
-| 需求管理 | `/requisitions` | 招聘需求管理 |
-| 岗位管理 | `/positions` | 岗位创建、能力维度定义 |
-| JD 管理 | `/jd-management` | JD 版本管理、AI 生成 JD |
-| 简历管理 | `/resumes` | 飞书导入、上传、BOSS 导入、AI 初筛 |
-| 面试管理 | `/interviews` | 面试同步、面试官、提醒、评价流转 |
-| 入职管理 | `/onboarding` | 入职记录与状态跟踪 |
-| 试用期管理 | `/probation` | 试用期跟踪、转正评估 |
-| 招聘日报 | `/daily-reports` | AI 生成日报/周报 |
-| 岗位映射 | `/settings/position-mappings` | 岗位名称映射管理 |
-| 面试官管理 | `/settings/interviewer-mappings` | 面试官 open_id 管理 |
-| 用户管理 | `/users` | 系统用户管理 |
-| 邮件设置 | `/settings/mail` | 邮件配置 |
-| 工作流 | `/workflows` | React Flow 可视化编排 |
-| 笔试管理 | `/coding-tests` | 算法题、AI 评测 |
-| 背调管理 | `/background-checks` | 背景调查 |
-| Offer 管理 | `/offers` | Offer 发送与模板 |
-| 题库管理 | `/question-banks` | 题库管理 |
-| 系统设置 | `/settings/*` | 能力维度、AI 模型、系统参数等 |
-
----
-
-## AI 初筛流程
-
-```
-飞书同步 (sync-from-feishu)
-  └─ 飞书缺 AI 评估 → parse_status = 'pending_screening'
-       └─ batch-auto-screen (批量 5 条/次)
-            ├─ getResumeTextForScreening (三级降级获取文本)
-            ├─ callAI #1: 字段解析 (学校/专业/技能等) → 更新 parsed_data
-            └─ callAI #2: 能力维度评分
-                 ├─ getPositionContext (查 positions + capability_dimensions 表)
-                 ├─ 按岗位定义维度逐项 0-5 打分
-                 ├─ 写 D1 (match_score / ai_evaluation / screening_result)
-                 └─ 回写飞书 Bitable
-```
-
-**编辑页按钮** (`POST /api/resumes/:id/ai-screen`) 流程相同，单条触发。
-
-**数据联动**：列表/详情 API 合并 D1 数据 → 卡片实时展示 AI 初筛结果。
+- 修复重新评估时无法重新 OCR 的问题。
+- 修复 AI 模型配置前后端打通（GET 不返回完整 key）。
+- 修复 talent-pool 按 `updated_at` 排序、education 数组回退。
+- 修复淘汰/重置/清除已淘汰接口不再依赖飞书 Bitable。
+- 修复简历岗位显示/筛选用标准岗位名。
+- 修复年龄筛选兼容多种日期格式。
+- 修复筛选条件持久化。
+- 修复妙搭 API 代理 JSON 解析错误。
 
 ---
 
