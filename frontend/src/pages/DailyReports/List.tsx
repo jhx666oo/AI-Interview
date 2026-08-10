@@ -14,6 +14,7 @@ import request from '../../utils/request';
 import { useOwner } from '../../contexts/OwnerContext';
 import ReactMarkdown from 'react-markdown';
 import dayjs from 'dayjs';
+import { normalizeDailyReportStats } from './stats';
 
 const { Text, Title } = Typography;
 
@@ -205,7 +206,7 @@ const DailyReportsList: React.FC = () => {
         <Row gutter={[16, 16]}>
           {data.map((record: any) => {
             // stats 列存的是 JSON 统计数据（transformRow 已解析为对象），ai_summary 是 AI 摘要文本
-            const stats = record.stats && typeof record.stats === 'object' ? record.stats : null;
+            const stats = normalizeDailyReportStats(record.stats);
 
             return (
               <Col key={record.id} xs={24} sm={24} md={12} lg={8}>
