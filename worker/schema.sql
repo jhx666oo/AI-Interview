@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   feishu_name TEXT DEFAULT '',
   feishu_refresh_token TEXT DEFAULT '',
   feishu_token_expires_at INTEGER DEFAULT 0,
+  feishu_token_failed_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );

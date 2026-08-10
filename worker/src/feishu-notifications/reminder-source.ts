@@ -11,8 +11,59 @@ function sourceError(code: string, message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code });
 }
 
+function isOptionalSchemaCompatibilityError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /no such (?:table|column)|has no column named/i.test(message);
+}
+
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+async function optionalFirst(
+  db: D1Database,
+  sql: string,
+  value: string,
+): Promise<RawRecord | null> {
+  try {
+    return await db.prepare(sql).bind(value).first<RawRecord>();
+  } catch (error) {
+    if (isOptionalSchemaCompatibilityError(error)) return null;
+    throw error;
+  }
+}
+
+function uniqueOpenId(rows: RawRecord[]): string | null {
+  const openIds = [...new Set(rows.map((row) => text(row.open_id || row.feishu_open_id)).filter(Boolean))];
+  if (openIds.length > 1) {
+    throw sourceError(
+      'AMBIGUOUS_INTERVIEWER_BINDING',
+      '存在多个同名面试官绑定，请在面试官管理中清理重复映射后重试。',
+    );
+  }
+  return openIds[0] || null;
+}
+
+export async function resolveExactInterviewerOpenId(
+  db: D1Database,
+  name: string,
+): Promise<string | null> {
+  let mappings: RawRecord[] = [];
+  try {
+    const rows = await db.prepare(
+      "SELECT open_id FROM interviewer_mappings WHERE name = ? AND open_id IS NOT NULL AND open_id != ''",
+    ).bind(name).all<RawRecord>();
+    mappings = rows.results;
+  } catch (error) {
+    if (!isOptionalSchemaCompatibilityError(error)) throw error;
+  }
+  const mappedOpenId = uniqueOpenId(mappings);
+  if (mappedOpenId) return mappedOpenId;
+
+  const users = await db.prepare(
+    "SELECT feishu_open_id FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != ''",
+  ).bind(name).all<RawRecord>();
+  return uniqueOpenId(users.results);
 }
 
 export async function loadInterviewReminderSource(
@@ -45,24 +96,23 @@ export async function loadInterviewReminderSource(
 
   const authoritativeResumeId = text(resume?.id);
   const screening = authoritativeResumeId
-    ? await db.prepare(
+    ? await optionalFirst(db,
       'SELECT * FROM resume_screening_queue WHERE resume_id = ? ORDER BY updated_at DESC, created_at DESC LIMIT 1',
-    ).bind(authoritativeResumeId).first<RawRecord>()
+      authoritativeResumeId)
     : null;
 
   let recruitmentTask: RawRecord | null = null;
   const positionId = text(interview.position_id);
   if (positionId) {
-    recruitmentTask = await db.prepare('SELECT * FROM recruitment_tasks WHERE id = ?')
-      .bind(positionId).first<RawRecord>();
+    recruitmentTask = await optionalFirst(db, 'SELECT * FROM recruitment_tasks WHERE id = ?', positionId);
   }
   const positionName = text(resume?.mapped_position)
     || text(resume?.position_applied)
     || text(interview.position_applied);
   if (!recruitmentTask && positionName) {
-    recruitmentTask = await db.prepare(
+    recruitmentTask = await optionalFirst(db,
       'SELECT * FROM recruitment_tasks WHERE position_name = ? ORDER BY updated_at DESC LIMIT 1',
-    ).bind(positionName).first<RawRecord>();
+      positionName);
   }
 
   return { interview, resume, screening, recruitmentTask };

@@ -8,8 +8,10 @@ import {
 } from '../src/feishu-notifications/interview-reminder';
 import {
   loadInterviewReminderSource,
+  resolveExactInterviewerOpenId,
   resolveReminderInterviewer,
 } from '../src/feishu-notifications/reminder-source';
+import { saveRefreshedUserToken } from '../src/feishu-notifications/user-token-storage';
 
 const completeView = {
   name: '张三', education: '本科', age: 29, gender: '女', position: '社区运营',
@@ -83,6 +85,138 @@ describe('interview reminders', () => {
     expect(resolveReminderInterviewer(interview, '请求体伪造面试官')).toBeNull();
   });
 
+  it('does not resolve 李四 to a substring-only 李四郎 binding', async () => {
+    const queries: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        queries.push(sql);
+        return {
+          bind(name: string) {
+            return {
+              all: async () => ({ results: sql.includes('WHERE full_name = ?') && name === '李四郎'
+                ? [{ full_name: '李四郎', feishu_open_id: 'ou_wrong' }]
+                : [] }),
+            };
+          },
+        };
+      },
+    };
+
+    await expect(resolveExactInterviewerOpenId(db as never, '李四')).resolves.toBeNull();
+    expect(queries.some((sql) => sql.includes('FROM users') && !sql.includes('full_name = ?'))).toBe(false);
+  });
+
+  it('rejects conflicting duplicate exact interviewer mappings', async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return {
+              all: async () => ({ results: sql.includes('interviewer_mappings')
+                ? [{ open_id: 'ou_one' }, { open_id: 'ou_two' }]
+                : [] }),
+            };
+          },
+        };
+      },
+    };
+
+    await expect(resolveExactInterviewerOpenId(db as never, '李四')).rejects.toMatchObject({
+      code: 'AMBIGUOUS_INTERVIEWER_BINDING',
+    });
+  });
+
+  it('treats missing optional enrichment schema as null', async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return {
+              first: async () => {
+                if (sql.includes('FROM interviews')) return { id: 'iv-1', resume_id: 'resume-1', position_id: 'task-1' };
+                if (sql.includes('FROM resumes')) return { id: 'resume-1' };
+                if (sql.includes('resume_screening_queue')) throw new Error('D1_ERROR: no such table: resume_screening_queue');
+                if (sql.includes('recruitment_tasks')) throw new Error('D1_ERROR: no such column: updated_at');
+                return null;
+              },
+              all: async () => ({ results: [] }),
+            };
+          },
+        };
+      },
+    };
+
+    await expect(loadInterviewReminderSource(db as never, 'iv-1')).resolves.toMatchObject({
+      screening: null,
+      recruitmentTask: null,
+    });
+  });
+
+  it('does not hide real optional enrichment database failures', async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return {
+              first: async () => {
+                if (sql.includes('FROM interviews')) return { id: 'iv-1', resume_id: 'resume-1' };
+                if (sql.includes('FROM resumes')) return { id: 'resume-1' };
+                if (sql.includes('resume_screening_queue')) throw new Error('D1_ERROR: database is locked');
+                return null;
+              },
+              all: async () => ({ results: [] }),
+            };
+          },
+        };
+      },
+    };
+
+    await expect(loadInterviewReminderSource(db as never, 'iv-1')).rejects.toThrow('database is locked');
+  });
+
+  it('saves refreshed tokens on old D1 schemas without feishu_token_failed_at', async () => {
+    const updates: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        updates.push(sql);
+        return {
+          bind() {
+            return {
+              run: async () => {
+                if (sql.includes('feishu_token_failed_at')) {
+                  throw new Error('D1_ERROR: no such column: feishu_token_failed_at');
+                }
+                return { success: true };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await expect(saveRefreshedUserToken(db as never, {
+      email: 'current@example.com',
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 123,
+      updatedAt: '2026-08-10T00:00:00.000Z',
+    })).resolves.toBeUndefined();
+    expect(updates).toHaveLength(2);
+    expect(updates[1]).not.toContain('feishu_token_failed_at');
+  });
+
+  it('declares the failed-token marker in schema and the next numbered migration', async () => {
+    const [schema, migration, workerSource] = await Promise.all([
+      readFile(resolve(process.cwd(), 'schema.sql'), 'utf8'),
+      readFile(resolve(process.cwd(), 'migrations/0025_feishu_token_failed_at.sql'), 'utf8'),
+      readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8'),
+    ]);
+
+    expect(schema).toMatch(/feishu_token_failed_at TEXT/);
+    expect(migration).toContain('ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT');
+    expect(workerSource).toContain("ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT");
+  });
+
   it('wires the endpoint to current-user delivery without candidate-body or sender fallback paths', async () => {
     const source = await readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8');
     const route = source.slice(
@@ -95,6 +229,7 @@ describe('interview reminders', () => {
     expect(route).toContain('getFeishuToken(c.env)');
     expect(route).toContain('getResumeFileBytes(c.env, resumeId)');
     expect(route).toContain('deliverInterviewReminder');
+    expect(route).toContain('resolveExactInterviewerOpenId(c.env.DB, interviewerName)');
     expect(route).toContain('need_feishu_auth: true');
     expect(route).toContain('need_bind: true');
     expect(route).not.toContain('body.candidate_name');

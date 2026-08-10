@@ -18,7 +18,8 @@ import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-scr
 import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
 import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
 import { buildInterviewReminderView, deliverInterviewReminder } from './feishu-notifications/interview-reminder';
-import { loadInterviewReminderSource, resolveReminderInterviewer } from './feishu-notifications/reminder-source';
+import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveReminderInterviewer } from './feishu-notifications/reminder-source';
+import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -7932,6 +7933,7 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE users ADD COLUMN feishu_token TEXT DEFAULT ''",
     "ALTER TABLE users ADD COLUMN feishu_refresh_token TEXT DEFAULT ''",
     "ALTER TABLE users ADD COLUMN feishu_token_expires_at INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT",
     "ALTER TABLE positions ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE positions ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE interviews ADD COLUMN primary_interviewer TEXT DEFAULT ''",
@@ -8833,16 +8835,18 @@ async function refreshUserAccessToken(env: Env, email: string): Promise<{ access
     const newRefreshToken = data.refresh_token || data.data?.refresh_token || row.feishu_refresh_token;
     if (!newAccessToken) {
       console.error('[refreshUserAccessToken] refresh response did not contain an access token');
-      await env.DB.prepare(
-        "UPDATE users SET feishu_token_failed_at = ? WHERE email = ?"
-      ).bind(now(), email).run();
+      await markUserTokenRefreshFailed(env.DB, email, now());
       return null;
     }
     const expiresIn = data.expires_in || data.data?.expires_in || 7200;
     const expiresAt = Date.now() + (expiresIn - 300) * 1000;
-    await env.DB.prepare(
-      'UPDATE users SET feishu_token = ?, feishu_refresh_token = ?, feishu_token_expires_at = ?, feishu_token_failed_at = NULL, updated_at = ? WHERE email = ?'
-    ).bind(newAccessToken, newRefreshToken, expiresAt, now(), email).run();
+    await saveRefreshedUserToken(env.DB, {
+      email,
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      expiresAt,
+      updatedAt: now(),
+    });
     console.log('[refreshUserAccessToken] refresh succeeded');
     return { access_token: newAccessToken, refresh_token: newRefreshToken, expires_at: expiresAt };
   } catch (e: any) {
@@ -10448,7 +10452,7 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       }, 400);
     }
 
-    const openId = await getInterviewerOpenId(c.env, interviewerName);
+    const openId = await resolveExactInterviewerOpenId(c.env.DB, interviewerName);
     if (!openId) {
       return c.json({
         detail: `无法通知「${interviewerName}」：未在面试官映射表或用户表中找到该面试官的飞书 open_id。请在系统设置 → 面试官管理中配置映射。`,
@@ -10503,6 +10507,9 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
   } catch (err: any) {
     if (err?.code === 'AMBIGUOUS_RESUME') {
       return c.json({ detail: err.message, code: err.code }, 409);
+    }
+    if (err?.code === 'AMBIGUOUS_INTERVIEWER_BINDING') {
+      return c.json({ detail: err.message, code: err.code, need_bind: true }, 409);
     }
     return c.json({ detail: `通知失败: ${err?.message || '未知错误'}` }, 500);
   }
