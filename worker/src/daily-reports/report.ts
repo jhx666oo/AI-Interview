@@ -242,16 +242,63 @@ function exactCalendarDate(value: string): string | null {
     : null;
 }
 
+interface StrictTimestampParts {
+  readonly date: string;
+  readonly hour: string;
+  readonly minute: string;
+  readonly second: string;
+  readonly millisecond: string;
+  readonly zone: string;
+}
+
+function strictTimestampParts(value: string): StrictTimestampParts | null {
+  const match = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:?\d{2})?$/i.exec(value);
+  if (!match || !exactCalendarDate(match[1])) return null;
+
+  const hour = Number(match[2]);
+  const minute = Number(match[3]);
+  const second = Number(match[4] ?? '0');
+  if (hour > 23 || minute > 59 || second > 59) return null;
+
+  const zone = match[6] ?? '';
+  if (zone && zone.toUpperCase() !== 'Z') {
+    const offset = /^[+-](\d{2}):?(\d{2})$/.exec(zone);
+    if (!offset) return null;
+    const offsetHour = Number(offset[1]);
+    const offsetMinute = Number(offset[2]);
+    if (offsetHour > 23 || offsetMinute > 59) return null;
+  }
+
+  return {
+    date: match[1],
+    hour: match[2],
+    minute: match[3],
+    second: match[4] ?? '00',
+    millisecond: match[5] ?? '',
+    zone,
+  };
+}
+
+function strictTimestampInstant(parts: StrictTimestampParts): Date | null {
+  const zone = !parts.zone
+    ? 'Z'
+    : parts.zone.toUpperCase() === 'Z'
+      ? 'Z'
+      : `${parts.zone.slice(0, 3)}:${parts.zone.slice(-2)}`;
+  const fractional = parts.millisecond ? `.${parts.millisecond}` : '';
+  const instant = new Date(`${parts.date}T${parts.hour}:${parts.minute}:${parts.second}${fractional}${zone}`);
+  return Number.isNaN(instant.getTime()) ? null : instant;
+}
+
 function shanghaiDateFromUtcTimestamp(value: string | null | undefined): string | null {
   const raw = value?.trim();
   if (!raw) return null;
   const calendarDate = exactCalendarDate(raw);
   if (calendarDate) return calendarDate;
 
-  const hasTimeZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(raw);
-  const normalized = hasTimeZone ? raw : `${raw.replace(' ', 'T')}Z`;
-  const instant = new Date(normalized);
-  if (Number.isNaN(instant.getTime())) return null;
+  const timestampParts = strictTimestampParts(raw);
+  const instant = timestampParts ? strictTimestampInstant(timestampParts) : null;
+  if (!instant) return null;
 
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Shanghai',
@@ -270,16 +317,9 @@ function shanghaiInterviewDate(value: string | null | undefined): string | null 
   const calendarDate = exactCalendarDate(raw);
   if (calendarDate) return calendarDate;
 
-  if (/(?:z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
-    return shanghaiDateFromUtcTimestamp(raw);
-  }
-
-  const localDateTime = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(raw);
-  if (!localDateTime || !exactCalendarDate(localDateTime[1])) return null;
-  const hour = Number(localDateTime[2]);
-  const minute = Number(localDateTime[3]);
-  const second = Number(localDateTime[4] ?? '0');
-  return hour <= 23 && minute <= 59 && second <= 59 ? localDateTime[1] : null;
+  const timestampParts = strictTimestampParts(raw);
+  if (!timestampParts) return null;
+  return timestampParts.zone ? shanghaiDateFromUtcTimestamp(raw) : timestampParts.date;
 }
 
 function requireReportDate(reportDate: string): void {

@@ -190,6 +190,52 @@ describe('buildDailyReportSnapshot', () => {
     expect(snapshot.rows[0].todayInterviews).toBe(0);
   });
 
+  it('rejects impossible calendar dates before parsing zoned and D1 UTC timestamps', () => {
+    const dataset = emptyDataset();
+    dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '何雨菱' }];
+    dataset.interviews = [
+      { id: 'invalid-zoned-date', position_id: 'p1', interview_time: '2026-02-30T00:00:00Z' },
+    ];
+    dataset.resumes = [
+      { id: 'invalid-d1-date', position_id: 'p1', created_at: '2026-02-30 00:00:00', status: 'approved' },
+    ];
+
+    const normalizedMarchDay = buildDailyReportSnapshot(dataset, '2026-03-02', '2026-03-02T10:00:00.000Z');
+
+    expect(normalizedMarchDay.rows[0].todayInterviews).toBe(0);
+    expect(normalizedMarchDay.rows[0].todayNew).toBe(0);
+  });
+
+  it('rejects out-of-range zoned time and offset components', () => {
+    const dataset = emptyDataset();
+    dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '何雨菱' }];
+    dataset.interviews = [
+      { id: 'invalid-hour', position_id: 'p1', interview_time: '2026-08-10T25:00:00Z' },
+      { id: 'invalid-minute', position_id: 'p1', interview_time: '2026-08-10T20:60:00Z' },
+      { id: 'invalid-second', position_id: 'p1', interview_time: '2026-08-10T20:00:60Z' },
+      { id: 'invalid-offset-hour', position_id: 'p1', interview_time: '2026-08-10T20:00:00+24:00' },
+      { id: 'invalid-offset-minute', position_id: 'p1', interview_time: '2026-08-10T20:00:00+08:60' },
+    ];
+
+    const snapshot = buildDailyReportSnapshot(dataset, '2026-08-10', '2026-08-10T10:00:00.000Z');
+
+    expect(snapshot.rows[0].todayInterviews).toBe(0);
+  });
+
+  it('converts valid Z and supported numeric offsets to the Shanghai report date', () => {
+    const dataset = emptyDataset();
+    dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '何雨菱' }];
+    dataset.interviews = [
+      { id: 'z-crossing', position_id: 'p1', interview_time: '2026-08-10T16:00:00Z' },
+      { id: 'colon-offset', position_id: 'p1', interview_time: '2026-08-11T00:00:00.123+08:00' },
+      { id: 'compact-offset', position_id: 'p1', interview_time: '2026-08-11T00:00:00+0800' },
+    ];
+
+    const snapshot = buildDailyReportSnapshot(dataset, '2026-08-11', '2026-08-11T10:00:00.000Z');
+
+    expect(snapshot.rows[0].todayInterviews).toBe(3);
+  });
+
   it('does not recount old screening results after an unrelated edit today', () => {
     const dataset = emptyDataset();
     dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '杜雁玲' }];
