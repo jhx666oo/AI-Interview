@@ -45,7 +45,20 @@ describe('D1 primary requisitions', () => {
     });
 
     expect(item.city).toEqual(['not-json']);
-    expect(item.hard_requirements).toEqual([]);
+    expect(item.hard_requirements).toBe('{bad');
     expect(item.personalized_requirements).toEqual({});
+  });
+
+  it('preserves text entered in the requisition form while normalizing city text', () => {
+    const item = parseD1RequisitionRow({
+      id: 'req-2',
+      city: '北京, 上海，杭州\n深圳',
+      hard_requirements: JSON.stringify('年龄45岁以上不考虑'),
+      personalized_requirements: JSON.stringify('有大客户资源可加分'),
+    });
+
+    expect(item.city).toEqual(['北京', '上海', '杭州', '深圳']);
+    expect(item.hard_requirements).toBe('年龄45岁以上不考虑');
+    expect(item.personalized_requirements).toBe('有大客户资源可加分');
   });
 });

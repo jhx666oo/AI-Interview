@@ -3006,28 +3006,42 @@ function parseRequisitionRecord(record: any): any {
   };
 }
 
-function parseJsonArrayField(value: unknown, fallback: unknown[] = [], preserveScalar = true): unknown[] {
-  if (Array.isArray(value)) return value;
-  if (typeof value !== 'string') return fallback;
-  const text = value.trim();
-  if (!text) return fallback;
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== 'string' || !value.trim()) return value;
   try {
-    const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed : [parsed];
+    return JSON.parse(value);
   } catch {
-    return preserveScalar ? [value] : fallback;
+    // D1 rows created by the Feishu sync may contain ordinary text rather than JSON.
+    return value;
   }
 }
 
-function parseJsonObjectField(value: unknown): Record<string, any> {
+function parseCityField(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  const parsed = parseJsonValue(value);
+  if (Array.isArray(parsed)) return parsed;
+  if (typeof parsed === 'string') {
+    return parsed.split(/[,，\n]/).map((city) => city.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+/** Preserve the TextArea contract while still decoding arrays stored as JSON. */
+function parseTextOrJsonArrayField(value: unknown): unknown {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined) return [];
+  const parsed = parseJsonValue(value);
+  if (Array.isArray(parsed)) return parsed;
+  return parsed;
+}
+
+/** Preserve free-form text when a JSON object is not present. */
+function parseJsonObjectOrTextField(value: unknown): Record<string, any> | string {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
   if (typeof value !== 'string' || !value.trim()) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
+  const parsed = parseJsonValue(value);
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, any>;
+  return typeof parsed === 'string' ? parsed : {};
 }
 
 export function parseD1RequisitionRow(row: Record<string, any>): Record<string, any> {
@@ -3035,9 +3049,9 @@ export function parseD1RequisitionRow(row: Record<string, any>): Record<string, 
   item.id = row.id;
   item.title = row.title || '(未命名岗位)';
   item.headcount = Number(row.headcount) || 1;
-  item.city = parseJsonArrayField(row.city);
-  item.hard_requirements = parseJsonArrayField(row.hard_requirements, [], false);
-  item.personalized_requirements = parseJsonObjectField(row.personalized_requirements);
+  item.city = parseCityField(row.city);
+  item.hard_requirements = parseTextOrJsonArrayField(row.hard_requirements);
+  item.personalized_requirements = parseJsonObjectOrTextField(row.personalized_requirements);
   item.feishu_record_id = row.feishu_record_id || '';
   return item;
 }
