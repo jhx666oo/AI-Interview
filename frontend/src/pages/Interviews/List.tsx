@@ -12,6 +12,7 @@ import {
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
+import { getReminderFeedback, type ReminderDeliveryResponse } from './reminderFeedback';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -460,16 +461,21 @@ const InterviewsList: React.FC = () => {
     const name = interviewerName || record.interviewer;
     try {
       setReminderLoading(record.id);
-      await request.post(`/interviews/${record.interview_id}/notify-interviewer`, {
-        candidate_name: record.candidate_name,
-        position_applied: record.position_applied || record.position || '',
-        city: record.city || '',
+      const response = await request.post(`/interviews/${record.interview_id}/notify-interviewer`, {
         interviewer_name: name,
-        interview_time: record.interview_time || '',
-      });
-      message.success(`已提醒面试官：${name}`);
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || '发送提醒失败');
+      }) as ReminderDeliveryResponse;
+      const feedback = getReminderFeedback(response);
+      message[feedback.type](feedback.content);
+    } catch (error: unknown) {
+      const errorResponse = typeof error === 'object' && error !== null && 'response' in error
+        ? (error as { response?: { data?: ReminderDeliveryResponse } }).response?.data
+        : undefined;
+      if (errorResponse?.need_feishu_auth || errorResponse?.need_bind) {
+        const feedback = getReminderFeedback(errorResponse);
+        message[feedback.type](feedback.content);
+      } else {
+        message.error(errorResponse?.detail || '发送提醒失败');
+      }
     } finally {
       setReminderLoading(null);
     }

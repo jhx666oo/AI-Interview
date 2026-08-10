@@ -17,6 +17,8 @@ import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStor
 import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
 import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
 import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
+import { buildInterviewReminderView, deliverInterviewReminder } from './feishu-notifications/interview-reminder';
+import { loadInterviewReminderSource, resolveReminderInterviewer } from './feishu-notifications/reminder-source';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -8760,7 +8762,7 @@ async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
   // 1. 先从 interviewer_mappings 表查
   const map = await getInterviewerOpenIds(env);
   if (map[name]) {
-    console.log(`[getInterviewerOpenId] 从 interviewer_mappings 找到 ${name}`);
+    console.log('[getInterviewerOpenId] matched interviewer_mappings');
     return map[name];
   }
 
@@ -8770,7 +8772,7 @@ async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
       "SELECT feishu_open_id FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != '' LIMIT 1"
     ).bind(name).first() as any;
     if (userRow?.feishu_open_id) {
-      console.log(`[getInterviewerOpenId] 从 users 表找到 ${name} 的 feishu_open_id`);
+      console.log('[getInterviewerOpenId] matched bound user');
       return userRow.feishu_open_id;
     }
   } catch (e: any) {
@@ -8784,7 +8786,7 @@ async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
     ).all() as any;
     for (const u of (boundUsers.results || [])) {
       if (u.full_name && u.feishu_open_id && (u.full_name.includes(name) || name.includes(u.full_name))) {
-        console.log(`[getInterviewerOpenId] 模糊匹配: ${name} → ${u.full_name}`);
+        console.log('[getInterviewerOpenId] matched bound user by normalized name');
         return u.feishu_open_id;
       }
     }
@@ -8792,7 +8794,7 @@ async function getInterviewerOpenId(env: Env, name: string): Promise<string> {
 
   // 4. ❌ 硬编码的 FEISHU_CONFIG 中的 open_id 属于多维表格应用，不能跨应用发消息
   //    直接返回空，让调用方知道面试官未绑定飞书
-  console.warn(`[getInterviewerOpenId] ⚠ "${name}" 未找到任何绑定，返回空字符串`);
+  console.warn('[getInterviewerOpenId] no bound interviewer found');
   return '';
 }
 
@@ -8830,7 +8832,7 @@ async function refreshUserAccessToken(env: Env, email: string): Promise<{ access
     const newAccessToken = data.access_token || data.data?.access_token || '';
     const newRefreshToken = data.refresh_token || data.data?.refresh_token || row.feishu_refresh_token;
     if (!newAccessToken) {
-      console.error(`[refreshUserAccessToken] 刷新失败: ${JSON.stringify(data)}`);
+      console.error('[refreshUserAccessToken] refresh response did not contain an access token');
       await env.DB.prepare(
         "UPDATE users SET feishu_token_failed_at = ? WHERE email = ?"
       ).bind(now(), email).run();
@@ -8841,7 +8843,7 @@ async function refreshUserAccessToken(env: Env, email: string): Promise<{ access
     await env.DB.prepare(
       'UPDATE users SET feishu_token = ?, feishu_refresh_token = ?, feishu_token_expires_at = ?, feishu_token_failed_at = NULL, updated_at = ? WHERE email = ?'
     ).bind(newAccessToken, newRefreshToken, expiresAt, now(), email).run();
-    console.log(`[refreshUserAccessToken] 刷新成功: ${email}`);
+    console.log('[refreshUserAccessToken] refresh succeeded');
     return { access_token: newAccessToken, refresh_token: newRefreshToken, expires_at: expiresAt };
   } catch (e: any) {
     console.error(`[refreshUserAccessToken] 异常: ${e.message}`);
@@ -8871,7 +8873,7 @@ async function getValidUserAccessToken(env: Env, email: string): Promise<string 
   }
 
   // 过期，尝试刷新
-  console.log(`[getValidUserAccessToken] token 已过期，尝试刷新: ${email}`);
+  console.log('[getValidUserAccessToken] token expired; attempting refresh');
   const refreshed = await refreshUserAccessToken(env, email);
   return refreshed?.access_token || null;
 }
@@ -10426,31 +10428,26 @@ app.post('/api/interviews/sync-from-feishu', authMiddleware, async (c) => {
 /**
  * 面试管理 - 提醒面试官
  * POST /api/interviews/:id/notify-interviewer
- * 直接给面试记录中指定的面试官发送飞书提醒
- * 请求体：{ candidate_name, interviewer_name }
+ * 候选人和面试数据只从 D1 权威记录读取；请求体仅可选择该记录已配置的面试官。
+ * 请求体：{ interviewer_name? }
  */
 app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json().catch(() => ({}));
-  const currentUser = c.get('user');
-
-  // 从面试记录读取面试官信息
-  let interviewerName = body.interviewer_name || '';
-  let candidateName = body.candidate_name || '';
-  if (!interviewerName || !candidateName) {
-    const interview = await c.env.DB.prepare(
-      'SELECT interviewer, candidate_name, interview_time FROM interviews WHERE id = ?'
-    ).bind(id).first() as any;
-    if (interview) {
-      if (!interviewerName) interviewerName = interview.interviewer || '';
-      if (!candidateName) candidateName = interview.candidate_name || '';
-    }
-  }
-  interviewerName = interviewerName || '面试官';
-  candidateName = candidateName || '该候选人';
+  const currentUser = c.get('user') as { email?: string; full_name?: string };
 
   try {
-    // 1. 从面试官映射表或 users 表获取 open_id
+    const source = await loadInterviewReminderSource(c.env.DB, id);
+    if (!source) return c.json({ detail: '未找到该面试记录。' }, 404);
+
+    const interviewerName = resolveReminderInterviewer(source.interview, body.interviewer_name);
+    if (!interviewerName) {
+      return c.json({
+        detail: '面试记录未配置可用的面试官，请先更新面试安排。',
+        need_bind: true,
+      }, 400);
+    }
+
     const openId = await getInterviewerOpenId(c.env, interviewerName);
     if (!openId) {
       return c.json({
@@ -10459,41 +10456,55 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       }, 400);
     }
 
-    // 2. 构建卡片消息
-    const interviewTime = body.interview_time || '';
-    const cardContent = buildInterviewerCard(
-      candidateName,
-      body.position_applied || '',
-      body.city || '',
-      '',
-      currentUser?.full_name,
-      interviewTime
-    );
+    const userToken = currentUser?.email
+      ? await getValidUserAccessToken(c.env, currentUser.email)
+      : null;
+    if (!userToken) {
+      return c.json({
+        detail: '请先在个人设置中授权当前账号的飞书身份。',
+        need_feishu_auth: true,
+      }, 400);
+    }
 
-    // 3. 三层 fallback 发送（当前用户token → DB任意用户token → bot）
-    await sendFeishuMessageWithFallback(c.env, currentUser?.email, openId, cardContent);
+    const resourceToken = await getFeishuToken(c.env);
+    const resumeId = typeof source.resume?.id === 'string' ? source.resume.id : '';
+    const resumeFile = resumeId
+      ? await getResumeFileBytes(c.env, resumeId)
+      : { bytes: null, fileName: 'resume.pdf' };
+    const delivery = await deliverInterviewReminder({
+      userToken,
+      resourceToken,
+      receiverOpenId: openId,
+      view: buildInterviewReminderView(source),
+      operatorName: currentUser?.full_name || currentUser?.email || '',
+      file: resumeFile.bytes ? { bytes: resumeFile.bytes, fileName: resumeFile.fileName } : undefined,
+    }, { fetch });
 
-    console.log(`[NotifyInterviewer] ✅ 通知面试官: ${interviewerName} (open_id: ${openId})`);
-
-    // 埋点：面试官通知
     await logOperation(c.env, {
       action: 'interview.notify',
       entityType: 'interview',
       entityId: id,
       actor: currentUser?.email,
-      detail: JSON.stringify({ interviewer: interviewerName, candidate: candidateName }),
+      detail: JSON.stringify({ card_sent: delivery.cardSent, file_sent: delivery.fileSent }),
     });
 
-    // 如果是提醒二面面试官，标记 status2 = 'scheduled'
-    const ivRow = await c.env.DB.prepare('SELECT secondary_interviewer FROM interviews WHERE id = ?').bind(id).first() as any;
-    if (ivRow?.secondary_interviewer && interviewerName === ivRow.secondary_interviewer) {
+    if (source.interview.secondary_interviewer === interviewerName) {
       await c.env.DB.prepare("UPDATE interviews SET status2 = 'scheduled', updated_at = ? WHERE id = ?")
         .bind(now(), id).run();
     }
 
-    return c.json({ ok: true, message: `已通知面试官 ${interviewerName}: ${candidateName}` });
+    return c.json({
+      ok: delivery.cardSent,
+      card_sent: delivery.cardSent,
+      file_sent: delivery.fileSent,
+      sent_as: currentUser.email || '',
+      warning: delivery.warning || (resumeFile.bytes ? null : '未找到可发送的简历 PDF'),
+    });
   } catch (err: any) {
-    return c.json({ detail: `通知失败: ${err.message}` }, 500);
+    if (err?.code === 'AMBIGUOUS_RESUME') {
+      return c.json({ detail: err.message, code: err.code }, 409);
+    }
+    return c.json({ detail: `通知失败: ${err?.message || '未知错误'}` }, 500);
   }
 });
 

@@ -1,9 +1,15 @@
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildInterviewReminderCard,
   buildInterviewReminderView,
   deliverInterviewReminder,
 } from '../src/feishu-notifications/interview-reminder';
+import {
+  loadInterviewReminderSource,
+  resolveReminderInterviewer,
+} from '../src/feishu-notifications/reminder-source';
 
 const completeView = {
   name: '张三', education: '本科', age: 29, gender: '女', position: '社区运营',
@@ -17,6 +23,85 @@ const deliveryInput = {
 };
 
 describe('interview reminders', () => {
+  it('loads the resume by interview resume_id and attaches screening and task data', async () => {
+    const queries: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        queries.push(sql);
+        return {
+          bind(...values: unknown[]) {
+            return {
+              first: async () => {
+                if (sql.includes('FROM interviews')) return { id: 'iv-1', resume_id: 'resume-1', candidate_name: '请求体不可信', position_id: 'task-1' };
+                if (sql.includes('FROM resumes')) return { id: values[0], candidate_name: '数据库候选人' };
+                if (sql.includes('FROM resume_screening_queue')) return { resume_id: values[0], city: '北京' };
+                if (sql.includes('FROM recruitment_tasks')) return { id: values[0], position_name: '社区运营' };
+                return null;
+              },
+              all: async () => ({ results: [] }),
+            };
+          },
+        };
+      },
+    };
+
+    await expect(loadInterviewReminderSource(db as never, 'iv-1')).resolves.toMatchObject({
+      interview: { id: 'iv-1' },
+      resume: { id: 'resume-1', candidate_name: '数据库候选人' },
+      screening: { resume_id: 'resume-1' },
+      recruitmentTask: { id: 'task-1' },
+    });
+    expect(queries.filter((sql) => sql.includes('candidate_name = ?'))).toHaveLength(0);
+  });
+
+  it('rejects an ambiguous legacy candidate-name resume match', async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return {
+              first: async () => sql.includes('FROM interviews')
+                ? { id: 'iv-legacy', resume_id: '', candidate_name: '同名候选人' }
+                : null,
+              all: async () => ({ results: sql.includes('FROM resumes')
+                ? [{ id: 'resume-1' }, { id: 'resume-2' }]
+                : [] }),
+            };
+          },
+        };
+      },
+    };
+
+    await expect(loadInterviewReminderSource(db as never, 'iv-legacy')).rejects.toMatchObject({
+      code: 'AMBIGUOUS_RESUME',
+    });
+  });
+
+  it('only accepts an interviewer selected from the authoritative interview row', () => {
+    const interview = { interviewer: '张三、李四', primary_interviewer: '张三', secondary_interviewer: '李四' };
+    expect(resolveReminderInterviewer(interview, '李四')).toBe('李四');
+    expect(resolveReminderInterviewer(interview, '请求体伪造面试官')).toBeNull();
+  });
+
+  it('wires the endpoint to current-user delivery without candidate-body or sender fallback paths', async () => {
+    const source = await readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8');
+    const route = source.slice(
+      source.indexOf("app.post('/api/interviews/:id/notify-interviewer'"),
+      source.indexOf('// ==================== 飞书事件回调'),
+    );
+
+    expect(route).toContain('loadInterviewReminderSource(c.env.DB, id)');
+    expect(route).toContain('getValidUserAccessToken(c.env, currentUser.email)');
+    expect(route).toContain('getFeishuToken(c.env)');
+    expect(route).toContain('getResumeFileBytes(c.env, resumeId)');
+    expect(route).toContain('deliverInterviewReminder');
+    expect(route).toContain('need_feishu_auth: true');
+    expect(route).toContain('need_bind: true');
+    expect(route).not.toContain('body.candidate_name');
+    expect(route).not.toContain('sendFeishuMessageWithFallback');
+    expect(route).not.toMatch(/callAI|chat\/completions/);
+  });
+
   it('uploads PDF before sending the card and file from the current user', async () => {
     const calls: string[] = [];
     const authorizations: Array<string | null> = [];
