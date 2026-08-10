@@ -36,13 +36,18 @@ export interface InterviewReminderDeliveryResult {
 }
 
 const EMPTY_VALUE = '未填写';
+const DEFAULT_AI_ADVICE = '建议面试官重点核实岗位匹配、核心经历与稳定性，并结合简历原文人工判断。';
 const MAX_ADVICE_LENGTH = 500;
 const MAX_PDF_BYTES = 30 * 1024 * 1024;
 const MAX_FEISHU_RESPONSE_BYTES = 1024 * 1024;
 const FEISHU_IM_API = 'https://open.feishu.cn/open-apis/im/v1';
 
-function deliveryError(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
+function deliveryError(
+  code: string,
+  message: string,
+  feishuCode?: number,
+): Error & { code: string; feishuCode?: number } {
+  return Object.assign(new Error(message), { code }, feishuCode === undefined ? {} : { feishuCode });
 }
 
 async function readFeishuResponse(response: Response): Promise<RawRecord> {
@@ -92,7 +97,10 @@ async function readFeishuResponse(response: Response): Promise<RawRecord> {
   }
 
   if (!response.ok || parsed.code !== 0) {
-    throw deliveryError('FEISHU_DELIVERY_FAILED', 'Feishu delivery request failed');
+    const feishuCode = typeof parsed.code === 'number' && Number.isFinite(parsed.code)
+      ? parsed.code
+      : undefined;
+    throw deliveryError('FEISHU_DELIVERY_FAILED', 'Feishu delivery request failed', feishuCode);
   }
   return parsed;
 }
@@ -198,13 +206,33 @@ function calculateAge(value: unknown, at: Date): number | null {
   const birthday = new Date(`${value}T00:00:00.000Z`);
   if (Number.isNaN(birthday.getTime()) || birthday.toISOString().slice(0, 10) !== value) return null;
 
-  const today = new Date(at);
-  if (Number.isNaN(today.getTime()) || birthday > today) return null;
-  let age = today.getUTCFullYear() - birthday.getUTCFullYear();
-  const beforeBirthday = today.getUTCMonth() < birthday.getUTCMonth()
-    || (today.getUTCMonth() === birthday.getUTCMonth() && today.getUTCDate() < birthday.getUTCDate());
+  if (Number.isNaN(at.getTime())) return null;
+  const shanghaiParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(at);
+  const today = Object.fromEntries(shanghaiParts.map(({ type, value: part }) => [type, Number(part)]));
+  const birthdayYear = birthday.getUTCFullYear();
+  const birthdayMonth = birthday.getUTCMonth() + 1;
+  const birthdayDay = birthday.getUTCDate();
+  if ([today.year, today.month, today.day].some((part) => !Number.isFinite(part))) return null;
+  if (birthdayYear > today.year
+    || (birthdayYear === today.year && birthdayMonth > today.month)
+    || (birthdayYear === today.year && birthdayMonth === today.month && birthdayDay > today.day)) return null;
+  let age = today.year - birthdayYear;
+  const beforeBirthday = today.month < birthdayMonth
+    || (today.month === birthdayMonth && today.day < birthdayDay);
   if (beforeBirthday) age -= 1;
-  return age;
+  return age >= 0 && age <= 120 ? age : null;
+}
+
+function parsedAge(value: unknown): number | null {
+  const numeric = typeof value === 'number'
+    ? value
+    : (typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value.trim()) : Number.NaN);
+  return Number.isInteger(numeric) && numeric >= 0 && numeric <= 120 ? numeric : null;
 }
 
 function list(value: unknown): string[] {
@@ -214,17 +242,48 @@ function list(value: unknown): string[] {
     .map((item) => item.trim());
 }
 
-function buildAiAdvice(evaluation: RawRecord): string {
-  const advice = [
-    text(evaluation.summary),
-    text(evaluation.recommendation, evaluation.recommendations),
-    ...list(evaluation.risks).map((point) => `风险点：${point}`),
-    ...list(evaluation.risk).map((point) => `风险点：${point}`),
-    ...list(evaluation.risk_points).map((point) => `风险点：${point}`),
-    ...list(evaluation.suggested_questions).map((question) => `建议提问：${question}`),
-    ...list(evaluation.interview_questions).map((question) => `建议提问：${question}`),
-  ].filter(Boolean).join('\n');
-  return advice.slice(0, MAX_ADVICE_LENGTH) || EMPTY_VALUE;
+function unique(values: string[], limit: number): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, limit);
+}
+
+function aiSource(value: unknown): RawRecord | string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (typeof parsed === 'string') return parsed.trim() || null;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as RawRecord;
+      return null;
+    } catch {
+      return trimmed;
+    }
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as RawRecord;
+  return null;
+}
+
+function buildAiAdvice(value: unknown): string {
+  const source = aiSource(value);
+  if (typeof source === 'string') return source.slice(0, MAX_ADVICE_LENGTH);
+  if (!source) return '';
+
+  const conclusions = unique([
+    text(source.summary),
+    ...list(source.recommendation),
+    ...list(source.recommendations),
+  ], 2);
+  const risks = unique([
+    ...list(source.risks),
+    ...list(source.risk),
+    ...list(source.risk_points),
+  ], 4).map((point) => `风险点：${point}`);
+  const questions = unique([
+    ...list(source.suggested_questions),
+    ...list(source.interview_questions),
+    ...list(source.questions),
+  ], 4).map((question) => `建议提问：${question}`);
+  return unique([...conclusions, ...risks, ...questions], 10).join('\n').slice(0, MAX_ADVICE_LENGTH);
 }
 
 export function buildInterviewReminderView(
@@ -236,17 +295,31 @@ export function buildInterviewReminderView(
   const screening = asRecord(source.screening);
   const task = asRecord(source.recruitmentTask);
   const parsed = asRecord(resume.parsed_data);
-  const evaluation = asRecord(resume.ai_evaluation);
+  const advice = [resume.ai_evaluation, resume.ai_review, screening.ai_analysis]
+    .map(buildAiAdvice)
+    .find(Boolean);
+  const authoritativeAge = parsedAge(parsed.age);
 
   return {
     name: text(resume.candidate_name, resume.name, screening.candidate_name, interview.candidate_name, task.candidate_name) || EMPTY_VALUE,
-    education: text(resume.education, parsed.highest_degree, parsed.education, screening.education) || EMPTY_VALUE,
-    age: calculateAge(text(resume.birthday, parsed.birthday, screening.birthday), at),
-    gender: text(resume.gender, parsed.gender, screening.gender) || EMPTY_VALUE,
+    education: text(parsed.highest_degree, parsed.education, resume.education, screening.education) || EMPTY_VALUE,
+    age: authoritativeAge ?? calculateAge(text(resume.birthday, parsed.birthday, screening.birthday), at),
+    gender: text(parsed.gender, resume.gender, screening.gender) || EMPTY_VALUE,
     position: text(resume.mapped_position, resume.position_applied, screening.mapped_position, interview.position_applied, task.position) || EMPTY_VALUE,
     interviewTime: formatInterviewTime(text(interview.interview_time, task.interview_time)),
-    city: text(resume.city, parsed.city, screening.city) || EMPTY_VALUE,
-    aiAdvice: buildAiAdvice(evaluation),
+    city: text(
+      parsed.city,
+      screening.city,
+      task.city,
+      resume.position_location,
+      resume.work_location,
+      resume.location,
+      task.position_location,
+      task.work_location,
+      task.location,
+      interview.interview_location,
+    ) || EMPTY_VALUE,
+    aiAdvice: advice || DEFAULT_AI_ADVICE,
   };
 }
 
@@ -278,7 +351,10 @@ export function buildInterviewReminderCard(
 
 export async function deliverInterviewReminder(
   input: InterviewReminderDeliveryInput,
-  dependencies: { fetch: typeof fetch },
+  dependencies: {
+    fetch: typeof fetch;
+    refreshUserToken?: () => Promise<string | null>;
+  },
 ): Promise<InterviewReminderDeliveryResult> {
   if (!input.userToken.trim()) {
     throw deliveryError('FEISHU_AUTH_REQUIRED', 'A current-user Feishu token is required');
@@ -289,6 +365,55 @@ export async function deliverInterviewReminder(
 
   let fileKey: string | null = null;
   let warning: string | null = null;
+  let activeUserToken = input.userToken;
+  let refreshAttempted = false;
+
+  const sendCurrentUserMessage = async (msgType: 'interactive' | 'file', content: string): Promise<void> => {
+    try {
+      await sendFeishuMessage(
+        dependencies.fetch,
+        activeUserToken,
+        input.receiverOpenId,
+        msgType,
+        content,
+      );
+      return;
+    } catch (error) {
+      const feishuCode = (error as { feishuCode?: number })?.feishuCode;
+      if (feishuCode !== 99991677) throw error;
+      if (refreshAttempted || !dependencies.refreshUserToken) {
+        throw deliveryError('FEISHU_AUTH_REQUIRED', '当前用户飞书授权已失效，请重新授权后重试', feishuCode);
+      }
+      refreshAttempted = true;
+
+      let refreshedToken: string | null = null;
+      try {
+        refreshedToken = await dependencies.refreshUserToken();
+      } catch {
+        // The route returns a single actionable authentication response for all refresh failures.
+      }
+      activeUserToken = refreshedToken?.trim() || '';
+      if (!activeUserToken) {
+        throw deliveryError('FEISHU_AUTH_REQUIRED', '当前用户飞书授权已失效，请重新授权后重试', feishuCode);
+      }
+
+      try {
+        await sendFeishuMessage(
+          dependencies.fetch,
+          activeUserToken,
+          input.receiverOpenId,
+          msgType,
+          content,
+        );
+      } catch (retryError) {
+        if ((retryError as { feishuCode?: number })?.feishuCode === 99991677) {
+          throw deliveryError('FEISHU_AUTH_REQUIRED', '当前用户飞书授权已失效，请重新授权后重试', 99991677);
+        }
+        throw retryError;
+      }
+    }
+  };
+
   if (input.file) {
     try {
       fileKey = await uploadPdf(input.file, input.resourceToken, dependencies.fetch);
@@ -297,10 +422,7 @@ export async function deliverInterviewReminder(
     }
   }
 
-  await sendFeishuMessage(
-    dependencies.fetch,
-    input.userToken,
-    input.receiverOpenId,
+  await sendCurrentUserMessage(
     'interactive',
     JSON.stringify(buildInterviewReminderCard(input.view, {
       operatorName: input.operatorName,
@@ -311,15 +433,15 @@ export async function deliverInterviewReminder(
   if (!fileKey) return { cardSent: true, fileSent: false, warning };
 
   try {
-    await sendFeishuMessage(
-      dependencies.fetch,
-      input.userToken,
-      input.receiverOpenId,
+    await sendCurrentUserMessage(
       'file',
       JSON.stringify({ file_key: fileKey }),
     );
     return { cardSent: true, fileSent: true, warning: null };
-  } catch {
+  } catch (error) {
+    if ((error as { code?: string })?.code === 'FEISHU_AUTH_REQUIRED') {
+      throw Object.assign(error as Error, { cardSent: true, fileSent: false });
+    }
     return { cardSent: true, fileSent: false, warning: 'PDF 发送失败，已发送面试提醒卡片。' };
   }
 }

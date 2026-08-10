@@ -22,9 +22,9 @@ database_id = "3f82993e-210d-4b0b-9d83-4ed4be69724f"
 binding = "RESUME_PROCESSING_QUEUE"
 queue = "resume-processing"
 
-# Cron triggers - 每天北京时间 9:00（UTC 1:00）检查待审核候选人并发飞书提醒；23:55 生成招聘看板快照
+# Cron triggers - 北京时间 9:00 提醒待审核候选人；18:00（UTC 10:00）生成并推送日报；23:55 生成招聘看板快照
 [triggers]
-crons = ["0 1 * * *", "55 15 * * *"]
+crons = ["0 1 * * *", "0 10 * * *", "55 15 * * *"]
 
 # 简历 PDF 存储（KV，替代 D1 base64，避免 SQLITE_TOOBIG）
 [[kv_namespaces]]

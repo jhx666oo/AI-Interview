@@ -31,7 +31,9 @@ import {
   mapHrDecision,
   recordResumeDecisionTimestamp,
   releaseScreeningQueueClaim,
+  runDailyReportPipeline,
   sendStoredDailyReport,
+  DailyReportTargetMissingError,
   type DailyReportGenerationDependencies,
 } from './daily-reports/service';
 import type { DailyReportSnapshot } from './daily-reports/report';
@@ -9727,15 +9729,10 @@ app.use('/api/cron/*', async (c, next) => {
  */
 app.post('/api/cron/daily-report', async (c) => {
   try {
-    const reportDate = getShanghaiReportDate();
-    const chatId = (c.env.FEISHU_RECRUITMENT_GROUP_CHAT_ID || FEISHU_CONFIG.recruitmentGroupChatId).trim();
-    if (!chatId) {
-      return c.json({ ok: false, detail: '未配置日报招聘群 FEISHU_RECRUITMENT_GROUP_CHAT_ID' }, 503);
-    }
-    const report = await generatePersistAndDeliverDailyReport(
+    const report = await runDailyReportPipeline(
       c.env,
-      reportDate,
-      { type: 'chat', id: chatId },
+      new Date(),
+      c.env.FEISHU_RECRUITMENT_GROUP_CHAT_ID || '',
       dailyReportGenerationDependencies(c.env),
       async (target, card) => {
         const token = await getFeishuToken(c.env);
@@ -9756,6 +9753,9 @@ app.post('/api/cron/daily-report', async (c) => {
       }
     });
   } catch (err: any) {
+    if (err instanceof DailyReportTargetMissingError) {
+      return c.json({ ok: false, detail: '未配置日报招聘群 FEISHU_RECRUITMENT_GROUP_CHAT_ID' }, 503);
+    }
     if (err instanceof DailyReportDeliveryError) {
       return c.json({ ok: false, report_id: err.reportId, detail: `日报已生成但推送失败: ${err.message}` }, 502);
     }
@@ -10480,7 +10480,14 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       view: buildInterviewReminderView(source),
       operatorName: currentUser?.full_name || currentUser?.email || '',
       file: resumeFile.bytes ? { bytes: resumeFile.bytes, fileName: resumeFile.fileName } : undefined,
-    }, { fetch });
+    }, {
+      fetch,
+      refreshUserToken: async () => {
+        if (!currentUser.email) return null;
+        const refreshed = await refreshUserAccessToken(c.env, currentUser.email);
+        return refreshed?.access_token || null;
+      },
+    });
 
     await logOperation(c.env, {
       action: 'interview.notify',
@@ -10508,6 +10515,15 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
     }
     if (err?.code === 'AMBIGUOUS_INTERVIEWER_BINDING') {
       return c.json({ detail: err.message, code: err.code, need_bind: true }, 409);
+    }
+    if (err?.code === 'FEISHU_AUTH_REQUIRED') {
+      return c.json({
+        detail: '当前账号的飞书授权已失效，请在个人设置中重新授权后重试。',
+        code: err.code,
+        need_feishu_auth: true,
+        card_sent: Boolean(err.cardSent),
+        file_sent: false,
+      }, 400);
     }
     return c.json({ detail: `通知失败: ${err?.message || '未知错误'}` }, 500);
   }
@@ -10992,6 +11008,39 @@ export default {
         try { await createDashboardSnapshot(env.DB, toShanghaiSnapshotDate(at), board, 'cron', at.toISOString()); }
         catch (error) { if (!(error instanceof Error && error.message === 'snapshot already exists')) throw error; }
       })());
+      return;
+    }
+
+    if (event.cron === '0 10 * * *') {
+      ctx.waitUntil((async () => {
+        try {
+          const report = await runDailyReportPipeline(
+            env,
+            new Date(event.scheduledTime),
+            env.FEISHU_RECRUITMENT_GROUP_CHAT_ID || '',
+            dailyReportGenerationDependencies(env),
+            async (target, card) => {
+              const token = await getFeishuToken(env);
+              await sendFeishuMessageToChat(token, target.id, card);
+            },
+          );
+          console.log(`[cron:daily-report] sent report_id=${report.id} report_date=${report.snapshot.reportDate}`);
+        } catch (error) {
+          if (error instanceof DailyReportTargetMissingError) {
+            console.warn('[cron:daily-report] FEISHU_RECRUITMENT_GROUP_CHAT_ID 未配置，跳过且不生成日报');
+            return;
+          }
+          if (error instanceof DailyReportDeliveryError) {
+            console.error(`[cron:daily-report] delivery failed report_id=${error.reportId}: ${error.message}`);
+          }
+          throw error;
+        }
+      })());
+      return;
+    }
+
+    if (event.cron !== '0 1 * * *') {
+      console.warn(`[cron] 未识别的 cron 表达式，跳过: ${event.cron}`);
       return;
     }
 

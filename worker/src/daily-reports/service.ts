@@ -489,6 +489,31 @@ export async function generatePersistAndDeliverDailyReport(
   return report;
 }
 
+export async function runDailyReportPipeline(
+  env: { DB: Pick<D1Database, 'prepare'> },
+  at: Date,
+  chatId: string,
+  dependencies: DailyReportGenerationDependencies,
+  deliver: DailyReportDeliver,
+): Promise<PersistedDailyReport> {
+  const targetId = chatId.trim();
+  if (!targetId) throw new DailyReportTargetMissingError();
+  return generatePersistAndDeliverDailyReport(
+    env,
+    getShanghaiReportDate(at),
+    { type: 'chat', id: targetId },
+    dependencies,
+    deliver,
+  );
+}
+
+export class DailyReportTargetMissingError extends Error {
+  constructor() {
+    super('FEISHU_RECRUITMENT_GROUP_CHAT_ID is not configured');
+    this.name = 'DailyReportTargetMissingError';
+  }
+}
+
 export class DailyReportDeliveryError extends Error {
   readonly reportId: string;
 

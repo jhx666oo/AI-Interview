@@ -327,6 +327,76 @@ describe('interview reminders', () => {
     })).rejects.toMatchObject({ code: 'FEISHU_AUTH_REQUIRED' });
   });
 
+  it('preserves the numeric Feishu error code for non-expiry card failures', async () => {
+    let refreshCalls = 0;
+    await expect(deliverInterviewReminder({ ...deliveryInput, file: undefined }, {
+      fetch: async () => Response.json({ code: 234567, msg: 'permission denied' }),
+      refreshUserToken: async () => { refreshCalls += 1; return 'unused-token'; },
+    })).rejects.toMatchObject({ code: 'FEISHU_DELIVERY_FAILED', feishuCode: 234567 });
+    expect(refreshCalls).toBe(0);
+  });
+
+  it('refreshes the same user once and retries only an expired card request', async () => {
+    const calls: Array<{ kind: string; authorization: string | null }> = [];
+    let refreshCalls = 0;
+
+    const result = await deliverInterviewReminder(deliveryInput, {
+      fetch: async (url, init) => {
+        const authorization = new Headers(init?.headers).get('Authorization');
+        const kind = String(url).includes('/files') ? 'upload' : JSON.parse(String(init?.body)).msg_type;
+        calls.push({ kind, authorization });
+        if (kind === 'upload') return Response.json({ code: 0, data: { file_key: 'file-key' } });
+        if (kind === 'interactive' && authorization === 'Bearer user-token') {
+          return Response.json({ code: 99991677, msg: 'token expired' });
+        }
+        return Response.json({ code: 0, data: { message_id: 'message-id' } });
+      },
+      refreshUserToken: async () => { refreshCalls += 1; return 'same-user-refreshed-token'; },
+    });
+
+    expect(calls).toEqual([
+      { kind: 'upload', authorization: 'Bearer tenant-token' },
+      { kind: 'interactive', authorization: 'Bearer user-token' },
+      { kind: 'interactive', authorization: 'Bearer same-user-refreshed-token' },
+      { kind: 'file', authorization: 'Bearer same-user-refreshed-token' },
+    ]);
+    expect(refreshCalls).toBe(1);
+    expect(result).toMatchObject({ cardSent: true, fileSent: true });
+  });
+
+  it('refreshes once at the file stage without repeating the delivered card or PDF upload', async () => {
+    const calls: Array<{ kind: string; authorization: string | null }> = [];
+    let refreshCalls = 0;
+
+    const result = await deliverInterviewReminder(deliveryInput, {
+      fetch: async (url, init) => {
+        const authorization = new Headers(init?.headers).get('Authorization');
+        const kind = String(url).includes('/files') ? 'upload' : JSON.parse(String(init?.body)).msg_type;
+        calls.push({ kind, authorization });
+        if (kind === 'upload') return Response.json({ code: 0, data: { file_key: 'file-key' } });
+        if (kind === 'file' && authorization === 'Bearer user-token') {
+          return Response.json({ code: 99991677, msg: 'token expired' });
+        }
+        return Response.json({ code: 0, data: { message_id: 'message-id' } });
+      },
+      refreshUserToken: async () => { refreshCalls += 1; return 'same-user-refreshed-token'; },
+    });
+
+    expect(calls.map(({ kind }) => kind)).toEqual(['upload', 'interactive', 'file', 'file']);
+    expect(calls.at(-1)?.authorization).toBe('Bearer same-user-refreshed-token');
+    expect(refreshCalls).toBe(1);
+    expect(result).toMatchObject({ cardSent: true, fileSent: true });
+  });
+
+  it('returns actionable auth failure when the same-user refresh cannot produce a token', async () => {
+    let refreshCalls = 0;
+    await expect(deliverInterviewReminder({ ...deliveryInput, file: undefined }, {
+      fetch: async () => Response.json({ code: 99991677, msg: 'token expired' }),
+      refreshUserToken: async () => { refreshCalls += 1; return null; },
+    })).rejects.toMatchObject({ code: 'FEISHU_AUTH_REQUIRED', feishuCode: 99991677 });
+    expect(refreshCalls).toBe(1);
+  });
+
   it('still sends a card when PDF upload fails', async () => {
     const messageTypes: string[] = [];
     const result = await deliverInterviewReminder(deliveryInput, {
@@ -401,6 +471,34 @@ describe('interview reminders', () => {
     expect(view.aiAdvice).toContain('稳定性待核实');
   });
 
+  it('prefers valid parsed demographics and falls back from invalid parsed age to birthday', () => {
+    const parsed = buildInterviewReminderView({
+      resume: {
+        education: '本科', gender: '男', birthday: '1980-01-01',
+        parsed_data: JSON.stringify({ highest_degree: '硕士', gender: '女', age: '32' }),
+      },
+    }, new Date('2026-08-10T16:30:00.000Z'));
+    const birthdayFallback = buildInterviewReminderView({
+      resume: {
+        birthday: '1996-08-11',
+        parsed_data: { age: 121 },
+      },
+    }, new Date('2026-08-10T16:30:00.000Z'));
+
+    expect(parsed).toMatchObject({ education: '硕士', gender: '女', age: 32 });
+    expect(birthdayFallback.age).toBe(30);
+  });
+
+  it.each([
+    [{ parsed_data: { city: '上海' } }, { city: '北京' }, { city: '杭州' }, { interview_location: '深圳' }, '上海'],
+    [{}, { city: '北京' }, { city: '杭州' }, { interview_location: '深圳' }, '北京'],
+    [{}, {}, { city: '杭州' }, { interview_location: '深圳' }, '杭州'],
+    [{ position_location: '成都' }, {}, {}, { interview_location: '深圳' }, '成都'],
+    [{}, {}, {}, { interview_location: '深圳' }, '深圳'],
+  ])('uses the documented city fallback chain', (resume, screening, recruitmentTask, interview, expected) => {
+    expect(buildInterviewReminderView({ resume, screening, recruitmentTask, interview }).city).toBe(expected);
+  });
+
   it('renders attachment availability and never exposes raw JSON', () => {
     const card = buildInterviewReminderCard({
       name: '张三', education: '本科', age: 29, gender: '女', position: '社区运营',
@@ -472,5 +570,62 @@ describe('interview reminders', () => {
     expect(view.aiAdvice).toContain('请描述一次冲突处理');
     expect(view.aiAdvice).toContain('请介绍过往项目');
     expect(view.aiAdvice.length).toBeLessThanOrEqual(500);
+  });
+
+  it('falls through compatible AI sources and deduplicates bounded risks and questions', () => {
+    const fromReview = buildInterviewReminderView({
+      resume: {
+        ai_evaluation: JSON.stringify({ dimensions: [] }),
+        ai_review: JSON.stringify({
+          summary: '整体匹配', recommendation: '建议进入面试',
+          risks: ['稳定性待核实', '稳定性待核实', '薪资预期偏高', '通勤距离', '经验年限', '第五项不展示'],
+          interview_questions: ['为何离职', '为何离职', '职业规划', '如何协作', '如何复盘', '第五题不展示'],
+        }),
+      },
+      screening: { ai_analysis: JSON.stringify({ summary: '不应覆盖优先来源' }) },
+    });
+    const fromScreeningString = buildInterviewReminderView({
+      screening: { ai_analysis: '建议核实最近一段经历的真实性。' },
+    });
+
+    expect(fromReview.aiAdvice).toContain('整体匹配');
+    expect(fromReview.aiAdvice).toContain('建议进入面试');
+    expect(fromReview.aiAdvice.match(/稳定性待核实/g)).toHaveLength(1);
+    expect(fromReview.aiAdvice.match(/为何离职/g)).toHaveLength(1);
+    expect(fromReview.aiAdvice).not.toContain('第五项不展示');
+    expect(fromReview.aiAdvice).not.toContain('第五题不展示');
+    expect(fromReview.aiAdvice).not.toContain('不应覆盖优先来源');
+    expect(fromReview.aiAdvice.length).toBeLessThanOrEqual(500);
+    expect(fromScreeningString.aiAdvice).toBe('建议核实最近一段经历的真实性。');
+  });
+
+  it('uses a fixed actionable recommendation when no stored AI advice is usable', () => {
+    const view = buildInterviewReminderView({
+      resume: { ai_evaluation: '', ai_review: '{}' },
+      screening: { ai_analysis: null },
+    });
+
+    expect(view.aiAdvice).toBe('建议面试官重点核实岗位匹配、核心经历与稳定性，并结合简历原文人工判断。');
+  });
+
+  it('wires legacy-token retries only to the authenticated current user', async () => {
+    const source = await readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8');
+    const validToken = source.slice(
+      source.indexOf('async function getValidUserAccessToken'),
+      source.indexOf('async function getFeishuToken'),
+    );
+    const route = source.slice(
+      source.indexOf("app.post('/api/interviews/:id/notify-interviewer'"),
+      source.indexOf('// ==================== 飞书事件回调'),
+    );
+
+    expect(validToken).toContain('row.feishu_token_expires_at <= 0');
+    expect(validToken).toContain('return row.feishu_token');
+    expect(route).toContain('refreshUserAccessToken(c.env, currentUser.email)');
+    expect(route).toContain('refreshUserToken');
+    expect(route).toContain('need_feishu_auth: true');
+    expect(route).not.toContain('getAnyFeishuUserToken');
+    expect(route).not.toContain('sendFeishuMessageWithFallback');
+    expect(route).not.toContain('tenant_access_token');
   });
 });

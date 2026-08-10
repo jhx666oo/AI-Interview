@@ -16,6 +16,7 @@ import {
   generatePersistAndDeliverDailyReport,
   mapHrDecision,
   releaseScreeningQueueClaim,
+  runDailyReportPipeline,
 } from '../src/daily-reports/service';
 
 function dataset(): DailyReportDataset {
@@ -348,6 +349,42 @@ describe('HR and linked screening decisions', () => {
 });
 
 describe('cron delivery and request boundaries', () => {
+  it('uses the scheduled instant to select the Shanghai report date', async () => {
+    let loadedDate = '';
+    const db = { prepare() { return { bind() { return { async run() { return { meta: { changes: 1 } }; } }; } }; } };
+
+    const report = await runDailyReportPipeline(
+      { DB: db as never },
+      new Date('2026-08-10T10:00:00.000Z'),
+      'oc_daily_report',
+      {
+        id: () => 'daily-shanghai-date',
+        loadDataset: async (_db, reportDate) => { loadedDate = reportDate; return dataset(); },
+        summarize: async () => '',
+      },
+      async () => undefined,
+    );
+
+    expect(loadedDate).toBe('2026-08-10');
+    expect(report.snapshot.reportDate).toBe('2026-08-10');
+  });
+
+  it('skips generation when the runtime daily-report chat id is missing', async () => {
+    let loads = 0;
+    let writes = 0;
+    const db = { prepare() { return { bind() { return { async run() { writes += 1; return { meta: { changes: 1 } }; } }; } }; } };
+
+    await expect(runDailyReportPipeline(
+      { DB: db as never },
+      new Date('2026-08-10T10:00:00.000Z'),
+      '   ',
+      { loadDataset: async () => { loads += 1; return dataset(); }, summarize: async () => '' },
+      async () => undefined,
+    )).rejects.toMatchObject({ name: 'DailyReportTargetMissingError' });
+    expect(loads).toBe(0);
+    expect(writes).toBe(0);
+  });
+
   it('validates the cron target before loading or persisting a report', async () => {
     let loads = 0;
     let writes = 0;
@@ -393,7 +430,11 @@ describe('cron delivery and request boundaries', () => {
   });
 
   it('handles malformed generate/send JSON as 400 and reads the cron chat id from Env', async () => {
-    const source = await readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8');
+    const [source, jsonc, toml] = await Promise.all([
+      readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8'),
+      readFile(resolve(process.cwd(), 'wrangler.jsonc'), 'utf8'),
+      readFile(resolve(process.cwd(), 'wrangler.toml'), 'utf8'),
+    ]);
     const generate = source.slice(source.indexOf("app.post('/api/daily-reports/generate'"), source.indexOf("app.delete('/api/daily-reports/:id'"));
     const send = source.slice(source.indexOf("app.post('/api/daily-reports/:id/send'"), source.indexOf('// ==================== Feishu Sync'));
     const cron = source.slice(source.indexOf("app.post('/api/cron/daily-report'"), source.indexOf('/**\n * 面试提醒'));
@@ -405,5 +446,11 @@ describe('cron delivery and request boundaries', () => {
     expect(cron).toContain('c.env.FEISHU_RECRUITMENT_GROUP_CHAT_ID');
     expect(cron).toContain('503');
     expect(cron).toContain('日报已生成但推送失败');
+    const scheduled = source.slice(source.indexOf('async scheduled(event: any'));
+    expect(scheduled).toContain("event.cron === '0 10 * * *'");
+    expect(scheduled).toContain('runDailyReportPipeline');
+    expect(scheduled).toContain('env.FEISHU_RECRUITMENT_GROUP_CHAT_ID');
+    expect(jsonc).toContain('"0 10 * * *"');
+    expect(toml).toContain('"0 10 * * *"');
   });
 });
