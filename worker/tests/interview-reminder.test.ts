@@ -1,7 +1,82 @@
 import { describe, expect, it } from 'vitest';
-import { buildInterviewReminderCard, buildInterviewReminderView } from '../src/feishu-notifications/interview-reminder';
+import {
+  buildInterviewReminderCard,
+  buildInterviewReminderView,
+  deliverInterviewReminder,
+} from '../src/feishu-notifications/interview-reminder';
+
+const completeView = {
+  name: '张三', education: '本科', age: 29, gender: '女', position: '社区运营',
+  interviewTime: '2026-08-11 10:00', city: '北京', aiAdvice: '建议核实稳定性',
+};
+
+const deliveryInput = {
+  userToken: 'user-token', resourceToken: 'tenant-token', receiverOpenId: 'ou_receiver',
+  view: completeView, operatorName: '金皓翔',
+  file: { bytes: new Uint8Array([1, 2, 3]), fileName: '张三.pdf' },
+};
 
 describe('interview reminders', () => {
+  it('uploads PDF before sending the card and file from the current user', async () => {
+    const calls: string[] = [];
+    const authorizations: Array<string | null> = [];
+
+    const result = await deliverInterviewReminder(deliveryInput, {
+      fetch: async (url, init) => {
+        const isUpload = String(url).includes('/files');
+        calls.push(isUpload ? 'upload' : JSON.parse(String(init?.body)).msg_type);
+        authorizations.push(new Headers(init?.headers).get('Authorization'));
+        return Response.json(isUpload
+          ? { code: 0, data: { file_key: 'file-key' } }
+          : { code: 0, data: { message_id: 'message-id' } });
+      },
+    });
+
+    expect(calls).toEqual(['upload', 'interactive', 'file']);
+    expect(authorizations).toEqual(['Bearer tenant-token', 'Bearer user-token', 'Bearer user-token']);
+    expect(result).toMatchObject({ cardSent: true, fileSent: true, warning: null });
+  });
+
+  it('rejects delivery without a current-user token', async () => {
+    await expect(deliverInterviewReminder({ ...deliveryInput, userToken: '' }, {
+      fetch: async () => Response.json({ code: 0 }),
+    })).rejects.toMatchObject({ code: 'FEISHU_AUTH_REQUIRED' });
+  });
+
+  it('still sends a card when PDF upload fails', async () => {
+    const messageTypes: string[] = [];
+    const result = await deliverInterviewReminder(deliveryInput, {
+      fetch: async (url, init) => {
+        if (String(url).includes('/files')) return Response.json({ code: 999, msg: 'upload failed' });
+        messageTypes.push(JSON.parse(String(init?.body)).msg_type);
+        return Response.json({ code: 0, data: { message_id: 'message-id' } });
+      },
+    });
+
+    expect(messageTypes).toEqual(['interactive']);
+    expect(result).toMatchObject({ cardSent: true, fileSent: false });
+    expect(result.warning).toContain('PDF');
+  });
+
+  it.each([
+    ['empty', new Uint8Array()],
+    ['oversized', new Uint8Array(30 * 1024 * 1024 + 1)],
+  ])('rejects a %s PDF before any network I/O', async (_label, bytes) => {
+    let fetchCalls = 0;
+
+    await expect(deliverInterviewReminder({
+      ...deliveryInput,
+      file: { bytes, fileName: 'resume.pdf' },
+    }, {
+      fetch: async () => {
+        fetchCalls += 1;
+        return Response.json({ code: 0 });
+      },
+    })).rejects.toMatchObject({ code: 'FEISHU_INVALID_PDF' });
+
+    expect(fetchCalls).toBe(0);
+  });
+
   it('normalizes all seven fields from authoritative resume data', () => {
     const view = buildInterviewReminderView({
       interview: { candidate_name: '候选人', position_applied: '旧岗位', interview_time: '2026-08-11T02:00:00.000Z' },

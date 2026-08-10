@@ -20,8 +20,92 @@ export interface InterviewReminderView {
 
 export type FeishuCard = Record<string, unknown>;
 
+export interface InterviewReminderDeliveryInput {
+  userToken: string;
+  resourceToken: string;
+  receiverOpenId: string;
+  view: InterviewReminderView;
+  operatorName: string;
+  file?: { bytes: Uint8Array; fileName: string };
+}
+
+export interface InterviewReminderDeliveryResult {
+  cardSent: boolean;
+  fileSent: boolean;
+  warning: string | null;
+}
+
 const EMPTY_VALUE = '未填写';
 const MAX_ADVICE_LENGTH = 500;
+const MAX_PDF_BYTES = 30 * 1024 * 1024;
+const MAX_FEISHU_RESPONSE_BYTES = 1024 * 1024;
+const FEISHU_IM_API = 'https://open.feishu.cn/open-apis/im/v1';
+
+function deliveryError(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
+}
+
+async function readFeishuResponse(response: Response): Promise<RawRecord> {
+  const contentLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > MAX_FEISHU_RESPONSE_BYTES) {
+    throw deliveryError('FEISHU_RESPONSE_TOO_LARGE', 'Feishu response is too large');
+  }
+
+  const body = await response.text();
+  if (body.length > MAX_FEISHU_RESPONSE_BYTES) {
+    throw deliveryError('FEISHU_RESPONSE_TOO_LARGE', 'Feishu response is too large');
+  }
+
+  let parsed: RawRecord;
+  try {
+    parsed = asRecord(JSON.parse(body));
+  } catch {
+    throw deliveryError('FEISHU_RESPONSE_INVALID', 'Feishu returned an invalid response');
+  }
+
+  if (!response.ok || parsed.code !== 0) {
+    throw deliveryError('FEISHU_DELIVERY_FAILED', 'Feishu delivery request failed');
+  }
+  return parsed;
+}
+
+async function sendFeishuMessage(
+  fetcher: typeof fetch,
+  userToken: string,
+  receiverOpenId: string,
+  msgType: 'interactive' | 'file',
+  content: string,
+): Promise<void> {
+  const response = await fetcher(`${FEISHU_IM_API}/messages?receive_id_type=open_id`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${userToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ receive_id: receiverOpenId, msg_type: msgType, content }),
+  });
+  await readFeishuResponse(response);
+}
+
+async function uploadPdf(
+  file: NonNullable<InterviewReminderDeliveryInput['file']>,
+  resourceToken: string,
+  fetcher: typeof fetch,
+): Promise<string> {
+  const formData = new FormData();
+  formData.append('file_type', 'pdf');
+  formData.append('file_name', file.fileName);
+  formData.append('file', new Blob([file.bytes], { type: 'application/pdf' }), file.fileName);
+  const response = await fetcher(`${FEISHU_IM_API}/files`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${resourceToken}` },
+    body: formData,
+  });
+  const data = await readFeishuResponse(response);
+  const fileKey = text(asRecord(data.data).file_key);
+  if (!fileKey) throw deliveryError('FEISHU_RESPONSE_INVALID', 'Feishu upload response did not include a file key');
+  return fileKey;
+}
 
 function asRecord(value: unknown): RawRecord {
   if (typeof value === 'string') {
@@ -162,4 +246,52 @@ export function buildInterviewReminderCard(
       { tag: 'note', elements: [{ tag: 'plain_text', content: `${attachment}｜操作人：${options.operatorName || EMPTY_VALUE}` }] },
     ],
   };
+}
+
+export async function deliverInterviewReminder(
+  input: InterviewReminderDeliveryInput,
+  dependencies: { fetch: typeof fetch },
+): Promise<InterviewReminderDeliveryResult> {
+  if (!input.userToken.trim()) {
+    throw deliveryError('FEISHU_AUTH_REQUIRED', 'A current-user Feishu token is required');
+  }
+  if (input.file && (input.file.bytes.byteLength === 0 || input.file.bytes.byteLength > MAX_PDF_BYTES)) {
+    throw deliveryError('FEISHU_INVALID_PDF', 'PDF must be between 1 byte and 30 MB');
+  }
+
+  let fileKey: string | null = null;
+  let warning: string | null = null;
+  if (input.file) {
+    try {
+      fileKey = await uploadPdf(input.file, input.resourceToken, dependencies.fetch);
+    } catch {
+      warning = 'PDF 上传失败，已发送面试提醒卡片。';
+    }
+  }
+
+  await sendFeishuMessage(
+    dependencies.fetch,
+    input.userToken,
+    input.receiverOpenId,
+    'interactive',
+    JSON.stringify(buildInterviewReminderCard(input.view, {
+      operatorName: input.operatorName,
+      attachmentAvailable: Boolean(fileKey),
+    })),
+  );
+
+  if (!fileKey) return { cardSent: true, fileSent: false, warning };
+
+  try {
+    await sendFeishuMessage(
+      dependencies.fetch,
+      input.userToken,
+      input.receiverOpenId,
+      'file',
+      JSON.stringify({ file_key: fileKey }),
+    );
+    return { cardSent: true, fileSent: true, warning: null };
+  } catch {
+    return { cardSent: true, fileSent: false, warning: 'PDF 发送失败，已发送面试提醒卡片。' };
+  }
 }
