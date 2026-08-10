@@ -10,10 +10,12 @@ import {
 import {
   DAILY_REPORT_DATASET_SQL,
   DailyReportDeliveryError,
+  claimScreeningQueueRecord,
+  commitScreeningDecisionAtomically,
   generateAndPersistDailyReport,
   generatePersistAndDeliverDailyReport,
   mapHrDecision,
-  syncLinkedResumeScreeningDecision,
+  releaseScreeningQueueClaim,
 } from '../src/daily-reports/service';
 
 function dataset(): DailyReportDataset {
@@ -55,6 +57,12 @@ describe('daily report SQL schema contracts', () => {
     expect(DAILY_REPORT_DATASET_SQL.offers).not.toContain('localStart');
   });
 
+  it('uses the same zoned-versus-local contract for onboarding SQL', () => {
+    expect(DAILY_REPORT_DATASET_SQL.onboardingRecords).toContain("upper(substr(trim(onboard_date), -1)) = 'Z'");
+    expect(DAILY_REPORT_DATASET_SQL.onboardingRecords).toContain('substr(trim(onboard_date), 1, 10) = ?');
+    expect(DAILY_REPORT_DATASET_SQL.onboardingRecords.match(/datetime\(onboard_date\)/g)).toHaveLength(2);
+  });
+
   it('keeps migration 0026 as the sole upgrade path for approved_at', async () => {
     const source = await readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8');
     const init = source.slice(source.indexOf("app.get('/api/init/status'"), source.indexOf('// v2.0: create jd_versions table'));
@@ -90,6 +98,20 @@ describe('explicit daily decision semantics', () => {
 
     expect(snapshot.rows[0]).toMatchObject({ pending: 0, todayApproved: 0, todayRejected: 0 });
   });
+
+  it('treats zoned onboarding as instants, unzoned onboarding as Shanghai local time, and rejects malformed values', () => {
+    const input = dataset();
+    input.onboardingRecords = [
+      { id: 'zoned', position_id: 'p1', onboard_date: '2026-08-09T17:00:00Z' },
+      { id: 'local', position_id: 'p1', onboard_date: '2026-08-10 20:00:00' },
+      { id: 'date', position_id: 'p1', onboard_date: '2026-08-10' },
+      { id: 'invalid', position_id: 'p1', onboard_date: '2026-08-10T99:00:00Z' },
+    ];
+
+    const snapshot = buildDailyReportSnapshot(input, '2026-08-10', '2026-08-10T10:00:00Z');
+
+    expect(snapshot.rows[0].todayOnboarding).toBe(3);
+  });
 });
 
 describe('immutable candidate detail snapshot', () => {
@@ -107,13 +129,33 @@ describe('immutable candidate detail snapshot', () => {
 
     const details = buildDailyReportCandidateDetails(input, '2026-08-10');
 
-    expect(details.groups.map((group) => group.responsible_person)).toEqual(['何雨菱', '杜雁玲', '魏秋柠', '未分配']);
+    expect(details.groups.map((group) => group.responsible_person)).toEqual(['何雨菱', '杜雁玲', '魏秋柠']);
     expect(details.groups[0].candidates.map((candidate) => candidate.resume_id)).toEqual(['owned']);
-    expect(details.groups[3].candidates.map((candidate) => candidate.resume_id)).toEqual(['ambiguous']);
     expect(details.stats).toEqual({
-      total: 2,
-      by_person: { '何雨菱': 1, '杜雁玲': 0, '魏秋柠': 0, '未分配': 1 },
+      total: 1,
+      unassigned: 1,
+      by_person: { '何雨菱': 1, '杜雁玲': 0, '魏秋柠': 0 },
     });
+  });
+
+  it('keeps persisted candidate totals and each owner group equal to the aggregate snapshot', () => {
+    const input = dataset();
+    input.positionMappings = [
+      { mapped_name: '共享岗位', responsible_person: '何雨菱' },
+      { mapped_name: '共享岗位', responsible_person: '杜雁玲' },
+    ];
+    input.resumes = [
+      { id: 'owned', position_id: 'p1', approved_at: '2026-08-10T01:00:00Z' },
+      { id: 'owned', position_id: 'p1', approved_at: '2026-08-10T01:00:00Z' },
+      { id: 'ambiguous', mapped_position: '共享岗位', approved_at: '2026-08-10T02:00:00Z' },
+    ];
+    const snapshot = buildDailyReportSnapshot(input, '2026-08-10', '2026-08-10T10:00:00Z');
+    const details = buildDailyReportCandidateDetails(input, '2026-08-10');
+
+    expect(details.stats.total).toBe(snapshot.totals.todayApproved);
+    expect(details.groups.map((group) => group.candidates.length))
+      .toEqual(snapshot.rows.map((row) => row.todayApproved));
+    expect(details.stats.unassigned).toBe(1);
   });
 
   it('bounds every persisted candidate text field', () => {
@@ -194,48 +236,114 @@ describe('HR and linked screening decisions', () => {
     expect(() => mapHrDecision('unknown')).toThrow(/unsupported HR decision/i);
   });
 
-  it('synchronizes card/queue store and discard to linked resume business state plus timestamp', async () => {
-    const updates: Array<{ sql: string; values: unknown[] }> = [];
+  it('commits queue final state, linked resume state, and event timestamp in one D1 batch', async () => {
+    const batches: Array<Array<{ sql: string; values: unknown[] }>> = [];
     const db = {
       prepare(sql: string) {
-        return { bind(...values: unknown[]) { return { async run() { updates.push({ sql, values }); return { meta: { changes: 1 } }; } }; } };
+        return { bind(...values: unknown[]) { return { sql, values }; } };
+      },
+      async batch(statements: Array<{ sql: string; values: unknown[] }>) {
+        batches.push(statements);
+        return statements.map(() => ({ meta: { changes: 1 } }));
       },
     };
 
-    await syncLinkedResumeScreeningDecision(db as never, 'resume-store', 'store', '2026-08-10T01:00:00Z');
-    await syncLinkedResumeScreeningDecision(db as never, 'resume-discard', 'discard', '2026-08-10T02:00:00Z');
+    await commitScreeningDecisionAtomically(db as never, {
+      queueId: 'queue-1', resumeId: 'resume-store', decision: 'store', reviewedBy: 'user-1',
+      timestamp: '2026-08-10T01:00:00Z',
+    });
 
-    expect(updates.some(({ sql, values }) => sql.includes("status = 'approved'") && values.at(-1) === 'resume-store')).toBe(true);
-    expect(updates.some(({ sql, values }) => sql.includes('approved_at = ?') && values.at(-1) === 'resume-store')).toBe(true);
-    expect(updates.some(({ sql, values }) => sql.includes("status = 'rejected'") && values.at(-1) === 'resume-discard')).toBe(true);
-    expect(updates.some(({ sql, values }) => sql.includes('rejected_at = ?') && values.at(-1) === 'resume-discard')).toBe(true);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(2);
+    expect(batches[0][0].sql).toContain('SET status = ?');
+    expect(batches[0][0].values[0]).toBe('approved');
+    expect(batches[0][0].sql).toContain("status = 'processing'");
+    expect(batches[0][1].sql).toContain("stage = 'talent_pool'");
+    expect(batches[0][1].sql).toContain('approved_at = ?');
+    expect(batches[0][1].sql).toContain('rejected_at = NULL');
   });
 
-  it('keeps linked screening decisions operational before migration 0026', async () => {
-    const statuses: string[] = [];
+  it.each([
+    ['store', "status = 'approved'", false],
+    ['discard', "status = 'rejected'", true],
+  ] as const)('retries %s as one legacy batch only for missing approved_at', async (decision, resumeStatus, hasRejectedAt) => {
+    const batches: string[][] = [];
     const db = {
       prepare(sql: string) {
-        return { bind() { return { async run() {
-          if (sql.includes('approved_at')) throw new Error('no such column: approved_at');
-          statuses.push(sql);
+        return { bind() { return { sql }; } };
+      },
+      async batch(statements: Array<{ sql: string }>) {
+        batches.push(statements.map((statement) => statement.sql));
+        if (batches.length === 1) throw new Error('no such column: approved_at');
+        return statements.map(() => ({ meta: { changes: 1 } }));
+      },
+    };
+
+    await commitScreeningDecisionAtomically(db as never, {
+      queueId: 'queue-old', resumeId: 'resume-old', decision, timestamp: '2026-08-10T01:00:00Z',
+    });
+
+    expect(batches).toHaveLength(2);
+    expect(batches[1].some((sql) => sql.includes(resumeStatus))).toBe(true);
+    expect(batches[1].some((sql) => sql.includes('approved_at'))).toBe(false);
+    expect(batches[1].some((sql) => sql.includes('rejected_at = ?'))).toBe(hasRejectedAt);
+  });
+
+  it('does not retry a partially failing atomic decision for non-schema errors', async () => {
+    let batches = 0;
+    const db = {
+      prepare(sql: string) { return { bind() { return { sql }; } }; },
+      async batch() { batches += 1; throw new Error('D1_BUSY'); },
+    };
+    await expect(commitScreeningDecisionAtomically(db as never, {
+      queueId: 'queue-1', resumeId: 'resume-1', decision: 'store', timestamp: '2026-08-10T01:00:00Z',
+    })).rejects.toThrow('D1_BUSY');
+    expect(batches).toBe(1);
+  });
+
+  it('claims a pending card action with compare-and-set and reports contention', async () => {
+    const sql: string[] = [];
+    const changes = [1, 0];
+    const db = {
+      prepare(statement: string) {
+        sql.push(statement);
+        return { bind() { return { async run() { return { meta: { changes: changes.shift() } }; } }; } };
+      },
+    };
+    await expect(claimScreeningQueueRecord(db as never, 'queue-1', '2026-08-10T01:00:00Z')).resolves.toBe(true);
+    await expect(claimScreeningQueueRecord(db as never, 'queue-1', '2026-08-10T01:00:00Z')).resolves.toBe(false);
+    expect(sql.every((statement) => statement.includes("WHERE id = ? AND status = 'pending'"))).toBe(true);
+  });
+
+  it('releases only the matching in-progress claim before an atomic decision commits', async () => {
+    let captured: { sql: string; values: unknown[] } | undefined;
+    const db = {
+      prepare(sql: string) {
+        return { bind(...values: unknown[]) { return { async run() {
+          captured = { sql, values };
           return { meta: { changes: 1 } };
         } }; } };
       },
     };
-
-    await expect(syncLinkedResumeScreeningDecision(db as never, 'resume-old', 'store', '2026-08-10T01:00:00Z')).resolves.toBeUndefined();
-    expect(statuses.some((sql) => sql.includes("status = 'approved'"))).toBe(true);
+    await releaseScreeningQueueClaim(db as never, 'queue-1', 'claim-1');
+    expect(captured?.sql).toContain("SET status = 'pending'");
+    expect(captured?.sql).toContain("status = 'processing' AND feishu_processed_at = ?");
+    expect(captured?.values.at(-2)).toBe('queue-1');
+    expect(captured?.values.at(-1)).toBe('claim-1');
   });
 
-  it('wires both direct queue routes and both card callback branches through linked resume synchronization', async () => {
+  it('wires direct routes and card callbacks through CAS plus the shared atomic decision helper', async () => {
     const source = await readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8');
     const approve = source.slice(source.indexOf("app.post('/api/resume-screening/:id/approve'"), source.indexOf("app.post('/api/resume-screening/:id/reject'"));
     const reject = source.slice(source.indexOf("app.post('/api/resume-screening/:id/reject'"), source.indexOf("app.post('/api/resume-screening/batch-analyze'"));
     const callback = source.slice(source.indexOf("app.post('/api/feishu/card-action'"), source.indexOf('// ==================== 事件回调 Endpoint'));
-    expect(approve).toContain("syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'store'");
-    expect(reject).toContain("syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'discard'");
-    expect(callback).toContain("syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'store'");
-    expect(callback).toContain("syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'discard'");
+    expect(approve).toContain('claimScreeningQueueRecord(c.env.DB, id');
+    expect(reject).toContain('claimScreeningQueueRecord(c.env.DB, id');
+    expect(approve).toContain('commitScreeningDecisionAtomically(c.env.DB');
+    expect(reject).toContain('commitScreeningDecisionAtomically(c.env.DB');
+    expect(callback).toContain('claimScreeningQueueRecord(c.env.DB, recordId');
+    expect(callback.match(/commitScreeningDecisionAtomically\(c\.env\.DB/g)).toHaveLength(2);
+    expect(callback).not.toContain("UPDATE resume_screening_queue SET status = 'pending' WHERE id = ?");
   });
 });
 

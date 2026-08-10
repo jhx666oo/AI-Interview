@@ -22,14 +22,16 @@ import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveRemi
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
 import {
   assertDailyReportDate,
+  claimScreeningQueueRecord,
+  commitScreeningDecisionAtomically,
   DailyReportDeliveryError,
   generateAndPersistDailyReport,
   generatePersistAndDeliverDailyReport,
   getShanghaiReportDate,
   mapHrDecision,
   recordResumeDecisionTimestamp,
+  releaseScreeningQueueClaim,
   sendStoredDailyReport,
-  syncLinkedResumeScreeningDecision,
   type DailyReportGenerationDependencies,
 } from './daily-reports/service';
 import type { DailyReportSnapshot } from './daily-reports/report';
@@ -8505,23 +8507,32 @@ app.post('/api/resume-screening/:id/approve', authMiddleware, async (c) => {
   if (!record) return c.json({ detail: 'Not found' }, 404);
   if (record.status !== 'pending') return c.json({ detail: 'Already processed' }, 400);
 
-  // Create talent_pool entry
   const tpId = uuid();
-  await c.env.DB.prepare(
+  const reviewedAt = now();
+  const claimed = await claimScreeningQueueRecord(c.env.DB, id, reviewedAt);
+  if (!claimed) return c.json({ detail: 'Already processed' }, 409);
+
+  const talentPoolInsert = c.env.DB.prepare(
     `INSERT INTO talent_pool (id, resume_id, candidate_name, email, phone, current_title, skills, experience_years, education, expected_salary, source, tags, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(
     tpId, record.resume_id || null, record.candidate_name, '', '', record.position_applied || '',
     '[]', 0, record.education || '', '', '邮箱初筛',
     JSON.stringify(['AI初筛']), 'available',
     record.ai_analysis || '', now(), now()
-  ).run();
-
-  // Update screening record
-  const reviewedAt = now();
-  await c.env.DB.prepare(
-    'UPDATE resume_screening_queue SET status = ?, ai_result = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ?'
-  ).bind('approved', 'shortlisted', user.id, reviewedAt, reviewedAt, id).run();
-  await syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'store', reviewedAt);
+  );
+  try {
+    await commitScreeningDecisionAtomically(c.env.DB, {
+      queueId: id,
+      resumeId: record.resume_id,
+      decision: 'store',
+      reviewedBy: user.id,
+      timestamp: reviewedAt,
+      additionalStatements: [talentPoolInsert],
+    });
+  } catch (error) {
+    await releaseScreeningQueueClaim(c.env.DB, id, reviewedAt);
+    throw error;
+  }
 
   // 写入飞书多维表格 + 推群（异步）
   c.executionCtx.waitUntil((async () => {
@@ -8568,10 +8579,20 @@ app.post('/api/resume-screening/:id/reject', authMiddleware, async (c) => {
   if (record.status !== 'pending') return c.json({ detail: 'Already processed' }, 400);
 
   const reviewedAt = now();
-  await c.env.DB.prepare(
-    'UPDATE resume_screening_queue SET status = ?, ai_result = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ?'
-  ).bind('rejected', 'rejected', user.id, reviewedAt, reviewedAt, id).run();
-  await syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'discard', reviewedAt);
+  const claimed = await claimScreeningQueueRecord(c.env.DB, id, reviewedAt);
+  if (!claimed) return c.json({ detail: 'Already processed' }, 409);
+  try {
+    await commitScreeningDecisionAtomically(c.env.DB, {
+      queueId: id,
+      resumeId: record.resume_id,
+      decision: 'discard',
+      reviewedBy: user.id,
+      timestamp: reviewedAt,
+    });
+  } catch (error) {
+    await releaseScreeningQueueClaim(c.env.DB, id, reviewedAt);
+    throw error;
+  }
 
   const row = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
@@ -9416,19 +9437,30 @@ app.post('/api/feishu/card-action', async (c) => {
     if (!record) {
       return c.json({ code: 0, msg: 'success', data: { toast: { type: 'error', content: '记录不存在' } } });
     }
-    if (record.status !== 'pending') {
+    const claimToken = now();
+    const claimed = await claimScreeningQueueRecord(c.env.DB, recordId, claimToken);
+    if (!claimed) {
       return c.json({ code: 0, msg: 'success', data: { toast: { type: 'warning', content: '已处理过' } } });
     }
-
-    await c.env.DB.prepare(
-      "UPDATE resume_screening_queue SET status = 'processing', feishu_processed_at = ? WHERE id = ?"
-    ).bind(now(), recordId).run();
 
     const posName = record.mapped_position || record.position_applied?.split('_')[0] || '未知岗位';
 
     if (actionType === 'store') {
       // ✅ 入库
       c.executionCtx.waitUntil((async () => {
+        try {
+          await commitScreeningDecisionAtomically(c.env.DB, {
+            queueId: recordId,
+            resumeId: record.resume_id,
+            decision: 'store',
+            timestamp: claimToken,
+          });
+        } catch (e: any) {
+          console.error(`[CardCallback] D1 入库决策失败: ${e.message}`);
+          await releaseScreeningQueueClaim(c.env.DB, recordId, claimToken);
+          return;
+        }
+
         try {
           const token = await getFeishuToken(c.env);
           const appToken = c.env.FEISHU_BITABLE_APP_TOKEN || FEISHU_CONFIG.appToken;
@@ -9455,12 +9487,6 @@ app.post('/api/feishu/card-action', async (c) => {
           };
           await createFeishuBitableRecord(token, appToken, talentTableId, bitableFields);
 
-          // 更新 D1 状态
-          await c.env.DB.prepare(
-            "UPDATE resume_screening_queue SET status = 'approved', ai_result = 'shortlisted', updated_at = ? WHERE id = ?"
-          ).bind(now(), recordId).run();
-          await syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'store', now());
-
           // 更新卡片为绿色
           if (record.feishu_card_msg_id) {
             await updateFeishuCard(c.env, record.feishu_card_msg_id, 'approved', candidateName);
@@ -9472,8 +9498,7 @@ app.post('/api/feishu/card-action', async (c) => {
 
           console.log(`[CardCallback] ✅ record ${recordId} 已入库`);
         } catch (e: any) {
-          console.error(`[CardCallback] 入库异常: ${e.message}`);
-          await c.env.DB.prepare("UPDATE resume_screening_queue SET status = 'pending' WHERE id = ?").bind(recordId).run();
+          console.error(`[CardCallback] 入库决策已提交，外部同步失败: ${e.message}`);
         }
       })());
 
@@ -9486,18 +9511,24 @@ app.post('/api/feishu/card-action', async (c) => {
       // ❌ 淘汰
       c.executionCtx.waitUntil((async () => {
         try {
-          const token = await getFeishuToken(c.env);
-          await c.env.DB.prepare(
-            "UPDATE resume_screening_queue SET status = 'rejected', ai_result = 'rejected', updated_at = ? WHERE id = ?"
-          ).bind(now(), recordId).run();
-          await syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'discard', now());
+          await commitScreeningDecisionAtomically(c.env.DB, {
+            queueId: recordId,
+            resumeId: record.resume_id,
+            decision: 'discard',
+            timestamp: claimToken,
+          });
+        } catch (e: any) {
+          console.error(`[CardCallback] D1 淘汰决策失败: ${e.message}`);
+          await releaseScreeningQueueClaim(c.env.DB, recordId, claimToken);
+          return;
+        }
 
+        try {
           if (record.feishu_card_msg_id) {
             await updateFeishuCard(c.env, record.feishu_card_msg_id, 'rejected', candidateName);
           }
         } catch (e: any) {
-          console.error(`[CardCallback] 淘汰异常: ${e.message}`);
-          await c.env.DB.prepare("UPDATE resume_screening_queue SET status = 'pending' WHERE id = ?").bind(recordId).run();
+          console.error(`[CardCallback] 淘汰决策已提交，卡片同步失败: ${e.message}`);
         }
       })());
 

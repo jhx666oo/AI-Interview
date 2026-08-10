@@ -319,7 +319,7 @@ function shanghaiDateFromUtcTimestamp(value: string | null | undefined): string 
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
-function shanghaiInterviewDate(value: string | null | undefined): string | null {
+function shanghaiBusinessEventDate(value: string | null | undefined): string | null {
   const raw = value?.trim();
   if (!raw) return null;
   const calendarDate = exactCalendarDate(raw);
@@ -380,7 +380,8 @@ export interface DailyReportCandidateDetails {
   }>[];
   readonly stats: Readonly<{
     total: number;
-    by_person: Readonly<Record<DailyReportOwner | '未分配', number>>;
+    unassigned: number;
+    by_person: Readonly<Record<DailyReportOwner, number>>;
   }>;
 }
 
@@ -412,17 +413,21 @@ export function buildDailyReportCandidateDetails(
 ): DailyReportCandidateDetails {
   requireReportDate(reportDate);
   const indexes = buildOwnerIndexes(dataset);
-  const ownerKeys = [...DAILY_REPORT_OWNERS, '未分配'] as const;
-  const candidates = new Map<(typeof ownerKeys)[number], DailyReportCandidateDetail[]>(
-    ownerKeys.map((owner) => [owner, []]),
+  const candidates = new Map<DailyReportOwner, DailyReportCandidateDetail[]>(
+    DAILY_REPORT_OWNERS.map((owner) => [owner, []]),
   );
   const seen = new Set<string>();
+  let unassigned = 0;
 
   for (const resume of dataset.resumes) {
     const resumeId = boundedText(resume.id, 128);
     if (!resumeId || seen.has(resumeId) || !isUtcTimestampOnReportDate(resume.approved_at, reportDate)) continue;
     seen.add(resumeId);
-    const owner = resolveOwner(indexes, resume) ?? '未分配';
+    const owner = resolveOwner(indexes, resume);
+    if (!owner) {
+      unassigned += 1;
+      continue;
+    }
     candidates.get(owner)!.push(Object.freeze({
       name: boundedText(resume.candidate_name, 80),
       education: boundedText(resume.parsed_education || resume.education, 80),
@@ -436,14 +441,17 @@ export function buildDailyReportCandidateDetails(
     }));
   }
 
-  const byPerson = Object.fromEntries(ownerKeys.map((owner) => [owner, candidates.get(owner)!.length])) as
-    Record<(typeof ownerKeys)[number], number>;
-  const groups = ownerKeys
-    .filter((owner) => owner !== '未分配' || candidates.get(owner)!.length > 0)
+  const byPerson = Object.fromEntries(DAILY_REPORT_OWNERS.map((owner) => [owner, candidates.get(owner)!.length])) as
+    Record<DailyReportOwner, number>;
+  const groups = DAILY_REPORT_OWNERS
     .map((owner) => Object.freeze({ responsible_person: owner, candidates: Object.freeze(candidates.get(owner)!) }));
   return Object.freeze({
     groups: Object.freeze(groups),
-    stats: Object.freeze({ total: seen.size, by_person: Object.freeze(byPerson) }),
+    stats: Object.freeze({
+      total: Object.values(byPerson).reduce((sum, count) => sum + count, 0),
+      unassigned,
+      by_person: Object.freeze(byPerson),
+    }),
   });
 }
 
@@ -477,6 +485,7 @@ export function buildDailyReportSnapshot(
   );
   const resumesById = new Map(dataset.resumes.map((resume) => [resume.id, resume]));
   const unassignedRecords = new Set<string>();
+  const countedResumeIds = new Set<string>();
 
   const count = (
     recordKey: string,
@@ -502,6 +511,8 @@ export function buildDailyReportSnapshot(
   });
 
   dataset.resumes.forEach((resume, index) => {
+    if (resume.id && countedResumeIds.has(resume.id)) return;
+    if (resume.id) countedResumeIds.add(resume.id);
     const applicableMetrics: MetricName[] = [];
     if (isUtcTimestampOnReportDate(resume.created_at, reportDate)) applicableMetrics.push('todayNew');
     if (isPending(resume)) applicableMetrics.push('pending');
@@ -515,7 +526,7 @@ export function buildDailyReportSnapshot(
   });
 
   dataset.interviews.forEach((interview, index) => {
-    if (shanghaiInterviewDate(interview.interview_time) !== reportDate) return;
+    if (shanghaiBusinessEventDate(interview.interview_time) !== reportDate) return;
     count(
       `interview:${interview.id || index}`,
       resolveOwner(indexes, interview, interview.resume_id ? resumesById.get(interview.resume_id) : undefined),
@@ -533,7 +544,7 @@ export function buildDailyReportSnapshot(
   });
 
   dataset.onboardingRecords.forEach((onboarding, index) => {
-    if (!isUtcTimestampOnReportDate(onboarding.onboard_date, reportDate)) return;
+    if (shanghaiBusinessEventDate(onboarding.onboard_date) !== reportDate) return;
     count(
       `onboarding:${onboarding.id || index}`,
       resolveOwner(indexes, onboarding, onboarding.resume_id ? resumesById.get(onboarding.resume_id) : undefined),

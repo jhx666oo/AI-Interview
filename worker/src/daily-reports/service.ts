@@ -85,8 +85,21 @@ export const DAILY_REPORT_DATASET_SQL = Object.freeze({
   onboardingRecords: `
     SELECT id, resume_id, position_id, position_title, onboard_date
     FROM onboarding_records
-    WHERE onboard_date = ?
-       OR (datetime(onboard_date) >= datetime(?) AND datetime(onboard_date) < datetime(?))
+    WHERE (
+      (upper(substr(trim(onboard_date), -1)) = 'Z'
+       OR (length(trim(onboard_date)) >= 20 AND (
+         substr(trim(onboard_date), -6, 1) IN ('+', '-')
+         OR substr(trim(onboard_date), -5, 1) IN ('+', '-')
+       )))
+      AND datetime(onboard_date) >= datetime(?) AND datetime(onboard_date) < datetime(?)
+    ) OR (
+      upper(substr(trim(onboard_date), -1)) <> 'Z'
+      AND (length(trim(onboard_date)) < 20 OR (
+        substr(trim(onboard_date), -6, 1) NOT IN ('+', '-')
+        AND substr(trim(onboard_date), -5, 1) NOT IN ('+', '-')
+      ))
+      AND substr(trim(onboard_date), 1, 10) = ?
+    )
     ORDER BY id`,
 });
 
@@ -130,18 +143,13 @@ export function getShanghaiReportDate(date = new Date()): string {
 function reportDateBounds(reportDate: string): {
   utcStart: string;
   utcEnd: string;
-  localStart: string;
-  localEnd: string;
 } {
   const date = assertDailyReportDate(reportDate);
   const utcStartMs = Date.parse(`${date}T00:00:00.000+08:00`);
   const utcEndMs = utcStartMs + 86_400_000;
-  const nextDate = getShanghaiReportDate(new Date(utcEndMs));
   return {
     utcStart: new Date(utcStartMs).toISOString(),
     utcEnd: new Date(utcEndMs).toISOString(),
-    localStart: `${date} 00:00:00`,
-    localEnd: `${nextDate} 00:00:00`,
   };
 }
 
@@ -244,7 +252,7 @@ export async function loadDailyReportDataset(
   reportDate: string,
 ): Promise<DailyReportDataset> {
   const date = assertDailyReportDate(reportDate);
-  const { utcStart, utcEnd, localStart, localEnd } = reportDateBounds(date);
+  const { utcStart, utcEnd } = reportDateBounds(date);
 
   const [positions, positionMappings, resumes, interviews, offers, onboardingRecords, allTimeRow] = await Promise.all([
     boundedAll<DailyReportDataset['positions'][number]>(db, 'positions', DAILY_REPORT_DATASET_SQL.positions),
@@ -252,7 +260,7 @@ export async function loadDailyReportDataset(
     loadResumes(db, utcStart, utcEnd),
     boundedAll<DailyReportDataset['interviews'][number]>(db, 'interviews', DAILY_REPORT_DATASET_SQL.interviews, [utcStart, utcEnd, date]),
     loadOptionalDataset(() => boundedAll<DailyReportDataset['offers'][number]>(db, 'offers', DAILY_REPORT_DATASET_SQL.offers, [utcStart, utcEnd])),
-    loadOptionalDataset(() => boundedAll<DailyReportDataset['onboardingRecords'][number]>(db, 'onboardingRecords', DAILY_REPORT_DATASET_SQL.onboardingRecords, [date, localStart, localEnd])),
+    loadOptionalDataset(() => boundedAll<DailyReportDataset['onboardingRecords'][number]>(db, 'onboardingRecords', DAILY_REPORT_DATASET_SQL.onboardingRecords, [utcStart, utcEnd, date])),
     db.prepare('SELECT COUNT(*) AS cnt FROM resumes').bind().first<{ cnt: number }>(),
   ]);
 
@@ -505,18 +513,88 @@ export function mapHrDecision(value: unknown): HrDecisionMapping {
   throw new Error('unsupported HR decision');
 }
 
-export async function syncLinkedResumeScreeningDecision(
+export async function claimScreeningQueueRecord(
   db: Pick<D1Database, 'prepare'>,
-  resumeId: string | null | undefined,
-  decision: 'store' | 'discard',
-  timestamp = new Date().toISOString(),
+  queueId: string,
+  claimToken: string,
+): Promise<boolean> {
+  const result = await db.prepare(
+    "UPDATE resume_screening_queue SET status = 'processing', feishu_processed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'",
+  ).bind(claimToken, claimToken, queueId).run();
+  return (result.meta?.changes ?? 0) === 1;
+}
+
+export async function releaseScreeningQueueClaim(
+  db: Pick<D1Database, 'prepare'>,
+  queueId: string,
+  claimToken: string,
 ): Promise<void> {
-  if (!resumeId) return;
-  const update = decision === 'store'
-    ? "UPDATE resumes SET status = 'approved', stage = 'talent_pool', updated_at = ? WHERE id = ?"
-    : "UPDATE resumes SET status = 'rejected', stage = 'rejected', updated_at = ? WHERE id = ?";
-  await db.prepare(update).bind(timestamp, resumeId).run();
-  await recordResumeDecisionTimestamp(db, resumeId, decision === 'store' ? 'approved' : 'rejected', timestamp);
+  await db.prepare(
+    "UPDATE resume_screening_queue SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'processing' AND feishu_processed_at = ?",
+  ).bind(new Date().toISOString(), queueId, claimToken).run();
+}
+
+export interface AtomicScreeningDecision {
+  readonly queueId: string;
+  readonly resumeId?: string | null;
+  readonly decision: 'store' | 'discard';
+  readonly reviewedBy?: string | null;
+  readonly timestamp: string;
+  readonly additionalStatements?: readonly D1PreparedStatement[];
+}
+
+function isMissingApprovedAtError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /no such column:\s*(?:\w+\.)?approved_at|has no column named approved_at/i.test(message);
+}
+
+function screeningDecisionStatements(
+  db: Pick<D1Database, 'prepare'>,
+  input: AtomicScreeningDecision,
+  legacy: boolean,
+): D1PreparedStatement[] {
+  const approved = input.decision === 'store';
+  const queue = db.prepare(`
+    UPDATE resume_screening_queue
+    SET status = ?, ai_result = ?, reviewed_by = COALESCE(?, reviewed_by),
+        reviewed_at = ?, updated_at = ?
+    WHERE id = ? AND status = 'processing' AND feishu_processed_at = ?
+  `).bind(
+    approved ? 'approved' : 'rejected',
+    approved ? 'shortlisted' : 'rejected',
+    input.reviewedBy ?? null,
+    input.timestamp,
+    input.timestamp,
+    input.queueId,
+    input.timestamp,
+  );
+  if (!input.resumeId) return [queue, ...(input.additionalStatements ?? [])];
+
+  const resume = legacy
+    ? approved
+      ? db.prepare("UPDATE resumes SET status = 'approved', stage = 'talent_pool', updated_at = ? WHERE id = ?")
+        .bind(input.timestamp, input.resumeId)
+      : db.prepare("UPDATE resumes SET status = 'rejected', stage = 'rejected', rejected_at = ?, updated_at = ? WHERE id = ?")
+        .bind(input.timestamp, input.timestamp, input.resumeId)
+    : approved
+      ? db.prepare("UPDATE resumes SET status = 'approved', stage = 'talent_pool', approved_at = ?, rejected_at = NULL, updated_at = ? WHERE id = ?")
+        .bind(input.timestamp, input.timestamp, input.resumeId)
+      : db.prepare("UPDATE resumes SET status = 'rejected', stage = 'rejected', rejected_at = ?, approved_at = NULL, updated_at = ? WHERE id = ?")
+        .bind(input.timestamp, input.timestamp, input.resumeId);
+  return [queue, resume, ...(input.additionalStatements ?? [])];
+}
+
+/** D1 batch is transactional: queue and linked resume either both commit or both roll back. */
+export async function commitScreeningDecisionAtomically(
+  db: Pick<D1Database, 'prepare' | 'batch'>,
+  input: AtomicScreeningDecision,
+): Promise<void> {
+  try {
+    await db.batch(screeningDecisionStatements(db, input, false));
+  } catch (error) {
+    if (!isMissingApprovedAtError(error)) throw error;
+    await db.batch(screeningDecisionStatements(db, input, true));
+  }
 }
 
 /**

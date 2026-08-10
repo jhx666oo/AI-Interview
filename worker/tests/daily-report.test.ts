@@ -566,7 +566,8 @@ describe('daily-report generation and stored delivery', () => {
     expect(storedSnapshot.totals).toEqual(report.snapshot.totals);
     expect(storedDetails.stats).toEqual({
       total: 1,
-      by_person: { '何雨菱': 0, '杜雁玲': 1, '魏秋柠': 0, '未分配': 0 },
+      unassigned: 0,
+      by_person: { '何雨菱': 0, '杜雁玲': 1, '魏秋柠': 0 },
     });
     expect(storedDetails.groups[1].candidates).toMatchObject([{ resume_id: 'r-du' }]);
     expect(writes[0].values.slice(2, 9)).toEqual([
