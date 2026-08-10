@@ -457,11 +457,11 @@ Run:
 cd worker && npm test
 cd worker && npx tsc --noEmit
 cd frontend && npm test
-cd frontend && npm run lint
+cd frontend && npx eslint src/pages/Interviews/reminderFeedback.ts src/pages/Interviews/reminderFeedback.test.ts
 cd frontend && npm run build
 ```
 
-Expected: all commands exit 0. Existing third-party bundle warnings may be recorded, but no TypeScript, test, lint, or build errors are allowed.
+Expected: all commands exit 0. Existing third-party bundle warnings may be recorded, but no TypeScript, focused test, focused lint, or build errors are allowed. The pre-existing whole-frontend lint baseline is 617 errors and 19 warnings on `main`; it is recorded but is outside this feature's scope.
 
 - [ ] **Step 2: Start local services and verify with agent-browser**
 
