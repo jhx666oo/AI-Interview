@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Table, Tag, Tooltip, type TableColumnsType } from 'antd';
+import { TableViewport } from '../../../components/Responsive';
 import type { BoardPosition, BoardTotals, DivisionBoard } from '../types';
 import styles from '../dashboard.module.css';
 
@@ -165,17 +166,18 @@ export function PositionSummaryTable({
   ];
 
   return (
-    <Table<TableRow>
-      className={styles.summaryTable}
-      rowKey="key"
-      size="small"
-      columns={columns}
-      dataSource={dataSource}
-      pagination={false}
-      scroll={{ x: 1460 }}
-      rowClassName={(row) => row.kind === 'division' ? styles.divisionTableRow : styles.positionTableRow}
-      locale={{ emptyText: '暂无岗位数据' }}
-      summary={() => (
+    <TableViewport>
+      <Table<TableRow>
+        className={styles.summaryTable}
+        rowKey="key"
+        size="small"
+        columns={columns}
+        dataSource={dataSource}
+        pagination={false}
+        scroll={{ x: 1460 }}
+        rowClassName={(row) => row.kind === 'division' ? styles.divisionTableRow : styles.positionTableRow}
+        locale={{ emptyText: '暂无岗位数据' }}
+        summary={() => (
         <Table.Summary fixed>
           <Table.Summary.Row className={styles.totalRow}>
             <Table.Summary.Cell index={0}><strong>合计</strong></Table.Summary.Cell>
@@ -194,7 +196,8 @@ export function PositionSummaryTable({
             <Table.Summary.Cell index={13} align="center"><Tag color="blue">全部</Tag></Table.Summary.Cell>
           </Table.Summary.Row>
         </Table.Summary>
-      )}
-    />
+        )}
+      />
+    </TableViewport>
   );
 }
