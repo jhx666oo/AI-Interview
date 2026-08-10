@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Table, Button, Tag, Space, message, Typography, Empty, Spin } from 'antd';
+import { Card, Table, Button, Tag, Space, message, Empty, Spin } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
-import { EyeOutlined, ClockCircleOutlined, FileTextOutlined } from '@ant-design/icons';
+import { EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import request from '../../utils/request';
-
-const { Title, Text } = Typography;
+import { PageHeader, TableViewport } from '../../components/Responsive';
 
 interface PendingReview {
   review_id: string;
@@ -100,10 +99,7 @@ const MyReviews: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={2} style={{ margin: 0 }}>我的待评审</Title>
-        <Text type="secondary">您被指派的待评审简历列表</Text>
-      </div>
+      <PageHeader title="我的待评审" description="您被指派的待评审简历列表" />
 
       <Card>
         {pendingReviews.length === 0 ? (
@@ -113,12 +109,14 @@ const MyReviews: React.FC = () => {
           />
         ) : (
           <>
-          <Table
-            columns={columns}
-            dataSource={pendingReviews.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
-            rowKey="review_id"
-            pagination={false}
-          />
+          <TableViewport>
+            <Table
+              columns={columns}
+              dataSource={pendingReviews.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
+              rowKey="review_id"
+              pagination={false}
+            />
+          </TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={pendingReviews.length} onChange={setTablePage} />
           </>
         )}

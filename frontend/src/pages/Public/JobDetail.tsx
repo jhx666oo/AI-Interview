@@ -86,7 +86,7 @@ const PublicJobDetail: React.FC = () => {
   if (submitted) {
     return (
       <div style={{ height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC' }}>
-        <Card style={{ width: 500, borderRadius: 16, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+        <Card style={{ width: 'min(500px, calc(100vw - 32px))', borderRadius: 16, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
           <Result
             status="success"
             title="简历投递成功！"
@@ -124,7 +124,8 @@ const PublicJobDetail: React.FC = () => {
               padding: '20px', 
               borderRadius: '8px', 
               color: '#334155',
-              lineHeight: 1.8
+              lineHeight: 1.8,
+              overflowWrap: 'anywhere'
             }}>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {position.description || '暂无描述'}
@@ -139,7 +140,8 @@ const PublicJobDetail: React.FC = () => {
               padding: '20px', 
               borderRadius: '8px', 
               color: '#334155',
-              lineHeight: 1.8
+              lineHeight: 1.8,
+              overflowWrap: 'anywhere'
             }}>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {position.requirements || '暂无详细要求'}

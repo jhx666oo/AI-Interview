@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Card, Button, Space, Typography, message, Modal, Form, Input, Select,
+  Card, Button, Space, message, Modal, Form, Input, Select,
   Table, Tag, Popconfirm, Tooltip
 } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
@@ -11,8 +11,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
+import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 
-const { Title, Text } = Typography;
 const { Option } = Select;
 
 interface Workflow {
@@ -301,39 +301,38 @@ const WorkflowsList: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={2} style={{ margin: 0 }}>工作流编排</Title>
-        <Text type="secondary">可视化设计和编排自动化工作流</Text>
-      </div>
-
-      <Card
-        extra={
-          isHR && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-              创建工作流
-            </Button>
-          )
-        }
-      >
-        {selectedRowKeys.length > 0 && (
-          <div style={{ marginBottom: 12, padding: '8px 12px', background: '#e6f7ff', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>已选 {selectedRowKeys.length} 项</span>
-            <Button size="small" onClick={handleBatchPublish}>批量发布</Button>
-            <Button size="small" danger onClick={handleBatchDelete}>批量删除</Button>
-          </div>
+      <PageHeader
+        title="工作流编排"
+        description="可视化设计和编排自动化工作流"
+        actions={isHR && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+            创建工作流
+          </Button>
         )}
-        <Table
-          columns={columns}
-          dataSource={workflows.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
-          rowKey="id"
-          loading={loading}
-          pagination={false}
-          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
-        />
+      />
+
+      <Card>
+        <ResponsiveToolbar actions={selectedRowKeys.length > 0 ? <Space wrap>
+          <span>已选 {selectedRowKeys.length} 项</span>
+          <Button size="small" onClick={handleBatchPublish}>批量发布</Button>
+          <Button size="small" danger onClick={handleBatchDelete}>批量删除</Button>
+        </Space> : undefined}>
+          <span />
+        </ResponsiveToolbar>
+        <TableViewport>
+          <Table
+            columns={columns}
+            dataSource={workflows.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
+            rowKey="id"
+            loading={loading}
+            pagination={false}
+            rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
+          />
+        </TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={workflows.length} onChange={setTablePage} />
       </Card>
 
-      <Modal
+      <ResponsiveModal
         title="创建工作流"
         open={modalVisible}
         onOk={handleSubmit}
@@ -360,7 +359,7 @@ const WorkflowsList: React.FC = () => {
             </Select>
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };
