@@ -32,6 +32,8 @@ const statusMap = {
   archived: { text: '已归档', color: 'red' },
 };
 
+const staticModalWidth = 'min(600px, calc(100vw - 32px))';
+
 const WorkflowsList: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -131,7 +133,7 @@ const WorkflowsList: React.FC = () => {
               {JSON.stringify(res.output_data, null, 2)}
             </pre>
           ),
-          width: 600,
+          width: staticModalWidth,
         });
       }
     } catch (e: any) {
@@ -163,6 +165,7 @@ const WorkflowsList: React.FC = () => {
     Modal.confirm({
       title: '确认批量删除',
       content: `确定要删除选中的 ${selectedRowKeys.length} 个工作流吗？`,
+      width: staticModalWidth,
       onOk: async () => {
         try {
           await Promise.all(selectedRowKeys.map(id => request.delete(`/workflows/${id}`)));
@@ -179,6 +182,7 @@ const WorkflowsList: React.FC = () => {
     Modal.confirm({
       title: '确认批量发布',
       content: `确定要发布选中的 ${selectedRowKeys.length} 个工作流吗？`,
+      width: staticModalWidth,
       onOk: async () => {
         try {
           await Promise.all(selectedRowKeys.map(id => request.post(`/workflows/${id}/publish`)));
