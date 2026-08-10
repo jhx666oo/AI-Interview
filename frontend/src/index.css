@@ -28,6 +28,10 @@
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+
+  --page-gutter: 32px;
+  --card-gutter: 24px;
+  --control-gap: 12px;
 }
 
 body {
@@ -120,13 +124,13 @@ code {
 
 .ant-card-head {
   border-bottom: 1px solid var(--border-color);
-  padding: 0 24px;
+  padding: 0 var(--card-gutter);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .ant-card-body {
-  padding: 24px;
+  padding: var(--card-gutter);
 }
 
 /* Table */
@@ -146,11 +150,11 @@ code {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   border-bottom: 1px solid var(--border-color) !important;
-  padding: 16px 24px !important;
+  padding: 16px var(--card-gutter) !important;
 }
 
 .ant-table-tbody > tr > td {
-  padding: 20px 24px !important;
+  padding: 20px var(--card-gutter) !important;
   border-bottom: 1px solid var(--border-color) !important;
   color: var(--text-primary);
   font-size: 14px;
@@ -232,6 +236,70 @@ code {
   animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.app-shell,
+.app-shell .ant-layout,
+.page-container {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.responsive-page-header {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-end;
+  min-width: 0;
+  margin-bottom: 20px;
+}
+
+.responsive-page-header__copy,
+.responsive-page-header__actions,
+.responsive-toolbar__fields,
+.responsive-toolbar__actions {
+  min-width: 0;
+}
+
+.responsive-page-header h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.responsive-page-header p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+}
+
+.responsive-page-header__actions,
+.responsive-toolbar__fields,
+.responsive-toolbar__actions {
+  display: flex;
+  gap: var(--control-gap);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.responsive-toolbar {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.table-viewport {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.responsive-modal .ant-modal {
+  max-width: calc(100vw - 32px);
+}
+
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
@@ -240,4 +308,45 @@ code {
 /* 侧边栏折叠按钮居中对齐图标 */
 .ant-layout-sider-trigger {
   text-align: center !important;
+}
+
+@media (max-width: 1199px) {
+  :root {
+    --page-gutter: 24px;
+    --card-gutter: 16px;
+  }
+}
+
+@media (max-width: 767px) {
+  :root {
+    --page-gutter: 16px;
+    --card-gutter: 12px;
+    --control-gap: 8px;
+  }
+
+  .responsive-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .responsive-page-header__actions,
+  .responsive-toolbar__fields,
+  .responsive-toolbar__actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 479px) {
+  :root {
+    --page-gutter: 12px;
+  }
+
+  .responsive-page-header h1 {
+    font-size: 20px;
+  }
+
+  .responsive-toolbar__fields > * {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
 }
