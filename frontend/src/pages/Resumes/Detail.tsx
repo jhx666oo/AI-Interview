@@ -167,11 +167,14 @@ const ResumeDetail: React.FC = () => {
   const aiContentStyle: React.CSSProperties = {
     maxWidth: '100%',
     minWidth: 0,
-    maxHeight: '60vh',
     overflowX: 'hidden',
-    overflowY: 'auto',
     overflowWrap: 'anywhere',
     wordBreak: 'break-word',
+  };
+  const aiAnalysisPanelStyle: React.CSSProperties = {
+    ...aiContentStyle,
+    maxHeight: '60vh',
+    overflowY: 'auto',
   };
 
   const getParseStatusText = (parseStatus?: string) => {
@@ -748,7 +751,7 @@ const ResumeDetail: React.FC = () => {
           </div>
           {aiReview ? (
             typeof aiReview === 'object' ? (
-              <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', ...aiContentStyle }}>
+              <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', ...aiAnalysisPanelStyle }}>
                 <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
                   <Tag color={normalizedEvaluation.overallScore == null ? 'red' : 'geekblue'} style={{ margin: 0 }}>加权分 {formatWeightedScore(normalizedEvaluation.overallScore)}</Tag>
                   {hasGateResults && gateRows.map((gate) => (
@@ -837,7 +840,7 @@ const ResumeDetail: React.FC = () => {
                 )}
               </div>
             ) : (
-              <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', color: '#334155', fontSize: '15px', lineHeight: 1.8, ...aiContentStyle }}>
+              <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: '12px', border: '1px solid #E2E8F0', color: '#334155', fontSize: '15px', lineHeight: 1.8, ...aiAnalysisPanelStyle }}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{String(aiReview)}</ReactMarkdown>
               </div>
             )
