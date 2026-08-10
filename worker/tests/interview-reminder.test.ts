@@ -20,12 +20,14 @@ describe('interview reminders', () => {
   it('uploads PDF before sending the card and file from the current user', async () => {
     const calls: string[] = [];
     const authorizations: Array<string | null> = [];
+    const contentTypes: Array<string | null> = [];
 
     const result = await deliverInterviewReminder(deliveryInput, {
       fetch: async (url, init) => {
         const isUpload = String(url).includes('/files');
         calls.push(isUpload ? 'upload' : JSON.parse(String(init?.body)).msg_type);
         authorizations.push(new Headers(init?.headers).get('Authorization'));
+        contentTypes.push(new Headers(init?.headers).get('Content-Type'));
         return Response.json(isUpload
           ? { code: 0, data: { file_key: 'file-key' } }
           : { code: 0, data: { message_id: 'message-id' } });
@@ -34,6 +36,7 @@ describe('interview reminders', () => {
 
     expect(calls).toEqual(['upload', 'interactive', 'file']);
     expect(authorizations).toEqual(['Bearer tenant-token', 'Bearer user-token', 'Bearer user-token']);
+    expect(contentTypes).toEqual([null, 'application/json; charset=utf-8', 'application/json; charset=utf-8']);
     expect(result).toMatchObject({ cardSent: true, fileSent: true, warning: null });
   });
 
@@ -56,6 +59,32 @@ describe('interview reminders', () => {
     expect(messageTypes).toEqual(['interactive']);
     expect(result).toMatchObject({ cardSent: true, fileSent: false });
     expect(result.warning).toContain('PDF');
+  });
+
+  it('rejects an over-limit streaming Feishu response before consuming its full body', async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) controller.enqueue(new Uint8Array(512 * 1024));
+        else if (pulls === 2) controller.enqueue(new Uint8Array(600 * 1024));
+        else controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }, { highWaterMark: 0 });
+
+    const result = await deliverInterviewReminder(deliveryInput, {
+      fetch: async (url) => String(url).includes('/files')
+        ? new Response(stream, { headers: { 'content-type': 'application/json' } })
+        : Response.json({ code: 0, data: { message_id: 'message-id' } }),
+    });
+
+    expect(result).toMatchObject({ cardSent: true, fileSent: false });
+    expect(pulls).toBe(2);
+    expect(cancelled).toBe(true);
   });
 
   it.each([
