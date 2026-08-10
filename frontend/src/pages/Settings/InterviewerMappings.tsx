@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Input, message, Popconfirm, Space, Card, Typography, Modal } from 'antd';
+import { Table, Button, Input, message, Popconfirm, Space, Card, Modal } from 'antd';
 import { PlusOutlined, DeleteOutlined, SaveOutlined, BellOutlined, SearchOutlined, CloudSyncOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
-
-const { Title } = Typography;
+import { PageHeader, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 
 interface InterviewerMapping {
   name: string;
@@ -184,20 +183,20 @@ const InterviewerMappings: React.FC = () => {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
+      <PageHeader
+        title="面试官映射管理"
+        actions={<Space>
+          <Button icon={<BellOutlined />} loading={notifyLoading} disabled={notifyLoading} onClick={handleNotifyAll}>通知全部面试官</Button>
+          <Button icon={<PlusOutlined />} type="dashed" onClick={handleAdd}>添加</Button>
+          <Button icon={<SaveOutlined />} type="primary" loading={saving} onClick={handleSave}>保存</Button>
+          <Button icon={<CloudSyncOutlined />} loading={syncing} onClick={handleSyncFromFeishu}>从飞书同步</Button>
+        </Space>}
+      />
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <Title level={4} style={{ margin: 0 }}>面试官映射管理</Title>
-          <Space>
-            <Button icon={<BellOutlined />} loading={notifyLoading} disabled={notifyLoading} onClick={handleNotifyAll}>通知全部面试官</Button>
-            <Button icon={<PlusOutlined />} type="dashed" onClick={handleAdd}>添加</Button>
-            <Button icon={<SaveOutlined />} type="primary" loading={saving} onClick={handleSave}>保存</Button>
-            <Button icon={<CloudSyncOutlined />} loading={syncing} onClick={handleSyncFromFeishu}>从飞书同步</Button>
-          </Space>
-        </div>
         {/* 飞书搜索 */}
         <div style={{ marginBottom: 12, padding: '12px 16px', background: '#F8FAFC', borderRadius: 8 }}>
-          <Space>
+          <ResponsiveToolbar>
             <Input.Search
               placeholder="输入姓名，从飞书搜索 open_id"
               value={searchName}
@@ -205,9 +204,9 @@ const InterviewerMappings: React.FC = () => {
               onSearch={handleSearch}
               enterButton={<Space><SearchOutlined /> 搜索</Space>}
               loading={searching}
-              style={{ width: 360 }}
+              style={{ width: '100%', maxWidth: 420 }}
             />
-          </Space>
+          </ResponsiveToolbar>
           {searchResults.length > 0 && (
             <div style={{ marginTop: 8 }}>
               {searchResults.map((item, idx) => (
@@ -232,7 +231,8 @@ const InterviewerMappings: React.FC = () => {
             </Space>
           </div>
         )}
-        <Table
+        <TableViewport>
+          <Table
           dataSource={data}
           columns={columns}
           rowKey={(_, idx) => `${idx}`}
@@ -240,7 +240,8 @@ const InterviewerMappings: React.FC = () => {
           pagination={false}
           rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
           locale={{ emptyText: '暂无映射，请点击「添加」配置面试官姓名与飞书 Open ID' }}
-        />
+          />
+        </TableViewport>
       </Card>
     </div>
   );
