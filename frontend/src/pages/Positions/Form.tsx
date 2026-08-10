@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
+import { PageHeader } from '../../components/Responsive/PageHeader';
 
 const { Title, Text } = Typography;
 
@@ -99,14 +100,9 @@ const PositionForm: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/positions')}>
-          返回列表
-        </Button>
-      </div>
+      <PageHeader title={id ? '编辑岗位' : '新增岗位'} actions={<Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/positions')}>返回列表</Button>} />
       
       <Card>
-        <Title level={4} style={{ marginBottom: 24 }}>{id ? '编辑岗位' : '新增岗位'}</Title>
         <Form
           form={form}
           layout="vertical"
@@ -122,7 +118,7 @@ const PositionForm: React.FC = () => {
             <Input placeholder="例如：高级前端工程师" size="large" />
           </Form.Item>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
             <Form.Item
               name="department"
               label="所属部门"
@@ -138,7 +134,7 @@ const PositionForm: React.FC = () => {
             </Form.Item>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
             <Form.Item
               name="salary_range"
               label="薪资范围"
@@ -154,7 +150,7 @@ const PositionForm: React.FC = () => {
             </Form.Item>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
             <Form.Item
               name="position_type"
               label="岗位类型"
@@ -180,7 +176,7 @@ const PositionForm: React.FC = () => {
             </Form.Item>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
             <Form.Item name="primary_interviewer" label="一面面试官" initialValue="杜雁玲">
               <Input placeholder="默认：杜雁玲" size="large" />
             </Form.Item>
@@ -189,7 +185,7 @@ const PositionForm: React.FC = () => {
             </Form.Item>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
             <Form.Item
               name="hiring_manager_id"
               label="招聘负责人"

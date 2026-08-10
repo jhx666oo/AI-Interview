@@ -12,6 +12,8 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import dayjs from 'dayjs';
+import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -198,10 +200,10 @@ const ProbationList: React.FC = () => {
   return (
     <div>
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}><Card><Statistic title="试用总数" value={data.length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="试用中" value={data.filter(r => r.result === 'pending').length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="已转正" value={data.filter(r => r.result === 'confirmed').length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="未通过" value={data.filter(r => r.result === 'terminated').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="试用总数" value={data.length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="试用中" value={data.filter(r => r.result === 'pending').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="已转正" value={data.filter(r => r.result === 'confirmed').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="未通过" value={data.filter(r => r.result === 'terminated').length} /></Card></Col>
       </Row>
       <Card title={<span><CheckCircleOutlined /> 试用期与转正管理</span>}
         extra={<Space>
@@ -214,12 +216,12 @@ const ProbationList: React.FC = () => {
             <Button size="small" danger onClick={handleBatchDelete}>批量删除</Button>
           </div>
         )}
-        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+        <TableViewport><Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1500 }} pagination={false}
-          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }} />
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }} /></TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
-      <Modal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
+      <ResponsiveModal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} confirmLoading={submitting} width={560} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="employee_name" label="员工姓名" rules={[{ required: true, message: '请输入姓名' }]}>
@@ -242,7 +244,7 @@ const ProbationList: React.FC = () => {
             <Form.Item name="notes" label="备注"><TextArea rows={2} /></Form.Item>
           </>)}
         </Form>
-      </Modal>
+      </ResponsiveModal>
       <Modal title="添加月度评估" open={reviewVisible} onCancel={() => setReviewVisible(false)}
         onOk={handleReviewSubmit} confirmLoading={reviewSubmitting} width={520} destroyOnHidden>
         <Form form={reviewForm} layout="vertical">

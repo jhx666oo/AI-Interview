@@ -10,6 +10,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildPositionCapabilitySave } from './capabilitySave';
 import { WEIGHTED_GATE_DIMENSIONS, WEIGHTED_SCORING_DIMENSIONS, WEIGHTED_SCREENING_DEFAULT_WEIGHTS } from '../../utils/resumeEvaluation';
+import { PageHeader } from '../../components/Responsive/PageHeader';
+import { ResponsiveToolbar } from '../../components/Responsive/ResponsiveToolbar';
+import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { Title, Text } = Typography;
 
@@ -794,16 +798,10 @@ const PositionsList: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 32, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <div>
-          <Title level={2} style={{ margin: 0, fontWeight: 700 }}>岗位管理</Title>
-          <Text type="secondary">管理企业的招聘岗位信息</Text>
-        </div>
-        <Space>
+      <PageHeader title="岗位管理" description="管理企业的招聘岗位信息" actions={<Space wrap>
           <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleAdd}>新增岗位</Button>
           <Button size="small" icon={<SyncOutlined />} loading={syncLoading} onClick={handleSyncFromFeishu}>从飞书同步</Button>
-        </Space>
-      </div>
+        </Space>} />
 
       {/* 重复岗位提醒 */}
       {duplicateGroups.length > 0 && (
@@ -822,7 +820,7 @@ const PositionsList: React.FC = () => {
         />
       )}
       
-      <div style={{ marginBottom: 24, padding: '24px', background: '#fff', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+      <ResponsiveToolbar actions={selectedRowKeys.length > 0 ? <Space wrap><span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span><Button onClick={() => handleBatchPublish(true)} type="primary" ghost>批量发布</Button><Button onClick={() => handleBatchPublish(false)}>批量下架</Button><Button danger onClick={handleBatchDelete}>批量删除</Button><Button onClick={() => setSelectedRowKeys([])}>取消选择</Button></Space> : undefined}>
           <Input 
               placeholder="搜索岗位名称" 
               prefix={<EyeOutlined style={{ color: '#94A3B8' }} />} 
@@ -840,18 +838,9 @@ const PositionsList: React.FC = () => {
               <Select.Option value="published">招聘中</Select.Option>
               <Select.Option value="closed">已关闭</Select.Option>
           </Select>
-          {selectedRowKeys.length > 0 && (
-            <Space>
-              <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
-              <Button onClick={() => handleBatchPublish(true)} type="primary" ghost>批量发布</Button>
-              <Button onClick={() => handleBatchPublish(false)}>批量下架</Button>
-              <Button danger onClick={handleBatchDelete}>批量删除</Button>
-              <Button onClick={() => setSelectedRowKeys([])}>取消选择</Button>
-            </Space>
-          )}
-      </div>
+      </ResponsiveToolbar>
       
-      <Table 
+      <TableViewport><Table
         columns={columns} 
         dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} 
         loading={loading} 
@@ -863,10 +852,10 @@ const PositionsList: React.FC = () => {
           onChange: setSelectedRowKeys,
           columnWidth: 40,
         }}
-      />
+      /></TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
 
-      <Modal
+      <ResponsiveModal
         title={editingId ? '编辑岗位' : '新增岗位'}
         open={isModalVisible}
         onCancel={() => setIsModalVisible(false)}
@@ -989,7 +978,7 @@ const PositionsList: React.FC = () => {
             </Select>
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       <Modal title="AI候选人匹配排名" open={aiMatchVisible} onCancel={() => setAiMatchVisible(false)} footer={<Button onClick={() => setAiMatchVisible(false)}>关闭</Button>} width={640}>
         {aiMatchResult?.rankings?.map((item: any, idx: number) => (

@@ -10,6 +10,8 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import dayjs from 'dayjs';
+import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -177,10 +179,10 @@ const OnboardingList: React.FC = () => {
   return (
     <div>
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}><Card><Statistic title="入职总数" value={data.length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="待入职" value={data.filter(r => r.status === 'pending').length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="入职中" value={data.filter(r => r.status === 'in_progress').length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="已完成" value={data.filter(r => r.status === 'completed').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="入职总数" value={data.length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="待入职" value={data.filter(r => r.status === 'pending').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="入职中" value={data.filter(r => r.status === 'in_progress').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="已完成" value={data.filter(r => r.status === 'completed').length} /></Card></Col>
       </Row>
       <Card title={<span><HomeOutlined /> 入职管理</span>}
         extra={<Space>
@@ -196,17 +198,17 @@ const OnboardingList: React.FC = () => {
             </Space>
           </div>
         )}
-        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+        <TableViewport><Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1400 }} pagination={false}
           rowSelection={{
             selectedRowKeys,
             onChange: setSelectedRowKeys,
             columnWidth: 40,
           }}
-        />
+        /></TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
-      <Modal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
+      <ResponsiveModal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} confirmLoading={submitting} width={640} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="resume_id" label="关联简历" rules={[{ required: true, message: '请选择简历' }]}>
@@ -244,7 +246,7 @@ const OnboardingList: React.FC = () => {
           </Row>)}
           <Form.Item name="notes" label="备注"><TextArea rows={2} /></Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
       <Drawer size="large" title="入职详情" open={detailVisible} onClose={() => setDetailVisible(false)}>
         {current && (
           <Descriptions column={1} bordered>

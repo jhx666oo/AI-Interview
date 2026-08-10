@@ -5,6 +5,7 @@ import { EditOutlined, DeleteOutlined, PlusOutlined, SaveOutlined, CloseOutlined
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { getMaximizedPdfPreviewUrl } from '../../utils/pdfPreview';
+import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -1060,7 +1061,7 @@ const InterviewScore: React.FC = () => {
 
               <Row gutter={[16, 16]}>
                 {/* 方式1: 添加面试题目 */}
-                <Col span={8}>
+                <Col xs={24} sm={12} md={8}>
                   <Card
                     hoverable
                     style={{ textAlign: 'center', height: '100%' }}
@@ -1073,7 +1074,7 @@ const InterviewScore: React.FC = () => {
                 </Col>
 
                 {/* 方式2: 录制整场面试 */}
-                <Col span={8}>
+                <Col xs={24} sm={12} md={8}>
                   <Card style={{ textAlign: 'center', height: '100%' }}>
                     <AudioOutlined style={{ fontSize: 32, color: fullRecording ? '#ff4d4f' : '#52c41a', marginBottom: 12 }} />
                     <Title level={5}>录制整场面试</Title>
@@ -1127,7 +1128,7 @@ const InterviewScore: React.FC = () => {
                 </Col>
 
                 {/* 方式3: 直接填写评价 */}
-                <Col span={8}>
+                <Col xs={24} sm={12} md={8}>
                   <Card style={{ textAlign: 'center', height: '100%' }}>
                     <EditOutlined style={{ fontSize: 32, color: '#722ed1', marginBottom: 12 }} />
                     <Title level={5}>直接填写评价</Title>
@@ -1281,7 +1282,7 @@ const InterviewScore: React.FC = () => {
                   
                     <div style={{ marginTop: 24, background: '#F8FAFC', padding: 16, borderRadius: 8 }}>
                       <Row gutter={16}>
-                        <Col span={8}>
+                        <Col xs={24} sm={8}>
                           <Text strong>评分 (0-10):</Text>
                           <InputNumber 
                             min={0} max={10} 
@@ -1290,7 +1291,7 @@ const InterviewScore: React.FC = () => {
                             onChange={(val) => setScores({...scores, [currentQuestionIndex]: val || 0})}
                           />
                         </Col>
-                        <Col span={16}>
+                        <Col xs={24} sm={16}>
                           <Text strong>评语:</Text>
                           <TextArea 
                             rows={2} 
@@ -1346,7 +1347,7 @@ const InterviewScore: React.FC = () => {
       </div>
 
       {/* Add Question Modal */}
-      <Modal
+      <ResponsiveModal
         title="添加面试题"
         open={isAddModalVisible}
         onOk={handleAddModalOk}
@@ -1359,10 +1360,10 @@ const InterviewScore: React.FC = () => {
         <Form form={addForm} layout="vertical">
             {questionFormContent}
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       {/* 取消面试弹窗 */}
-      <Modal
+      <ResponsiveModal
         title="取消面试"
         open={cancelModalVisible}
         onOk={handleCancelInterview}
@@ -1381,7 +1382,7 @@ const InterviewScore: React.FC = () => {
           maxLength={500}
           showCount
         />
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };
