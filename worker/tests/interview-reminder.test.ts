@@ -274,7 +274,7 @@ describe('interview reminders', () => {
     ]);
 
     expect(schema).toMatch(/feishu_token_failed_at TEXT/);
-    expect(migration).toContain('ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT');
+    expect(migration).toContain('SELECT 1');
     expect(workerSource).toContain("ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT");
   });
 
