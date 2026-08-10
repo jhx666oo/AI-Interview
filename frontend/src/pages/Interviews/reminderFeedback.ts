@@ -9,6 +9,12 @@ export interface ReminderDeliveryResponse {
 }
 
 export function getReminderFeedback(response: ReminderDeliveryResponse) {
+  if (response.need_feishu_auth && response.card_sent && !response.file_sent) {
+    return {
+      type: 'warning' as const,
+      content: '面试提醒卡片已发送；飞书授权已失效，简历 PDF 未发送。请重新授权，勿重复发送整条提醒',
+    };
+  }
   if (response.need_feishu_auth) {
     return { type: 'warning' as const, content: '请先在个人设置中完成飞书授权，再发送面试提醒' };
   }

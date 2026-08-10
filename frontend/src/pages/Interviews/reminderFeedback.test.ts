@@ -16,6 +16,14 @@ it('asks the current user to authorize Feishu', () => {
     .toEqual({ type: 'warning', content: '请先在个人设置中完成飞书授权，再发送面试提醒' });
 });
 
+it('preserves partial success when authorization expires after the card was sent', () => {
+  expect(getReminderFeedback({ need_feishu_auth: true, card_sent: true, file_sent: false }))
+    .toEqual({
+      type: 'warning',
+      content: '面试提醒卡片已发送；飞书授权已失效，简历 PDF 未发送。请重新授权，勿重复发送整条提醒',
+    });
+});
+
 it('reports the actionable interviewer binding message', () => {
   expect(getReminderFeedback({ need_bind: true, detail: '请先为面试官张三绑定飞书' }))
     .toEqual({ type: 'warning', content: '请先为面试官张三绑定飞书' });

@@ -301,11 +301,11 @@ export function buildInterviewReminderView(
   const authoritativeAge = parsedAge(parsed.age);
 
   return {
-    name: text(resume.candidate_name, resume.name, screening.candidate_name, interview.candidate_name, task.candidate_name) || EMPTY_VALUE,
+    name: text(resume.candidate_name, interview.candidate_name, resume.name, task.candidate_name) || EMPTY_VALUE,
     education: text(parsed.highest_degree, parsed.education, resume.education, screening.education) || EMPTY_VALUE,
     age: authoritativeAge ?? calculateAge(text(resume.birthday, parsed.birthday, screening.birthday), at),
     gender: text(parsed.gender, resume.gender, screening.gender) || EMPTY_VALUE,
-    position: text(resume.mapped_position, resume.position_applied, screening.mapped_position, interview.position_applied, task.position) || EMPTY_VALUE,
+    position: text(resume.mapped_position, resume.position_applied, interview.position_applied, task.position) || EMPTY_VALUE,
     interviewTime: formatInterviewTime(text(interview.interview_time, task.interview_time)),
     city: text(
       parsed.city,

@@ -471,6 +471,17 @@ describe('interview reminders', () => {
     expect(view.aiAdvice).toContain('稳定性待核实');
   });
 
+  it('uses the selected interview before stale screening data for name and position', () => {
+    const view = buildInterviewReminderView({
+      resume: {},
+      screening: { candidate_name: '旧姓名', mapped_position: '旧岗位' },
+      interview: { candidate_name: '当前姓名', position_applied: '当前岗位' },
+      recruitmentTask: { candidate_name: '任务姓名', position: '任务岗位' },
+    });
+
+    expect(view).toMatchObject({ name: '当前姓名', position: '当前岗位' });
+  });
+
   it('prefers valid parsed demographics and falls back from invalid parsed age to birthday', () => {
     const parsed = buildInterviewReminderView({
       resume: {
