@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Button, Avatar, Space, Dropdown, theme, Badge, Select } from 'antd';
+import { Layout, Menu, Button, Avatar, Space, Dropdown, Drawer, Popover, Select } from 'antd';
 import {
   DashboardOutlined,
   UserOutlined,
@@ -16,11 +16,13 @@ import {
   BarChartOutlined,
   FolderOpenOutlined,
   MailOutlined,
+  MenuOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import request from '../../utils/request';
+import { getLayoutMode, useViewportWidth } from './responsive';
 
 const { Header, Sider, Content } = Layout;
 
@@ -29,11 +31,13 @@ const AppLayout: React.FC = () => {
   const location = useLocation();
   const { logout, user } = useAuth();
   const { selectedOwner, setSelectedOwner } = useOwner();
-  const {
-    token: { colorBgContainer, borderRadiusLG },
-  } = theme.useToken();
+  const viewportWidth = useViewportWidth();
+  const layoutMode = getLayoutMode(viewportWidth);
+  const isMobile = layoutMode === 'mobile' || layoutMode === 'narrow';
+  const isCompact = layoutMode === 'compact';
   const role = (user as any)?.role?.value ?? (user as any)?.role;
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [ownerList, setOwnerList] = useState<string[]>([]);
 
   // 加载负责人列表
@@ -46,6 +50,10 @@ const AppLayout: React.FC = () => {
       setOwnerList([...new Set(names)].sort());
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
 
   const handleLogout = () => {
     logout();
@@ -168,82 +176,99 @@ const AppLayout: React.FC = () => {
 
   const userMenu = { items: userMenuItems };
 
+  const ownerSelector = (
+    <Select
+      aria-label="筛选负责人"
+      placeholder="筛选负责人"
+      value={selectedOwner}
+      onChange={setSelectedOwner}
+      allowClear
+      showSearch
+      className="app-shell__owner-select"
+      options={ownerList.map(n => ({ value: n, label: n }))}
+      onClear={() => setSelectedOwner(undefined)}
+    />
+  );
+
+  const navigationMenu = (closeAfterNavigate = false) => (
+    <Menu
+      theme="light"
+      mode="inline"
+      selectedKeys={[location.pathname]}
+      items={filteredMenuItems}
+      onClick={({ key }) => {
+        if (closeAfterNavigate) setMobileMenuOpen(false);
+        navigate(key);
+      }}
+      className="app-shell__menu"
+    />
+  );
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider 
-        collapsible
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-        width={200}
-        theme="light"
-        style={{
-          borderRight: '1px solid #f0f0f0',
-          position: 'fixed',
-          left: 0,
-          top: 0,
-          bottom: 0,
-          zIndex: 100
-        }}
-      >
-        <div style={{ 
-          height: 64, 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          color: '#0F172A',
-          fontSize: '18px',
-          fontWeight: 700,
-          letterSpacing: '-0.025em',
-          borderBottom: '1px solid #f0f0f0',
-          overflow: 'hidden',
-          whiteSpace: 'nowrap',
-          padding: '0 12px'
-        }}>
-          <img src="/swan.svg" alt="天鹅到家" style={{ height: 28, width: 'auto', flexShrink: 0 }} />
-          {!collapsed && <>&nbsp;<span style={{ color: '#3B82F6' }}>AI</span>&nbsp;Interview</>}
-        </div>
-        <Menu
+    <Layout className="app-shell" data-layout-mode={layoutMode} style={{ margin: 0, minHeight: '100vh' }}>
+      {isMobile ? (
+        <Drawer
+          className="app-shell__drawer"
+          open={mobileMenuOpen}
+          onClose={() => setMobileMenuOpen(false)}
+          placement="left"
+          width={280}
+          title={<span><span className="app-shell__brand-accent">AI</span> Interview</span>}
+        >
+          {navigationMenu(true)}
+        </Drawer>
+      ) : (
+        <Sider
+          collapsible={!isCompact}
+          collapsed={isCompact || collapsed}
+          onCollapse={setCollapsed}
+          width={200}
           theme="light"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={filteredMenuItems}
-          onClick={({ key }) => navigate(key)}
-          style={{ padding: '16px 8px', borderRight: 0, overflowY: 'auto', maxHeight: 'calc(100vh - 64px)' }}
-        />
-      </Sider>
-      <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.2s' }}>
-        <Header style={{ 
-          padding: '0 32px', 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          background: 'rgba(255, 255, 255, 0.8)',
-          backdropFilter: 'blur(12px)'
-        }}>
-          <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600, color: '#0F172A' }}>
-            {pageTitle}
-          </h2>
-          <Space size="large">
-            <Select
-              placeholder="筛选负责人"
-              value={selectedOwner}
-              onChange={setSelectedOwner}
-              allowClear
-              showSearch
-              style={{ minWidth: 140 }}
-              options={ownerList.map(n => ({ value: n, label: n }))}
-              onClear={() => setSelectedOwner(undefined)}
-            />
+          className="app-shell__sider"
+        >
+          <div className="app-shell__brand">
+            <img src="/swan.svg" alt="天鹅到家" />
+            {!(isCompact || collapsed) && <>&nbsp;<span className="app-shell__brand-accent">AI</span>&nbsp;Interview</>}
+          </div>
+          {navigationMenu()}
+        </Sider>
+      )}
+      <Layout
+        className="app-shell__main"
+        style={{ marginLeft: isMobile ? 0 : (isCompact || collapsed ? 80 : 200) }}
+      >
+        <Header className="app-shell__header">
+          <div className="app-shell__heading">
+            {isMobile && (
+              <Button
+                type="text"
+                aria-label="打开导航菜单"
+                icon={<MenuOutlined />}
+                onClick={() => setMobileMenuOpen(true)}
+              />
+            )}
+            <h2 className="app-shell__title">
+              {pageTitle}
+            </h2>
+          </div>
+          <Space className="app-shell__actions" size={isMobile ? 4 : isCompact ? 12 : 'large'}>
+            {isMobile ? (
+              <Popover content={ownerSelector} trigger="click" placement="bottomRight">
+                <Button type="text" aria-label="筛选负责人" icon={<FilterOutlined />} />
+              </Popover>
+            ) : ownerSelector}
             <Button type="text" icon={<BellOutlined style={{ fontSize: '18px', color: '#64748B' }} />} />
             <Dropdown menu={userMenu}>
-              <Space style={{ cursor: 'pointer' }}>
+              <Space className="app-shell__user">
                 <Avatar style={{ backgroundColor: '#3B82F6' }} icon={<UserOutlined />} />
-                <span style={{ fontWeight: 500, color: '#0F172A' }}>{user?.full_name || user?.email}</span>
+                {!isCompact && !isMobile && (
+                  <span className="app-shell__username">{user?.full_name || user?.email}</span>
+                )}
               </Space>
             </Dropdown>
           </Space>
         </Header>
-        <Content style={{ margin: '32px', minHeight: 280 }}>
+        <Content className="app-shell__content">
           <div className="page-container">
             <Outlet />
           </div>
