@@ -36,12 +36,12 @@ const aggregateDataset: DailyReportDataset = {
     {
       id: 'r-du', mapped_position: '  销售专员  ', position_applied: 'HR',
       created_at: '2026-08-09T15:59:59.999Z', updated_at: '2026-08-10T03:00:00.000Z',
-      status: 'approved', screening_result: '通过',
+      approved_at: '2026-08-10T03:00:00.000Z', status: 'approved', screening_result: '通过',
     },
     {
       id: 'r-wei', position_applied: 'HR',
       created_at: '2026-08-10T01:00:00.000Z', updated_at: '2026-08-10T04:00:00.000Z',
-      status: 'rejected', screening_result: '淘汰',
+      rejected_at: '2026-08-10T04:00:00.000Z', status: 'rejected', screening_result: '淘汰',
     },
     {
       id: 'r-old-pending', position_id: 'p-hy', created_at: '2026-08-01T00:00:00.000Z',
@@ -147,10 +147,10 @@ describe('buildDailyReportSnapshot', () => {
     const dataset = emptyDataset();
     dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '何雨菱' }];
     dataset.resumes = [
-      { id: 'before', position_id: 'p1', created_at: '2026-08-09T15:59:59.999Z', status: 'approved', screening_result: '通过', updated_at: '2026-08-10T15:59:59.999Z' },
-      { id: 'start', position_id: 'p1', created_at: '2026-08-09T16:00:00.000Z', status: 'approved', screening_result: '通过', updated_at: '2026-08-10T16:00:00.000Z' },
-      { id: 'end', position_id: 'p1', created_at: '2026-08-10T15:59:59.999Z', status: 'approved', screening_result: '通过', updated_at: '2026-08-09T16:00:00.000Z' },
-      { id: 'after', position_id: 'p1', created_at: '2026-08-10T16:00:00.000Z', status: 'approved', screening_result: '通过', updated_at: '2026-08-09T15:59:59.999Z' },
+      { id: 'before', position_id: 'p1', created_at: '2026-08-09T15:59:59.999Z', status: 'approved', screening_result: '通过', approved_at: '2026-08-10T15:59:59.999Z' },
+      { id: 'start', position_id: 'p1', created_at: '2026-08-09T16:00:00.000Z', status: 'approved', screening_result: '通过', approved_at: '2026-08-10T16:00:00.000Z' },
+      { id: 'end', position_id: 'p1', created_at: '2026-08-10T15:59:59.999Z', status: 'approved', screening_result: '通过', approved_at: '2026-08-09T16:00:00.000Z' },
+      { id: 'after', position_id: 'p1', created_at: '2026-08-10T16:00:00.000Z', status: 'approved', screening_result: '通过', approved_at: '2026-08-09T15:59:59.999Z' },
     ];
 
     const snapshot = buildDailyReportSnapshot(dataset, '2026-08-10', '2099-01-01T00:00:00.000Z');
@@ -159,6 +159,75 @@ describe('buildDailyReportSnapshot', () => {
     expect(snapshot.rows[0].todayApproved).toBe(2);
     expect(snapshot.reportDate).toBe('2026-08-10');
     expect(snapshot.generatedAt).toBe('2099-01-01T00:00:00.000Z');
+  });
+
+  it('treats an unzoned evening interview as Shanghai wall-clock time without shifting its day', () => {
+    const dataset = emptyDataset();
+    dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '何雨菱' }];
+    dataset.interviews = [
+      { id: 'local-evening', position_id: 'p1', interview_time: '2026-08-10 20:00' },
+      { id: 'local-seconds', position_id: 'p1', interview_time: '2026-08-10 20:00:30' },
+      { id: 'zoned-next-day', position_id: 'p1', interview_time: '2026-08-10T16:00:00Z' },
+    ];
+
+    const august10 = buildDailyReportSnapshot(dataset, '2026-08-10', '2026-08-10T10:00:00.000Z');
+    const august11 = buildDailyReportSnapshot(dataset, '2026-08-11', '2026-08-11T10:00:00.000Z');
+
+    expect(august10.rows[0].todayInterviews).toBe(2);
+    expect(august11.rows[0].todayInterviews).toBe(1);
+  });
+
+  it('rejects invalid unzoned Shanghai wall-clock values', () => {
+    const dataset = emptyDataset();
+    dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '何雨菱' }];
+    dataset.interviews = [
+      { id: 'invalid-hour', position_id: 'p1', interview_time: '2026-08-10 25:00' },
+      { id: 'invalid-minute', position_id: 'p1', interview_time: '2026-08-10 20:60' },
+    ];
+
+    const snapshot = buildDailyReportSnapshot(dataset, '2026-08-10', '2026-08-10T10:00:00.000Z');
+
+    expect(snapshot.rows[0].todayInterviews).toBe(0);
+  });
+
+  it('does not recount old screening results after an unrelated edit today', () => {
+    const dataset = emptyDataset();
+    dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '杜雁玲' }];
+    dataset.resumes = [
+      {
+        id: 'old-approved', position_id: 'p1', status: 'approved', screening_result: '通过',
+        approved_at: '2026-08-08T03:00:00Z', updated_at: '2026-08-10T03:00:00Z',
+      },
+      {
+        id: 'old-rejected', position_id: 'p1', status: 'rejected', screening_result: '淘汰',
+        rejected_at: '2026-08-08T04:00:00Z', updated_at: '2026-08-10T04:00:00Z',
+      },
+    ];
+
+    const snapshot = buildDailyReportSnapshot(dataset, '2026-08-10', '2026-08-10T10:00:00.000Z');
+
+    expect(snapshot.rows[1].todayApproved).toBe(0);
+    expect(snapshot.rows[1].todayRejected).toBe(0);
+  });
+
+  it('counts approved_at and rejected_at on the report date without using updated_at', () => {
+    const dataset = emptyDataset();
+    dataset.positions = [{ id: 'p1', title: '运营', status: 'open', responsible_person: '魏秋柠' }];
+    dataset.resumes = [
+      {
+        id: 'approved-today', position_id: 'p1', status: 'approved', screening_result: '通过',
+        approved_at: '2026-08-10T03:00:00Z', updated_at: '2026-08-08T03:00:00Z',
+      },
+      {
+        id: 'rejected-today', position_id: 'p1', status: 'rejected', screening_result: '淘汰',
+        rejected_at: '2026-08-10T04:00:00Z', updated_at: '2026-08-08T04:00:00Z',
+      },
+    ];
+
+    const snapshot = buildDailyReportSnapshot(dataset, '2026-08-10', '2026-08-10T10:00:00.000Z');
+
+    expect(snapshot.rows[2].todayApproved).toBe(1);
+    expect(snapshot.rows[2].todayRejected).toBe(1);
   });
 
   it('keeps cumulative totals separate from report-day activity', () => {

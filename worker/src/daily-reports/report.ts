@@ -27,6 +27,8 @@ export interface DailyReportResumeRecord extends DailyReportPositionReference {
   id: string;
   created_at?: string | null;
   updated_at?: string | null;
+  approved_at?: string | null;
+  rejected_at?: string | null;
   screened_at?: string | null;
   reviewed_at?: string | null;
   status?: string | null;
@@ -227,10 +229,24 @@ function resolveOwner(
   )) ?? null;
 }
 
-function shanghaiDate(value: string | null | undefined): string | null {
+function exactCalendarDate(value: string): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth[month - 1]
+    ? value
+    : null;
+}
+
+function shanghaiDateFromUtcTimestamp(value: string | null | undefined): string | null {
   const raw = value?.trim();
   if (!raw) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const calendarDate = exactCalendarDate(raw);
+  if (calendarDate) return calendarDate;
 
   const hasTimeZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(raw);
   const normalized = hasTimeZone ? raw : `${raw.replace(' ', 'T')}Z`;
@@ -248,14 +264,32 @@ function shanghaiDate(value: string | null | undefined): string | null {
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
+function shanghaiInterviewDate(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const calendarDate = exactCalendarDate(raw);
+  if (calendarDate) return calendarDate;
+
+  if (/(?:z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
+    return shanghaiDateFromUtcTimestamp(raw);
+  }
+
+  const localDateTime = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(raw);
+  if (!localDateTime || !exactCalendarDate(localDateTime[1])) return null;
+  const hour = Number(localDateTime[2]);
+  const minute = Number(localDateTime[3]);
+  const second = Number(localDateTime[4] ?? '0');
+  return hour <= 23 && minute <= 59 && second <= 59 ? localDateTime[1] : null;
+}
+
 function requireReportDate(reportDate: string): void {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate) || shanghaiDate(`${reportDate}T00:00:00+08:00`) !== reportDate) {
+  if (exactCalendarDate(reportDate) !== reportDate) {
     throw new TypeError('reportDate must be an exact YYYY-MM-DD calendar date');
   }
 }
 
-function isOnReportDate(value: string | null | undefined, reportDate: string): boolean {
-  return shanghaiDate(value) === reportDate;
+function isUtcTimestampOnReportDate(value: string | null | undefined, reportDate: string): boolean {
+  return shanghaiDateFromUtcTimestamp(value) === reportDate;
 }
 
 function isApproved(resume: DailyReportResumeRecord): boolean {
@@ -274,8 +308,12 @@ function isPending(resume: DailyReportResumeRecord): boolean {
     || PENDING_STATUSES.has(normalizeStatus(resume.screening_result));
 }
 
-function finalScreeningTime(resume: DailyReportResumeRecord): string | null | undefined {
-  return resume.screened_at || resume.reviewed_at || resume.updated_at;
+function approvalTime(resume: DailyReportResumeRecord): string | null | undefined {
+  return resume.approved_at || resume.screened_at || resume.reviewed_at;
+}
+
+function rejectionTime(resume: DailyReportResumeRecord): string | null | undefined {
+  return resume.rejected_at || resume.screened_at || resume.reviewed_at;
 }
 
 function emptyMetrics(owner: DailyReportOwner): MutableMetrics {
@@ -334,19 +372,19 @@ export function buildDailyReportSnapshot(
 
   dataset.resumes.forEach((resume, index) => {
     const applicableMetrics: MetricName[] = [];
-    if (isOnReportDate(resume.created_at, reportDate)) applicableMetrics.push('todayNew');
+    if (isUtcTimestampOnReportDate(resume.created_at, reportDate)) applicableMetrics.push('todayNew');
     if (isPending(resume)) applicableMetrics.push('pending');
-    if (isApproved(resume) && isOnReportDate(finalScreeningTime(resume), reportDate)) {
+    if (isApproved(resume) && isUtcTimestampOnReportDate(approvalTime(resume), reportDate)) {
       applicableMetrics.push('todayApproved');
     }
-    if (isRejected(resume) && isOnReportDate(finalScreeningTime(resume), reportDate)) {
+    if (isRejected(resume) && isUtcTimestampOnReportDate(rejectionTime(resume), reportDate)) {
       applicableMetrics.push('todayRejected');
     }
     count(`resume:${resume.id || index}`, resolveOwner(indexes, resume), applicableMetrics);
   });
 
   dataset.interviews.forEach((interview, index) => {
-    if (!isOnReportDate(interview.interview_time, reportDate)) return;
+    if (shanghaiInterviewDate(interview.interview_time) !== reportDate) return;
     count(
       `interview:${interview.id || index}`,
       resolveOwner(indexes, interview, interview.resume_id ? resumesById.get(interview.resume_id) : undefined),
@@ -355,7 +393,7 @@ export function buildDailyReportSnapshot(
   });
 
   dataset.offers.forEach((offer, index) => {
-    if (!isOnReportDate(offer.sent_at, reportDate)) return;
+    if (!isUtcTimestampOnReportDate(offer.sent_at, reportDate)) return;
     count(
       `offer:${offer.id || index}`,
       resolveOwner(indexes, offer, offer.resume_id ? resumesById.get(offer.resume_id) : undefined),
@@ -364,7 +402,7 @@ export function buildDailyReportSnapshot(
   });
 
   dataset.onboardingRecords.forEach((onboarding, index) => {
-    if (!isOnReportDate(onboarding.onboard_date, reportDate)) return;
+    if (!isUtcTimestampOnReportDate(onboarding.onboard_date, reportDate)) return;
     count(
       `onboarding:${onboarding.id || index}`,
       resolveOwner(indexes, onboarding, onboarding.resume_id ? resumesById.get(onboarding.resume_id) : undefined),
