@@ -25,6 +25,16 @@ interface DailyReportPositionReference {
 
 export interface DailyReportResumeRecord extends DailyReportPositionReference {
   id: string;
+  candidate_name?: string | null;
+  gender?: string | null;
+  education?: string | null;
+  birthday?: string | null;
+  parsed_age?: string | number | null;
+  parsed_education?: string | null;
+  parsed_gender?: string | null;
+  parsed_city?: string | null;
+  ai_summary?: string | null;
+  recommendation?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   approved_at?: string | null;
@@ -116,8 +126,6 @@ const PENDING_STATUSES = new Set([
   '待初筛',
   '待筛选',
 ]);
-const APPROVED_RESULTS = new Set(['approved', 'accept', 'accepted', 'pass', 'passed', '通过']);
-const REJECTED_RESULTS = new Set(['rejected', 'reject', 'failed', 'fail', '淘汰', '拒绝', '不通过']);
 
 function normalizeExact(value: string | null | undefined): string {
   return (value ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('zh-CN');
@@ -333,29 +341,110 @@ function isUtcTimestampOnReportDate(value: string | null | undefined, reportDate
 }
 
 function isApproved(resume: DailyReportResumeRecord): boolean {
-  if (resume.approved_at && !resume.rejected_at) return true;
-  const result = normalizeStatus(resume.screening_result || resume.status);
-  return APPROVED_RESULTS.has(result);
+  return Boolean(resume.approved_at);
 }
 
 function isRejected(resume: DailyReportResumeRecord): boolean {
-  if (resume.rejected_at && !resume.approved_at) return true;
-  const result = normalizeStatus(resume.screening_result || resume.status);
-  return REJECTED_RESULTS.has(result);
+  return Boolean(resume.rejected_at);
 }
 
 function isPending(resume: DailyReportResumeRecord): boolean {
   if (isApproved(resume) || isRejected(resume)) return false;
-  return PENDING_STATUSES.has(normalizeStatus(resume.status))
-    || PENDING_STATUSES.has(normalizeStatus(resume.screening_result));
+  return PENDING_STATUSES.has(normalizeStatus(resume.status));
 }
 
 function approvalTime(resume: DailyReportResumeRecord): string | null | undefined {
-  return resume.approved_at || resume.screened_at || resume.reviewed_at;
+  return resume.approved_at;
 }
 
 function rejectionTime(resume: DailyReportResumeRecord): string | null | undefined {
-  return resume.rejected_at || resume.screened_at || resume.reviewed_at;
+  return resume.rejected_at;
+}
+
+export interface DailyReportCandidateDetail {
+  readonly name: string;
+  readonly education: string;
+  readonly age: number | null;
+  readonly gender: string;
+  readonly position: string;
+  readonly city: string;
+  readonly ai_summary: string;
+  readonly recommendation: string;
+  readonly resume_id: string;
+}
+
+export interface DailyReportCandidateDetails {
+  readonly groups: readonly Readonly<{
+    responsible_person: DailyReportOwner | '未分配';
+    candidates: readonly DailyReportCandidateDetail[];
+  }>[];
+  readonly stats: Readonly<{
+    total: number;
+    by_person: Readonly<Record<DailyReportOwner | '未分配', number>>;
+  }>;
+}
+
+function boundedText(value: unknown, limit: number): string {
+  if (value === null || value === undefined) return '';
+  return String(value).normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, limit);
+}
+
+function ageOnDate(resume: DailyReportResumeRecord, reportDate: string): number | null {
+  if (resume.parsed_age !== null && resume.parsed_age !== undefined && String(resume.parsed_age).trim()) {
+    const parsed = Number.parseInt(boundedText(resume.parsed_age, 16), 10);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 120 ? parsed : null;
+  }
+  const birthday = exactCalendarDate(boundedText(resume.birthday, 10));
+  if (!birthday) return null;
+  const [year, month, day] = birthday.split('-').map(Number);
+  const [reportYear, reportMonth, reportDay] = reportDate.split('-').map(Number);
+  const age = reportYear - year - (reportMonth < month || (reportMonth === month && reportDay < day) ? 1 : 0);
+  return age >= 0 && age <= 120 ? age : null;
+}
+
+/**
+ * Creates the immutable candidate drill-down from the exact dataset used for
+ * aggregate statistics. Only explicit report-day approvals are included.
+ */
+export function buildDailyReportCandidateDetails(
+  dataset: DailyReportDataset,
+  reportDate: string,
+): DailyReportCandidateDetails {
+  requireReportDate(reportDate);
+  const indexes = buildOwnerIndexes(dataset);
+  const ownerKeys = [...DAILY_REPORT_OWNERS, '未分配'] as const;
+  const candidates = new Map<(typeof ownerKeys)[number], DailyReportCandidateDetail[]>(
+    ownerKeys.map((owner) => [owner, []]),
+  );
+  const seen = new Set<string>();
+
+  for (const resume of dataset.resumes) {
+    const resumeId = boundedText(resume.id, 128);
+    if (!resumeId || seen.has(resumeId) || !isUtcTimestampOnReportDate(resume.approved_at, reportDate)) continue;
+    seen.add(resumeId);
+    const owner = resolveOwner(indexes, resume) ?? '未分配';
+    candidates.get(owner)!.push(Object.freeze({
+      name: boundedText(resume.candidate_name, 80),
+      education: boundedText(resume.parsed_education || resume.education, 80),
+      age: ageOnDate(resume, reportDate),
+      gender: boundedText(resume.parsed_gender || resume.gender, 16),
+      position: boundedText(resume.mapped_position || resume.position_applied || resume.position_title, 120),
+      city: boundedText(resume.parsed_city, 120),
+      ai_summary: boundedText(resume.ai_summary, 300),
+      recommendation: boundedText(resume.recommendation, 120),
+      resume_id: resumeId,
+    }));
+  }
+
+  const byPerson = Object.fromEntries(ownerKeys.map((owner) => [owner, candidates.get(owner)!.length])) as
+    Record<(typeof ownerKeys)[number], number>;
+  const groups = ownerKeys
+    .filter((owner) => owner !== '未分配' || candidates.get(owner)!.length > 0)
+    .map((owner) => Object.freeze({ responsible_person: owner, candidates: Object.freeze(candidates.get(owner)!) }));
+  return Object.freeze({
+    groups: Object.freeze(groups),
+    stats: Object.freeze({ total: seen.size, by_person: Object.freeze(byPerson) }),
+  });
 }
 
 function emptyMetrics(owner: DailyReportOwner): MutableMetrics {

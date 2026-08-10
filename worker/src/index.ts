@@ -22,11 +22,14 @@ import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveRemi
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
 import {
   assertDailyReportDate,
+  DailyReportDeliveryError,
   generateAndPersistDailyReport,
   generatePersistAndDeliverDailyReport,
   getShanghaiReportDate,
+  mapHrDecision,
   recordResumeDecisionTimestamp,
   sendStoredDailyReport,
+  syncLinkedResumeScreeningDecision,
   type DailyReportGenerationDependencies,
 } from './daily-reports/service';
 import type { DailyReportSnapshot } from './daily-reports/report';
@@ -63,6 +66,7 @@ interface Env {
   FEISHU_REQUISITION_TABLE_ID?: string;
   FEISHU_POSITION_TABLE_ID?: string;
   FEISHU_TALENT_TABLE_ID?: string;
+  FEISHU_RECRUITMENT_GROUP_CHAT_ID?: string;
   FEISHU_OAUTH_REDIRECT_URI?: string;
   RESUMES_KV?: KVNamespace;
   CRON_SECRET?: string;
@@ -6687,12 +6691,16 @@ app.post('/api/resumes/:id/department-reviews', authMiddleware, async (c) => {
 app.post('/api/resumes/:id/hr-decision', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
-  const decision = body.decision || 'approve';
-  let status = 'pending_interview', stage = 'interview';
-  if (decision === 'reject') { status = 'rejected'; stage = 'rejected'; }
+  let decision;
+  try {
+    decision = mapHrDecision(body.decision);
+  } catch (error: any) {
+    return c.json({ detail: error.message }, 400);
+  }
   const decisionAt = now();
-  await c.env.DB.prepare('UPDATE resumes SET status = ?, stage = ?, hr_review = ?, updated_at = ? WHERE id = ?').bind(status, stage, body.comment || '', decisionAt, id).run();
-  await recordResumeDecisionTimestamp(c.env.DB, id, decision === 'reject' ? 'rejected' : 'approved', decisionAt);
+  await c.env.DB.prepare('UPDATE resumes SET status = ?, stage = ?, hr_review = ?, updated_at = ? WHERE id = ?')
+    .bind(decision.status, decision.stage, body.hr_comment || body.comment || '', decisionAt, id).run();
+  await recordResumeDecisionTimestamp(c.env.DB, id, decision.event, decisionAt);
   const row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
 });
@@ -7999,7 +8007,6 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE resumes ADD COLUMN three_layer_match TEXT DEFAULT '{}'",
     "ALTER TABLE resumes ADD COLUMN feishu_file_token TEXT DEFAULT ''",
     "ALTER TABLE resumes ADD COLUMN uploaded_at TEXT DEFAULT ''",
-    "ALTER TABLE resumes ADD COLUMN approved_at TEXT",
     ...RESUME_LIST_COMPATIBILITY_MIGRATIONS,
     "ALTER TABLE daily_reports ADD COLUMN total_offers INTEGER DEFAULT 0",
     "ALTER TABLE daily_reports ADD COLUMN candidate_details TEXT",
@@ -8514,7 +8521,7 @@ app.post('/api/resume-screening/:id/approve', authMiddleware, async (c) => {
   await c.env.DB.prepare(
     'UPDATE resume_screening_queue SET status = ?, ai_result = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ?'
   ).bind('approved', 'shortlisted', user.id, reviewedAt, reviewedAt, id).run();
-  await recordResumeDecisionTimestamp(c.env.DB, record.resume_id, 'approved', reviewedAt);
+  await syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'store', reviewedAt);
 
   // 写入飞书多维表格 + 推群（异步）
   c.executionCtx.waitUntil((async () => {
@@ -8564,7 +8571,7 @@ app.post('/api/resume-screening/:id/reject', authMiddleware, async (c) => {
   await c.env.DB.prepare(
     'UPDATE resume_screening_queue SET status = ?, ai_result = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ?'
   ).bind('rejected', 'rejected', user.id, reviewedAt, reviewedAt, id).run();
-  await recordResumeDecisionTimestamp(c.env.DB, record.resume_id, 'rejected', reviewedAt);
+  await syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'discard', reviewedAt);
 
   const row = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
@@ -8619,7 +8626,6 @@ app.get('/api/daily-reports', authMiddleware, async (c) => {
 
 function dailyReportGenerationDependencies(env: Env): DailyReportGenerationDependencies {
   return {
-    loadCandidateDetails: (reportDate) => queryDailyCandidatesByOwner(env.DB, reportDate),
     summarize: async (snapshot: DailyReportSnapshot) => {
       const prompt = await getAIPrompt(env, 'generate_daily_report', {
         system: '你是招聘数据分析专家。仅根据去标识化聚合数据输出100至150个中文字符，说明推进量最高负责人、最大堵点和一条次日行动。不要输出候选人信息。',
@@ -8634,8 +8640,14 @@ function dailyReportGenerationDependencies(env: Env): DailyReportGenerationDepen
 }
 
 app.post('/api/daily-reports/generate', authMiddleware, async (c) => {
+  let body: any;
   try {
-    const body = await c.req.json().catch(() => ({})) || {};
+    body = await c.req.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid JSON object');
+  } catch {
+    return c.json({ detail: '请求体必须是合法 JSON' }, 400);
+  }
+  try {
     const reportDate = body.report_date === undefined
       ? getShanghaiReportDate()
       : assertDailyReportDate(body.report_date);
@@ -8683,8 +8695,14 @@ app.get('/api/daily-reports/:id/details', authMiddleware, async (c) => {
 
 // 发送日报到飞书
 app.post('/api/daily-reports/:id/send', authMiddleware, async (c) => {
+  let body: any;
   try {
-    const body = await c.req.json();
+    body = await c.req.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid JSON object');
+  } catch {
+    return c.json({ detail: '请求体必须是合法 JSON' }, 400);
+  }
+  try {
     const { target_type, target_id } = body;
     if (!target_type || !target_id) {
       return c.json({ detail: '请指定发送目标' }, 400);
@@ -9363,7 +9381,7 @@ async function pushCandidateToGroup(env: Env, record: any): Promise<void> {
     };
 
     await sendFeishuMessageToChat(token, chatId, cardContent);
-    console.log(`[GroupPush] ✅ 已推送 ${record.candidate_name} 到招聘群`);
+    console.log(`[GroupPush] ✅ 已推送候选人记录 ${record.id || ''} 到招聘群`);
   } catch (e: any) {
     console.error(`[GroupPush] 推送失败: ${e.message}`);
   }
@@ -9388,8 +9406,11 @@ app.post('/api/feishu/card-action', async (c) => {
     const actionType = v.action; // 'store' | 'discard'
     const recordId = v.record_id;
     const candidateName = v.name || '未知';
+    if ((actionType !== 'store' && actionType !== 'discard') || typeof recordId !== 'string' || !recordId) {
+      return c.json({ code: 0, msg: 'success', data: { toast: { type: 'error', content: '无效操作' } } });
+    }
 
-    console.log(`[CardCallback] ${actionType} - ${candidateName} (${recordId})`);
+    console.log(`[CardCallback] ${actionType} - record ${recordId}`);
 
     const record = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(recordId).first() as any;
     if (!record) {
@@ -9438,6 +9459,7 @@ app.post('/api/feishu/card-action', async (c) => {
           await c.env.DB.prepare(
             "UPDATE resume_screening_queue SET status = 'approved', ai_result = 'shortlisted', updated_at = ? WHERE id = ?"
           ).bind(now(), recordId).run();
+          await syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'store', now());
 
           // 更新卡片为绿色
           if (record.feishu_card_msg_id) {
@@ -9448,7 +9470,7 @@ app.post('/api/feishu/card-action', async (c) => {
           const updated = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(recordId).first() as any;
           await pushCandidateToGroup(c.env, updated);
 
-          console.log(`[CardCallback] ✅ ${candidateName} 已入库`);
+          console.log(`[CardCallback] ✅ record ${recordId} 已入库`);
         } catch (e: any) {
           console.error(`[CardCallback] 入库异常: ${e.message}`);
           await c.env.DB.prepare("UPDATE resume_screening_queue SET status = 'pending' WHERE id = ?").bind(recordId).run();
@@ -9468,6 +9490,7 @@ app.post('/api/feishu/card-action', async (c) => {
           await c.env.DB.prepare(
             "UPDATE resume_screening_queue SET status = 'rejected', ai_result = 'rejected', updated_at = ? WHERE id = ?"
           ).bind(now(), recordId).run();
+          await syncLinkedResumeScreeningDecision(c.env.DB, record.resume_id, 'discard', now());
 
           if (record.feishu_card_msg_id) {
             await updateFeishuCard(c.env, record.feishu_card_msg_id, 'rejected', candidateName);
@@ -9674,7 +9697,10 @@ app.use('/api/cron/*', async (c, next) => {
 app.post('/api/cron/daily-report', async (c) => {
   try {
     const reportDate = getShanghaiReportDate();
-    const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
+    const chatId = (c.env.FEISHU_RECRUITMENT_GROUP_CHAT_ID || FEISHU_CONFIG.recruitmentGroupChatId).trim();
+    if (!chatId) {
+      return c.json({ ok: false, detail: '未配置日报招聘群 FEISHU_RECRUITMENT_GROUP_CHAT_ID' }, 503);
+    }
     const report = await generatePersistAndDeliverDailyReport(
       c.env,
       reportDate,
@@ -9699,6 +9725,9 @@ app.post('/api/cron/daily-report', async (c) => {
       }
     });
   } catch (err: any) {
+    if (err instanceof DailyReportDeliveryError) {
+      return c.json({ ok: false, report_id: err.reportId, detail: `日报已生成但推送失败: ${err.message}` }, 502);
+    }
     return c.json({ ok: false, detail: `生成日报失败: ${err.message}` }, 500);
   }
 });
@@ -10250,7 +10279,7 @@ async function notifyInterviewersForCandidate(env: Env, record: any, currentUser
         // 三层 fallback 发送（当前用户token → DB任意用户token → bot）
         const cardContent = buildInterviewerCard(record.candidate_name, posName, record.city, record.ai_analysis, operatorName);
         await sendFeishuMessageWithFallback(env, currentUser?.email, openId, cardContent);
-        console.log(`[NotifyInterviewers] ✅ 已通知 ${name} (${openId}) - ${record.candidate_name}`);
+        console.log(`[NotifyInterviewers] ✅ 已通知面试官处理记录 ${record.id || ''}`);
       }
     }
   } catch (e: any) {

@@ -539,7 +539,6 @@ describe('daily-report generation and stored delivery', () => {
     };
     let summaryCalls = 0;
     let summaryInput: DailyReportSnapshot | undefined;
-    let detailsCalls = 0;
 
     const report = await generateAndPersistDailyReport(
       { DB: db as never },
@@ -548,10 +547,6 @@ describe('daily-report generation and stored delivery', () => {
         id: () => 'daily-1',
         generatedAt: () => '2026-08-10T10:00:00.000Z',
         loadDataset: async () => aggregateDataset,
-        loadCandidateDetails: async () => {
-          detailsCalls += 1;
-          return { groups: [], stats: { total: 0, by_person: {} } };
-        },
         summarize: async (snapshot) => {
           summaryCalls += 1;
           summaryInput = snapshot;
@@ -561,7 +556,6 @@ describe('daily-report generation and stored delivery', () => {
     );
 
     expect(summaryCalls).toBe(1);
-    expect(detailsCalls).toBe(1);
     expect(summaryInput).toEqual(report.snapshot);
     expect(JSON.stringify(summaryInput)).not.toContain('测试候选人');
     expect(report.snapshot.totals).toEqual(snapshotFixture.totals);
@@ -570,7 +564,11 @@ describe('daily-report generation and stored delivery', () => {
     const storedSnapshot = JSON.parse(String(writes[0].values[10]));
     const storedDetails = JSON.parse(String(writes[0].values[11]));
     expect(storedSnapshot.totals).toEqual(report.snapshot.totals);
-    expect(storedDetails).toEqual({ groups: [], stats: { total: 0, by_person: {} } });
+    expect(storedDetails.stats).toEqual({
+      total: 1,
+      by_person: { '何雨菱': 0, '杜雁玲': 1, '魏秋柠': 0, '未分配': 0 },
+    });
+    expect(storedDetails.groups[1].candidates).toMatchObject([{ resume_id: 'r-du' }]);
     expect(writes[0].values.slice(2, 9)).toEqual([
       report.snapshot.totals.allTimeResumes,
       report.snapshot.totals.pending,
@@ -596,7 +594,6 @@ describe('daily-report generation and stored delivery', () => {
         id: () => 'daily-2',
         generatedAt: () => '2026-08-10T10:00:00.000Z',
         loadDataset: async () => aggregateDataset,
-        loadCandidateDetails: async () => ({ groups: [], stats: { total: 0, by_person: {} } }),
         summarize: async () => {
           calls += 1;
           throw new Error('AI unavailable');
@@ -638,7 +635,6 @@ describe('daily-report generation and stored delivery', () => {
       id: () => 'daily-cron',
       generatedAt: () => '2026-08-10T10:00:00.000Z',
       loadDataset: async () => aggregateDataset,
-      loadCandidateDetails: async () => ({ groups: [], stats: { total: 0, by_person: {} } }),
       summarize: async () => '今日招聘工作稳步推进，明日继续清理待初筛队列。',
     };
     const deliver = async (target: { type: 'chat' | 'user'; id: string }, card: unknown) => {
@@ -665,7 +661,6 @@ describe('daily-report generation and stored delivery', () => {
       id: () => 'never',
       generatedAt: () => '2026-08-10T10:00:00.000Z',
       loadDataset: async () => emptyDataset(),
-      loadCandidateDetails: async () => ({}),
       summarize: async () => '',
     })).rejects.toThrow(/YYYY-MM-DD/);
   });

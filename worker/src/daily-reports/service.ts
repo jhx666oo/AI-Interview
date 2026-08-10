@@ -1,5 +1,6 @@
 import {
   buildDailyReportFallbackSummary,
+  buildDailyReportCandidateDetails,
   buildDailyReportFeishuCard,
   buildDailyReportSnapshot,
   DAILY_REPORT_OWNERS,
@@ -26,7 +27,6 @@ export interface DailyReportGenerationDependencies {
   readonly id?: () => string;
   readonly generatedAt?: () => string;
   readonly loadDataset?: (db: Pick<D1Database, 'prepare'>, reportDate: string) => Promise<DailyReportDataset>;
-  readonly loadCandidateDetails: (reportDate: string) => Promise<unknown>;
   readonly summarize: (snapshot: DailyReportSnapshot) => Promise<string>;
 }
 
@@ -42,6 +42,52 @@ export const DAILY_REPORT_QUERY_LIMITS = Object.freeze({
   interviews: 2_000,
   offers: 2_000,
   onboardingRecords: 2_000,
+});
+
+export const DAILY_REPORT_CANDIDATE_DETAILS_MAX_BYTES = 256 * 1024;
+
+const RESUME_DETAIL_PROJECTION = `
+  id, position_id, mapped_position, position_applied, candidate_name, gender, education, birthday,
+  CASE WHEN json_valid(parsed_data) THEN substr(COALESCE(json_extract(parsed_data, '$.age'), ''), 1, 16) ELSE '' END AS parsed_age,
+  CASE WHEN json_valid(parsed_data) THEN substr(COALESCE(json_extract(parsed_data, '$.highest_degree'), ''), 1, 80) ELSE '' END AS parsed_education,
+  CASE WHEN json_valid(parsed_data) THEN substr(COALESCE(json_extract(parsed_data, '$.gender'), ''), 1, 16) ELSE '' END AS parsed_gender,
+  CASE WHEN json_valid(parsed_data) THEN substr(COALESCE(json_extract(parsed_data, '$.city'), ''), 1, 120) ELSE '' END AS parsed_city,
+  CASE WHEN json_valid(ai_evaluation) THEN substr(COALESCE(json_extract(ai_evaluation, '$.summary'), ''), 1, 300) ELSE '' END AS ai_summary,
+  CASE WHEN json_valid(ai_evaluation) THEN substr(COALESCE(json_extract(ai_evaluation, '$.recommendation'), ''), 1, 120) ELSE '' END AS recommendation,
+  created_at`;
+
+export const DAILY_REPORT_DATASET_SQL = Object.freeze({
+  positions: `SELECT id, title, status, responsible_person FROM positions ORDER BY id`,
+  interviews: `
+    SELECT id, resume_id, position_id, position_applied AS position_title, interview_time
+    FROM interviews
+    WHERE (
+      (upper(substr(trim(interview_time), -1)) = 'Z'
+       OR (length(trim(interview_time)) >= 20 AND (
+         substr(trim(interview_time), -6, 1) IN ('+', '-')
+         OR substr(trim(interview_time), -5, 1) IN ('+', '-')
+       )))
+      AND datetime(interview_time) >= datetime(?) AND datetime(interview_time) < datetime(?)
+    ) OR (
+      upper(substr(trim(interview_time), -1)) <> 'Z'
+      AND (length(trim(interview_time)) < 20 OR (
+        substr(trim(interview_time), -6, 1) NOT IN ('+', '-')
+        AND substr(trim(interview_time), -5, 1) NOT IN ('+', '-')
+      ))
+      AND substr(trim(interview_time), 1, 10) = ?
+    )
+    ORDER BY id`,
+  offers: `
+    SELECT id, resume_id, position_id, position_title, sent_at
+    FROM offers
+    WHERE datetime(sent_at) >= datetime(?) AND datetime(sent_at) < datetime(?)
+    ORDER BY id`,
+  onboardingRecords: `
+    SELECT id, resume_id, position_id, position_title, onboard_date
+    FROM onboarding_records
+    WHERE onboard_date = ?
+       OR (datetime(onboard_date) >= datetime(?) AND datetime(onboard_date) < datetime(?))
+    ORDER BY id`,
 });
 
 const PENDING_RESUME_STATUSES = [
@@ -143,7 +189,7 @@ async function loadResumes(
 ): Promise<DailyReportDataset['resumes']> {
   const pendingPlaceholders = PENDING_RESUME_STATUSES.map((status) => `'${status}'`).join(', ');
   const preferredSql = `
-    SELECT id, position_id, mapped_position, position_applied, created_at,
+    SELECT ${RESUME_DETAIL_PROJECTION},
            approved_at, rejected_at, status, screening_result
     FROM resumes
     WHERE status IN (${pendingPlaceholders})
@@ -163,7 +209,7 @@ async function loadResumes(
   // operation available, but never substitute updated_at as an approval time.
   try {
     return await boundedAll(db, 'resumes', `
-      SELECT id, position_id, mapped_position, position_applied, created_at,
+      SELECT ${RESUME_DETAIL_PROJECTION},
              NULL AS approved_at, rejected_at, status, screening_result
       FROM resumes
       WHERE status IN (${pendingPlaceholders})
@@ -174,7 +220,7 @@ async function loadResumes(
   } catch (error) {
     if (!isMissingSchemaError(error)) throw error;
     return await boundedAll(db, 'resumes', `
-      SELECT id, position_id, mapped_position, position_applied, created_at,
+      SELECT ${RESUME_DETAIL_PROJECTION},
              NULL AS approved_at, NULL AS rejected_at, status, screening_result
       FROM resumes
       WHERE status IN (${pendingPlaceholders})
@@ -199,37 +245,14 @@ export async function loadDailyReportDataset(
 ): Promise<DailyReportDataset> {
   const date = assertDailyReportDate(reportDate);
   const { utcStart, utcEnd, localStart, localEnd } = reportDateBounds(date);
-  const eventValues = [utcStart, utcEnd, localStart, localEnd] as const;
 
   const [positions, positionMappings, resumes, interviews, offers, onboardingRecords, allTimeRow] = await Promise.all([
-    boundedAll<DailyReportDataset['positions'][number]>(db, 'positions', `
-      SELECT id, title, status, responsible_person
-      FROM positions
-      ORDER BY id
-    `),
+    boundedAll<DailyReportDataset['positions'][number]>(db, 'positions', DAILY_REPORT_DATASET_SQL.positions),
     loadPositionMappings(db),
     loadResumes(db, utcStart, utcEnd),
-    boundedAll<DailyReportDataset['interviews'][number]>(db, 'interviews', `
-      SELECT id, resume_id, position_id, position_title, interview_time
-      FROM interviews
-      WHERE (datetime(interview_time) >= datetime(?) AND datetime(interview_time) < datetime(?))
-         OR (datetime(interview_time) >= datetime(?) AND datetime(interview_time) < datetime(?))
-      ORDER BY id
-    `, eventValues),
-    loadOptionalDataset(() => boundedAll<DailyReportDataset['offers'][number]>(db, 'offers', `
-      SELECT id, resume_id, position_id, position_title, sent_at
-      FROM offers
-      WHERE (datetime(sent_at) >= datetime(?) AND datetime(sent_at) < datetime(?))
-         OR (datetime(sent_at) >= datetime(?) AND datetime(sent_at) < datetime(?))
-      ORDER BY id
-    `, eventValues)),
-    loadOptionalDataset(() => boundedAll<DailyReportDataset['onboardingRecords'][number]>(db, 'onboardingRecords', `
-      SELECT id, resume_id, position_id, onboard_date
-      FROM onboarding_records
-      WHERE onboard_date = ?
-         OR (datetime(onboard_date) >= datetime(?) AND datetime(onboard_date) < datetime(?))
-      ORDER BY id
-    `, [date, localStart, localEnd])),
+    boundedAll<DailyReportDataset['interviews'][number]>(db, 'interviews', DAILY_REPORT_DATASET_SQL.interviews, [utcStart, utcEnd, date]),
+    loadOptionalDataset(() => boundedAll<DailyReportDataset['offers'][number]>(db, 'offers', DAILY_REPORT_DATASET_SQL.offers, [utcStart, utcEnd])),
+    loadOptionalDataset(() => boundedAll<DailyReportDataset['onboardingRecords'][number]>(db, 'onboardingRecords', DAILY_REPORT_DATASET_SQL.onboardingRecords, [date, localStart, localEnd])),
     db.prepare('SELECT COUNT(*) AS cnt FROM resumes').bind().first<{ cnt: number }>(),
   ]);
 
@@ -356,7 +379,7 @@ export function normalizeStoredDailyReportSnapshot(record: StoredDailyReportReco
 function usableSummary(value: unknown, snapshot: DailyReportSnapshot): string {
   if (typeof value !== 'string') return buildDailyReportFallbackSummary(snapshot);
   const summary = value.trim().replace(/\s+/g, ' ');
-  return summary && summary.length <= 150 ? summary : buildDailyReportFallbackSummary(snapshot);
+  return summary.length >= 100 && summary.length <= 150 ? summary : buildDailyReportFallbackSummary(snapshot);
 }
 
 export function buildStoredDailyReportCard(record: StoredDailyReportRecord): DailyReportFeishuCard {
@@ -386,6 +409,10 @@ export async function generateAndPersistDailyReport(
   const id = dependencies.id?.() ?? crypto.randomUUID();
   const dataset = await (dependencies.loadDataset ?? loadDailyReportDataset)(env.DB, date);
   const snapshot = buildDailyReportSnapshot(dataset, date, generatedAt);
+  const candidateDetailsJson = JSON.stringify(buildDailyReportCandidateDetails(dataset, date));
+  if (new TextEncoder().encode(candidateDetailsJson).byteLength > DAILY_REPORT_CANDIDATE_DETAILS_MAX_BYTES) {
+    throw new Error(`candidate_details exceeds byte limit ${DAILY_REPORT_CANDIDATE_DETAILS_MAX_BYTES}`);
+  }
 
   let aiSummary: string;
   try {
@@ -393,9 +420,7 @@ export async function generateAndPersistDailyReport(
   } catch {
     aiSummary = buildDailyReportFallbackSummary(snapshot);
   }
-  const candidateDetails = await dependencies.loadCandidateDetails(date);
   const stats = JSON.stringify(snapshot);
-  const candidateDetailsJson = JSON.stringify(candidateDetails);
 
   await env.DB.prepare(`
     INSERT INTO daily_reports (
@@ -444,9 +469,54 @@ export async function generatePersistAndDeliverDailyReport(
   dependencies: DailyReportGenerationDependencies,
   deliver: DailyReportDeliver,
 ): Promise<PersistedDailyReport> {
+  if (!target.id?.trim() || (target.type !== 'chat' && target.type !== 'user')) {
+    throw new Error('daily report delivery target is invalid');
+  }
   const report = await generateAndPersistDailyReport(env, reportDate, dependencies);
-  await sendStoredDailyReport(report, target, deliver);
+  try {
+    await sendStoredDailyReport(report, target, deliver);
+  } catch (error) {
+    throw new DailyReportDeliveryError(report.id, error);
+  }
   return report;
+}
+
+export class DailyReportDeliveryError extends Error {
+  readonly reportId: string;
+
+  constructor(reportId: string, cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    super(`daily report ${reportId} was generated but delivery failed: ${message}`);
+    this.name = 'DailyReportDeliveryError';
+    this.reportId = reportId;
+  }
+}
+
+export type HrDecisionMapping = Readonly<{
+  status: 'pending_interview' | 'rejected' | 'waitlist';
+  stage: 'interview' | 'rejected' | 'screening';
+  event: 'approved' | 'rejected' | 'reset';
+}>;
+
+export function mapHrDecision(value: unknown): HrDecisionMapping {
+  if (value === 'pending_interview') return { status: 'pending_interview', stage: 'interview', event: 'approved' };
+  if (value === 'rejected' || value === 'reject') return { status: 'rejected', stage: 'rejected', event: 'rejected' };
+  if (value === 'waitlist') return { status: 'waitlist', stage: 'screening', event: 'reset' };
+  throw new Error('unsupported HR decision');
+}
+
+export async function syncLinkedResumeScreeningDecision(
+  db: Pick<D1Database, 'prepare'>,
+  resumeId: string | null | undefined,
+  decision: 'store' | 'discard',
+  timestamp = new Date().toISOString(),
+): Promise<void> {
+  if (!resumeId) return;
+  const update = decision === 'store'
+    ? "UPDATE resumes SET status = 'approved', stage = 'talent_pool', updated_at = ? WHERE id = ?"
+    : "UPDATE resumes SET status = 'rejected', stage = 'rejected', updated_at = ? WHERE id = ?";
+  await db.prepare(update).bind(timestamp, resumeId).run();
+  await recordResumeDecisionTimestamp(db, resumeId, decision === 'store' ? 'approved' : 'rejected', timestamp);
 }
 
 /**
