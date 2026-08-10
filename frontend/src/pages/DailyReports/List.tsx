@@ -14,9 +14,83 @@ import request from '../../utils/request';
 import { useOwner } from '../../contexts/OwnerContext';
 import ReactMarkdown from 'react-markdown';
 import dayjs from 'dayjs';
-import { normalizeDailyReportStats } from './stats';
+import { normalizeDailyReportStats, type DailyReportStats, type DailyReportStatsRow } from './stats';
 
 const { Text, Title } = Typography;
+
+const REPORT_METRIC_COLUMNS = [
+  { key: 'open_requisitions', label: '开放岗位' },
+  { key: 'today_new', label: '今日新增' },
+  { key: 'pending_screening', label: '待初筛' },
+  { key: 'approved_candidates', label: '今日通过' },
+  { key: 'rejected_candidates', label: '今日淘汰' },
+  { key: 'active_interviews', label: '今日面试' },
+  { key: 'offers_count', label: 'Offer' },
+  { key: 'onboarding_count', label: '入职' },
+] as const;
+
+function buildSnapshotTableRows(stats: DailyReportStats): DailyReportStatsRow[] {
+  if (!stats.rows?.length) return [];
+  return [
+    ...stats.rows,
+    {
+      owner: '合计',
+      open_requisitions: stats.open_requisitions,
+      today_new: stats.today_new,
+      pending_screening: stats.pending_screening,
+      approved_candidates: stats.approved_candidates,
+      rejected_candidates: stats.rejected_candidates,
+      active_interviews: stats.active_interviews,
+      offers_count: stats.offers_count,
+      onboarding_count: stats.onboarding_count,
+    },
+  ];
+}
+
+function renderSnapshotTable(stats: DailyReportStats | null): React.ReactNode {
+  const rows = stats ? buildSnapshotTableRows(stats) : [];
+  if (rows.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <Text strong style={{ display: 'block', marginBottom: 8 }}>📊 统计数据（与飞书同步）</Text>
+      <div style={{ overflowX: 'auto', border: '1px solid #f0f0f0', borderRadius: 8 }}>
+        <table style={{ width: '100%', minWidth: 760, fontSize: 12, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: '#f5f5f5' }}>
+              <th style={{ padding: '8px 10px', borderBottom: '1px solid #d9d9d9', textAlign: 'left', whiteSpace: 'nowrap' }}>负责人</th>
+              {REPORT_METRIC_COLUMNS.map((column) => (
+                <th key={column.key} style={{ padding: '8px 10px', borderBottom: '1px solid #d9d9d9', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={row.owner} style={{ background: row.owner === '合计' ? '#f5f5f5' : index % 2 === 0 ? '#fff' : '#fafafa', fontWeight: row.owner === '合计' ? 600 : 400 }}>
+                <td style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap' }}>{row.owner}</td>
+                {REPORT_METRIC_COLUMNS.map((column) => (
+                  <td key={column.key} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
+                    {row[column.key] ?? '-'}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {(stats.unassigned ?? 0) > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginTop: 8 }}
+          message={`未唯一归属记录 ${stats.unassigned} 条，未计入负责人表格`}
+        />
+      )}
+    </div>
+  );
+}
 
 interface ContactItem {
   id: string;
@@ -157,6 +231,8 @@ const DailyReportsList: React.FC = () => {
     }
     return text.length > 150 ? text.slice(0, 150) + '...' : text;
   };
+
+  const detailStats = normalizeDailyReportStats(detailModal?.stats);
 
   return (
     <div>
@@ -316,7 +392,7 @@ const DailyReportsList: React.FC = () => {
                         onClick={() => {
                           Modal.info({
                             title: `📊 招聘日报 · ${record.report_date}`,
-                            width: 700,
+                            width: 900,
                             content: (
                               <div>
                                 <Row gutter={16} style={{ marginBottom: 16, marginTop: 16 }}>
@@ -329,6 +405,7 @@ const DailyReportsList: React.FC = () => {
                                     <Text strong>{record.created_at ? dayjs(record.created_at).format('MM-DD HH:mm') : '-'}</Text>
                                   </Col>
                                 </Row>
+                                {renderSnapshotTable(stats)}
                                 {stats && (
                                   <>
                                     <Divider>统计数据</Divider>
@@ -419,6 +496,9 @@ const DailyReportsList: React.FC = () => {
           <div style={{ textAlign: 'center', padding: 40 }}><Spin /><p style={{ marginTop: 12, color: '#999' }}>加载候选人数据...</p></div>
         ) : detailData ? (
           <div>
+            {/* 与飞书卡片保持同一份 v2 快照数据 */}
+            {renderSnapshotTable(detailStats)}
+
             {/* 汇总统计 */}
             <div style={{ marginBottom: 16, padding: '12px 16px', background: '#f0f5ff', borderRadius: 6 }}>
               <Text strong>📋 今日通过初筛：{detailData.stats?.total || 0} 人</Text>
