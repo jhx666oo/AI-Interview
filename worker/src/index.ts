@@ -3026,6 +3026,15 @@ function parseCityField(value: unknown): unknown[] {
   return [];
 }
 
+/** Normalize form text back to the canonical JSON representation used by D1. */
+export function serializeRequisitionJsonField(field: string, value: unknown): string {
+  if (field === 'city') return JSON.stringify(parseCityField(value));
+  const fallback = field === 'personalized_requirements' ? {} : [];
+  if (value === null || value === undefined) return JSON.stringify(fallback);
+  if (typeof value === 'string' && !value.trim()) return JSON.stringify(fallback);
+  return JSON.stringify(parseJsonValue(value));
+}
+
 /** Convert structured D1 values into the editable TextArea contract. */
 function formatEditableJsonField(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -3876,7 +3885,9 @@ app.post('/api/requisitions', authMiddleware, async (c) => {
       d1Id, title, body.department || '', Number(body.headcount) || 1, body.employment_type || 'full_time',
       body.salary_range || '', body.budget ?? null, body.urgency || 'medium', body.expected_date || null,
       body.description || '', body.requirements || '', body.status || 'draft',
-      JSON.stringify(body.city || []), JSON.stringify(body.hard_requirements || []), JSON.stringify(body.personalized_requirements || {}),
+      serializeRequisitionJsonField('city', body.city),
+      serializeRequisitionJsonField('hard_requirements', body.hard_requirements),
+      serializeRequisitionJsonField('personalized_requirements', body.personalized_requirements),
       body.hr_interviewer || '', body.biz_interviewer || '', body.final_interviewer || '',
       body.responsible_person || '', body.reason || '', body.notes || '', '', now(), now()
     ).run();
@@ -3906,7 +3917,7 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
     for (const field of editableFields) {
       if (body[field] === undefined) continue;
       sets.push(`${field} = ?`);
-      vals.push(jsonFields.has(field) ? JSON.stringify(body[field]) : body[field]);
+      vals.push(jsonFields.has(field) ? serializeRequisitionJsonField(field, body[field]) : body[field]);
     }
 
     if (sets.length > 0) {

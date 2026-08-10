@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterD1Requisitions, parseD1RequisitionRow } from '../src/index';
+import { filterD1Requisitions, parseD1RequisitionRow, serializeRequisitionJsonField } from '../src/index';
 
 describe('D1 primary requisitions', () => {
   it('maps JSON fields from a D1 row into the requisition API shape', () => {
@@ -60,5 +60,15 @@ describe('D1 primary requisitions', () => {
     expect(item.city).toEqual(['北京', '上海', '杭州', '深圳']);
     expect(item.hard_requirements).toBe('年龄45岁以上不考虑');
     expect(item.personalized_requirements).toBe('有大客户资源可加分');
+  });
+
+  it('normalizes structured text before storing it back to D1', () => {
+    const hard = [{ field: 'age', operator: 'lte', value: 35 }];
+    const personalized = { items: ['有大客户资源'] };
+
+    expect(serializeRequisitionJsonField('hard_requirements', JSON.stringify(hard, null, 2))).toBe(JSON.stringify(hard));
+    expect(serializeRequisitionJsonField('personalized_requirements', JSON.stringify(personalized, null, 2))).toBe(JSON.stringify(personalized));
+    expect(serializeRequisitionJsonField('hard_requirements', '年龄45岁以上不考虑')).toBe(JSON.stringify('年龄45岁以上不考虑'));
+    expect(serializeRequisitionJsonField('city', '北京,上海')).toBe(JSON.stringify(['北京', '上海']));
   });
 });
