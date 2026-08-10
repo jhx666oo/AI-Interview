@@ -5187,7 +5187,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     await ensureResumeListSchema(c.env.DB);
     // 纯 D1 驱动：直接从 resumes 表读取，不依赖飞书
     const d1Rows = await c.env.DB.prepare(
-      'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY updated_at DESC'
+      'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY created_at DESC, updated_at DESC'
     ).all();
     let items = (d1Rows.results || []).map((r: any) => {
       const item: any = { ...r };
@@ -5227,7 +5227,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     let filtered = items;
     if (statusFilter) {
       if (statusFilter === 'pending_screening') {
-        filtered = filtered.filter(i => !i.screening_result || i.screening_result === '');
+        filtered = filtered.filter(i => i.status === 'pending_screening' && (!i.screening_result || i.screening_result === '' || i.screening_result === 'pending'));
       } else {
         filtered = filtered.filter(i => i.status === statusFilter);
       }

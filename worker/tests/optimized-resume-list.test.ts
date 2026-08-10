@@ -99,7 +99,7 @@ describe('optimized resume list response', () => {
     expect(payload.total).toBe(3);
     expect(payload.stats).toMatchObject({ total: 3, approved: 2, rejected: 1 });
 
-    const dataSql = captured.find(c => c.sql.includes('ORDER BY r.updated_at DESC'));
+    const dataSql = captured.find(c => c.sql.includes('ORDER BY r.created_at DESC'));
     expect(dataSql!.sql).toContain('r.mapped_position = ?');
     expect(dataSql!.sql).toContain('r.mapped_position IN (SELECT raw_name FROM position_mappings WHERE mapped_name = ?)');
     expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.major') LIKE ?");
@@ -109,6 +109,28 @@ describe('optimized resume list response', () => {
     expect(dataSql!.sql).toContain("COALESCE(NULLIF(r.gender, '')");
     expect(dataSql!.params.slice(0, 4)).toEqual(['软件工程师', '软件工程师', '%计算机%', 25]);
     expect(dataSql!.params.slice(4, 6)).toEqual([35, '男']);
+  });
+
+  it('includes newly uploaded pending rows in the pending-screening filter', async () => {
+    const context = makeContext();
+    const captured: string[] = [];
+    context.env.DB.prepare = (sql: string) => {
+      captured.push(sql);
+      return {
+        all: async () => ({ results: [] }),
+        bind: (..._params: unknown[]) => ({
+          first: async () => sql.includes('COUNT(*)') ? { total: 1 } : null,
+          all: async () => ({ results: [] }),
+        }),
+      };
+    };
+    context.req = { query: (name: string) => ({ page: '1', page_size: '20', status: 'pending_screening' }[name]) };
+
+    await handleOptimizedResumeList(context);
+
+    const dataSql = captured.find((sql) => sql.includes('ORDER BY')) || '';
+    expect(dataSql).toContain("r.screening_result = 'pending'");
+    expect(dataSql).toContain("r.status = 'pending_screening'");
   });
 
   it('maps raw position names to standard position names for display', async () => {

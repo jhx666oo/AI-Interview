@@ -46,8 +46,8 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   }
   if (statusFilter) {
     if (statusFilter === 'pending_screening') {
-      // 待初筛：筛选 AI 尚未完成评分的简历（screening_result 为空）
-      whereClause += " AND (r.screening_result IS NULL OR r.screening_result = '')";
+      // 待初筛：新上传记录的默认 screening_result 是 pending，历史数据可能为空。
+      whereClause += " AND r.status = 'pending_screening' AND (r.screening_result IS NULL OR r.screening_result = '' OR r.screening_result = 'pending')";
     } else {
       whereClause += ' AND r.status = ?';
       params.push(statusFilter);
@@ -174,7 +174,7 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   };
 
   const offset = (page - 1) * pageSize;
-  const dataSql = `SELECT ${LIST_COLUMNS} FROM resumes r ${whereClause} ORDER BY r.updated_at DESC LIMIT ? OFFSET ?`;
+  const dataSql = `SELECT ${LIST_COLUMNS} FROM resumes r ${whereClause} ORDER BY r.created_at DESC, r.updated_at DESC LIMIT ? OFFSET ?`;
   const dataResult = await c.env.DB.prepare(dataSql).bind(...params, pageSize, offset).all();
 
   const items = (dataResult.results || []).map((r: any) => {
