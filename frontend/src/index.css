@@ -296,7 +296,7 @@ code {
   overflow-y: hidden;
 }
 
-.responsive-modal .ant-modal {
+.responsive-modal {
   max-width: calc(100vw - 32px);
 }
 
