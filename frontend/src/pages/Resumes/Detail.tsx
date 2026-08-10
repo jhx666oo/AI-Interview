@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { DownloadOutlined, FilePdfOutlined, ArrowLeftOutlined, CloseCircleOutlined, EditOutlined, SaveOutlined, ReloadOutlined, UserOutlined, CheckCircleOutlined, TeamOutlined, SolutionOutlined, ClockCircleOutlined, RobotOutlined } from '@ant-design/icons';
 import RejectReasonSelector, { REJECT_REASONS } from '../../components/RejectReasonSelector';
 import { useAuth } from '../../contexts/AuthContext';
+import { useViewportWidth } from '../../components/Layout/responsive';
 import { getMaximizedPdfPreviewUrl } from '../../utils/pdfPreview';
 import { asDisplayTextList, formatWeightedScore, getScreeningGateRows, normalizeResumeEvaluation } from '../../utils/resumeEvaluation';
 
@@ -37,6 +38,8 @@ const ResumeDetail: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const viewportWidth = useViewportWidth();
+  const isMobileLayout = viewportWidth < 768;
   const [resume, setResume] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -164,7 +167,9 @@ const ResumeDetail: React.FC = () => {
   const aiContentStyle: React.CSSProperties = {
     maxWidth: '100%',
     minWidth: 0,
-    overflowX: 'auto',
+    maxHeight: '60vh',
+    overflowX: 'hidden',
+    overflowY: 'auto',
     overflowWrap: 'anywhere',
     wordBreak: 'break-word',
   };
@@ -544,13 +549,13 @@ const ResumeDetail: React.FC = () => {
   };
 
   return (
-    <div style={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: isMobileLayout ? 'auto' : 'calc(100vh - 100px)', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/resumes')}>返回列表</Button>
       </div>
-      <div style={{ flex: 1, display: 'flex', gap: '24px', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: isMobileLayout ? 'column' : 'row', gap: '24px', overflow: isMobileLayout ? 'visible' : 'hidden' }}>
       {/* Left: File Preview */}
-      <div style={{ flex: '1 1 45%', minWidth: 0, background: '#fff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: isMobileLayout ? '0 0 auto' : '1 1 45%', width: isMobileLayout ? '100%' : undefined, minWidth: 0, height: isMobileLayout ? 'min(60vh, 480px)' : undefined, background: '#fff', borderRadius: '16px', border: '1px solid #E2E8F0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '16px 24px', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#F8FAFC' }}>
           <Title level={5} style={{ margin: 0 }}>简历原件预览</Title>
           <Button type="primary" icon={<DownloadOutlined />} href={downloadUrl} target="_blank">
@@ -573,18 +578,18 @@ const ResumeDetail: React.FC = () => {
       </div>
 
       {/* Right: AI Analysis & Details */}
-      <div style={{ flex: '1 1 55%', minWidth: 0, overflowY: 'auto', paddingRight: '4px' }}>
+      <div style={{ flex: isMobileLayout ? '0 0 auto' : '1 1 55%', width: isMobileLayout ? '100%' : undefined, maxWidth: '100%', minWidth: 0, overflowY: isMobileLayout ? 'visible' : 'auto', paddingRight: isMobileLayout ? 0 : '4px' }}>
         <Card
           variant="borderless"
           style={{ borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)', border: '1px solid #E2E8F0' }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, gap: 20, flexWrap: 'wrap' }}>
             {/* 姓名 + 邮箱 */}
-            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 120 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, width: isMobileLayout ? '100%' : undefined }}>
               {isEditing ? (
-                  <Form form={form} layout="inline">
-                      <Form.Item name="candidate_name" style={{ marginBottom: 0 }}>
-                          <Input placeholder="姓名" disabled={updating} style={{ fontSize: 24, fontWeight: 600, width: 150 }} />
+                  <Form form={form} layout="inline" style={{ width: isMobileLayout ? '100%' : undefined }}>
+                      <Form.Item name="candidate_name" style={{ marginBottom: 0, width: isMobileLayout ? '100%' : undefined }}>
+                          <Input placeholder="姓名" disabled={updating} style={{ fontSize: 24, fontWeight: 600, width: isMobileLayout ? '100%' : 150 }} />
                       </Form.Item>
                   </Form>
               ) : (
@@ -593,12 +598,12 @@ const ResumeDetail: React.FC = () => {
 
               <div style={{ marginTop: 8 }}>
                 {isEditing ? (
-                    <Form form={form} layout="inline" style={{ marginTop: 8 }}>
-                         <Form.Item name="email" style={{ marginBottom: 0 }}>
-                             <Input placeholder="邮箱" disabled={updating} style={{ width: 200 }} />
+                    <Form form={form} layout="inline" style={{ marginTop: 8, display: isMobileLayout ? 'grid' : undefined, gridTemplateColumns: isMobileLayout ? 'minmax(0, 1fr)' : undefined, gap: isMobileLayout ? 8 : undefined, width: isMobileLayout ? '100%' : undefined }}>
+                         <Form.Item name="email" style={{ marginBottom: 0, width: isMobileLayout ? '100%' : undefined }}>
+                             <Input placeholder="邮箱" disabled={updating} style={{ width: isMobileLayout ? '100%' : 200 }} />
                          </Form.Item>
-                         <Form.Item name="contact" style={{ marginBottom: 0 }}>
-                             <Input placeholder="电话" disabled={updating} style={{ width: 150 }} />
+                         <Form.Item name="contact" style={{ marginBottom: 0, width: isMobileLayout ? '100%' : undefined }}>
+                             <Input placeholder="电话" disabled={updating} style={{ width: isMobileLayout ? '100%' : 150 }} />
                          </Form.Item>
                     </Form>
                 ) : (
@@ -617,7 +622,7 @@ const ResumeDetail: React.FC = () => {
             </div>
 
             {/* 加权分 + 状态 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', maxWidth: '100%' }}>
               <div style={{ textAlign: 'center' }}>
                 <Text type="secondary" style={{ fontSize: 11 }}>加权分</Text>
                 <div style={{ marginTop: 2 }}>
@@ -636,7 +641,7 @@ const ResumeDetail: React.FC = () => {
             </div>
 
             {/* 操作按钮 */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxWidth: '100%' }}>
               {renderActionButtons()}
             </div>
           </div>
@@ -652,7 +657,7 @@ const ResumeDetail: React.FC = () => {
             </div>
           )}
 
-          <Descriptions column={2} bordered size="small">
+          <Descriptions column={isMobileLayout ? 1 : 2} bordered size="small">
             <Descriptions.Item label="应聘岗位">{resume.standard_position || resume.position?.title || resume.position_applied || '-'}</Descriptions.Item>
             <Descriptions.Item label="学历">{parsedData.highest_degree || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="毕业院校">{parsedData.school || '未识别'}</Descriptions.Item>
