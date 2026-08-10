@@ -57,13 +57,10 @@ export async function resolveExactInterviewerOpenId(
   } catch (error) {
     if (!isOptionalSchemaCompatibilityError(error)) throw error;
   }
-  const mappedOpenId = uniqueOpenId(mappings);
-  if (mappedOpenId) return mappedOpenId;
-
   const users = await db.prepare(
     "SELECT feishu_open_id FROM users WHERE full_name = ? AND feishu_open_id IS NOT NULL AND feishu_open_id != ''",
   ).bind(name).all<RawRecord>();
-  return uniqueOpenId(users.results);
+  return uniqueOpenId([...mappings, ...users.results]);
 }
 
 export async function loadInterviewReminderSource(

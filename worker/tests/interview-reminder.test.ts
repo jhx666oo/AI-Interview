@@ -126,6 +126,67 @@ describe('interview reminders', () => {
     });
   });
 
+  it('rejects conflicting exact bindings across mappings and users', async () => {
+    const queries: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        queries.push(sql);
+        return {
+          bind() {
+            return {
+              all: async () => ({ results: sql.includes('interviewer_mappings')
+                ? [{ open_id: 'ou_mapping' }]
+                : [{ feishu_open_id: 'ou_user' }] }),
+            };
+          },
+        };
+      },
+    };
+
+    await expect(resolveExactInterviewerOpenId(db as never, '李四')).rejects.toMatchObject({
+      code: 'AMBIGUOUS_INTERVIEWER_BINDING',
+    });
+    expect(queries.some((sql) => sql.includes('FROM users'))).toBe(true);
+  });
+
+  it('uses an exact user binding when the optional mappings table is absent', async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return {
+              all: async () => {
+                if (sql.includes('interviewer_mappings')) throw new Error('D1_ERROR: no such table: interviewer_mappings');
+                return { results: [{ feishu_open_id: 'ou_user' }] };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await expect(resolveExactInterviewerOpenId(db as never, '李四')).resolves.toBe('ou_user');
+  });
+
+  it('propagates a users-table failure even when mappings contains a match', async () => {
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return {
+              all: async () => {
+                if (sql.includes('interviewer_mappings')) return { results: [{ open_id: 'ou_mapping' }] };
+                throw new Error('D1_ERROR: database is locked');
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await expect(resolveExactInterviewerOpenId(db as never, '李四')).rejects.toThrow('database is locked');
+  });
+
   it('treats missing optional enrichment schema as null', async () => {
     const db = {
       prepare(sql: string) {
