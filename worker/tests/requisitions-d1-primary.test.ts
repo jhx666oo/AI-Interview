@@ -20,8 +20,8 @@ describe('D1 primary requisitions', () => {
       feishu_record_id: 'rec-1',
       title: '社区运营专员',
       city: ['长沙', '北京'],
-      hard_requirements: [{ field: 'age', operator: 'lte', value: 35 }],
-      personalized_requirements: { items: ['有社群运营经验'] },
+      hard_requirements: JSON.stringify([{ field: 'age', operator: 'lte', value: 35 }], null, 2),
+      personalized_requirements: JSON.stringify({ items: ['有社群运营经验'] }, null, 2),
     });
   });
 
@@ -46,7 +46,7 @@ describe('D1 primary requisitions', () => {
 
     expect(item.city).toEqual(['not-json']);
     expect(item.hard_requirements).toBe('{bad');
-    expect(item.personalized_requirements).toEqual({});
+    expect(item.personalized_requirements).toBe('');
   });
 
   it('preserves text entered in the requisition form while normalizing city text', () => {

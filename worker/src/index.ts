@@ -3026,22 +3026,16 @@ function parseCityField(value: unknown): unknown[] {
   return [];
 }
 
-/** Preserve the TextArea contract while still decoding arrays stored as JSON. */
-function parseTextOrJsonArrayField(value: unknown): unknown {
-  if (Array.isArray(value)) return value;
-  if (value === null || value === undefined) return [];
+/** Convert structured D1 values into the editable TextArea contract. */
+function formatEditableJsonField(value: unknown): string {
+  if (value === null || value === undefined) return '';
   const parsed = parseJsonValue(value);
-  if (Array.isArray(parsed)) return parsed;
-  return parsed;
-}
-
-/** Preserve free-form text when a JSON object is not present. */
-function parseJsonObjectOrTextField(value: unknown): Record<string, any> | string {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
-  if (typeof value !== 'string' || !value.trim()) return {};
-  const parsed = parseJsonValue(value);
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, any>;
-  return typeof parsed === 'string' ? parsed : {};
+  if (typeof parsed === 'string') return parsed;
+  if (Array.isArray(parsed)) return parsed.length > 0 ? JSON.stringify(parsed, null, 2) : '';
+  if (parsed && typeof parsed === 'object') {
+    return Object.keys(parsed).length > 0 ? JSON.stringify(parsed, null, 2) : '';
+  }
+  return parsed === null || parsed === undefined ? '' : String(parsed);
 }
 
 export function parseD1RequisitionRow(row: Record<string, any>): Record<string, any> {
@@ -3050,8 +3044,8 @@ export function parseD1RequisitionRow(row: Record<string, any>): Record<string, 
   item.title = row.title || '(未命名岗位)';
   item.headcount = Number(row.headcount) || 1;
   item.city = parseCityField(row.city);
-  item.hard_requirements = parseTextOrJsonArrayField(row.hard_requirements);
-  item.personalized_requirements = parseJsonObjectOrTextField(row.personalized_requirements);
+  item.hard_requirements = formatEditableJsonField(row.hard_requirements);
+  item.personalized_requirements = formatEditableJsonField(row.personalized_requirements);
   item.feishu_record_id = row.feishu_record_id || '';
   return item;
 }
