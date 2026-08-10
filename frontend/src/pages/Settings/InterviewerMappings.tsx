@@ -186,7 +186,7 @@ const InterviewerMappings: React.FC = () => {
     <div>
       <PageHeader
         title="面试官映射管理"
-        actions={<Space>
+        actions={<Space wrap>
           <Button icon={<BellOutlined />} loading={notifyLoading} disabled={notifyLoading} onClick={handleNotifyAll}>通知全部面试官</Button>
           <Button icon={<PlusOutlined />} type="dashed" onClick={handleAdd}>添加</Button>
           <Button icon={<SaveOutlined />} type="primary" loading={saving} onClick={handleSave}>保存</Button>

@@ -273,7 +273,7 @@ const PositionMappings: React.FC = () => {
       <PageHeader title="岗位映射管理" />
       <Card>
       <ResponsiveToolbar
-        actions={<Space>
+        actions={<Space wrap>
           <Button icon={<SyncOutlined />} onClick={handleSync} loading={syncing}>
             从飞书同步
           </Button>
