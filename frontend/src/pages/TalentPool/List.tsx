@@ -188,7 +188,7 @@ const TalentPoolList: React.FC = () => {
         title="候选人管理"
         extra={null}
       >
-        <ResponsiveToolbar actions={<Space>
+        <ResponsiveToolbar actions={<Space wrap>
             <Input placeholder="搜索姓名" prefix={<SearchOutlined />} value={search} onChange={e => setSearch(e.target.value)} onPressEnter={fetchData} style={{ width: 180 }} allowClear />
             <Select placeholder="状态筛选" allowClear style={{ width: 120 }} value={filterStatus} onChange={v => setFilterStatus(v)}>
               {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}

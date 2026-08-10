@@ -872,7 +872,7 @@ const InterviewsList: React.FC = () => {
       </ResponsiveModal>
 
       {/* 编辑面试弹窗 */}
-      <Modal
+      <ResponsiveModal
         title={<span>编辑面试 - {editRecord?.candidate_name || ''}</span>}
         open={editModalVisible}
         onOk={handleEditSubmit}
@@ -952,7 +952,7 @@ const InterviewsList: React.FC = () => {
             </Select>
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };

@@ -220,13 +220,13 @@ const OnboardingList: React.FC = () => {
             <Input />
           </Form.Item>
           <Row gutter={16}>
-            <Col span={8}><Form.Item name="employee_id" label="工号"><Input placeholder="如：EMP001" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="department" label="部门"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="position_title" label="职位"><Input /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="employee_id" label="工号"><Input placeholder="如：EMP001" /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="department" label="部门"><Input /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="position_title" label="职位"><Input /></Form.Item></Col>
           </Row>
           <Row gutter={16}>
-            <Col span={8}><Form.Item name="onboard_date" label="入职日期"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="contract_type" label="合同类型">
+            <Col xs={24} sm={12} md={8}><Form.Item name="onboard_date" label="入职日期"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="contract_type" label="合同类型">
               <Select>
                 <Option value="fixed_term">固定期限</Option>
                 <Option value="permanent">无固定期限</Option>
@@ -234,15 +234,15 @@ const OnboardingList: React.FC = () => {
                 <Option value="outsourcing">外包</Option>
               </Select>
             </Form.Item></Col>
-            <Col span={8}><Form.Item name="status" label="状态">
+            <Col xs={24} sm={12} md={8}><Form.Item name="status" label="状态">
               <Select>{Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}</Select>
             </Form.Item></Col>
           </Row>
           {editing && (<Row gutter={16}>
-            <Col span={6}><Form.Item name="contract_signed" label="合同已签" valuePropName="checked"><Switch /></Form.Item></Col>
-            <Col span={6}><Form.Item name="accounts_created" label="账号已开" valuePropName="checked"><Switch /></Form.Item></Col>
-            <Col span={6}><Form.Item name="equipment_assigned" label="设备已配" valuePropName="checked"><Switch /></Form.Item></Col>
-            <Col span={6}><Form.Item name="orientation_completed" label="入职引导完成" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="contract_signed" label="合同已签" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="accounts_created" label="账号已开" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="equipment_assigned" label="设备已配" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="orientation_completed" label="入职引导完成" valuePropName="checked"><Switch /></Form.Item></Col>
           </Row>)}
           <Form.Item name="notes" label="备注"><TextArea rows={2} /></Form.Item>
         </Form>

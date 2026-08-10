@@ -980,7 +980,7 @@ const PositionsList: React.FC = () => {
         </Form>
       </ResponsiveModal>
 
-      <Modal title="AI候选人匹配排名" open={aiMatchVisible} onCancel={() => setAiMatchVisible(false)} footer={<Button onClick={() => setAiMatchVisible(false)}>关闭</Button>} width={640}>
+      <ResponsiveModal title="AI候选人匹配排名" open={aiMatchVisible} onCancel={() => setAiMatchVisible(false)} footer={<Button onClick={() => setAiMatchVisible(false)}>关闭</Button>} width={640}>
         {aiMatchResult?.rankings?.map((item: any, idx: number) => (
           <div key={idx} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -990,7 +990,7 @@ const PositionsList: React.FC = () => {
             <div style={{ color: '#64748B', fontSize: 13, marginTop: 4 }}>{item.ranking_reason}</div>
           </div>
         ))}
-      </Modal>
+      </ResponsiveModal>
       <JDGeneratorModal
         visible={jdModalVisible}
         onCancel={() => setJdModalVisible(false)}
@@ -1002,7 +1002,7 @@ const PositionsList: React.FC = () => {
       />
 
       {/* 评估维度编辑弹窗 */}
-      <Modal
+      <ResponsiveModal
         title={
           <Space>
             <RadarChartOutlined />
@@ -1103,7 +1103,7 @@ const PositionsList: React.FC = () => {
             )}
           </Form.List>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       <Drawer
         title="岗位详情"

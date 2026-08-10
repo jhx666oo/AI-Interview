@@ -254,8 +254,9 @@ const InterviewResultPage: React.FC = () => {
   const isPendingReview = interview.status !== 'completed' && interview.result === 'pending';
 
   return (
-    <div id="interview-result-content"><PageHeader title="面试结果" />
-    <Card>
+    <>
+      <PageHeader title="面试结果" />
+      <Card id="interview-result-content">
       {isPendingReview ? (
          // Pending review state
          <>
@@ -405,7 +406,8 @@ const InterviewResultPage: React.FC = () => {
           </List.Item>
         )}
       />
-    </Card></div>
+      </Card>
+    </>
   );
 };
 

@@ -809,7 +809,7 @@ const InterviewScore: React.FC = () => {
         <TextArea rows={2} placeholder="追问1&#10;追问2" />
       </Form.Item>
       <Row gutter={16}>
-          <Col span={12}>
+          <Col xs={24} sm={12}>
               <Form.Item name="difficulty" label="难度">
                   <Select>
                       <Select.Option value="junior">初级</Select.Option>
@@ -818,7 +818,7 @@ const InterviewScore: React.FC = () => {
                   </Select>
               </Form.Item>
           </Col>
-          <Col span={12}>
+          <Col xs={24} sm={12}>
               <Form.Item name="type" label="类型">
                   <Select>
                       <Select.Option value="technical">技术</Select.Option>
