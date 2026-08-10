@@ -879,6 +879,17 @@ function transformRow(row: Record<string, any>): Record<string, any> {
   return result;
 }
 
+export function normalizeResumeEditPayload(body: Record<string, unknown>): Record<string, string> {
+  const updates: Record<string, string> = {};
+  for (const field of ['candidate_name', 'email', 'contact']) {
+    if (body[field] === undefined) continue;
+    updates[field] = typeof body[field] === 'string'
+      ? body[field].trim()
+      : String(body[field] ?? '').trim();
+  }
+  return updates;
+}
+
 
 
 // ==================== 日报详情：按负责人分组查询候选人 ====================
@@ -5738,6 +5749,36 @@ app.get('/api/resumes/:id', authMiddleware, async (c) => {
     return c.json(item);
   } catch (e: any) {
     return c.json({ detail: e.message }, 500);
+  }
+});
+
+app.put('/api/resumes/:id', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
+  try {
+    const resumeId = c.req.param('id');
+    const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ?').bind(resumeId).first();
+    if (!existing) return c.json({ detail: 'Not found' }, 404);
+
+    const body = await c.req.json().catch(() => ({}));
+    const updates = normalizeResumeEditPayload(body && typeof body === 'object' ? body : {});
+    const fields = Object.keys(updates);
+    if (fields.length === 0) return c.json({ detail: 'No editable fields' }, 400);
+
+    const assignments = fields.map((field) => `${field} = ?`).join(', ');
+    await c.env.DB.prepare(
+      `UPDATE resumes SET ${assignments}, updated_at = ? WHERE id = ?`
+    ).bind(...fields.map((field) => updates[field]), now(), resumeId).run();
+
+    const row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(resumeId).first() as Record<string, any> | null;
+    if (!row) return c.json({ detail: 'Not found' }, 404);
+    const item = transformRow(row);
+    for (const key of ['parsed_data', 'ai_review', 'ai_evaluation', 'work_experience', 'education', 'certifications']) {
+      if (typeof item[key] === 'string') item[key] = safeJsonParse(item[key]) || item[key];
+    }
+    applyParsedResumeFields(item);
+    exposeStructuredEvaluation(item);
+    return c.json(item);
+  } catch (e: any) {
+    return c.json({ detail: '更新失败: ' + e.message }, 500);
   }
 });
 
