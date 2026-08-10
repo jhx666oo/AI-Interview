@@ -4,6 +4,7 @@ import SimplePagination from '../../components/SimplePagination';
 import { EditOutlined, ThunderboltOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
+import { PageHeader, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 
 const { Text } = Typography;
 
@@ -84,10 +85,18 @@ const JDManagementList: React.FC = () => {
   ];
 
   return (
-    <Card title="JD 管理" extra={<Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>}>
-      <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading} pagination={false} />
+    <>
+      <PageHeader title="JD 管理" />
+      <Card>
+        <ResponsiveToolbar actions={<Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>}>
+          <span />
+        </ResponsiveToolbar>
+        <TableViewport>
+          <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading} pagination={false} />
+        </TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
     </Card>
+    </>
   );
 };
 

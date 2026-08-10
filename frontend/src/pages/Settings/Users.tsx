@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Space, message, Tag, Modal, Form, Input, Select, Card, Typography, Popconfirm, Tooltip } from 'antd';
+import { Table, Button, Space, message, Tag, Modal, Form, Input, Select, Typography, Popconfirm, Tooltip } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, KeyOutlined, CopyOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
+import { PageHeader, ResponsiveModal, TableViewport } from '../../components/Responsive';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface User {
   id: string;
@@ -336,12 +337,10 @@ const UsersList: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 32, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <div>
-          <Title level={2} style={{ margin: 0 }}>用户管理</Title>
-          <Text type="secondary">管理系统用户及权限分配</Text>
-        </div>
-        <Space>
+      <PageHeader
+        title="用户管理"
+        description="管理系统用户及权限分配"
+        actions={<Space>
           {selectedRowKeys.length > 0 && (
             <>
               <span style={{ lineHeight: '32px' }}>已选 {selectedRowKeys.length} 项</span>
@@ -351,10 +350,11 @@ const UsersList: React.FC = () => {
           )}
           <Button icon={<ReloadOutlined />} onClick={fetchUsers}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新增用户</Button>
-        </Space>
-      </div>
+        </Space>}
+      />
 
-      <Table
+      <TableViewport>
+        <Table
         columns={columns}
         dataSource={data}
         loading={loading}
@@ -366,10 +366,11 @@ const UsersList: React.FC = () => {
           onChange: (keys) => setSelectedRowKeys(keys),
           columnWidth: 48,
         }}
-      />
+        />
+      </TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
 
-      <Modal
+      <ResponsiveModal
         title={isEditModal ? '编辑用户' : '新增用户'}
         open={isModalVisible}
         onOk={handleOk}
@@ -459,7 +460,7 @@ const UsersList: React.FC = () => {
             </div>
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };

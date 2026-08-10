@@ -12,6 +12,7 @@ import { sortResumesNewestFirst } from '../../utils/resumeSort';
 import { getCurrentPageSelectionState, toggleCurrentPageSelection } from '../../utils/resumeSelection';
 import { createRefreshVersion } from '../../utils/resumeRefresh';
 import { buildResumeExportRows } from '../../utils/resumeExport';
+import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -1121,34 +1122,38 @@ const handleUploadClick = () => {
 
   return (
     <div style={{ maxWidth: '100%' }}>
-      <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <div>
-          <Title level={3} style={{ margin: 0, fontWeight: 600 }}>简历管理</Title>
-          <Text type="secondary" style={{ fontSize: 13 }}>管理候选人简历及面试流程</Text>
-        </div>
-        <Space size="small" wrap>
-          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
-          <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={handleExportExcel}>导出 Excel</Button>
-          <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
-          <Button type="primary" size="small" icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
-          <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
-            {pollingEnabled ? '解析中...' : '刷新数据'}
-          </Button>
-          <Dropdown menu={{
-            items: [
-              { key: 'reparse', label: selectedRowKeys.length > 0 ? `批量重新评估（${selectedRowKeys.length}）` : '批量重新评估全部', icon: <SyncOutlined />, onClick: handleBatchReparse },
-              { type: 'divider' },
-              { key: 'clear', label: '清除已淘汰', icon: <CloseCircleOutlined />, danger: true, onClick: handleClearRejected },
-            ]
-          }}>
-            <Button size="small" icon={<RobotOutlined />}>AI 工具</Button>
-          </Dropdown>
-        </Space>
-      </div>
+      <PageHeader
+        title="简历管理"
+        description="管理候选人简历及面试流程"
+        actions={
+          <>
+            <Space size="small" wrap>
+              <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleUploadClick}>上传简历</Button>
+              <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={handleExportExcel}>导出 Excel</Button>
+              <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={() => setBossImportOpen(true)}>BOSS导入</Button>
+              <Button type="primary" size="small" icon={<CloudUploadOutlined />} onClick={handleFeishuSync}>飞书导入</Button>
+            </Space>
+            <Space size="small" wrap>
+              <Button size="small" icon={pollingEnabled ? <SyncOutlined spin /> : <ReloadOutlined />} onClick={() => fetchResumes()}>
+                {pollingEnabled ? '解析中...' : '刷新数据'}
+              </Button>
+              <Dropdown menu={{
+                items: [
+                  { key: 'reparse', label: selectedRowKeys.length > 0 ? `批量重新评估（${selectedRowKeys.length}）` : '批量重新评估全部', icon: <SyncOutlined />, onClick: handleBatchReparse },
+                  { type: 'divider' },
+                  { key: 'clear', label: '清除已淘汰', icon: <CloseCircleOutlined />, danger: true, onClick: handleClearRejected },
+                ]
+              }}>
+                <Button size="small" icon={<RobotOutlined />}>AI 工具</Button>
+              </Dropdown>
+            </Space>
+          </>
+        }
+      />
 
       {/* 统计卡片：精简为 4 项 */}
       <Row gutter={12} style={{ marginBottom: 16 }}>
-        <Col span={6}>
+        <Col xs={24} sm={12} md={12} lg={6}>
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>总简历数</span>}
@@ -1158,7 +1163,7 @@ const handleUploadClick = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} sm={12} md={12} lg={6}>
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>待处理</span>}
@@ -1168,7 +1173,7 @@ const handleUploadClick = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} sm={12} md={12} lg={6}>
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>已入库</span>}
@@ -1178,7 +1183,7 @@ const handleUploadClick = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={24} sm={12} md={12} lg={6}>
           <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
             <Statistic
               title={<span style={{ fontSize: 13 }}>已入职</span>}
@@ -1191,8 +1196,36 @@ const handleUploadClick = () => {
       </Row>
 
         <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px', overflow: 'visible' } }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
-            <Space size={4}>
+          <ResponsiveToolbar
+            actions={<>
+              {selectedRowKeys.length > 0 && (
+                <>
+                  <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
+                  {canBatchApproveToTalentPool && (
+                    <Button type="primary" size="small" loading={batchApproving} disabled={batchApproving} onClick={handleBatchApproveToTalentPool}>批量入库</Button>
+                  )}
+                  <Button danger size="small" onClick={handleBatchReject}>批量淘汰</Button>
+                  <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
+                  <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+                </>
+              )}
+              <Checkbox
+                checked={currentPageSelection.checked}
+                indeterminate={currentPageSelection.indeterminate}
+                disabled={currentPageIds.length === 0}
+                onChange={(event) => setSelectedRowKeys((previous) => toggleCurrentPageSelection(previous, currentPageIds, event.target.checked))}
+              >
+                全选本页
+              </Checkbox>
+              <div className="resume-toolbar__search-actions">
+                <span style={{ width: 1, height: 20, background: '#E2E8F0' }} />
+                <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
+                <Button onClick={handleReset}>重置</Button>
+              </div>
+            </>}
+          >
+            <div className="resume-toolbar__field">
+              <Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>筛选：</Text>
               <Select
                 placeholder="全部"
@@ -1207,8 +1240,9 @@ const handleUploadClick = () => {
                 <Select.Option value="screening_passed">AI 通过</Select.Option>
                 <Select.Option value="screening_failed">AI 不通过</Select.Option>
               </Select>
-            </Space>
-            <Space size={4}>
+              </Space>
+            </div>
+            <div className="resume-toolbar__field"><Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>岗位：</Text>
               <Select
                 placeholder="全部"
@@ -1223,8 +1257,8 @@ const handleUploadClick = () => {
                   <Select.Option key={p.id || p.title} value={p.title}>{p.title}</Select.Option>
                 ))}
               </Select>
-            </Space>
-            <Space size={4}>
+            </Space></div>
+            <div className="resume-toolbar__field"><Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>专业：</Text>
               <Select
                 placeholder="全部"
@@ -1239,9 +1273,9 @@ const handleUploadClick = () => {
                   <Select.Option key={m} value={m}>{m}</Select.Option>
                 ))}
               </Select>
-            </Space>
+            </Space></div>
 
-            <Space size={4}>
+            <div className="resume-toolbar__field"><Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>学历：</Text>
               <Select
                 placeholder="全部"
@@ -1256,47 +1290,23 @@ const handleUploadClick = () => {
                   <Select.Option key={e} value={e}>{e}</Select.Option>
                 ))}
               </Select>
-            </Space>
+            </Space></div>
 
-            <Space size={4}>
+            <div className="resume-toolbar__field"><Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>年龄：</Text>
               <InputNumber min={0} max={100} value={minimumAge} onChange={value => setMinimumAge(value == null ? null : Number(value))} placeholder="最小" style={{ width: 70 }} />
               <span style={{ color: '#94A3B8' }}>—</span>
               <InputNumber min={0} max={100} value={maximumAge} onChange={value => setMaximumAge(value == null ? null : Number(value))} placeholder="最大" style={{ width: 70 }} />
-            </Space>
-            <Space size={4}>
+            </Space></div>
+            <div className="resume-toolbar__field"><Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>性别：</Text>
               <Checkbox.Group
                 options={['男', '女', '未识别']}
                 value={genderFilters}
                 onChange={(values) => setGenderFilters(values.map(String))}
               />
-            </Space>
-            {selectedRowKeys.length > 0 && (
-              <>
-                <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
-                {canBatchApproveToTalentPool && (
-                  <Button type="primary" size="small" loading={batchApproving} disabled={batchApproving} onClick={handleBatchApproveToTalentPool}>批量入库</Button>
-                )}
-                <Button danger size="small" onClick={handleBatchReject}>批量淘汰</Button>
-                <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
-                <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
-              </>
-            )}
-            <Checkbox
-              checked={currentPageSelection.checked}
-              indeterminate={currentPageSelection.indeterminate}
-              disabled={currentPageIds.length === 0}
-              onChange={(event) => setSelectedRowKeys((previous) => toggleCurrentPageSelection(previous, currentPageIds, event.target.checked))}
-            >
-              全选本页
-            </Checkbox>
-            <div style={{ marginLeft: 24, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ width: 1, height: 20, background: '#E2E8F0' }} />
-              <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
-              <Button onClick={handleReset}>重置</Button>
-            </div>
-          </div>
+            </Space></div>
+          </ResponsiveToolbar>
         </Card>
 
       {/* 候选人卡片列表 */}
@@ -1331,67 +1341,71 @@ const handleUploadClick = () => {
                   hoverable
                   onClick={() => navigate(`/resumes/${record.id}`)}
                 >
-                  {/* 顶部：复选框 + 姓名 + 状态 + 操作 */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, minHeight: 32 }}>
-                    <Checkbox
-                      checked={selectedRowKeys.includes(record.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedRowKeys([...selectedRowKeys, record.id]);
-                        } else {
-                          setSelectedRowKeys(selectedRowKeys.filter(k => k !== record.id));
-                        }
-                      }}
-                      onClick={e => e.stopPropagation()}
-                    />
-                    <span style={{ fontWeight: 600, fontSize: 15 }}>{record.candidate_name || '未知'}</span>
-                    <Tooltip title={[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '暂无信息'}>
-                      <span style={{ color: '#bfbfbf', fontSize: 12, cursor: 'default', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '—'}
-                      </span>
-                    </Tooltip>
-                    {record.position_applied && (
-                      <Tag style={{ margin: 0 }}>{record.standard_position || record.position_applied}</Tag>
-                    )}
-                    {record.screening_label ? (
-                      <Tag color={record.screening_label === '通过' ? 'green' : 'red'} style={{ margin: 0 }}>
-                        AI{record.screening_label}
-                      </Tag>
-                    ) : (
-                      statusTag(record.status)
-                    )}
-                    {hasGateResults && gateRows.map((gate) => (
-                      <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
-                        {gate.passed ? `${gate.label}已通过` : gate.reason}
-                      </Tag>
-                    ))}
-                    {hardResult?.passed === false && (
-                      <Tag color="red" style={{ margin: 0 }}>硬条件未满足{hardResult.unmet_items?.length ? `：${hardResult.unmet_items.join('、')}` : ''}</Tag>
-                    )}
-                    {hardResult?.passed !== false && (hardResult?.unknown_items || []).length > 0 && (
-                      <Tag color="orange" style={{ margin: 0 }}>硬条件待复核{hardResult.unknown_items?.length ? `：${hardResult.unknown_items.join('、')}` : ''}</Tag>
-                    )}
-                    {record.create_time && (
-                      <span style={{ color: '#8c8c8c', fontSize: 12, whiteSpace: 'nowrap' }}>
-                        入库: {new Date(Number(record.create_time)).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })}
-                      </span>
-                    )}
-                    <div style={{ marginLeft: 'auto' }} onClick={e => e.stopPropagation()}>
+                  {/* 顶部：身份、状态和操作分区，窄屏时自然换行 */}
+                  <div className="resume-card__header">
+                    <div className="resume-card__identity">
+                      <Checkbox
+                        checked={selectedRowKeys.includes(record.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedRowKeys([...selectedRowKeys, record.id]);
+                          } else {
+                            setSelectedRowKeys(selectedRowKeys.filter(k => k !== record.id));
+                          }
+                        }}
+                        onClick={e => e.stopPropagation()}
+                      />
+                      <span className="resume-card__name">{record.candidate_name || '未知'}</span>
+                      <Tooltip title={[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '暂无信息'}>
+                        <span className="resume-card__summary">
+                          {[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '—'}
+                        </span>
+                      </Tooltip>
+                    </div>
+                    <div className="resume-card__status">
+                      {record.position_applied && (
+                        <Tag style={{ margin: 0 }}>{record.standard_position || record.position_applied}</Tag>
+                      )}
+                      {record.screening_label ? (
+                        <Tag color={record.screening_label === '通过' ? 'green' : 'red'} style={{ margin: 0 }}>
+                          AI{record.screening_label}
+                        </Tag>
+                      ) : (
+                        statusTag(record.status)
+                      )}
+                      {hasGateResults && gateRows.map((gate) => (
+                        <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
+                          {gate.passed ? `${gate.label}已通过` : gate.reason}
+                        </Tag>
+                      ))}
+                      {hardResult?.passed === false && (
+                        <Tag color="red" style={{ margin: 0 }}>硬条件未满足{hardResult.unmet_items?.length ? `：${hardResult.unmet_items.join('、')}` : ''}</Tag>
+                      )}
+                      {hardResult?.passed !== false && (hardResult?.unknown_items || []).length > 0 && (
+                        <Tag color="orange" style={{ margin: 0 }}>硬条件待复核{hardResult.unknown_items?.length ? `：${hardResult.unknown_items.join('、')}` : ''}</Tag>
+                      )}
+                      {record.create_time && (
+                        <span className="resume-card__created-at">
+                          入库: {new Date(Number(record.create_time)).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
+                    <div className="resume-card__actions" onClick={e => e.stopPropagation()}>
                       {renderActionButtons(record)}
                     </div>
                   </div>
 
                   {/* AI 评估维度 — 横向标签式 */}
                   {scoreDetails && scoreDetails.length > 0 && (
-                    <div style={{ marginTop: 4 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <div className="resume-card__evaluation">
+                      <div className="resume-card__evaluation-summary">
                         <span style={{ fontSize: 12, color: '#1677ff', fontWeight: 600, background: '#f0f5ff', padding: '1px 8px', borderRadius: 4 }}>
                           AI 评估 {matchCount}/{totalDims} 符合
                         </span>
                         <span style={{ fontSize: 12, color: '#8c8c8c' }}>加权分：{formatWeightedScore(normalizedEvaluation.overallScore)}</span>
                         <span style={{ fontSize: 12, color: '#8c8c8c' }}>维度合计：{scoreTotal.total}/{scoreTotal.maximum}</span>
                       </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 4 }}>
+                      <div className="resume-card__dimensions">
                         {scoreDetails.map((d: any, i: number) => {
                           const isMatch = d.score >= 3;
                           const color = d.score >= 4 ? '#52c41a' : d.score >= 3 ? '#1677ff' : d.score >= 2 ? '#fa8c16' : '#ff4d4f';
@@ -1399,6 +1413,7 @@ const handleUploadClick = () => {
                             <Tooltip key={i} title={d.reason || d.name}>
                               <Tag
                                 color={isMatch ? (d.score >= 4 ? 'green' : 'blue') : (d.score >= 2 ? 'orange' : 'red')}
+                                className="resume-card__dimension"
                                 style={{ margin: 0, cursor: 'pointer', fontSize: 11, lineHeight: '18px' }}
                               >
                                 {d.name} {d.score}/5
@@ -1410,19 +1425,19 @@ const handleUploadClick = () => {
                     </div>
                   )}
                   {scoreDetails.length === 0 && normalizedEvaluation.overallScore != null && (
-                    <div style={{ marginTop: 4 }}>
-                      <span style={{ color: '#1677ff', fontSize: 12 }}>AI 加权分 {formatWeightedScore(normalizedEvaluation.overallScore)}</span>
+                    <div className="resume-card__evaluation">
+                      <span className="resume-card__long-label" style={{ color: '#1677ff', fontSize: 12 }}>AI 加权分 {formatWeightedScore(normalizedEvaluation.overallScore)}</span>
                     </div>
                   )}
                   {normalizedEvaluation.screeningReason && (
-                    <div style={{ marginTop: 4 }}>
-                      <span style={{ color: hasGateResults && normalizedEvaluation.overallScore == null ? '#cf1322' : '#8c8c8c', fontSize: 12 }}>
+                    <div className="resume-card__evaluation">
+                      <span className="resume-card__long-label" style={{ color: hasGateResults && normalizedEvaluation.overallScore == null ? '#cf1322' : '#8c8c8c', fontSize: 12 }}>
                         初筛结论：{normalizedEvaluation.screeningReason}
                       </span>
                     </div>
                   )}
                   {scoreDetails.length === 0 && normalizedEvaluation.overallScore == null && (
-                    <div style={{ marginTop: 4 }}>
+                    <div className="resume-card__evaluation">
                       <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无 AI 评估</span>
                     </div>
                   )}
@@ -1444,7 +1459,7 @@ const handleUploadClick = () => {
       )}
 
       {/* Upload Modal */}
-      <Modal
+      <ResponsiveModal
         title="上传简历"
         open={isModalVisible}
         onOk={handleOk}
@@ -1486,10 +1501,10 @@ const handleUploadClick = () => {
             </Upload>
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       {/* Interview Modal */}
-      <Modal
+      <ResponsiveModal
         title="安排面试"
         open={interviewModalVisible}
         onOk={handleInterviewOk}
@@ -1521,7 +1536,7 @@ const handleUploadClick = () => {
           style={{ marginTop: 24 }}
         >
           <Row gutter={16}>
-            <Col span={8}>
+            <Col xs={24} sm={12} md={8}>
               <Form.Item
                 name="round"
                 label="面试轮次"
@@ -1536,7 +1551,7 @@ const handleUploadClick = () => {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={12} md={8}>
               <Form.Item
                 name="interview_category"
                 label="面试类型"
@@ -1552,7 +1567,7 @@ const handleUploadClick = () => {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={12} md={8}>
               <Form.Item
                 name="interview_type"
                 label="面试形式"
@@ -1666,10 +1681,10 @@ const handleUploadClick = () => {
             }
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       {/* 邮件预览模态框 */}
-      <Modal
+      <ResponsiveModal
         title="邮件预览"
         open={emailPreviewVisible}
         onCancel={handleCancelPreview}
@@ -1737,10 +1752,10 @@ const handleUploadClick = () => {
             <Checkbox>发送邮件通知候选人</Checkbox>
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       {/* 简历预览 Modal - 展示原始 PDF */}
-      <Modal
+      <ResponsiveModal
         title={`简历 - ${previewRecord?.candidate_name || ''}`}
         open={previewVisible}
         onCancel={() => { setPreviewPdfUrl(''); setPreviewVisible(false); }}
@@ -1760,10 +1775,10 @@ const handleUploadClick = () => {
             加载中...
           </div>
         )}
-      </Modal>
+      </ResponsiveModal>
 
       {/* 评估维度配置弹窗 */}
-      <Modal
+      <ResponsiveModal
         title="设置评估维度"
         open={dimModalOpen}
         onCancel={() => setDimModalOpen(false)}
@@ -1838,10 +1853,10 @@ const handleUploadClick = () => {
             )}
           </Form.List>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       {/* BOSS 直聘 Excel 批量导入 */}
-      <Modal
+      <ResponsiveModal
         title="BOSS 直聘候选人批量导入"
         open={bossImportOpen}
         onCancel={() => { setBossImportOpen(false); setBossPreview([]); setBossImportResult(null); }}
@@ -1883,7 +1898,7 @@ const handleUploadClick = () => {
             <div style={{ marginBottom: 12 }}>
               <Text strong>解析到 {bossPreview.length} 条候选人数据</Text>
             </div>
-            <div style={{ maxHeight: 400, overflow: 'auto', marginBottom: 16, border: '1px solid #f0f0f0', borderRadius: 4 }}>
+            <TableViewport className="resume-import-table resume-import-table--preview">
               <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#fafafa', position: 'sticky', top: 0 }}>
@@ -1910,7 +1925,7 @@ const handleUploadClick = () => {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableViewport>
             <Space>
               <Button onClick={() => { setBossPreview([]); setBossImportResult(null); }}>重新选择文件</Button>
               <Button type="primary" icon={<DownloadOutlined />} loading={bossImporting} onClick={handleBossImport}>
@@ -1930,7 +1945,7 @@ const handleUploadClick = () => {
                 {bossImportResult.failed > 0 && `，失败 ${bossImportResult.failed} 条`}
               </Text>
             </div>
-            <div style={{ maxHeight: 300, overflow: 'auto', marginBottom: 16, border: '1px solid #f0f0f0', borderRadius: 4 }}>
+            <TableViewport className="resume-import-table resume-import-table--result">
               <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: '#fafafa', position: 'sticky', top: 0 }}>
@@ -1951,13 +1966,13 @@ const handleUploadClick = () => {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableViewport>
             <Space>
               <Button onClick={() => { setBossImportOpen(false); setBossPreview([]); setBossImportResult(null); fetchResumes(); }}>关闭</Button>
             </Space>
           </div>
         )}
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };

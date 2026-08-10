@@ -11,6 +11,7 @@ import {
 import request from '../../utils/request';
 import SimplePagination from '../../components/SimplePagination';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
+import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 
@@ -319,20 +320,29 @@ const RequisitionsList: React.FC = () => {
 
   return (
     <div>
-      <Card
+      <PageHeader
         title="人力需求管理"
-        extra={
+        actions={
           <Space wrap>
-            <Input size="middle" placeholder="搜索部门" prefix={<SearchOutlined />} value={searchDept} onChange={e => setSearchDept(e.target.value)} onPressEnter={fetchData} style={{ width: 200 }} allowClear />
-            <Select size="middle" placeholder="状态筛选" allowClear style={{ width: 200 }} value={filterStatus} onChange={v => setFilterStatus(v)}>
-              {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
-            </Select>
-            <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
-            <Button type="primary" size="small" icon={<CloudUploadOutlined />} loading={syncLoading} onClick={handleFeishuSync}>飞书导入</Button>
             <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleCreate}>提报需求</Button>
           </Space>
         }
       >
+      </PageHeader>
+      <Card>
+        <ResponsiveToolbar
+          actions={
+            <Space wrap>
+              <Button size="small" icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
+              <Button type="primary" size="small" icon={<CloudUploadOutlined />} loading={syncLoading} onClick={handleFeishuSync}>飞书导入</Button>
+            </Space>
+          }
+        >
+          <Input size="middle" placeholder="搜索部门" prefix={<SearchOutlined />} value={searchDept} onChange={e => setSearchDept(e.target.value)} onPressEnter={fetchData} style={{ width: 200 }} allowClear />
+          <Select size="middle" placeholder="状态筛选" allowClear style={{ width: 200 }} value={filterStatus} onChange={v => setFilterStatus(v)}>
+            {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
+          </Select>
+        </ResponsiveToolbar>
         {selectedRowKeys.length > 0 && (
           <div style={{ marginBottom: 12 }}>
             <Space>
@@ -345,19 +355,21 @@ const RequisitionsList: React.FC = () => {
             </Space>
           </div>
         )}
-        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
-          scroll={{ x: 1400 }}
-          pagination={false}
-          rowSelection={{
-            selectedRowKeys,
-            onChange: setSelectedRowKeys,
-            columnWidth: 40,
-          }}
-        />
+        <TableViewport>
+          <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+            scroll={{ x: 1400 }}
+            pagination={false}
+            rowSelection={{
+              selectedRowKeys,
+              onChange: setSelectedRowKeys,
+              columnWidth: 40,
+            }}
+          />
+        </TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
 
-      <Modal title={editing ? '编辑需求' : '提报人力需求'} open={modalVisible} onCancel={() => setModalVisible(false)}
+      <ResponsiveModal title={editing ? '编辑需求' : '提报人力需求'} open={modalVisible} onCancel={() => setModalVisible(false)}
         onOk={handleSubmit} width={640} confirmLoading={submitting}>
         <Form form={form} layout="vertical">
           <Row gutter={16}>
@@ -470,7 +482,7 @@ const RequisitionsList: React.FC = () => {
             <TextArea rows={2} placeholder="招聘渠道计划" />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
       <JDGeneratorModal
         visible={jdModalVisible}
         onCancel={() => setJdModalVisible(false)}

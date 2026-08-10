@@ -4,7 +4,6 @@ import {
   Card,
   Input,
   List,
-  Modal,
   Radio,
   Select,
   Space,
@@ -26,6 +25,7 @@ import { downloadExcel } from '../../utils/exportExcel';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import { RecruitingBoardView } from './components/RecruitingBoardView';
+import { ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 import type {
   BoardPosition,
   BoardTotals,
@@ -429,26 +429,27 @@ const Dashboard: React.FC = () => {
       </section>
 
       <Card className={styles.filterCard} size="small">
-        <div className={styles.filterBar}>
+        <ResponsiveToolbar
+          actions={hasFilters ? <Button icon={<ClearOutlined />} onClick={clearFilters}>清除筛选</Button> : undefined}
+        >
           <Input
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
             prefix={<SearchOutlined />}
             placeholder="搜索职位 / 事业部 / HRBP"
-            style={{ width: 230 }}
+            style={{ width: 'min(100%, 230px)' }}
             allowClear
           />
-          <Select value={division} onChange={setDivision} placeholder="事业部" allowClear style={{ width: 150 }} options={divisionOptions.map((value) => ({ value }))} />
-          <Select value={hrbp} onChange={setHrbp} placeholder="HRBP" allowClear style={{ width: 140 }} options={hrbpOptions.map((value) => ({ value }))} />
-          <Select value={priority} onChange={setPriority} placeholder="优先级" allowClear style={{ width: 115 }} options={(['P0', 'P1', 'P2'] as Priority[]).map((value) => ({ value }))} />
-          <Select value={status} onChange={setStatus} placeholder="岗位状态" allowClear style={{ width: 130 }} options={statusOptions.map((value) => ({ value }))} />
-          {hasFilters && <Button icon={<ClearOutlined />} onClick={clearFilters}>清除筛选</Button>}
-        </div>
+          <Select value={division} onChange={setDivision} placeholder="事业部" allowClear style={{ width: 'min(100%, 150px)' }} options={divisionOptions.map((value) => ({ value }))} />
+          <Select value={hrbp} onChange={setHrbp} placeholder="HRBP" allowClear style={{ width: 'min(100%, 140px)' }} options={hrbpOptions.map((value) => ({ value }))} />
+          <Select value={priority} onChange={setPriority} placeholder="优先级" allowClear style={{ width: 'min(100%, 115px)' }} options={(['P0', 'P1', 'P2'] as Priority[]).map((value) => ({ value }))} />
+          <Select value={status} onChange={setStatus} placeholder="岗位状态" allowClear style={{ width: 'min(100%, 130px)' }} options={statusOptions.map((value) => ({ value }))} />
+        </ResponsiveToolbar>
       </Card>
 
       <RecruitingBoardView board={filteredBoard} />
 
-      <Modal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
+      <ResponsiveModal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
         <Typography.Paragraph type="secondary">公开链接仅展示聚合招聘数据，不包含候选人或 AI 评估信息。</Typography.Paragraph>
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Radio.Group
@@ -509,7 +510,7 @@ const Dashboard: React.FC = () => {
             )}
           />
         </Space>
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };

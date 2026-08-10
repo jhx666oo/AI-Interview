@@ -10,6 +10,8 @@ import {
 import request from '../../utils/request';
 import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
+import { ResponsiveToolbar } from '../../components/Responsive/ResponsiveToolbar';
+import { TableViewport } from '../../components/Responsive/TableViewport';
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -184,20 +186,19 @@ const TalentPoolList: React.FC = () => {
     <div>
       <Card
         title="候选人管理"
-        extra={
-          <Space>
+        extra={null}
+      >
+        <ResponsiveToolbar actions={<Space wrap>
             <Input placeholder="搜索姓名" prefix={<SearchOutlined />} value={search} onChange={e => setSearch(e.target.value)} onPressEnter={fetchData} style={{ width: 180 }} allowClear />
             <Select placeholder="状态筛选" allowClear style={{ width: 120 }} value={filterStatus} onChange={v => setFilterStatus(v)}>
               {Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
-          </Space>
-        }
-      >
-        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+          </Space>}><span /></ResponsiveToolbar>
+        <TableViewport><Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 'max-content' }}
           pagination={false}
-        />
+        /></TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
     </div>

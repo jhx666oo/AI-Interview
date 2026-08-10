@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Space, Typography, message, Divider, Tag, Tabs, Tooltip } from 'antd';
+import { Button, Card, Form, Input, Space, Typography, message, Tag, Tabs, Tooltip } from 'antd';
 import { SaveOutlined, ReloadOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
+import { PageHeader, ResponsiveToolbar } from '../../components/Responsive';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 type SystemSettings = {
   llm_base_url?: string | null;
@@ -222,23 +223,23 @@ const SystemSettingsPage: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 32 }}>
-        <Title level={2} style={{ margin: 0 }}>系统设置</Title>
-        <Text type="secondary">配置 AI 模型参数与提示词模板</Text>
-      </div>
+      <PageHeader title="系统设置" description="配置 AI 模型参数与提示词模板" />
 
       {/* 模型配置 */}
       <Card
         title="AI 模型配置"
         style={{ marginBottom: 24 }}
         loading={loading}
-        extra={
+      >
+        <ResponsiveToolbar
+          actions={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={fetchSettings}>刷新</Button>
             <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={saving}>保存</Button>
-          </Space>
-        }
-      >
+          </Space>}
+        >
+          <span />
+        </ResponsiveToolbar>
         <Form form={form} layout="vertical" autoComplete="off">
           <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} />
           <input type="password" name="password" autoComplete="current-password" style={{ display: 'none' }} />
@@ -294,10 +295,10 @@ const SystemSettingsPage: React.FC = () => {
       <Card
         title="提示词模板"
         loading={promptLoading}
-        extra={
-          <Button icon={<ReloadOutlined />} onClick={fetchPromptConfigs}>刷新</Button>
-        }
       >
+        <ResponsiveToolbar actions={<Button icon={<ReloadOutlined />} onClick={fetchPromptConfigs}>刷新</Button>}>
+          <span />
+        </ResponsiveToolbar>
         <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
           自定义各功能的 AI 提示词模板。修改后下次调用对应功能时生效。
         </Text>

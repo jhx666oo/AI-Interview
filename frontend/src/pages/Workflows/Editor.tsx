@@ -19,6 +19,7 @@ import ReactFlow, {
 import type { Node, Edge, Connection, NodeProps } from 'reactflow';
 import 'reactflow/dist/style.css';
 import request from '../../utils/request';
+import { ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -576,7 +577,7 @@ const WorkflowEditor: React.FC = () => {
     const statusInfo = executionStatusMap[executionResult.status] || executionStatusMap.pending;
 
     return (
-      <Modal
+      <ResponsiveModal
         title={
           <Space>
             <span>执行结果</span>
@@ -692,7 +693,7 @@ const WorkflowEditor: React.FC = () => {
             </pre>
           </div>
         )}
-      </Modal>
+      </ResponsiveModal>
     );
   };
 
@@ -705,8 +706,8 @@ const WorkflowEditor: React.FC = () => {
   }
 
   return (
-    <div style={{ height: 'calc(100vh - 150px)', display: 'flex' }}>
-      <div style={{ width: 240, borderRight: '1px solid #f0f0f0', overflow: 'auto', padding: 16 }}>
+    <div style={{ height: 'calc(100vh - 150px)', display: 'flex', minWidth: 0 }}>
+      <div style={{ width: 'clamp(160px, 22vw, 240px)', flexShrink: 0, borderRight: '1px solid #f0f0f0', overflow: 'auto', padding: 16 }}>
         <Title level={5}>节点库</Title>
         <Text type="secondary" style={{ fontSize: 12 }}>拖拽节点到画布</Text>
         
@@ -747,22 +748,17 @@ const WorkflowEditor: React.FC = () => {
         ))}
       </div>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <div style={{
-          padding: '12px 16px',
-          borderBottom: '1px solid #f0f0f0',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-          <Space>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0' }}>
+        <ResponsiveToolbar>
+          <Space wrap>
             <Button onClick={() => navigate('/workflows')}>返回</Button>
             <Title level={4} style={{ margin: 0 }}>{workflow?.name}</Title>
             <Tag color={statusMap[workflow?.status]?.color || 'default'}>
               {statusMap[workflow?.status]?.text || workflow?.status}
             </Tag>
           </Space>
-          <Space>
+          <Space wrap>
             <Tooltip title="工作流设置">
               <Button icon={<SettingOutlined />} onClick={() => setSettingsDrawerVisible(true)}>
                 设置
@@ -782,6 +778,7 @@ const WorkflowEditor: React.FC = () => {
               </Button>
             )}
           </Space>
+        </ResponsiveToolbar>
         </div>
 
         <div style={{ flex: 1 }} ref={reactFlowWrapper}>

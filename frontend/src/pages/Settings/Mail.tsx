@@ -11,8 +11,9 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
+import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 type MailSyncConfig = {
   id: string;
@@ -346,43 +347,43 @@ const MailSettingsPage: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 32 }}>
-        <Title level={2} style={{ margin: 0 }}>邮件设置</Title>
-        <Text type="secondary">配置 SMTP 邮件服务与邮箱简历同步</Text>
-      </div>
+      <PageHeader title="邮件设置" description="配置 SMTP 邮件服务与邮箱简历同步" />
 
       {/* SMTP 配置 */}
       <Card
         title="SMTP 配置"
         style={{ marginBottom: 24 }}
         loading={smtpLoading}
-        extra={
+      >
+        <ResponsiveToolbar
+          actions={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={fetchSmtpSettings}>刷新</Button>
             <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveSmtp} loading={smtpSaving}>保存</Button>
-          </Space>
-        }
-      >
+          </Space>}
+        >
+          <span />
+        </ResponsiveToolbar>
         <Form form={smtpForm} layout="vertical" autoComplete="off">
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="smtp_host" label="SMTP 主机">
                 <Input placeholder="smtp.example.com" autoComplete="off" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="smtp_port" label="SMTP 端口">
                 <InputNumber min={1} max={65535} style={{ width: '100%' }} placeholder="465" />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="smtp_username" label="SMTP 用户名">
                 <Input placeholder="noreply@example.com" autoComplete="off" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item
                 name="smtp_password"
                 label="SMTP 密码"
@@ -404,12 +405,12 @@ const MailSettingsPage: React.FC = () => {
           </Row>
           <Divider />
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="mail_from" label="发件人地址">
                 <Input placeholder="noreply@example.com" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="mail_from_name" label="发件人名称">
                 <Input placeholder="招聘系统" />
               </Form.Item>
@@ -432,32 +433,35 @@ const MailSettingsPage: React.FC = () => {
             <span>邮箱简历同步</span>
           </Space>
         }
-        extra={
+      >
+        <ResponsiveToolbar
+          actions={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={() => { fetchConfigs(); fetchLogs(); fetchLogsStats(); }}>刷新</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenAdd}>添加邮箱</Button>
-          </Space>
-        }
-      >
+          </Space>}
+        >
+          <span />
+        </ResponsiveToolbar>
         {/* 统计信息 */}
         {logsStats && (
           <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card size="small">
                 <Statistic title="总同步次数" value={logsStats.totalCount} prefix={<SyncOutlined />} />
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card size="small">
                 <Statistic title="成功" value={logsStats.successCount} valueStyle={{ color: '#52c41a' }} prefix={<CheckCircleOutlined />} />
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card size="small">
                 <Statistic title="失败" value={logsStats.failedCount} valueStyle={{ color: '#ff4d4f' }} prefix={<CloseCircleOutlined />} />
               </Card>
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Card size="small">
                 <Statistic title="上次同步" value={logsStats.lastScanAt ? new Date(logsStats.lastScanAt).toLocaleString('zh-CN') : '无'} />
               </Card>
@@ -486,7 +490,7 @@ const MailSettingsPage: React.FC = () => {
                   style={{ marginBottom: 8, borderLeft: config.enabled ? '3px solid #52c41a' : '3px solid #d9d9d9' }}
                 >
                   <Row align="middle" gutter={16}>
-                    <Col span={1}>
+                    <Col xs={24} sm={2} md={1}>
                       <Checkbox
                         checked={selectedConfigIds.includes(config.id)}
                         onChange={(e) => {
@@ -498,13 +502,13 @@ const MailSettingsPage: React.FC = () => {
                         }}
                       />
                     </Col>
-                    <Col span={5}>
+                    <Col xs={24} sm={10} md={5}>
                       <Space>
                         <MailOutlined />
                         <Text strong>{config.emailAccount}</Text>
                       </Space>
                     </Col>
-                    <Col span={3}>
+                    <Col xs={24} sm={6} md={3}>
                       <Tag color={config.enabled ? 'green' : 'default'}>
                         {config.enabled ? '已启用' : '已停用'}
                       </Tag>
@@ -514,17 +518,17 @@ const MailSettingsPage: React.FC = () => {
                         <Tag color="warning" style={{ marginLeft: 4 }}>未配置密码</Tag>
                       )}
                     </Col>
-                    <Col span={4}>
+                    <Col xs={24} sm={8} md={4}>
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         IMAP: {config.imapHost}:{config.imapPort}
                       </Text>
                     </Col>
-                    <Col span={3}>
+                    <Col xs={24} sm={8} md={3}>
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         扫描间隔: {config.scanMinutes}分钟
                       </Text>
                     </Col>
-                    <Col span={3}>
+                    <Col xs={24} sm={8} md={3}>
                       {isSyncing ? (
                         <Space>
                           <LoadingOutlined />
@@ -540,7 +544,7 @@ const MailSettingsPage: React.FC = () => {
                         </Text>
                       ) : null}
                     </Col>
-                    <Col span={5}>
+                    <Col xs={24} sm={24} md={5}>
                       <Space size="small">
                         <Button
                           size="small"
@@ -612,7 +616,8 @@ const MailSettingsPage: React.FC = () => {
         ) : logs.length === 0 ? (
           <Empty description="暂无同步记录" />
         ) : (
-          <Table
+          <TableViewport>
+            <Table
             dataSource={logs}
             rowKey="id"
             size="small"
@@ -684,12 +689,13 @@ const MailSettingsPage: React.FC = () => {
                 ),
               },
             ]}
-          />
+            />
+          </TableViewport>
         )}
       </Card>
 
       {/* 添加/编辑配置弹窗 */}
-      <Modal
+      <ResponsiveModal
         title={editingConfig ? '编辑邮箱配置' : '添加邮箱'}
         open={configModalOpen}
         onOk={handleSaveConfig}
@@ -718,7 +724,7 @@ const MailSettingsPage: React.FC = () => {
             />
           </Form.Item>
           <Row gutter={16}>
-            <Col span={16}>
+            <Col xs={24} sm={16}>
               <Form.Item
                 name="imapHost"
                 label="IMAP 服务器"
@@ -727,7 +733,7 @@ const MailSettingsPage: React.FC = () => {
                 <Input placeholder="imap.feishu.cn" />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item
                 name="imapPort"
                 label="端口"
@@ -755,7 +761,7 @@ const MailSettingsPage: React.FC = () => {
             <Input placeholder="可选，留空则自动匹配" />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };

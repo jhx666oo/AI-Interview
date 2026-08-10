@@ -12,6 +12,8 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import dayjs from 'dayjs';
+import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -198,10 +200,10 @@ const ProbationList: React.FC = () => {
   return (
     <div>
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}><Card><Statistic title="试用总数" value={data.length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="试用中" value={data.filter(r => r.result === 'pending').length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="已转正" value={data.filter(r => r.result === 'confirmed').length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="未通过" value={data.filter(r => r.result === 'terminated').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="试用总数" value={data.length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="试用中" value={data.filter(r => r.result === 'pending').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="已转正" value={data.filter(r => r.result === 'confirmed').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="未通过" value={data.filter(r => r.result === 'terminated').length} /></Card></Col>
       </Row>
       <Card title={<span><CheckCircleOutlined /> 试用期与转正管理</span>}
         extra={<Space>
@@ -214,20 +216,20 @@ const ProbationList: React.FC = () => {
             <Button size="small" danger onClick={handleBatchDelete}>批量删除</Button>
           </div>
         )}
-        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+        <TableViewport><Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1500 }} pagination={false}
-          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }} />
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }} /></TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
-      <Modal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
+      <ResponsiveModal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} confirmLoading={submitting} width={560} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="employee_name" label="员工姓名" rules={[{ required: true, message: '请输入姓名' }]}>
             <Input />
           </Form.Item>
           <Row gutter={16}>
-            <Col span={12}><Form.Item name="employee_id" label="工号"><Input placeholder="如：EMP001" /></Form.Item></Col>
-            <Col span={12}><Form.Item name="probation_months" label="试用期（月）"><InputNumber min={1} max={12} style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="employee_id" label="工号"><Input placeholder="如：EMP001" /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="probation_months" label="试用期（月）"><InputNumber min={1} max={12} style={{ width: '100%' }} /></Form.Item></Col>
           </Row>
           <Form.Item name="probation_start" label="试用开始日期"><DatePicker style={{ width: '100%' }} /></Form.Item>
           {editing && (<>
@@ -236,14 +238,14 @@ const ProbationList: React.FC = () => {
               <Select>{Object.entries(resultConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}</Select>
             </Form.Item>
             <Row gutter={16}>
-              <Col span={12}><Form.Item name="new_title" label="转正后职位"><Input /></Form.Item></Col>
-              <Col span={12}><Form.Item name="salary_adjustment" label="薪资调整（%）"><InputNumber style={{ width: '100%' }} placeholder="如：10" /></Form.Item></Col>
+              <Col xs={24} sm={12} md={8}><Form.Item name="new_title" label="转正后职位"><Input /></Form.Item></Col>
+              <Col xs={24} sm={12} md={8}><Form.Item name="salary_adjustment" label="薪资调整（%）"><InputNumber style={{ width: '100%' }} placeholder="如：10" /></Form.Item></Col>
             </Row>
             <Form.Item name="notes" label="备注"><TextArea rows={2} /></Form.Item>
           </>)}
         </Form>
-      </Modal>
-      <Modal title="添加月度评估" open={reviewVisible} onCancel={() => setReviewVisible(false)}
+      </ResponsiveModal>
+      <ResponsiveModal title="添加月度评估" open={reviewVisible} onCancel={() => setReviewVisible(false)}
         onOk={handleReviewSubmit} confirmLoading={reviewSubmitting} width={520} destroyOnHidden>
         <Form form={reviewForm} layout="vertical">
           <Form.Item name="month" label="评估月份" rules={[{ required: true, message: '请输入月份' }]}>
@@ -255,7 +257,7 @@ const ProbationList: React.FC = () => {
           <Form.Item name="issues" label="存在问题"><TextArea rows={2} placeholder="需要改进的方面" /></Form.Item>
           <Form.Item name="suggestion" label="导师建议"><TextArea rows={2} /></Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
       <Drawer size="large" title="试用期详情" open={detailVisible} onClose={() => setDetailVisible(false)}>
         {current && (<>
           <Descriptions column={1} bordered style={{ marginBottom: 24 }}>
@@ -287,7 +289,7 @@ const ProbationList: React.FC = () => {
         </>)}
       </Drawer>
 
-      <Modal
+      <ResponsiveModal
         title="AI试用期评估"
         open={aiAssessVisible}
         onCancel={() => setAiAssessVisible(false)}
@@ -297,7 +299,7 @@ const ProbationList: React.FC = () => {
         <div style={{ whiteSpace: 'pre-wrap', maxHeight: '60vh', overflowY: 'auto' }}>
           {aiAssessResult}
         </div>
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };

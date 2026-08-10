@@ -8,9 +8,10 @@ import {
   MinusCircleOutlined, AppstoreOutlined, UserOutlined, SearchOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 import { WEIGHTED_GATE_DIMENSIONS, WEIGHTED_SCORING_DIMENSIONS, WEIGHTED_SCREENING_DEFAULT_WEIGHTS } from '../../utils/resumeEvaluation';
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 const { TextArea } = Input;
 
 interface Dimension {
@@ -271,35 +272,27 @@ const CapabilityDimensions: React.FC = () => {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
+      <PageHeader title="能力维度管理" />
       <Card
-        title={
-          <Space>
-            <AppstoreOutlined />
-            <span>能力维度管理</span>
-          </Space>
-        }
-        extra={
-          <Space>
+        style={{ borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+      >
+        <ResponsiveToolbar
+          actions={<Space>
+            <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>刷新</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新增</Button>
+          </Space>}
+        >
             <Input
               placeholder="搜索岗位名称"
               prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
               value={search}
               onChange={e => setSearch(e.target.value)}
               onPressEnter={fetchData}
-              style={{ width: 200 }}
+              style={{ width: '100%', maxWidth: 280 }}
               allowClear
             />
-            <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
-              刷新
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-              新增
-            </Button>
-          </Space>
-        }
-        style={{ borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
-      >
+        </ResponsiveToolbar>
         {selectedRowKeys.length > 0 && (
           <div style={{ marginBottom: 16, padding: '8px 16px', background: '#e6f7ff', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>已选 <strong>{selectedRowKeys.length}</strong> 项</span>
@@ -315,7 +308,8 @@ const CapabilityDimensions: React.FC = () => {
           </Text>
         </div>
 
-        <Table
+        <TableViewport>
+          <Table
           dataSource={data}
           columns={columns}
           rowKey="id"
@@ -327,10 +321,11 @@ const CapabilityDimensions: React.FC = () => {
             showSizeChanger: false,
             showTotal: (total) => `共 ${total} 条`,
           }}
-        />
+          />
+        </TableViewport>
       </Card>
 
-      <Modal
+      <ResponsiveModal
         title={editing ? '编辑能力维度' : '新增能力维度'}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
@@ -441,7 +436,7 @@ const CapabilityDimensions: React.FC = () => {
             />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };
