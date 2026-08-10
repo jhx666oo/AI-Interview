@@ -333,11 +333,13 @@ function isUtcTimestampOnReportDate(value: string | null | undefined, reportDate
 }
 
 function isApproved(resume: DailyReportResumeRecord): boolean {
+  if (resume.approved_at && !resume.rejected_at) return true;
   const result = normalizeStatus(resume.screening_result || resume.status);
   return APPROVED_RESULTS.has(result);
 }
 
 function isRejected(resume: DailyReportResumeRecord): boolean {
+  if (resume.rejected_at && !resume.approved_at) return true;
   const result = normalizeStatus(resume.screening_result || resume.status);
   return REJECTED_RESULTS.has(result);
 }

@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS resumes (
   other_position_matches TEXT,
   reject_reason_category TEXT,
   reject_reason_detail TEXT,
+  approved_at TEXT,
   rejected_at TEXT,
   rejected_by TEXT,
   -- MinerU OCR 接入扩展字段
@@ -415,6 +416,7 @@ CREATE TABLE IF NOT EXISTS daily_reports (
   total_onboarding INTEGER DEFAULT 0,
   ai_summary TEXT,
   stats TEXT,
+  candidate_details TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );

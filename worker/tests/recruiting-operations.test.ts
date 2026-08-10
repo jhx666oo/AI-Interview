@@ -261,6 +261,7 @@ describe('bulk talent-pool approval', () => {
     });
     expect(db.updatedIds).toEqual(['resume-1']);
     expect(db.operationLogIds).toEqual(['resume-1']);
+    expect(db.rows['resume-1'].approved_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 });
 
@@ -585,7 +586,7 @@ function createSnapshotDb() {
 }
 
 function createApprovalDb() {
-  const rows: Record<string, { id: string; status: string; stage: string }> = {
+  const rows: Record<string, { id: string; status: string; stage: string; approved_at?: string }> = {
     'resume-1': { id: 'resume-1', status: 'pending_review', stage: 'screening' },
     'resume-2': { id: 'resume-2', status: 'approved', stage: 'talent_pool' },
   };
@@ -595,6 +596,7 @@ function createApprovalDb() {
   return {
     get updatedIds() { return updatedIds; },
     get operationLogIds() { return operationLogIds; },
+    get rows() { return rows; },
     prepare(sql: string) {
       return {
         bind(...values: unknown[]) {
@@ -611,6 +613,11 @@ function createApprovalDb() {
                 if (!rows[id]) return { meta: { changes: 0 } };
                 rows[id] = { ...rows[id], status: 'approved', stage: 'talent_pool' };
                 updatedIds.push(id);
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes('UPDATE resumes SET approved_at = ?')) {
+                const id = values.at(-1) as string;
+                rows[id] = { ...rows[id], approved_at: values[0] as string };
                 return { meta: { changes: 1 } };
               }
               if (sql.includes('INSERT INTO operation_logs')) {

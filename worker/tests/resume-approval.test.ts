@@ -7,6 +7,7 @@ function createApprovalDb() {
     candidate_name: '测试候选人',
     status: 'pending_review',
     stage: 'screening',
+    approved_at: '',
   };
 
   return {
@@ -28,6 +29,10 @@ function createApprovalDb() {
                 resume = { ...resume, status: 'approved', stage: 'talent_pool' };
                 return { meta: { changes: 1 } };
               }
+              if (sql.includes('UPDATE resumes SET approved_at = ?')) {
+                resume = { ...resume, approved_at: values[0] as string };
+                return { meta: { changes: 1 } };
+              }
               return { meta: { changes: 1 } };
             },
           };
@@ -46,6 +51,7 @@ describe('single resume approval', () => {
         id: '9b56d629-3eea-4d25-bbb8-4f2697f6ac79',
         status: 'approved',
         stage: 'talent_pool',
+        approved_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
       });
   });
 });

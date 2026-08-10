@@ -20,6 +20,16 @@ import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror
 import { buildInterviewReminderView, deliverInterviewReminder } from './feishu-notifications/interview-reminder';
 import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveReminderInterviewer } from './feishu-notifications/reminder-source';
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
+import {
+  assertDailyReportDate,
+  generateAndPersistDailyReport,
+  generatePersistAndDeliverDailyReport,
+  getShanghaiReportDate,
+  recordResumeDecisionTimestamp,
+  sendStoredDailyReport,
+  type DailyReportGenerationDependencies,
+} from './daily-reports/service';
+import type { DailyReportSnapshot } from './daily-reports/report';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
@@ -900,7 +910,11 @@ export function normalizeResumeEditPayload(body: Record<string, unknown>): Recor
  * 按负责人分组查询当日通过 AI 初筛的候选人明细
  * 用于日报表格展示和飞书卡片发送
  */
-async function queryDailyCandidatesByOwner(db: D1Database, reportDate?: string): Promise<{
+async function queryDailyCandidatesByOwner(
+  db: D1Database,
+  reportDate: string,
+  allowLegacyCreatedAtFallback = false,
+): Promise<{
   groups: Array<{
     responsible_person: string;
     candidates: Array<{
@@ -917,22 +931,45 @@ async function queryDailyCandidatesByOwner(db: D1Database, reportDate?: string):
   }>;
   stats: { total: number; by_person: Record<string, number> };
 }> {
-  const dateFilter = reportDate 
-    ? `AND datetime(r.created_at) >= datetime('${reportDate} 00:00:00') AND datetime(r.created_at) <= datetime('${reportDate} 23:59:59')`
-    : '';
+  const date = assertDailyReportDate(reportDate);
+  const utcStartMs = Date.parse(`${date}T00:00:00.000+08:00`);
+  const utcStart = new Date(utcStartMs).toISOString();
+  const utcEnd = new Date(utcStartMs + 86_400_000).toISOString();
+  const candidateLimit = 1_000;
 
   // 查询通过 AI 初筛的简历，关联负责人
-  const sql = `
+  const selectSql = `
     SELECT r.id, r.candidate_name, r.mapped_position, r.position_applied, r.screening_result,
            r.ai_evaluation, r.parsed_data, r.gender, r.education, r.birthday, r.created_at,
-           COALESCE(pm.responsible_person, '') as responsible_person
+           COALESCE(p.responsible_person, pm.responsible_person, '') as responsible_person
     FROM resumes r
+    LEFT JOIN positions p ON r.position_id = p.id
     LEFT JOIN position_mappings pm ON (r.mapped_position = pm.mapped_name OR r.position_applied = pm.raw_name)
-    WHERE r.screening_result = '通过' ${dateFilter}
-    ORDER BY r.created_at DESC
   `;
-  const result = await db.prepare(sql).all();
+  let result;
+  try {
+    result = await db.prepare(`${selectSql}
+      WHERE datetime(r.approved_at) >= datetime(?) AND datetime(r.approved_at) < datetime(?)
+      ORDER BY r.approved_at DESC
+      LIMIT ${candidateLimit + 1}
+    `).bind(utcStart, utcEnd).all();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/no such column:\s*(?:r\.)?approved_at/i.test(message)) throw error;
+    if (!allowLegacyCreatedAtFallback) {
+      return { groups: [], stats: { total: 0, by_person: {} } };
+    }
+    result = await db.prepare(`${selectSql}
+      WHERE r.screening_result = '通过'
+        AND datetime(r.created_at) >= datetime(?) AND datetime(r.created_at) < datetime(?)
+      ORDER BY r.created_at DESC
+      LIMIT ${candidateLimit + 1}
+    `).bind(utcStart, utcEnd).all();
+  }
   const rows = result.results || [];
+  if (rows.length > candidateLimit) {
+    throw new Error(`daily report candidate details exceeds hard limit ${candidateLimit}`);
+  }
 
   const groupMap = new Map<string, any[]>();
   const personOrder = ['何雨菱', '杜雁玲', '魏秋柠'];
@@ -1104,13 +1141,15 @@ export async function approveBatch(db: D1Database, resumeIds: string[], actor = 
         continue;
       }
 
+      const decisionAt = now();
       const update = await db.prepare("UPDATE resumes SET status = 'approved', stage = 'talent_pool', updated_at = ? WHERE id = ?")
-        .bind(now(), id)
+        .bind(decisionAt, id)
         .run();
       if (!update.meta.changes) {
         result.skipped.push({ id, reason: 'not_found' });
         continue;
       }
+      await recordResumeDecisionTimestamp(db, id, 'approved', decisionAt);
 
       result.approved.push(id);
       try {
@@ -6554,14 +6593,17 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
 
 app.post('/api/resumes/:id/confirm-rejection', authMiddleware, async (c) => {
   const id = c.req.param('id');
-  await c.env.DB.prepare("UPDATE resumes SET status = 'rejected', stage = 'rejected', rejected_at = ? WHERE id = ?").bind(now(), id).run();
+  const decisionAt = now();
+  await c.env.DB.prepare("UPDATE resumes SET status = 'rejected', stage = 'rejected', updated_at = ? WHERE id = ?").bind(decisionAt, id).run();
+  await recordResumeDecisionTimestamp(c.env.DB, id, 'rejected', decisionAt);
   const row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
 });
 
 app.post('/api/resumes/:id/override-rejection', authMiddleware, async (c) => {
   const id = c.req.param('id');
-  await c.env.DB.prepare("UPDATE resumes SET status = 'pending_review', stage = 'screening', rejected_at = NULL WHERE id = ?").bind(id).run();
+  await c.env.DB.prepare("UPDATE resumes SET status = 'pending_review', stage = 'screening', updated_at = ? WHERE id = ?").bind(now(), id).run();
+  await recordResumeDecisionTimestamp(c.env.DB, id, 'reset');
   const row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
 });
@@ -6610,7 +6652,9 @@ app.post('/api/resumes/batch-approve-to-talent-pool', authMiddleware, requireRol
 
 app.post('/api/resumes/:id/reject-from-screening', authMiddleware, async (c) => {
   const id = c.req.param('id');
-  await c.env.DB.prepare("UPDATE resumes SET status = 'rejected', stage = 'rejected', updated_at = ? WHERE id = ?").bind(now(), id).run();
+  const decisionAt = now();
+  await c.env.DB.prepare("UPDATE resumes SET status = 'rejected', stage = 'rejected', updated_at = ? WHERE id = ?").bind(decisionAt, id).run();
+  await recordResumeDecisionTimestamp(c.env.DB, id, 'rejected', decisionAt);
   return c.json({ status: 'rejected' });
 });
 
@@ -6618,6 +6662,7 @@ app.post('/api/resumes/:id/reject-from-screening', authMiddleware, async (c) => 
 app.post('/api/resumes/:id/reset-to-pending', authMiddleware, async (c) => {
   const id = c.req.param('id');
   await c.env.DB.prepare("UPDATE resumes SET status = 'pending_screening', stage = 'new', screening_result = '', updated_at = ? WHERE id = ?").bind(now(), id).run();
+  await recordResumeDecisionTimestamp(c.env.DB, id, 'reset');
   return c.json({ status: 'pending_screening' });
 });
 
@@ -6645,7 +6690,9 @@ app.post('/api/resumes/:id/hr-decision', authMiddleware, async (c) => {
   const decision = body.decision || 'approve';
   let status = 'pending_interview', stage = 'interview';
   if (decision === 'reject') { status = 'rejected'; stage = 'rejected'; }
-  await c.env.DB.prepare('UPDATE resumes SET status = ?, stage = ?, hr_review = ? WHERE id = ?').bind(status, stage, body.comment || '', id).run();
+  const decisionAt = now();
+  await c.env.DB.prepare('UPDATE resumes SET status = ?, stage = ?, hr_review = ?, updated_at = ? WHERE id = ?').bind(status, stage, body.comment || '', decisionAt, id).run();
+  await recordResumeDecisionTimestamp(c.env.DB, id, decision === 'reject' ? 'rejected' : 'approved', decisionAt);
   const row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
 });
@@ -7952,7 +7999,10 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE resumes ADD COLUMN three_layer_match TEXT DEFAULT '{}'",
     "ALTER TABLE resumes ADD COLUMN feishu_file_token TEXT DEFAULT ''",
     "ALTER TABLE resumes ADD COLUMN uploaded_at TEXT DEFAULT ''",
+    "ALTER TABLE resumes ADD COLUMN approved_at TEXT",
     ...RESUME_LIST_COMPATIBILITY_MIGRATIONS,
+    "ALTER TABLE daily_reports ADD COLUMN total_offers INTEGER DEFAULT 0",
+    "ALTER TABLE daily_reports ADD COLUMN candidate_details TEXT",
     // v2.0 - 入职管理增强
     "ALTER TABLE onboarding_records ADD COLUMN status_transitions TEXT DEFAULT '[]'",
     "ALTER TABLE onboarding_records ADD COLUMN probation_record_id TEXT DEFAULT ''",
@@ -8460,9 +8510,11 @@ app.post('/api/resume-screening/:id/approve', authMiddleware, async (c) => {
   ).run();
 
   // Update screening record
+  const reviewedAt = now();
   await c.env.DB.prepare(
     'UPDATE resume_screening_queue SET status = ?, ai_result = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ?'
-  ).bind('approved', 'shortlisted', user.id, now(), now(), id).run();
+  ).bind('approved', 'shortlisted', user.id, reviewedAt, reviewedAt, id).run();
+  await recordResumeDecisionTimestamp(c.env.DB, record.resume_id, 'approved', reviewedAt);
 
   // 写入飞书多维表格 + 推群（异步）
   c.executionCtx.waitUntil((async () => {
@@ -8508,9 +8560,11 @@ app.post('/api/resume-screening/:id/reject', authMiddleware, async (c) => {
   if (!record) return c.json({ detail: 'Not found' }, 404);
   if (record.status !== 'pending') return c.json({ detail: 'Already processed' }, 400);
 
+  const reviewedAt = now();
   await c.env.DB.prepare(
     'UPDATE resume_screening_queue SET status = ?, ai_result = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ? WHERE id = ?'
-  ).bind('rejected', 'rejected', user.id, now(), now(), id).run();
+  ).bind('rejected', 'rejected', user.id, reviewedAt, reviewedAt, id).run();
+  await recordResumeDecisionTimestamp(c.env.DB, record.resume_id, 'rejected', reviewedAt);
 
   const row = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(id).first();
   return c.json(transformRow(row));
@@ -8563,65 +8617,38 @@ app.get('/api/daily-reports', authMiddleware, async (c) => {
   return c.json(result.results.map(transformRow));
 });
 
-app.post('/api/daily-reports/generate', authMiddleware, async (c) => {
-  const body = await c.req.json().catch(() => ({})) || {};
-  const reportType = body.report_type || 'progress';
-  const reportDate = body.report_date || new Date().toISOString().split('T')[0];
-
-  // Gather stats
-  const totalResumes = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM resumes').first();
-  const totalScreening = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM resume_screening_queue WHERE status = 'pending'").first();
-  const totalApproved = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM resume_screening_queue WHERE status = 'approved'").first();
-  const totalRejected = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM resume_screening_queue WHERE status = 'rejected'").first();
-  const totalInterviews = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM interviews WHERE status IN ('scheduled','completed')").first();
-  const totalOnboarding = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM onboarding_records WHERE status = 'in_progress'").first();
-  const openRequisitions = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM job_requisitions WHERE status = 'open'").first();
-
-  const stats = {
-    report_date: reportDate,
-    open_requisitions: openRequisitions?.cnt || 0,
-    total_resumes: totalResumes?.cnt || 0,
-    pending_screening: totalScreening?.cnt || 0,
-    approved_candidates: totalApproved?.cnt || 0,
-    rejected_candidates: totalRejected?.cnt || 0,
-    active_interviews: totalInterviews?.cnt || 0,
-    onboarding_count: totalOnboarding?.cnt || 0,
+function dailyReportGenerationDependencies(env: Env): DailyReportGenerationDependencies {
+  return {
+    loadCandidateDetails: (reportDate) => queryDailyCandidatesByOwner(env.DB, reportDate),
+    summarize: async (snapshot: DailyReportSnapshot) => {
+      const prompt = await getAIPrompt(env, 'generate_daily_report', {
+        system: '你是招聘数据分析专家。仅根据去标识化聚合数据输出100至150个中文字符，说明推进量最高负责人、最大堵点和一条次日行动。不要输出候选人信息。',
+        user: '报告日期：{report_date}\n去标识化聚合快照：{stats_data}',
+      });
+      const aggregateOnlyInput = prompt.user
+        .replace('{report_date}', snapshot.reportDate)
+        .replace('{stats_data}', JSON.stringify(snapshot));
+      return await callAI(env, prompt.system, aggregateOnlyInput);
+    },
   };
+}
 
-  // Generate AI summary
-  let aiSummary = '';
+app.post('/api/daily-reports/generate', authMiddleware, async (c) => {
   try {
-    const dailyPrompt = await getAIPrompt(c.env, 'generate_daily_report', {
-      system: '你是招聘数据分析专家。根据招聘统计数据生成一份简洁的日报摘要（中文），包含：整体进展概述、关键指标分析、风险提示、明日建议。控制在300字以内。',
-      user: '日期：{report_date}\n统计数据：{stats_data}'
-    });
-    const dailyUserText = dailyPrompt.user
-      .replace('{report_date}', reportDate)
-      .replace('{stats_data}', JSON.stringify(stats, null, 2));
-    aiSummary = await callAI(c.env, dailyPrompt.system, dailyUserText);
+    const body = await c.req.json().catch(() => ({})) || {};
+    const reportDate = body.report_date === undefined
+      ? getShanghaiReportDate()
+      : assertDailyReportDate(body.report_date);
+    const report = await generateAndPersistDailyReport(
+      c.env,
+      reportDate,
+      dailyReportGenerationDependencies(c.env),
+    );
+    return c.json(transformRow(report));
   } catch (e: any) {
-    console.error('[daily-report] AI summary failed:', e?.message, e?.stack);
-    aiSummary = '(AI摘要生成失败)';
+    const status = /report_date must be/.test(e?.message || '') ? 400 : 500;
+    return c.json({ detail: `生成日报失败: ${e?.message || '未知错误'}` }, status as 400 | 500);
   }
-
-  const content = JSON.stringify(stats);
-  const id = uuid();
-
-  await c.env.DB.prepare(
-    `INSERT INTO daily_reports (id, report_date, total_resumes, pending_screening, approved, rejected, total_interviews, total_onboarding, ai_summary, stats, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-  ).bind(id, reportDate,
-    (stats as any).total_resumes || 0,
-    (stats as any).pending_screening || 0,
-    (stats as any).approved_candidates || 0,
-    (stats as any).rejected_candidates || 0,
-    (stats as any).active_interviews || 0,
-    (stats as any).onboarding_count || 0,
-    aiSummary, content, now()
-  ).run();
-
-  const row = await c.env.DB.prepare('SELECT * FROM daily_reports WHERE id = ?').bind(id).first();
-  return c.json(transformRow(row));
 });
 
 app.delete('/api/daily-reports/:id', authMiddleware, async (c) => {
@@ -8647,7 +8674,7 @@ app.get('/api/daily-reports/:id/details', authMiddleware, async (c) => {
     
     // 没有缓存则实时查询
     const reportDate = r.report_date || '';
-    const detail = await queryDailyCandidatesByOwner(c.env.DB, reportDate);
+    const detail = await queryDailyCandidatesByOwner(c.env.DB, reportDate, true);
     return c.json(detail);
   } catch (e: any) {
     return c.json({ detail: '获取日报详情失败: ' + e.message }, 500);
@@ -8666,58 +8693,21 @@ app.post('/api/daily-reports/:id/send', authMiddleware, async (c) => {
     const row = await c.env.DB.prepare('SELECT * FROM daily_reports WHERE id = ?').bind(c.req.param('id')).first();
     if (!row) return c.json({ detail: '日报不存在' }, 404);
 
-    const r: any = transformRow(row);
-    // stats 列存 JSON 数据，ai_summary 列存 AI 摘要
-    let statsData: any = {};
-    try { if (r.stats) statsData = typeof r.stats === 'string' ? JSON.parse(r.stats) : r.stats; } catch {}
-    const aiSummary = r.ai_summary || '(无AI摘要)';
-
-    const cardContent = {
-      config: { wide_screen_mode: true },
-      header: {
-        title: { tag: 'plain_text', content: `📊 招聘日报 · ${r.report_date || '-'}` },
-        template: 'blue',
-      },
-      elements: [
-        {
-          tag: 'div',
-          text: {
-            tag: 'lark_md',
-            content: [
-              `**报告日期**：${r.report_date || '-'}`,
-              `**简历总数**：${r.total_resumes ?? '-'}`,
-              `**待筛选**：${r.pending_screening ?? '-'}`,
-              `**已通过**：${r.approved ?? '-'}`,
-              `**已拒绝**：${r.rejected ?? '-'}`,
-              `**面试中**：${r.total_interviews ?? '-'}`,
-              `**入职中**：${r.total_onboarding ?? '-'}`,
-              '',
-              `**📝 AI 摘要**`,
-              aiSummary.length > 500 ? aiSummary.slice(0, 500) + '...' : aiSummary,
-            ].join('\n'),
-          },
-        },
-        {
-          tag: 'hr',
-        },
-        {
-          tag: 'note',
-          elements: [
-            { tag: 'plain_text', content: `AI 智能招聘系统 · ${new Date().toLocaleString('zh-CN')}` },
-          ],
-        },
-      ],
-    };
-
-    const token = await getFeishuToken(c.env);
-
-    if (target_type === 'chat') {
-      await sendFeishuMessageToChat(token, target_id, cardContent);
-    } else if (target_type === 'user') {
-      await sendFeishuMessageWithFallback(c.env, c.get('user')?.email, target_id, cardContent);
-    } else {
+    if (target_type !== 'chat' && target_type !== 'user') {
       return c.json({ detail: '不支持的发送类型' }, 400);
     }
+    await sendStoredDailyReport(
+      row,
+      { type: target_type, id: target_id },
+      async (target, card) => {
+        if (target.type === 'chat') {
+          const token = await getFeishuToken(c.env);
+          await sendFeishuMessageToChat(token, target.id, card);
+          return;
+        }
+        await sendFeishuMessageWithFallback(c.env, c.get('user')?.email, target.id, card);
+      },
+    );
 
     return c.json({ ok: true, detail: '发送成功' });
   } catch (e: any) {
@@ -9683,81 +9673,29 @@ app.use('/api/cron/*', async (c, next) => {
  */
 app.post('/api/cron/daily-report', async (c) => {
   try {
-    const today = new Date();
-    const dateStr = today.toISOString().split('T')[0];
-
-    // 统计今日数据
-    const todayStart = `${dateStr} 00:00:00`;
-    const todayEnd = `${dateStr} 23:59:59`;
-
-    const newCount = await c.env.DB.prepare(
-      "SELECT COUNT(*) as c FROM resume_screening_queue WHERE created_at >= ? AND created_at <= ?"
-    ).bind(todayStart, todayEnd).first() as any;
-
-    const approvedCount = await c.env.DB.prepare(
-      "SELECT COUNT(*) as c FROM resume_screening_queue WHERE status = 'approved' AND updated_at >= ? AND updated_at <= ?"
-    ).bind(todayStart, todayEnd).first() as any;
-
-    const rejectedCount = await c.env.DB.prepare(
-      "SELECT COUNT(*) as c FROM resume_screening_queue WHERE status = 'rejected' AND updated_at >= ? AND updated_at <= ?"
-    ).bind(todayStart, todayEnd).first() as any;
-
-    const pendingCount = await c.env.DB.prepare(
-      "SELECT COUNT(*) as c FROM resume_screening_queue WHERE status = 'pending'"
-    ).first() as any;
-
-    const talentCount = await c.env.DB.prepare(
-      "SELECT COUNT(*) as c FROM talent_pool"
-    ).first() as any;
-
-    // 推送到招聘群
+    const reportDate = getShanghaiReportDate();
     const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
-    if (chatId) {
-      const token = await getFeishuToken(c.env);
-      const cardContent = {
-        config: { wide_screen_mode: true },
-        header: {
-          title: { tag: 'plain_text', content: `📊 招聘日报 ${dateStr}` },
-          template: 'blue'
-        },
-        elements: [
-          {
-            tag: 'div',
-            text: {
-              tag: 'lark_md',
-              content: [
-                `📅 **日期：** ${dateStr}`,
-                '',
-                `**📋 今日数据**`,
-                `新进初筛：**${newCount?.c || 0}** 人`,
-                `已入库：**${approvedCount?.c || 0}** 人`,
-                `已淘汰：**${rejectedCount?.c || 0}** 人`,
-                '',
-                `**📦 累计数据**`,
-                `待审核：**${pendingCount?.c || 0}** 人`,
-                `人才库总数：**${talentCount?.c || 0}** 人`,
-              ].join('\n')
-            }
-          },
-          { tag: 'hr' },
-          {
-            tag: 'note',
-            elements: [{ tag: 'plain_text', content: `系统自动生成 | ${today.toLocaleString('zh-CN')}` }]
-          }
-        ]
-      };
-      await sendFeishuMessageToChat(token, chatId, cardContent);
-    }
+    const report = await generatePersistAndDeliverDailyReport(
+      c.env,
+      reportDate,
+      { type: 'chat', id: chatId },
+      dailyReportGenerationDependencies(c.env),
+      async (target, card) => {
+        const token = await getFeishuToken(c.env);
+        await sendFeishuMessageToChat(token, target.id, card);
+      },
+    );
 
     return c.json({
       ok: true,
       data: {
-        date: dateStr,
-        new: newCount?.c || 0,
-        approved: approvedCount?.c || 0,
-        rejected: rejectedCount?.c || 0,
-        pending: pendingCount?.c || 0,
-        talentPool: talentCount?.c || 0,
+        id: report.id,
+        date: report.snapshot.reportDate,
+        new: report.snapshot.totals.todayNew,
+        approved: report.snapshot.totals.todayApproved,
+        rejected: report.snapshot.totals.todayRejected,
+        pending: report.snapshot.totals.pending,
+        totalResumes: report.snapshot.totals.allTimeResumes,
       }
     });
   } catch (err: any) {
