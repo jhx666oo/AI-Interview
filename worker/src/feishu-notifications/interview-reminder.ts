@@ -46,7 +46,25 @@ function text(...values: unknown[]): string {
 }
 
 function formatInterviewTime(value: unknown): string {
-  if (typeof value !== 'string' && typeof value !== 'number') return EMPTY_VALUE;
+  if (typeof value === 'string') {
+    const localMatch = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?$/);
+    if (localMatch) {
+      const [, year, month, day, hour, minute, second = '00'] = localMatch;
+      const localDate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second)));
+      const isValidLocalTime = localDate.getUTCFullYear() === Number(year)
+        && localDate.getUTCMonth() === Number(month) - 1
+        && localDate.getUTCDate() === Number(day)
+        && localDate.getUTCHours() === Number(hour)
+        && localDate.getUTCMinutes() === Number(minute)
+        && localDate.getUTCSeconds() === Number(second);
+      return isValidLocalTime ? `${year}-${month}-${day} ${hour}:${minute}` : EMPTY_VALUE;
+    }
+
+    if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim())) return EMPTY_VALUE;
+  } else if (typeof value !== 'number') {
+    return EMPTY_VALUE;
+  }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return EMPTY_VALUE;
 
@@ -78,6 +96,7 @@ function calculateAge(value: unknown, at: Date): number | null {
 }
 
 function list(value: unknown): string[] {
+  if (typeof value === 'string' && value.trim()) return [value.trim()];
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
     .map((item) => item.trim());
@@ -87,7 +106,10 @@ function buildAiAdvice(evaluation: RawRecord): string {
   const advice = [
     text(evaluation.summary),
     text(evaluation.recommendation, evaluation.recommendations),
+    ...list(evaluation.risks).map((point) => `风险点：${point}`),
+    ...list(evaluation.risk).map((point) => `风险点：${point}`),
     ...list(evaluation.risk_points).map((point) => `风险点：${point}`),
+    ...list(evaluation.suggested_questions).map((question) => `建议提问：${question}`),
     ...list(evaluation.interview_questions).map((question) => `建议提问：${question}`),
   ].filter(Boolean).join('\n');
   return advice.slice(0, MAX_ADVICE_LENGTH) || EMPTY_VALUE;
