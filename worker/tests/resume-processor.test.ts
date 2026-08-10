@@ -82,6 +82,58 @@ describe('resume processor', () => {
     expect(updates.at(-1)).toMatchObject({ parse_status: 'ai_screened' });
   });
 
+  it('re-extracts fields when persisted parsed data is only partial', async () => {
+    let fieldCalls = 0;
+    const updates: Record<string, unknown>[] = [];
+    await processResume({ jobId: 'job-1', resumeId: 'resume-1' }, {
+      getResume: async () => ({
+        id: 'resume-1',
+        raw_text: 'candidate resume text',
+        parsed_data: JSON.stringify({ school: 'A大学' }),
+        ai_evaluation: null,
+      }),
+      getText: async () => 'candidate resume text',
+      extractFields: async () => {
+        fieldCalls += 1;
+        return { major: '计算机科学', gender: '女' };
+      },
+      screen: async (_text, fields) => {
+        expect(fields).toMatchObject({ school: 'A大学', major: '计算机科学', gender: '女' });
+        return { weighted_score: 4, screening_result: '通过' };
+      },
+      updateResume: async (_id, update) => { updates.push(update); },
+      setJobStep: async () => undefined,
+    });
+
+    expect(fieldCalls).toBe(1);
+    expect(updates.some((update) => {
+      if (typeof update.parsed_data !== 'string') return false;
+      return JSON.parse(update.parsed_data)._fields_extracted === true;
+    })).toBe(true);
+  });
+
+  it('forces field extraction for an explicit reprocess job', async () => {
+    let fieldCalls = 0;
+    await processResume({ jobId: 'job-1', resumeId: 'resume-1', reprocess: true }, {
+      getResume: async () => ({
+        id: 'resume-1',
+        raw_text: 'candidate resume text',
+        parsed_data: JSON.stringify({ school: 'A大学', _fields_extracted: true }),
+        ai_evaluation: JSON.stringify({ weighted_score: 4 }),
+      }),
+      getText: async () => 'candidate resume text',
+      extractFields: async () => {
+        fieldCalls += 1;
+        return { major: '计算机科学' };
+      },
+      screen: async () => ({ weighted_score: 4, screening_result: '通过' }),
+      updateResume: async () => undefined,
+      setJobStep: async () => undefined,
+    });
+
+    expect(fieldCalls).toBe(1);
+  });
+
   it('persists the queue screening hard-condition result without changing AI evidence', async () => {
     const updates: Record<string, unknown>[] = [];
     await processResume({ jobId: 'job-1', resumeId: 'resume-1' }, {

@@ -27,20 +27,25 @@ function jsonObject(value: string | null): Record<string, unknown> | null {
   }
 }
 
-// 字段提取的真实结果键（与 normalizeResumeFields / extractFields 对齐）。
-// 简历记录里常混有元数据键（source、position_applied、standard_position、_need_ocr 等），
-// 它们不是字段提取结果，不应阻止 AI 重新提取真实字段。
-const EXTRACTED_FIELD_KEYS = [
+function hasExtractedFields(fields: Record<string, unknown> | null): fields is Record<string, unknown> {
+  return fields?._fields_extracted === true;
+}
+
+const LEGACY_FIELD_KEYS = [
   'phone', 'email', 'gender', 'birthday', 'age',
   'highest_degree', 'school', 'major', 'years_of_experience',
   'recent_company', 'current_position', 'skills', 'certifications',
   'self_evaluation', 'work_experience', 'education',
 ];
 
-function hasExtractedFields(fields: Record<string, unknown> | null): fields is Record<string, unknown> {
+function hasAnyLegacyField(fields: Record<string, unknown> | null): boolean {
   if (!fields) return false;
-  // 上传/同步时写入的 { name }、source、岗位名等元数据不是字段提取结果，忽略它们。
-  return EXTRACTED_FIELD_KEYS.some((key) => fields[key] !== null && fields[key] !== undefined && String(fields[key]).trim() !== '');
+  return LEGACY_FIELD_KEYS.some((key) => {
+    const value = fields[key];
+    return Array.isArray(value)
+      ? value.length > 0
+      : value !== null && value !== undefined && String(value).trim() !== '';
+  });
 }
 
 export async function processResume(
@@ -58,11 +63,21 @@ export async function processResume(
     : { raw_text: text, parse_status: 'extracting_fields' });
 
   let fields = jsonObject(resume.parsed_data);
-  if (!hasExtractedFields(fields)) {
+  // 新上传记录只有姓名/岗位元数据，不能把它们当作字段提取完成。
+  // 已有 AI 结果的历史记录保持兼容，只有显式 reprocess 才强制重提字段。
+  const shouldExtractFields = Boolean(message.reprocess)
+    || (!hasExtractedFields(fields)
+      && (!jsonObject(resume.ai_evaluation) || !hasAnyLegacyField(fields)));
+  if (shouldExtractFields) {
     await deps.setJobStep(message.jobId, 'extracting_fields');
-    fields = await deps.extractFields(text, resume);
+    const extractedFields = await deps.extractFields(text, resume);
     // 保留原有元数据（source、position_applied、standard_position 等），仅覆盖真实字段，避免来源信息丢失
-    const mergedFields = { ...(jsonObject(resume.parsed_data) || {}), ...fields };
+    const mergedFields = {
+      ...(jsonObject(resume.parsed_data) || {}),
+      ...extractedFields,
+      _fields_extracted: true,
+    };
+    fields = mergedFields;
     await deps.updateResume(message.resumeId, { parsed_data: JSON.stringify(mergedFields), parse_status: 'screening' });
   }
 
