@@ -3006,6 +3006,54 @@ function parseRequisitionRecord(record: any): any {
   };
 }
 
+function parseJsonArrayField(value: unknown, fallback: unknown[] = [], preserveScalar = true): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return fallback;
+  const text = value.trim();
+  if (!text) return fallback;
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    return preserveScalar ? [value] : fallback;
+  }
+}
+
+function parseJsonObjectField(value: unknown): Record<string, any> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function parseD1RequisitionRow(row: Record<string, any>): Record<string, any> {
+  const item = transformRow(row);
+  item.id = row.id;
+  item.title = row.title || '(未命名岗位)';
+  item.headcount = Number(row.headcount) || 1;
+  item.city = parseJsonArrayField(row.city);
+  item.hard_requirements = parseJsonArrayField(row.hard_requirements, [], false);
+  item.personalized_requirements = parseJsonObjectField(row.personalized_requirements);
+  item.feishu_record_id = row.feishu_record_id || '';
+  return item;
+}
+
+export function filterD1Requisitions(
+  rows: Array<Record<string, any>>,
+  filters: { status?: string; department?: string; responsible_person?: string } = {},
+): Array<Record<string, any>> {
+  return rows.filter((row) => {
+    if (filters.status && row.status !== filters.status) return false;
+    if (filters.department && !String(row.department || '').includes(filters.department)) return false;
+    if (filters.responsible_person && row.responsible_person !== filters.responsible_person) return false;
+    return true;
+  });
+}
+
 function extractScoreFromEval(evalStr: string): number | null {
   if (!evalStr) return null;
   const match = evalStr.match(/匹配[度分][：:]\s*(\d+)/);
@@ -3741,65 +3789,21 @@ registerCrud('workflow-nodes', 'workflow_nodes', { workflow_id: 'eq' });
 registerCrud('workflow-edges', 'workflow_edges', { workflow_id: 'eq' });
 registerCrud('workflow-executions', 'workflow_executions', { workflow_id: 'eq', status: 'eq' });
 
-// ==================== 飞书多维表格 CRUD（替代 D1 CRUD） ====================
+// ==================== 需求管理（D1 主数据源） ====================
 
-// ---- 需求管理：直读飞书招聘任务表 ----
 app.get('/api/requisitions', authMiddleware, async (c) => {
   try {
-    const tableId = getBitableTableId(c.env, 'requisition');
-    const records = await bitableListRecords(c.env, tableId);
-    const items = records.map(parseRequisitionRecord);
-
-    // v2.0: 从 D1 增强数据（多城市、硬性要求、个性化需求）
-    try {
-      const d1Reqs = await c.env.DB.prepare(
-        'SELECT id, feishu_record_id, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, created_at, description, requirements, salary_range, budget, expected_date FROM job_requisitions'
-      ).all();
-      const d1Map = new Map();
-      for (const row of (d1Reqs.results || [])) {
-        d1Map.set(row.feishu_record_id || row.id, row);
-      }
-      for (const item of items) {
-        const d1 = d1Map.get(item.id) || d1Map.get(item.feishu_record_id);
-        if (d1) {
-          try { item.city = JSON.parse(d1.city || '[]'); } catch { item.city = item.city ? [item.city] : []; }
-          try { item.hard_requirements = JSON.parse(d1.hard_requirements || '[]'); } catch { item.hard_requirements = []; }
-          try { item.personalized_requirements = JSON.parse(d1.personalized_requirements || '{}'); } catch { item.personalized_requirements = {}; }
-          if (!item.responsible_person && d1.responsible_person) item.responsible_person = d1.responsible_person;
-          if (!item.hr_interviewer && d1.hr_interviewer) item.hr_interviewer = d1.hr_interviewer;
-          if (!item.biz_interviewer && d1.biz_interviewer) item.biz_interviewer = d1.biz_interviewer;
-          if (!item.final_interviewer && d1.final_interviewer) item.final_interviewer = d1.final_interviewer;
-          item.created_at = d1.created_at || item.created_at || '';
-          if (d1.description) item.description = d1.description;
-          if (d1.requirements) item.requirements = d1.requirements;
-          if (d1.salary_range && !item.salary_range) item.salary_range = d1.salary_range;
-          if (d1.budget != null && !item.budget) item.budget = d1.budget;
-          if (d1.expected_date && !item.expected_date) item.expected_date = d1.expected_date;
-        } else {
-          item.city = item.city ? [item.city] : [];
-          item.hard_requirements = [];
-          item.personalized_requirements = {};
-        }
-      }
-    } catch {
-      // D1 增强失败不影响主流程
-      for (const item of items) {
-        item.city = item.city ? [item.city] : [];
-        item.hard_requirements = [];
-        item.personalized_requirements = {};
-      }
-    }
-
-    // 支持 status / department 筛选
+    const result = await c.env.DB.prepare(
+      'SELECT * FROM job_requisitions ORDER BY datetime(created_at) DESC, rowid DESC'
+    ).all();
     const statusFilter = c.req.query('status');
     const deptFilter = c.req.query('department');
-    let filtered = items;
-    if (statusFilter) filtered = filtered.filter(i => i.status === statusFilter);
-    if (deptFilter) filtered = filtered.filter(i => i.department?.includes(deptFilter));
-
-    // 支持按负责人筛选（全局筛选器，admin 也可用）
     const ownerFilter = c.req.query('responsible_person');
-    if (ownerFilter) filtered = filtered.filter(i => i.responsible_person === ownerFilter);
+    let filtered = filterD1Requisitions((result.results || []) as Array<Record<string, any>>, {
+      status: statusFilter,
+      department: deptFilter,
+      responsible_person: ownerFilter,
+    });
 
     // 非管理员：只显示自己是责任人的需求
     const currentUser = c.get('user');
@@ -3807,47 +3811,21 @@ app.get('/api/requisitions', authMiddleware, async (c) => {
       filtered = filtered.filter(i => i.responsible_person === currentUser.full_name);
     }
 
-    return c.json(filtered);
+    return c.json(filtered.map(parseD1RequisitionRow));
   } catch (e: any) {
-    console.error(`[Bitable] 需求列表失败: ${e.message}`);
-    return c.json({ detail: '读取飞书数据失败: ' + e.message }, 500);
+    console.error(`[Requisition] D1 列表失败: ${e.message}`);
+    return c.json({ detail: '读取需求失败: ' + e.message }, 500);
   }
 });
 
 app.get('/api/requisitions/:id', authMiddleware, async (c) => {
   try {
-    const tableId = getBitableTableId(c.env, 'requisition');
-    const record = await bitableGetRecord(c.env, tableId, c.req.param('id'));
-    if (!record) return c.json({ detail: 'Not found' }, 404);
-    const item = parseRequisitionRecord(record);
-
-    // v2.0: D1 增强
-    try {
-      const d1 = await c.env.DB.prepare(
-        'SELECT city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, description, requirements FROM job_requisitions WHERE id = ? OR feishu_record_id = ?'
-      ).bind(c.req.param('id'), c.req.param('id')).first() as any;
-      if (d1) {
-        try { item.city = JSON.parse(d1.city || '[]'); } catch { item.city = item.city ? [item.city] : []; }
-        try { item.hard_requirements = JSON.parse(d1.hard_requirements || '[]'); } catch { item.hard_requirements = []; }
-        try { item.personalized_requirements = JSON.parse(d1.personalized_requirements || '{}'); } catch { item.personalized_requirements = {}; }
-        if (!item.responsible_person && d1.responsible_person) item.responsible_person = d1.responsible_person;
-        if (!item.hr_interviewer && d1.hr_interviewer) item.hr_interviewer = d1.hr_interviewer;
-        if (!item.biz_interviewer && d1.biz_interviewer) item.biz_interviewer = d1.biz_interviewer;
-        if (!item.final_interviewer && d1.final_interviewer) item.final_interviewer = d1.final_interviewer;
-        if (d1.description) item.description = d1.description;
-        if (d1.requirements) item.requirements = d1.requirements;
-      } else {
-        item.city = item.city ? [item.city] : [];
-        item.hard_requirements = [];
-        item.personalized_requirements = {};
-      }
-    } catch {
-      item.city = item.city ? [item.city] : [];
-      item.hard_requirements = [];
-      item.personalized_requirements = {};
-    }
-
-    return c.json(item);
+    const id = c.req.param('id');
+    const row = await c.env.DB.prepare(
+      'SELECT * FROM job_requisitions WHERE id = ? OR feishu_record_id = ?'
+    ).bind(id, id).first() as Record<string, any> | null;
+    if (!row) return c.json({ detail: 'Not found' }, 404);
+    return c.json(parseD1RequisitionRow(row));
   } catch (e: any) {
     return c.json({ detail: e.message }, 500);
   }
@@ -3878,54 +3856,28 @@ app.post('/api/requisitions', authMiddleware, async (c) => {
     if (typeof body.description === 'string' && body.description.length > 20000) {
       return c.json({ detail: '职位描述长度不能超过 20000 个字符' }, 400);
     }
-    const tableId = getBitableTableId(c.env, 'requisition');
-    // 标准化：city 数组转字符串；urgency 若格式不对则跳过（Bitable 可能为数字字段）
-    const normalized = { ...body };
-    if (Array.isArray(normalized.city)) normalized.city = normalized.city.join(', ');
-    // 只保留 Bitable 可接受的字段
-    const fields: Record<string, any> = {};
-    for (const [engKey, cnKey] of Object.entries(FEISHU_REQUISITION_FIELDS)) {
-      const v = normalized[engKey];
-      if (v === undefined || v === null) continue;
-      if (engKey === 'urgency' && typeof v === 'string' && isNaN(Number(v))) continue; // 非数字跳过
-      fields[cnKey] = v;
-    }
-
-    // v2.1: D1 优先落库，飞书同步失败不阻断主流程
     const d1Id = uuid();
-    let feishuRecordId = '';
-    let feishuSynced = false;
-    try {
-      feishuRecordId = await bitableCreateRecord(c.env, tableId, fields);
-      feishuSynced = !!feishuRecordId;
-      if (!feishuRecordId) console.warn(`[Requisition] 飞书创建记录失败，但 D1 将保存`);
-    } catch (fe: any) {
-      console.warn(`[Requisition] 飞书创建记录异常: ${fe.message}`);
-    }
-
     await c.env.DB.prepare(
-      `INSERT INTO job_requisitions (id, title, department, status, description, requirements, city, hard_requirements, personalized_requirements, hr_interviewer, biz_interviewer, final_interviewer, responsible_person, feishu_record_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO job_requisitions (
+        id, title, department, headcount, employment_type, salary_range, budget, urgency, expected_date,
+        description, requirements, status, city, hard_requirements, personalized_requirements,
+        hr_interviewer, biz_interviewer, final_interviewer, responsible_person, reason, notes,
+        feishu_record_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
-      d1Id, body.title || '', body.department || '', 'draft',
-      body.description || '', body.requirements || '',
+      d1Id, title, body.department || '', Number(body.headcount) || 1, body.employment_type || 'full_time',
+      body.salary_range || '', body.budget ?? null, body.urgency || 'medium', body.expected_date || null,
+      body.description || '', body.requirements || '', body.status || 'draft',
       JSON.stringify(body.city || []), JSON.stringify(body.hard_requirements || []), JSON.stringify(body.personalized_requirements || {}),
       body.hr_interviewer || '', body.biz_interviewer || '', body.final_interviewer || '',
-      body.responsible_person || '', feishuRecordId || '', now()
+      body.responsible_person || '', body.reason || '', body.notes || '', '', now(), now()
     ).run();
 
     // 返回以 D1 数据为准
     const row = await c.env.DB.prepare(
       'SELECT * FROM job_requisitions WHERE id = ?'
     ).bind(d1Id).first() as any;
-    const item = transformRow(row) as any;
-    if (body.city !== undefined) item.city = body.city;
-    if (body.hard_requirements !== undefined) item.hard_requirements = body.hard_requirements;
-    if (body.personalized_requirements !== undefined) item.personalized_requirements = body.personalized_requirements;
-    if (body.description !== undefined) item.description = body.description;
-    if (body.requirements !== undefined) item.requirements = body.requirements;
-    item.feishu_synced = feishuSynced;
-    return c.json(item);
+    return c.json(parseD1RequisitionRow(row));
   } catch (e: any) {
     return c.json({ detail: '创建需求失败: ' + e.message }, 500);
   }
@@ -3935,33 +3887,19 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
     const id = c.req.param('id');
-    const tableId = getBitableTableId(c.env, 'requisition');
-    // 标准化：同 POST 逻辑
-    if (Array.isArray(body.city)) body.city = body.city.join(', ');
-    const fields: Record<string, any> = {};
-    for (const [engKey, cnKey] of Object.entries(FEISHU_REQUISITION_FIELDS)) {
-      const v = body[engKey];
-      if (v === undefined || v === null) continue;
-      if (engKey === 'urgency' && typeof v === 'string' && isNaN(Number(v))) continue;
-      if (engKey === 'requirements') continue; // Bitable不支持此字段，只存D1
-      fields[cnKey] = v;
-    }
-
-    // v2.0: D1 本地存储优先 —— 保证即使飞书同步失败，数据也不丢失
     const sets: string[] = [];
     const vals: any[] = [];
-    if (body.city !== undefined) { sets.push('city = ?'); vals.push(JSON.stringify(body.city)); }
-    if (body.hard_requirements !== undefined) { sets.push('hard_requirements = ?'); vals.push(JSON.stringify(body.hard_requirements)); }
-    if (body.personalized_requirements !== undefined) { sets.push('personalized_requirements = ?'); vals.push(JSON.stringify(body.personalized_requirements)); }
-    if (body.hr_interviewer !== undefined) { sets.push('hr_interviewer = ?'); vals.push(body.hr_interviewer); }
-    if (body.biz_interviewer !== undefined) { sets.push('biz_interviewer = ?'); vals.push(body.biz_interviewer); }
-    if (body.final_interviewer !== undefined) { sets.push('final_interviewer = ?'); vals.push(body.final_interviewer); }
-    if (body.responsible_person !== undefined) { sets.push('responsible_person = ?'); vals.push(body.responsible_person); }
-    if (body.title !== undefined) { sets.push('title = ?'); vals.push(body.title); }
-    if (body.department !== undefined) { sets.push('department = ?'); vals.push(body.department); }
-    if (body.status !== undefined) { sets.push('status = ?'); vals.push(body.status); }
-    if (body.description !== undefined) { sets.push('description = ?'); vals.push(body.description); }
-    if (body.requirements !== undefined) { sets.push('requirements = ?'); vals.push(body.requirements); }
+    const jsonFields = new Set(['city', 'hard_requirements', 'personalized_requirements']);
+    const editableFields = [
+      'title', 'department', 'headcount', 'employment_type', 'salary_range', 'budget', 'urgency', 'expected_date',
+      'description', 'requirements', 'status', 'hr_interviewer', 'biz_interviewer', 'final_interviewer',
+      'responsible_person', 'reason', 'notes', 'city', 'hard_requirements', 'personalized_requirements',
+    ];
+    for (const field of editableFields) {
+      if (body[field] === undefined) continue;
+      sets.push(`${field} = ?`);
+      vals.push(jsonFields.has(field) ? JSON.stringify(body[field]) : body[field]);
+    }
 
     if (sets.length > 0) {
       await c.env.DB.prepare(
@@ -3969,32 +3907,11 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
       ).bind(...vals, now(), id, id).run();
     }
 
-    // 飞书多维表格同步 —— 失败仅告警，不阻断主流程（D1 已落库）
-    let feishuSynced = false;
-    try {
-      if (Object.keys(fields).length > 0) {
-        const ok = await bitableUpdateRecord(c.env, tableId, id, fields);
-        feishuSynced = !!ok;
-        if (!ok) console.warn(`[Requisition] 飞书同步失败 id=${id}，但 D1 已保存`);
-      } else {
-        feishuSynced = true;
-      }
-    } catch (fe: any) {
-      console.warn(`[Requisition] 飞书同步异常 id=${id}: ${fe.message}`);
-    }
-
-    // 返回以 D1 数据为准
     const row = await c.env.DB.prepare(
       'SELECT * FROM job_requisitions WHERE id = ? OR feishu_record_id = ?'
     ).bind(id, id).first() as any;
-    const item = transformRow(row) as any;
-    if (body.city !== undefined) item.city = body.city;
-    if (body.hard_requirements !== undefined) item.hard_requirements = body.hard_requirements;
-    if (body.personalized_requirements !== undefined) item.personalized_requirements = body.personalized_requirements;
-    if (body.description !== undefined) item.description = body.description;
-    if (body.requirements !== undefined) item.requirements = body.requirements;
-    item.feishu_synced = feishuSynced;
-    return c.json(item);
+    if (!row) return c.json({ detail: 'Not found' }, 404);
+    return c.json(parseD1RequisitionRow(row));
   } catch (e: any) {
     return c.json({ detail: '更新失败: ' + e.message }, 500);
   }
@@ -4002,8 +3919,10 @@ app.put('/api/requisitions/:id', authMiddleware, async (c) => {
 
 app.delete('/api/requisitions/:id', authMiddleware, async (c) => {
   try {
-    const tableId = getBitableTableId(c.env, 'requisition');
-    await bitableDeleteRecord(c.env, tableId, c.req.param('id'));
+    const id = c.req.param('id');
+    await c.env.DB.prepare(
+      'DELETE FROM job_requisitions WHERE id = ? OR feishu_record_id = ?'
+    ).bind(id, id).run();
     return c.json({ detail: 'Deleted' });
   } catch (e: any) {
     return c.json({ detail: '删除失败: ' + e.message }, 500);
