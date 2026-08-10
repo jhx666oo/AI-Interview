@@ -412,6 +412,121 @@ code {
   max-width: calc(100vw - 32px);
 }
 
+/* Resume management page: keep dense candidate data readable at every width. */
+.resume-toolbar__field {
+  min-width: 0;
+}
+
+.resume-toolbar__field .ant-space {
+  max-width: 100%;
+}
+
+.resume-toolbar__search-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.resume-card__header,
+.resume-card__identity,
+.resume-card__status,
+.resume-card__actions,
+.resume-card__evaluation-summary,
+.resume-card__dimensions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.resume-card__header {
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  min-height: 32px;
+}
+
+.resume-card__identity,
+.resume-card__status,
+.resume-card__actions,
+.resume-card__evaluation-summary,
+.resume-card__dimensions {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.resume-card__identity {
+  flex: 1 1 240px;
+}
+
+.resume-card__name {
+  flex: 0 0 auto;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.resume-card__summary {
+  min-width: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #bfbfbf;
+  font-size: 12px;
+}
+
+.resume-card__status {
+  flex: 1 1 280px;
+}
+
+.resume-card__status .ant-tag,
+.resume-card__dimension,
+.resume-card__long-label {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.resume-card__created-at {
+  color: #8c8c8c;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.resume-card__actions {
+  margin-left: auto;
+  flex: 0 1 auto;
+}
+
+.resume-card__evaluation {
+  margin-top: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.resume-card__evaluation-summary {
+  margin-bottom: 6px;
+}
+
+.resume-card__dimensions {
+  gap: 4px;
+  padding-left: 4px;
+}
+
+.resume-import-table {
+  margin-bottom: 16px;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  overflow-y: auto;
+}
+
+.resume-import-table--preview {
+  max-height: 400px;
+}
+
+.resume-import-table--result {
+  max-height: 300px;
+}
+
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
@@ -464,5 +579,24 @@ code {
   .responsive-toolbar__fields > * {
     flex: 1 1 100%;
     min-width: 0;
+  }
+
+  .resume-toolbar__field .ant-space {
+    width: 100%;
+  }
+
+  .resume-card__actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .resume-card__summary {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .resume-card__created-at {
+    white-space: normal;
   }
 }
