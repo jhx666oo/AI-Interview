@@ -69,9 +69,27 @@ export function ResponsiveDataView<RecordType extends object>({
   const cardWithRowKey: ResponsiveCardConfig<RecordType> = card.getKey
     ? card
     : { ...card, getKey: getRowKey(rowKey) };
-  const cardPagination = getCardPaginationConfig(dataSource ?? [], pagination);
-  const current = cardPagination?.config.current ?? internalCurrent;
-  const pageSize = cardPagination?.config.pageSize ?? internalPageSize;
+  const paginationConfig = pagination === false ? null : pagination ?? {};
+  const current = paginationConfig?.current ?? internalCurrent;
+  const pageSize = paginationConfig?.pageSize ?? internalPageSize;
+  const updatePage = (page: number, nextPageSize: number) => {
+    if (paginationConfig?.current === undefined) setInternalCurrent(page);
+    if (paginationConfig?.pageSize === undefined) setInternalPageSize(nextPageSize);
+  };
+  const sharedPagination: TableProps<RecordType>['pagination'] = paginationConfig && {
+    ...paginationConfig,
+    current,
+    pageSize,
+    onChange: (page, nextPageSize) => {
+      updatePage(page, nextPageSize);
+      paginationConfig.onChange?.(page, nextPageSize);
+    },
+    onShowSizeChange: (page, nextPageSize) => {
+      updatePage(page, nextPageSize);
+      paginationConfig.onShowSizeChange?.(page, nextPageSize);
+    },
+  };
+  const cardPagination = getCardPaginationConfig(dataSource ?? [], sharedPagination);
   const hasAllRows = (dataSource?.length ?? 0) >= (cardPagination?.total ?? 0);
   const currentPageData = cardPagination && hasAllRows
     ? (dataSource ?? []).slice((current - 1) * pageSize, current * pageSize)
@@ -82,7 +100,7 @@ export function ResponsiveDataView<RecordType extends object>({
       dataSource={dataSource}
       locale={locale}
       loading={loading}
-      pagination={pagination}
+      pagination={sharedPagination}
       rowKey={rowKey}
       rowSelection={rowSelection}
     />
@@ -113,13 +131,9 @@ export function ResponsiveDataView<RecordType extends object>({
               pageSize={pageSize}
               total={cardPagination.total}
               onChange={(page, nextPageSize) => {
-                if (cardPagination.config.current === undefined) setInternalCurrent(page);
-                if (cardPagination.config.pageSize === undefined) setInternalPageSize(nextPageSize);
                 cardPagination.config.onChange?.(page, nextPageSize);
               }}
               onShowSizeChange={(page, nextPageSize) => {
-                if (cardPagination.config.current === undefined) setInternalCurrent(page);
-                if (cardPagination.config.pageSize === undefined) setInternalPageSize(nextPageSize);
                 cardPagination.config.onShowSizeChange?.(page, nextPageSize);
               }}
             />

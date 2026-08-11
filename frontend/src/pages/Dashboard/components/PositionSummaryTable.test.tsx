@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { PositionSummaryTable } from './PositionSummaryTable';
@@ -87,5 +87,19 @@ describe('PositionSummaryTable narrow mode', () => {
     expect(screen.getByText('合计')).toBeDefined();
     expect(screen.getAllByText(String(totals.total_resumes)).length).toBeGreaterThan(0);
     expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  it('shows every interview pass stage in the division card', () => {
+    render(<PositionSummaryTable divisions={divisions} totals={totals} testWidth={700} />);
+    const divisionCard = screen.getByRole('button', { name: '收起智能硬件事业部' }).closest('article');
+
+    expect(divisionCard).not.toBeNull();
+    const firstPass = within(divisionCard as HTMLElement).getByText('一面通过').parentElement;
+    const secondPass = within(divisionCard as HTMLElement).getByText('二面通过').parentElement;
+    const thirdPass = within(divisionCard as HTMLElement).getByText('三面通过').parentElement;
+
+    expect(firstPass?.textContent).toContain(String(divisions[0].first_pass));
+    expect(secondPass?.textContent).toContain(String(divisions[0].second_pass));
+    expect(thirdPass?.textContent).toContain(String(divisions[0].third_pass));
   });
 });

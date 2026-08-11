@@ -151,4 +151,37 @@ describe('ResponsiveDataView', () => {
     expect(screen.queryByText('招商主管')).toBeNull();
     expect(screen.getByText('产品经理')).not.toBeNull();
   });
+
+  it('keeps an uncontrolled pagination page when switching between table and cards', async () => {
+    const user = userEvent.setup();
+    const pagedData: Row[] = [
+      ...data,
+      { id: 'position-2', name: '产品经理', department: '产品部' },
+    ];
+    const { rerender } = render(
+      <ResponsiveDataView
+        {...props}
+        dataSource={pagedData}
+        pagination={{ defaultCurrent: 1, defaultPageSize: 1, total: 2 }}
+        testWidth={1280}
+      />,
+    );
+
+    await user.click(screen.getByTitle('2'));
+    expect(screen.getByText('产品经理')).not.toBeNull();
+    expect(screen.queryByText('招商主管')).toBeNull();
+
+    rerender(
+      <ResponsiveDataView
+        {...props}
+        dataSource={pagedData}
+        pagination={{ defaultCurrent: 1, defaultPageSize: 1, total: 2 }}
+        testWidth={700}
+      />,
+    );
+
+    expect(screen.getByTestId('responsive-data-view').getAttribute('data-responsive-mode')).toBe('narrow');
+    expect(screen.getByText('产品经理')).not.toBeNull();
+    expect(screen.queryByText('招商主管')).toBeNull();
+  });
 });

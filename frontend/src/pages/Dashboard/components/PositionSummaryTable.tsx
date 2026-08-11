@@ -251,6 +251,9 @@ export function PositionSummaryTable({
               <SummaryMetric label="在招人数" value={division.total_headcount} />
               <SummaryMetric label="简历" value={division.total_resumes} />
               <SummaryMetric label="一面" value={division.first_interview} />
+              <SummaryMetric label="一面通过" value={division.first_pass} />
+              <SummaryMetric label="二面通过" value={division.second_pass} />
+              <SummaryMetric label="三面通过" value={division.third_pass} />
               <SummaryMetric label="通过率" value={division.interview_pass_rate == null ? '—' : `${division.interview_pass_rate}%`} />
               <SummaryMetric label="Offer" value={division.offers} />
               <SummaryMetric label="入职" value={division.hired} />
