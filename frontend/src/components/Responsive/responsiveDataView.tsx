@@ -1,5 +1,5 @@
 import { Pagination, Spin, Table, type TableProps } from 'antd';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { Key, TablePaginationConfig } from 'antd/es/table/interface';
 import { ResponsiveCardList } from './responsiveCardList';
 import { useResponsiveMode, type ResponsiveMode } from './responsiveMode';
@@ -26,28 +26,19 @@ function getRowKey<RecordType extends object>(
   return (record, index) => (record[keyField as keyof RecordType] as Key | undefined) ?? index;
 }
 
-function getCardPagination<RecordType>(
+function getCardPaginationConfig<RecordType>(
   data: readonly RecordType[],
   pagination: TableProps<RecordType>['pagination'],
 ) {
   if (pagination === false) return null;
 
   const config: TablePaginationConfig = pagination ?? {};
-  const pageSize = config.pageSize ?? config.defaultPageSize ?? 10;
-  const current = config.current ?? config.defaultCurrent ?? 1;
   const total = config.total ?? data.length;
-  const hasAllRows = data.length >= total;
-  const currentPageData = hasAllRows
-    ? data.slice((current - 1) * pageSize, current * pageSize)
-    : data;
   const hidden = config.position?.every((position) => position === 'none') ?? false;
 
   return {
     config,
-    current,
-    currentPageData,
     hidden,
-    pageSize,
     total,
   };
 }
@@ -65,12 +56,26 @@ export function ResponsiveDataView<RecordType extends object>({
   ...tableProps
 }: ResponsiveDataViewProps<RecordType>) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [internalCurrent, setInternalCurrent] = useState(() => {
+    if (pagination === false) return 1;
+    return pagination?.defaultCurrent ?? 1;
+  });
+  const [internalPageSize, setInternalPageSize] = useState(() => {
+    if (pagination === false) return 10;
+    return pagination?.defaultPageSize ?? 10;
+  });
   const mode = useResponsiveMode(containerRef, testWidth);
   const wrapperClassName = ['responsive-data-view', className].filter(Boolean).join(' ');
   const cardWithRowKey: ResponsiveCardConfig<RecordType> = card.getKey
     ? card
     : { ...card, getKey: getRowKey(rowKey) };
-  const cardPagination = getCardPagination(dataSource ?? [], pagination);
+  const cardPagination = getCardPaginationConfig(dataSource ?? [], pagination);
+  const current = cardPagination?.config.current ?? internalCurrent;
+  const pageSize = cardPagination?.config.pageSize ?? internalPageSize;
+  const hasAllRows = (dataSource?.length ?? 0) >= (cardPagination?.total ?? 0);
+  const currentPageData = cardPagination && hasAllRows
+    ? (dataSource ?? []).slice((current - 1) * pageSize, current * pageSize)
+    : (dataSource ?? []);
   const table = (
     <Table<RecordType>
       {...tableProps}
@@ -78,6 +83,7 @@ export function ResponsiveDataView<RecordType extends object>({
       locale={locale}
       loading={loading}
       pagination={pagination}
+      rowKey={rowKey}
       rowSelection={rowSelection}
     />
   );
@@ -94,7 +100,7 @@ export function ResponsiveDataView<RecordType extends object>({
       ) : (
         <Spin spinning={Boolean(loading)}>
           <ResponsiveCardList
-            data={cardPagination?.currentPageData ?? (dataSource ?? [])}
+            data={currentPageData}
             card={cardWithRowKey}
             rowSelection={rowSelection}
             emptyText={getEmptyText(locale)}
@@ -103,13 +109,17 @@ export function ResponsiveDataView<RecordType extends object>({
             <Pagination
               {...cardPagination.config}
               className="responsive-data-view-pagination"
-              current={cardPagination.current}
-              pageSize={cardPagination.pageSize}
+              current={current}
+              pageSize={pageSize}
               total={cardPagination.total}
               onChange={(page, nextPageSize) => {
+                if (cardPagination.config.current === undefined) setInternalCurrent(page);
+                if (cardPagination.config.pageSize === undefined) setInternalPageSize(nextPageSize);
                 cardPagination.config.onChange?.(page, nextPageSize);
               }}
               onShowSizeChange={(page, nextPageSize) => {
+                if (cardPagination.config.current === undefined) setInternalCurrent(page);
+                if (cardPagination.config.pageSize === undefined) setInternalPageSize(nextPageSize);
                 cardPagination.config.onShowSizeChange?.(page, nextPageSize);
               }}
             />

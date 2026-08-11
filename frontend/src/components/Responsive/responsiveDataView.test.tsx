@@ -50,6 +50,7 @@ describe('ResponsiveDataView', () => {
     render(<ResponsiveDataView {...props} testWidth={1280} />);
 
     expect(screen.getByRole('table')).not.toBeNull();
+    expect(document.querySelector('tr[data-row-key="position-1"]')).not.toBeNull();
     expect(screen.getByTestId('responsive-data-view').getAttribute('data-responsive-mode')).toBe('full');
   });
 
@@ -124,5 +125,30 @@ describe('ResponsiveDataView', () => {
     await user.click(screen.getByTitle('2'));
 
     expect(onChange).toHaveBeenCalledWith(2, 1);
+  });
+
+  it('updates compact cards after changing an uncontrolled pagination page', async () => {
+    const user = userEvent.setup();
+    const pagedData: Row[] = [
+      ...data,
+      { id: 'position-2', name: '产品经理', department: '产品部' },
+    ];
+
+    render(
+      <ResponsiveDataView
+        {...props}
+        dataSource={pagedData}
+        pagination={{ defaultCurrent: 1, defaultPageSize: 1, total: 2 }}
+        testWidth={1024}
+      />,
+    );
+
+    expect(screen.getByText('招商主管')).not.toBeNull();
+    expect(screen.queryByText('产品经理')).toBeNull();
+
+    await user.click(screen.getByTitle('2'));
+
+    expect(screen.queryByText('招商主管')).toBeNull();
+    expect(screen.getByText('产品经理')).not.toBeNull();
   });
 });
