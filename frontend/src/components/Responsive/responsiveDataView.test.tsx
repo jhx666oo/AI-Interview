@@ -54,6 +54,18 @@ describe('ResponsiveDataView', () => {
     expect(screen.getByTestId('responsive-data-view').getAttribute('data-responsive-mode')).toBe('full');
   });
 
+  it('keeps Ant Table pagination disabled when the page owns pagination externally', () => {
+    const manyRows = Array.from({ length: 11 }, (_, index) => ({
+      id: `position-${index + 1}`,
+      name: `岗位${index + 1}`,
+      department: '业务部',
+    }));
+
+    render(<ResponsiveDataView {...props} dataSource={manyRows} pagination={false} testWidth={1280} />);
+
+    expect(document.querySelector('.ant-pagination')).toBeNull();
+  });
+
   it('renders cards in compact mode', () => {
     render(<ResponsiveDataView {...props} testWidth={1024} />);
 

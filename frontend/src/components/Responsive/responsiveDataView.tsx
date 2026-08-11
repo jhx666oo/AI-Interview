@@ -87,17 +87,17 @@ export function ResponsiveDataView<RecordType extends object>({
     if (!isCurrentControlled) setInternalCurrent(page);
     if (paginationConfig?.pageSize === undefined) setInternalPageSize(nextPageSize);
   };
-  const sharedPagination: TableProps<RecordType>['pagination'] = paginationConfig && {
+  const sharedPagination: TableProps<RecordType>['pagination'] = pagination === false ? false : {
     ...paginationConfig,
     current: effectiveCurrent,
     pageSize,
     onChange: (page, nextPageSize) => {
       updatePage(page, nextPageSize);
-      paginationConfig.onChange?.(page, nextPageSize);
+      paginationConfig?.onChange?.(page, nextPageSize);
     },
     onShowSizeChange: (page, nextPageSize) => {
       updatePage(page, nextPageSize);
-      paginationConfig.onShowSizeChange?.(page, nextPageSize);
+      paginationConfig?.onShowSizeChange?.(page, nextPageSize);
     },
   };
   const cardPagination = getCardPaginationConfig(dataSource ?? [], sharedPagination);
