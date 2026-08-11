@@ -1,15 +1,9 @@
-import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
-import {
-  ResponsiveCardList,
-  createCardSelectionChange,
-  getCardFieldGroups,
-  getResponsiveCardRecords,
-  isCardRecordSelectable,
-  toggleAllCardSelection,
-  toggleExpandedCardKey,
-  toggleRecordSelection,
-} from './responsiveCardList';
+// @vitest-environment jsdom
+import { useState, type Key } from 'react';
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ResponsiveCardList } from './responsiveCardList';
 import type { ResponsiveCardConfig } from './responsiveTypes';
 
 interface Row {
@@ -49,52 +43,90 @@ const config: ResponsiveCardConfig<Row> = {
 };
 
 describe('ResponsiveCardList', () => {
-  it('exports a reusable list component for responsive data cards', () => {
-    expect(ResponsiveCardList).toBeTypeOf('function');
+  afterEach(() => cleanup());
+
+  it('shows secondary fields and expands the card detail panel on demand', async () => {
+    const user = userEvent.setup();
+    render(<ResponsiveCardList data={[row]} card={config} />);
+
+    expect(screen.getByText('招商主管')).toBeDefined();
+    expect(screen.getByText('城市')).toBeDefined();
+    expect(screen.queryByText('预算')).toBeNull();
+
+    const detailsButton = screen.getByRole('button', { name: '展开招商主管详情' });
+    expect(detailsButton.getAttribute('aria-expanded')).toBe('false');
+
+    await user.click(detailsButton);
+
+    expect(screen.getByText('预算')).toBeDefined();
+    expect(screen.getByRole('button', { name: '收起招商主管详情' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.queryByText('备注')).toBeNull();
   });
 
-  it('shows primary fields while keeping detail fields collapsed initially', () => {
-    const html = renderToStaticMarkup(<ResponsiveCardList data={[row]} card={config} />);
+  it('updates selected card state and emits the selected record payload', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
 
-    expect(html).toContain('招商主管');
-    expect(html).toContain('城市');
-    expect(html).not.toContain('预算');
+    function SelectionHarness() {
+      const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
+
+      return (
+        <ResponsiveCardList
+          data={[row]}
+          card={config}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys, rows, info) => {
+              setSelectedRowKeys(keys);
+              onChange(keys, rows, info);
+            },
+          }}
+        />
+      );
+    }
+
+    render(<SelectionHarness />);
+    const checkbox = screen.getByRole('checkbox', { name: '选择招商主管' });
+    expect(checkbox.getAttribute('aria-checked')).toBe('false');
+
+    await user.click(checkbox);
+
+    expect(checkbox.getAttribute('aria-checked')).toBe('true');
+    expect(onChange).toHaveBeenLastCalledWith(['row-1'], [row], { type: 'multiple' });
   });
 
-  it('makes detail fields available only after the card is expanded and omits empty hidden fields', () => {
-    const collapsed = getCardFieldGroups(config, row, 0, false);
-    const expanded = getCardFieldGroups(config, row, 0, true);
+  it('selects all enabled cards while keeping disabled cards unselectable', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
 
-    expect(collapsed.secondary.map((field) => field.key)).toEqual(['city']);
-    expect(collapsed.detail).toEqual([]);
-    expect(expanded.detail.map((field) => field.key)).toEqual(['budget']);
-    expect(toggleExpandedCardKey(new Set(), row.id)).toEqual(new Set([row.id]));
-    expect(toggleExpandedCardKey(new Set([row.id]), row.id)).toEqual(new Set());
-  });
+    function SelectionHarness() {
+      const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
 
-  it('emits row selection payloads for an enabled single card without mutating records', () => {
-    const records = getResponsiveCardRecords([row, disabledRow], config);
-    const nextKeys = toggleRecordSelection([], row.id, true);
-    const payload = createCardSelectionChange(records, nextKeys);
+      return (
+        <ResponsiveCardList
+          data={[row, disabledRow]}
+          card={config}
+          rowSelection={{
+            selectedRowKeys,
+            getCheckboxProps: (candidate) => ({ disabled: candidate.id === disabledRow.id }),
+            onChange: (keys, rows, info) => {
+              setSelectedRowKeys(keys);
+              onChange(keys, rows, info);
+            },
+          }}
+        />
+      );
+    }
 
-    expect(payload.selectedRowKeys).toEqual([row.id]);
-    expect(payload.selectedRows).toEqual([row]);
-    expect(records.map((entry) => entry.record)).toEqual([row, disabledRow]);
-  });
+    render(<SelectionHarness />);
+    const selectAll = screen.getByRole('checkbox', { name: '全选当前页' });
+    const disabledCheckbox = screen.getByRole('checkbox', { name: '选择禁用岗位' });
+    expect(disabledCheckbox).toHaveProperty('disabled', true);
 
-  it('selects only enabled cards when selecting the current page', () => {
-    const records = getResponsiveCardRecords([row, disabledRow], config);
-    const nextKeys = toggleAllCardSelection(
-      [],
-      records,
-      (record) => isCardRecordSelectable(record, {
-        getCheckboxProps: (candidate) => ({ disabled: candidate.id === disabledRow.id }),
-      }),
-      true,
-    );
-    const payload = createCardSelectionChange(records, nextKeys);
+    await user.click(selectAll);
 
-    expect(payload.selectedRowKeys).toEqual([row.id]);
-    expect(payload.selectedRows).toEqual([row]);
+    expect(selectAll.getAttribute('aria-checked')).toBe('true');
+    expect(disabledCheckbox.getAttribute('aria-checked')).toBe('false');
+    expect(onChange).toHaveBeenLastCalledWith(['row-1'], [row], { type: 'multiple' });
   });
 });

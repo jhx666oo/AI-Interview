@@ -178,6 +178,7 @@ export function ResponsiveCardList<RecordType>({
                     className="responsive-data-card-checkbox"
                     checked={selectedKeySet.has(key)}
                     aria-checked={selectedKeySet.has(key)}
+                    aria-label={`选择${titleText}`}
                     disabled={checkboxProps?.disabled}
                     onChange={(event) => toggleRecord(key, event.currentTarget.checked)}
                   />
