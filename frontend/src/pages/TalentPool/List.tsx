@@ -11,7 +11,7 @@ import request from '../../utils/request';
 import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 import { ResponsiveToolbar } from '../../components/Responsive/ResponsiveToolbar';
-import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveDataView } from '../../components/Responsive';
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -195,10 +195,25 @@ const TalentPoolList: React.FC = () => {
             </Select>
             <Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>
           </Space>}><span /></ResponsiveToolbar>
-        <TableViewport><Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+        <ResponsiveDataView dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 'max-content' }}
           pagination={false}
-        /></TableViewport>
+          card={{
+            title: record => record.candidate_name || '-',
+            subtitle: record => (columns[1] as any).render(null, record),
+            status: record => (columns[8] as any).render(record.status),
+            fields: [
+              { key: 'age', label: '年龄', level: 'detail', render: record => (columns[2] as any).render(record.age) },
+              { key: 'education', label: '学历', level: 'detail', render: record => (columns[3] as any).render(record.education) },
+              { key: 'city', label: '城市', level: 'detail', render: record => (columns[4] as any).render(record.city) },
+              { key: 'gender', label: '性别', level: 'detail', render: record => (columns[5] as any).render(record.gender) },
+              { key: 'screening_result', label: 'AI 初筛结果', level: 'secondary', render: record => (columns[6] as any).render(record.screening_result) },
+              { key: 'hr_review', label: 'HR 复核', level: 'secondary', render: record => (columns[7] as any).render(record.hr_review) },
+              { key: 'create_time', label: '创建时间', level: 'detail', render: record => (columns[9] as any).render(record.create_time) },
+            ],
+            actions: record => (columns[10] as any).render(null, record),
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
     </div>

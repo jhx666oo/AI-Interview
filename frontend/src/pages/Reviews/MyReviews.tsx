@@ -5,7 +5,7 @@ import { EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import request from '../../utils/request';
-import { PageHeader, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView } from '../../components/Responsive';
 
 interface PendingReview {
   review_id: string;
@@ -109,14 +109,21 @@ const MyReviews: React.FC = () => {
           />
         ) : (
           <>
-          <TableViewport>
-            <Table
+          <ResponsiveDataView
               columns={columns}
               dataSource={pendingReviews.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
               rowKey="review_id"
               pagination={false}
+              card={{
+                title: record => record.candidate_name || '未知',
+                subtitle: record => record.position_title || '-',
+                status: record => (columns[2] as any).render(record.match_score),
+                fields: [
+                  { key: 'created_at', label: '指派时间', level: 'detail', render: record => (columns[3] as any).render(record.created_at) },
+                ],
+                actions: record => (columns[4] as any).render(null, record),
+              }}
             />
-          </TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={pendingReviews.length} onChange={setTablePage} />
           </>
         )}

@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
-import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 
 const { Text } = Typography;
 
@@ -616,8 +616,7 @@ const MailSettingsPage: React.FC = () => {
         ) : logs.length === 0 ? (
           <Empty description="暂无同步记录" />
         ) : (
-          <TableViewport>
-            <Table
+          <ResponsiveDataView
             dataSource={logs}
             rowKey="id"
             size="small"
@@ -689,8 +688,28 @@ const MailSettingsPage: React.FC = () => {
                 ),
               },
             ]}
+            card={{
+              title: record => record.candidateName || '-',
+              subtitle: record => [record.processedAt ? new Date(record.processedAt).toLocaleString('zh-CN') : '', record.subject].filter(Boolean).join(' · '),
+              status: record => <Tag color={statusColor(record.status)}>{statusText(record.status)}</Tag>,
+              fields: [
+                { key: 'emailAccount', label: '邮箱', level: 'detail', render: record => record.emailAccount || '-' },
+                { key: 'attachmentFilename', label: '附件', level: 'detail', render: record => record.attachmentFilename || '-' },
+                { key: 'subject', label: '邮件主题', level: 'secondary', render: record => record.subject || '-' },
+              ],
+              actions: record => record.status === 'failed' ? (
+                <Button size="small" type="link" onClick={async () => {
+                  try {
+                    await request.post('/mail/sync/retry-single', { logId: record.id });
+                    message.success('已重试');
+                    fetchLogs();
+                  } catch (e: any) {
+                    message.error('重试失败');
+                  }
+                }}>重试</Button>
+              ) : null,
+            }}
             />
-          </TableViewport>
         )}
       </Card>
 

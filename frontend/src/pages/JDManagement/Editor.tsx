@@ -4,7 +4,7 @@ import { SaveOutlined, ArrowLeftOutlined, RobotOutlined } from '@ant-design/icon
 import { useNavigate, useParams } from 'react-router-dom';
 import request from '../../utils/request';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
-import { PageHeader, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveToolbar } from '../../components/Responsive';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -102,9 +102,15 @@ const JDManagementEditor: React.FC = () => {
 
       {record?.versions?.length > 0 && (
         <Card title="版本历史" size="small" style={{ marginTop: 24 }}>
-          <TableViewport>
-            <Table dataSource={record.versions} columns={verColumns} rowKey="id" size="small" pagination={false} />
-          </TableViewport>
+           <ResponsiveDataView dataSource={record.versions as any[]} columns={verColumns} rowKey="id" size="small" pagination={false}
+             card={{
+               title: version => `版本 ${version.version_number || '-'}`,
+               subtitle: version => [version.created_by, version.created_at ? new Date(version.created_at).toLocaleString('zh-CN') : ''].filter(Boolean).join(' · '),
+               fields: [
+                 { key: 'description', label: 'JD 快照', level: 'detail', render: version => (verColumns[3] as any).render(version.description) },
+               ],
+             }}
+           />
         </Card>
       )}
     </Card>

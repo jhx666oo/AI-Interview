@@ -12,7 +12,7 @@ import { buildPositionCapabilitySave } from './capabilitySave';
 import { WEIGHTED_GATE_DIMENSIONS, WEIGHTED_SCORING_DIMENSIONS, WEIGHTED_SCREENING_DEFAULT_WEIGHTS } from '../../utils/resumeEvaluation';
 import { PageHeader } from '../../components/Responsive/PageHeader';
 import { ResponsiveToolbar } from '../../components/Responsive/ResponsiveToolbar';
-import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveDataView } from '../../components/Responsive';
 import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { Title, Text } = Typography;
@@ -796,6 +796,43 @@ const PositionsList: React.FC = () => {
     },
   ];
 
+  const positionCard = {
+    title: (record: Position) => record.title,
+    subtitle: (record: Position) => record.department || '—',
+    status: (record: Position) => {
+      const text = record.status === 'open' ? '待发布' : record.status === 'published' ? '招聘中' : '已关闭';
+      const color = record.status === 'open' ? 'warning' : record.status === 'published' ? 'processing' : 'default';
+      return <Tag color={color}>{text}</Tag>;
+    },
+    fields: [
+      { key: 'type', label: '类型', level: 'secondary' as const, render: (record: Position) => {
+        const config = positionTypeConfig[record.position_type] || { color: 'default', text: record.position_type || '—' };
+        return <Tag color={config.color}>{config.text}</Tag>;
+      } },
+      { key: 'urgency', label: '紧急度', level: 'secondary' as const, render: (record: Position) => {
+        const config = urgencyConfig[record.urgency] || { color: 'default', text: record.urgency || '—' };
+        return <Tag color={config.color}>{config.text}</Tag>;
+      } },
+      { key: 'progress', label: '招聘进度', level: 'secondary' as const, render: (record: Position) => renderStats(record.stats) },
+      { key: 'responsible', label: '责任人', level: 'detail' as const, render: (record: Position) => record.responsible_person || '—' },
+      { key: 'primaryInterviewer', label: '一面面试官', level: 'detail' as const, render: (record: Position) => record.primary_interviewer || '—' },
+      { key: 'secondaryInterviewer', label: '二面面试官', level: 'detail' as const, render: (record: Position) => record.secondary_interviewer || '—' },
+      { key: 'dimensions', label: '能力维度', level: 'detail' as const, render: (record: Position) => columns[9].render?.(undefined, record) },
+      { key: 'createdAt', label: '创建时间', level: 'detail' as const, render: (record: Position) => record.created_at ? new Date(record.created_at).toLocaleDateString() : '—' },
+    ],
+    actions: (record: Position) => (
+      <Space size="small">
+        <Tooltip title="编辑"><Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} /></Tooltip>
+        {record.status === 'published' ? (
+          <Tooltip title="下架"><Button type="link" size="small" icon={<StopOutlined />} loading={publishingId === record.id} onClick={() => handlePublish(record.id, false)} /></Tooltip>
+        ) : (
+          <Tooltip title="发布"><Button type="link" size="small" icon={<GlobalOutlined />} loading={publishingId === record.id} onClick={() => handlePublish(record.id, true)} /></Tooltip>
+        )}
+        <Tooltip title="删除"><Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)} /></Tooltip>
+      </Space>
+    ),
+  };
+
   return (
     <div>
       <PageHeader title="岗位管理" description="管理企业的招聘岗位信息" actions={<Space wrap>
@@ -840,11 +877,12 @@ const PositionsList: React.FC = () => {
           </Select>
       </ResponsiveToolbar>
       
-      <TableViewport><Table
+      <ResponsiveDataView
         columns={columns} 
         dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} 
         loading={loading} 
         rowKey="id" 
+        card={positionCard}
         scroll={{ x: 1700 }}
         pagination={false}
         rowSelection={{
@@ -852,7 +890,7 @@ const PositionsList: React.FC = () => {
           onChange: setSelectedRowKeys,
           columnWidth: 40,
         }}
-      /></TableViewport>
+      />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
 
       <ResponsiveModal

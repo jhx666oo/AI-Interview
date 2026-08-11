@@ -10,7 +10,7 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import dayjs from 'dayjs';
-import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveDataView } from '../../components/Responsive';
 import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { TextArea } = Input;
@@ -198,14 +198,27 @@ const OnboardingList: React.FC = () => {
             </Space>
           </div>
         )}
-        <TableViewport><Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+        <ResponsiveDataView dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1400 }} pagination={false}
           rowSelection={{
             selectedRowKeys,
             onChange: setSelectedRowKeys,
             columnWidth: 40,
           }}
-        /></TableViewport>
+          card={{
+            title: record => record.candidate_name || '-',
+            subtitle: record => [record.department, record.position_title, record.onboard_date ? dayjs(record.onboard_date).format('YYYY-MM-DD') : ''].filter(Boolean).join(' · '),
+            status: record => (columns[9] as any).render(record.status),
+            fields: [
+              { key: 'employee_id', label: '工号', level: 'detail', render: record => record.employee_id || '-' },
+              { key: 'contract_signed', label: '合同', level: 'detail', render: record => (columns[5] as any).render(record.contract_signed) },
+              { key: 'accounts_created', label: '账号', level: 'detail', render: record => (columns[6] as any).render(record.accounts_created) },
+              { key: 'equipment_assigned', label: '设备', level: 'detail', render: record => (columns[7] as any).render(record.equipment_assigned) },
+              { key: 'orientation_completed', label: '入职引导', level: 'detail', render: record => (columns[8] as any).render(record.orientation_completed) },
+            ],
+            actions: record => (columns[10] as any).render(null, record),
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <ResponsiveModal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}

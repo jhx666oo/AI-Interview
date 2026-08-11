@@ -11,7 +11,7 @@ import {
 import request from '../../utils/request';
 import SimplePagination from '../../components/SimplePagination';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
-import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 import { useOwner } from '../../contexts/OwnerContext';
 import dayjs from 'dayjs';
 
@@ -318,6 +318,41 @@ const RequisitionsList: React.FC = () => {
     }
   ];
 
+  const requisitionCard = {
+    title: (record: any) => record.title,
+    subtitle: (record: any) => record.department || '—',
+    status: (record: any) => {
+      const config = statusConfig[record.status] || { color: 'default', text: record.status || '—' };
+      return <Tag color={config.color}>{config.text}</Tag>;
+    },
+    fields: [
+      {
+        key: 'city', label: '城市', level: 'secondary' as const,
+        render: (record: any) => {
+          const cities = Array.isArray(record.city) ? record.city : (typeof record.city === 'string' ? record.city.split(',').filter(Boolean) : []);
+          return cities.length ? cities.map((city: string) => <Tag key={city} color="blue">{city}</Tag>) : '—';
+        },
+      },
+      { key: 'headcount', label: '招聘人数', level: 'secondary' as const, render: (record: any) => record.headcount ?? '—' },
+      { key: 'urgency', label: '紧急程度', level: 'secondary' as const, render: (record: any) => {
+        const config = urgencyConfig[record.urgency] || { color: 'default', text: record.urgency || '—' };
+        return <Tag color={config.color}>{config.text}</Tag>;
+      } },
+      { key: 'salary', label: '薪资范围', level: 'detail' as const, render: (record: any) => record.salary_range || '—' },
+      { key: 'budget', label: '预算', level: 'detail' as const, render: (record: any) => record.budget ? `${record.budget}万` : '—' },
+      { key: 'expectedDate', label: '期望到岗', level: 'detail' as const, render: (record: any) => record.expected_date ? dayjs(record.expected_date).format('YYYY-MM-DD') : '—' },
+    ],
+    actions: (record: any) => (
+      <Space size="small">
+        <Button type="link" size="small" icon={aiLoading === record.id ? <LoadingOutlined /> : <ThunderboltOutlined />} onClick={() => handleAIJD(record.id)}>AI生成JD</Button>
+        <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>编辑</Button>
+        <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id)}>
+          <Button type="link" size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.id}>删除</Button>
+        </Popconfirm>
+      </Space>
+    ),
+  };
+
   return (
     <div>
       <PageHeader
@@ -355,17 +390,16 @@ const RequisitionsList: React.FC = () => {
             </Space>
           </div>
         )}
-        <TableViewport>
-          <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
-            scroll={{ x: 1400 }}
-            pagination={false}
-            rowSelection={{
-              selectedRowKeys,
-              onChange: setSelectedRowKeys,
-              columnWidth: 40,
-            }}
-          />
-        </TableViewport>
+        <ResponsiveDataView dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+          card={requisitionCard}
+          scroll={{ x: 1400 }}
+          pagination={false}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+            columnWidth: 40,
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
 
