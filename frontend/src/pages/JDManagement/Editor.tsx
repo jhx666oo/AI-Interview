@@ -4,6 +4,7 @@ import { SaveOutlined, ArrowLeftOutlined, RobotOutlined } from '@ant-design/icon
 import { useNavigate, useParams } from 'react-router-dom';
 import request from '../../utils/request';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
+import { PageHeader, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -61,19 +62,18 @@ const JDManagementEditor: React.FC = () => {
 
   return (
     <>
-    <Card
+    <PageHeader
       title={record ? `编辑 JD：${record.title}` : '加载中...'}
-      extra={<Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/jd-management')}>返回列表</Button>}
-      loading={loading}
-    >
+      actions={<Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/jd-management')}>返回列表</Button>}
+    />
+    <Card loading={loading}>
       <Form form={form} layout="vertical">
         <Form.Item name="title" label="岗位名称" rules={[{ required: true, message: '请输入岗位名称' }]}>
           <Input placeholder="例如：高级前端工程师" />
         </Form.Item>
         <Form.Item label="岗位部门"><Input value={record?.department} disabled /></Form.Item>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <Text strong>岗位描述 (JD)</Text>
-          <Button
+        <ResponsiveToolbar
+          actions={<Button
             type="link"
             icon={<RobotOutlined />}
             onClick={() => {
@@ -85,8 +85,10 @@ const JDManagementEditor: React.FC = () => {
             }}
           >
             AI 生成 JD
-          </Button>
-        </div>
+          </Button>}
+        >
+          <Text strong>岗位描述 (JD)</Text>
+        </ResponsiveToolbar>
         <Form.Item name="description" rules={[{ required: true }]}>
           <TextArea rows={8} placeholder="输入岗位描述，或点击右上角「AI 生成 JD」智能生成" />
         </Form.Item>
@@ -100,7 +102,9 @@ const JDManagementEditor: React.FC = () => {
 
       {record?.versions?.length > 0 && (
         <Card title="版本历史" size="small" style={{ marginTop: 24 }}>
-          <Table dataSource={record.versions} columns={verColumns} rowKey="id" size="small" pagination={false} />
+          <TableViewport>
+            <Table dataSource={record.versions} columns={verColumns} rowKey="id" size="small" pagination={false} />
+          </TableViewport>
         </Card>
       )}
     </Card>

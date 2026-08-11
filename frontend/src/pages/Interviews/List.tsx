@@ -13,6 +13,8 @@ import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import { getReminderFeedback, type ReminderDeliveryResponse } from './reminderFeedback';
+import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -701,7 +703,7 @@ const InterviewsList: React.FC = () => {
             </Space>
           </div>
         )}
-        <Table
+        <TableViewport><Table
           dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
           columns={columns}
           rowKey="id"
@@ -713,12 +715,12 @@ const InterviewsList: React.FC = () => {
             onChange: setSelectedRowKeys,
             columnWidth: 40,
           }}
-        />
+        /></TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
 
       {/* 安排面试弹窗 */}
-      <Modal
+      <ResponsiveModal
         title={
           <Space>
             <BellOutlined />
@@ -750,10 +752,10 @@ const InterviewsList: React.FC = () => {
             <Input placeholder="输入二面面试官姓名（可选）" />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       {/* 评价弹窗 */}
-      <Modal
+      <ResponsiveModal
         title={`填写第${evalRound}面评价 - ${evalRecord?.candidate_name || ''}`}
         open={evalModalVisible}
         onOk={handleSubmitEval}
@@ -777,10 +779,10 @@ const InterviewsList: React.FC = () => {
             </Radio.Group>
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       {/* 查看评价弹窗 */}
-      <Modal
+      <ResponsiveModal
         title={`面试评价 - ${viewEvalRecord?.candidate_name || ''}`}
         open={viewEvalVisible}
         onCancel={() => setViewEvalVisible(false)}
@@ -831,10 +833,10 @@ const InterviewsList: React.FC = () => {
             </div>
           </div>
         )}
-      </Modal>
+      </ResponsiveModal>
 
       {/* 新建面试弹窗 */}
-      <Modal
+      <ResponsiveModal
         title={<span>新建面试</span>}
         open={createModalVisible}
         onOk={handleCreateSubmit}
@@ -867,10 +869,10 @@ const InterviewsList: React.FC = () => {
             <Input placeholder="例如：3楼会议室 / 会议链接（可选）" />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
 
       {/* 编辑面试弹窗 */}
-      <Modal
+      <ResponsiveModal
         title={<span>编辑面试 - {editRecord?.candidate_name || ''}</span>}
         open={editModalVisible}
         onOk={handleEditSubmit}
@@ -950,7 +952,7 @@ const InterviewsList: React.FC = () => {
             </Select>
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };

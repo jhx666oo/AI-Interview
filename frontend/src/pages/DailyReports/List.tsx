@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   Card, Button, Space, Tag, Modal, message, Typography,
   Row, Col, Spin, Empty, Statistic, Divider, DatePicker, Select,
-  Input, Alert, Tooltip
+  Alert, Tooltip
 } from 'antd';
 import {
   ThunderboltOutlined, LoadingOutlined, ReloadOutlined,
@@ -15,6 +15,8 @@ import { useOwner } from '../../contexts/OwnerContext';
 import ReactMarkdown from 'react-markdown';
 import dayjs from 'dayjs';
 import { normalizeDailyReportStats, type DailyReportStats, type DailyReportStatsRow } from './stats';
+import { ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { useViewportWidth } from '../../components/Layout/responsive';
 
 const { Text, Title } = Typography;
 
@@ -47,39 +49,42 @@ function buildSnapshotTableRows(stats: DailyReportStats): DailyReportStatsRow[] 
   ];
 }
 
-function renderSnapshotTable(stats: DailyReportStats | null): React.ReactNode {
+function renderSnapshotTable(stats: DailyReportStats | null, dense = false): React.ReactNode {
   const rows = stats ? buildSnapshotTableRows(stats) : [];
   if (rows.length === 0) return null;
+  const cellPadding = dense ? '6px 8px' : '8px 10px';
 
   return (
     <div style={{ marginBottom: 20 }}>
       <Text strong style={{ display: 'block', marginBottom: 8 }}>📊 统计数据（与飞书同步）</Text>
-      <div style={{ overflowX: 'auto', border: '1px solid #f0f0f0', borderRadius: 8 }}>
-        <table style={{ width: '100%', minWidth: 760, fontSize: 12, borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ background: '#f5f5f5' }}>
-              <th style={{ padding: '8px 10px', borderBottom: '1px solid #d9d9d9', textAlign: 'left', whiteSpace: 'nowrap' }}>负责人</th>
-              {REPORT_METRIC_COLUMNS.map((column) => (
-                <th key={column.key} style={{ padding: '8px 10px', borderBottom: '1px solid #d9d9d9', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                  {column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={row.owner} style={{ background: row.owner === '合计' ? '#f5f5f5' : index % 2 === 0 ? '#fff' : '#fafafa', fontWeight: row.owner === '合计' ? 600 : 400 }}>
-                <td style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap' }}>{row.owner}</td>
+      <TableViewport className="daily-report-snapshot-table">
+        <div style={{ minWidth: 760, border: '1px solid #f0f0f0', borderRadius: 8 }}>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: '#f5f5f5' }}>
+                <th style={{ padding: cellPadding, borderBottom: '1px solid #d9d9d9', textAlign: 'left', whiteSpace: 'nowrap' }}>负责人</th>
                 {REPORT_METRIC_COLUMNS.map((column) => (
-                  <td key={column.key} style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
-                    {row[column.key] ?? '-'}
-                  </td>
+                  <th key={column.key} style={{ padding: cellPadding, borderBottom: '1px solid #d9d9d9', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                    {column.label}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={row.owner} style={{ background: row.owner === '合计' ? '#f5f5f5' : index % 2 === 0 ? '#fff' : '#fafafa', fontWeight: row.owner === '合计' ? 600 : 400 }}>
+                  <td style={{ padding: cellPadding, borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap' }}>{row.owner}</td>
+                  {REPORT_METRIC_COLUMNS.map((column) => (
+                    <td key={column.key} style={{ padding: cellPadding, borderBottom: '1px solid #f0f0f0', textAlign: 'center' }}>
+                      {row[column.key] ?? '-'}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </TableViewport>
       {(stats.unassigned ?? 0) > 0 && (
         <Alert
           type="warning"
@@ -119,6 +124,9 @@ const DailyReportsList: React.FC = () => {
   const [detailModal, setDetailModal] = useState<any>(null);
   const [detailData, setDetailData] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const viewportWidth = useViewportWidth();
+  const isNarrow = viewportWidth < 480;
+  const modalWidth = Math.min(900, Math.max(320, viewportWidth - 32));
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -237,32 +245,35 @@ const DailyReportsList: React.FC = () => {
   return (
     <div>
       {/* 顶部操作栏 */}
-      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <ResponsiveToolbar
+        actions={
+          <Space wrap>
+            <DatePicker
+              value={selectedDate}
+              onChange={(d) => d && setSelectedDate(d)}
+              allowClear={false}
+            />
+            <Button
+              type="primary"
+              icon={generating ? <LoadingOutlined /> : <ThunderboltOutlined />}
+              onClick={handleGenerate}
+              loading={generating}
+              size="large"
+              style={{ borderRadius: 8 }}
+            >
+              生成日报
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading} size="large" style={{ borderRadius: 8 }}>
+              刷新
+            </Button>
+          </Space>
+        }
+      >
         <div>
           <Title level={2} style={{ margin: 0, fontWeight: 700 }}>招聘日报</Title>
           <Text type="secondary">AI 自动生成每日招聘进展报告</Text>
         </div>
-        <Space>
-          <DatePicker
-            value={selectedDate}
-            onChange={(d) => d && setSelectedDate(d)}
-            allowClear={false}
-          />
-          <Button
-            type="primary"
-            icon={generating ? <LoadingOutlined /> : <ThunderboltOutlined />}
-            onClick={handleGenerate}
-            loading={generating}
-            size="large"
-            style={{ borderRadius: 8 }}
-          >
-            生成日报
-          </Button>
-          <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading} size="large" style={{ borderRadius: 8 }}>
-            刷新
-          </Button>
-        </Space>
-      </div>
+      </ResponsiveToolbar>
 
       {/* 列表区域 */}
       {loading ? (
@@ -324,7 +335,7 @@ const DailyReportsList: React.FC = () => {
                   {stats && (
                     <div style={{
                       display: 'grid',
-                      gridTemplateColumns: 'repeat(3, 1fr)',
+                      gridTemplateColumns: `repeat(${isNarrow ? 2 : 3}, minmax(0, 1fr))`,
                       gap: 8,
                       marginBottom: 12,
                       padding: 12,
@@ -392,7 +403,7 @@ const DailyReportsList: React.FC = () => {
                         onClick={() => {
                           Modal.info({
                             title: `📊 招聘日报 · ${record.report_date}`,
-                            width: 900,
+                            width: modalWidth,
                             content: (
                               <div>
                                 <Row gutter={16} style={{ marginBottom: 16, marginTop: 16 }}>
@@ -405,7 +416,7 @@ const DailyReportsList: React.FC = () => {
                                     <Text strong>{record.created_at ? dayjs(record.created_at).format('MM-DD HH:mm') : '-'}</Text>
                                   </Col>
                                 </Row>
-                                {renderSnapshotTable(stats)}
+                                {renderSnapshotTable(stats, isNarrow)}
                                 {stats && (
                                   <>
                                     <Divider>统计数据</Divider>
@@ -419,7 +430,7 @@ const DailyReportsList: React.FC = () => {
                                         { label: '面试中', key: 'active_interviews', color: '#722ed1' },
                                         { label: '入职中', key: 'onboarding_count', color: '#13c2c2' },
                                       ].map(item => (
-                                        <Col key={item.key} span={6} style={{ marginBottom: 12 }}>
+                                        <Col key={item.key} xs={12} sm={8} md={6} style={{ marginBottom: 12 }}>
                                           <Statistic
                                             title={item.label}
                                             value={stats[item.key] ?? '-'}
@@ -473,7 +484,7 @@ const DailyReportsList: React.FC = () => {
       )}
 
       {/* 日报详情对话框（按负责人分组表格） */}
-      <Modal
+      <ResponsiveModal
         title={
           <Space>
             <FileTextOutlined />
@@ -490,14 +501,14 @@ const DailyReportsList: React.FC = () => {
             </Button>
           ),
         ]}
-        width={900}
+        width={modalWidth}
       >
         {detailLoading ? (
           <div style={{ textAlign: 'center', padding: 40 }}><Spin /><p style={{ marginTop: 12, color: '#999' }}>加载候选人数据...</p></div>
         ) : detailData ? (
           <div>
             {/* 与飞书卡片保持同一份 v2 快照数据 */}
-            {renderSnapshotTable(detailStats)}
+            {renderSnapshotTable(detailStats, isNarrow)}
 
             {/* 汇总统计 */}
             <div style={{ marginBottom: 16, padding: '12px 16px', background: '#f0f5ff', borderRadius: 6 }}>
@@ -519,9 +530,10 @@ const DailyReportsList: React.FC = () => {
                   {group.responsible_person === '何雨菱' ? '🌸' : group.responsible_person === '杜雁玲' ? '🌻' : group.responsible_person === '魏秋柠' ? '🌺' : '📋'} {group.responsible_person}
                   <Tag style={{ marginLeft: 8 }}>{group.candidates.length} 人</Tag>
                 </div>
-                <div style={{ overflowX: 'auto', border: '1px solid #f0f0f0', borderRadius: '0 0 6px 6px' }}>
-                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                    <thead>
+                <TableViewport className="daily-report-candidate-table">
+                  <div style={{ minWidth: 780, border: '1px solid #f0f0f0', borderRadius: '0 0 6px 6px' }}>
+                    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                      <thead>
                       <tr style={{ background: '#fafafa' }}>
                         <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', whiteSpace: 'nowrap' }}>姓名</th>
                         <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', whiteSpace: 'nowrap' }}>学历</th>
@@ -532,8 +544,8 @@ const DailyReportsList: React.FC = () => {
                         <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'left', minWidth: 200 }}>AI 建议</th>
                         <th style={{ padding: '6px 8px', borderBottom: '1px solid #f0f0f0', textAlign: 'center', whiteSpace: 'nowrap' }}>简历</th>
                       </tr>
-                    </thead>
-                    <tbody>
+                      </thead>
+                      <tbody>
                       {group.candidates.map((c: any, idx: number) => (
                         <tr key={c.resume_id || idx} style={{ background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
                           <td style={{ padding: '4px 8px', borderBottom: '1px solid #f5f5f5', fontWeight: 500 }}>{c.name}</td>
@@ -556,9 +568,10 @@ const DailyReportsList: React.FC = () => {
                           </td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </tbody>
+                    </table>
+                  </div>
+                </TableViewport>
               </div>
             ))}
 
@@ -577,10 +590,10 @@ const DailyReportsList: React.FC = () => {
         ) : (
           <Empty description="暂无数据" />
         )}
-      </Modal>
+      </ResponsiveModal>
 
       {/* 发送到飞书对话框 */}
-      <Modal
+      <ResponsiveModal
         title={
           <Space>
             <SendOutlined />
@@ -593,7 +606,7 @@ const DailyReportsList: React.FC = () => {
         confirmLoading={sending}
         okText="发送"
         cancelText="取消"
-        width={480}
+        width={Math.min(480, Math.max(320, viewportWidth - 32))}
       >
         {sendModal && (
           <div>
@@ -657,7 +670,7 @@ const DailyReportsList: React.FC = () => {
             </div>
           </div>
         )}
-      </Modal>
+      </ResponsiveModal>
     </div>
   );
 };

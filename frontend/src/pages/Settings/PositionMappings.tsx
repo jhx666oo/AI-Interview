@@ -8,6 +8,7 @@ import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, SyncOutlined, UserOutlined, SearchOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
+import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 
 const { Text } = Typography;
 
@@ -268,19 +269,11 @@ const PositionMappings: React.FC = () => {
   ];
 
   return (
-    <Card
-      title="岗位映射管理"
-      extra={
-        <Space>
-          <Input
-            placeholder="搜索标准岗位名"
-            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onPressEnter={fetchData}
-            style={{ width: 200 }}
-            allowClear
-          />
+    <div>
+      <PageHeader title="岗位映射管理" />
+      <Card>
+      <ResponsiveToolbar
+        actions={<Space wrap>
           <Button icon={<SyncOutlined />} onClick={handleSync} loading={syncing}>
             从飞书同步
           </Button>
@@ -290,9 +283,18 @@ const PositionMappings: React.FC = () => {
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
             新增映射
           </Button>
-        </Space>
-      }
-    >
+        </Space>}
+      >
+        <Input
+          placeholder="搜索标准岗位名"
+          prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onPressEnter={fetchData}
+          style={{ width: '100%', maxWidth: 280 }}
+          allowClear
+        />
+      </ResponsiveToolbar>
       {selectedRowKeys.length > 0 && (
         <div style={{ marginBottom: 16, padding: '8px 16px', background: '#e6f7ff', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>已选 <strong>{selectedRowKeys.length}</strong> 项</span>
@@ -302,7 +304,8 @@ const PositionMappings: React.FC = () => {
           </Space>
         </div>
       )}
-      <Table
+      <TableViewport>
+        <Table
         columns={columns}
         dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
         rowKey="key"
@@ -310,9 +313,10 @@ const PositionMappings: React.FC = () => {
         scroll={{ x: 930 }}
         pagination={false}
         rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
-      />
+        />
+      </TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
-      <Modal
+      <ResponsiveModal
         title={editing ? '编辑映射' : '新增映射'}
         open={modalVisible}
         onOk={handleSubmit}
@@ -335,8 +339,9 @@ const PositionMappings: React.FC = () => {
             <Input placeholder="如：张三, 李四, 王五" />
           </Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
     </Card>
+    </div>
   );
 };
 

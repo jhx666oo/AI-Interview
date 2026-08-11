@@ -10,6 +10,8 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import dayjs from 'dayjs';
+import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -177,10 +179,10 @@ const OnboardingList: React.FC = () => {
   return (
     <div>
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}><Card><Statistic title="入职总数" value={data.length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="待入职" value={data.filter(r => r.status === 'pending').length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="入职中" value={data.filter(r => r.status === 'in_progress').length} /></Card></Col>
-        <Col span={6}><Card><Statistic title="已完成" value={data.filter(r => r.status === 'completed').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="入职总数" value={data.length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="待入职" value={data.filter(r => r.status === 'pending').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="入职中" value={data.filter(r => r.status === 'in_progress').length} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="已完成" value={data.filter(r => r.status === 'completed').length} /></Card></Col>
       </Row>
       <Card title={<span><HomeOutlined /> 入职管理</span>}
         extra={<Space>
@@ -196,17 +198,17 @@ const OnboardingList: React.FC = () => {
             </Space>
           </div>
         )}
-        <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+        <TableViewport><Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1400 }} pagination={false}
           rowSelection={{
             selectedRowKeys,
             onChange: setSelectedRowKeys,
             columnWidth: 40,
           }}
-        />
+        /></TableViewport>
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
-      <Modal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
+      <ResponsiveModal title={editing ? '编辑入职记录' : '新增入职记录'} open={modalVisible}
         onCancel={() => setModalVisible(false)} onOk={handleSubmit} confirmLoading={submitting} width={640} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="resume_id" label="关联简历" rules={[{ required: true, message: '请选择简历' }]}>
@@ -218,13 +220,13 @@ const OnboardingList: React.FC = () => {
             <Input />
           </Form.Item>
           <Row gutter={16}>
-            <Col span={8}><Form.Item name="employee_id" label="工号"><Input placeholder="如：EMP001" /></Form.Item></Col>
-            <Col span={8}><Form.Item name="department" label="部门"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="position_title" label="职位"><Input /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="employee_id" label="工号"><Input placeholder="如：EMP001" /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="department" label="部门"><Input /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="position_title" label="职位"><Input /></Form.Item></Col>
           </Row>
           <Row gutter={16}>
-            <Col span={8}><Form.Item name="onboard_date" label="入职日期"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="contract_type" label="合同类型">
+            <Col xs={24} sm={12} md={8}><Form.Item name="onboard_date" label="入职日期"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="contract_type" label="合同类型">
               <Select>
                 <Option value="fixed_term">固定期限</Option>
                 <Option value="permanent">无固定期限</Option>
@@ -232,19 +234,19 @@ const OnboardingList: React.FC = () => {
                 <Option value="outsourcing">外包</Option>
               </Select>
             </Form.Item></Col>
-            <Col span={8}><Form.Item name="status" label="状态">
+            <Col xs={24} sm={12} md={8}><Form.Item name="status" label="状态">
               <Select>{Object.entries(statusConfig).map(([k, v]) => <Option key={k} value={k}>{v.text}</Option>)}</Select>
             </Form.Item></Col>
           </Row>
           {editing && (<Row gutter={16}>
-            <Col span={6}><Form.Item name="contract_signed" label="合同已签" valuePropName="checked"><Switch /></Form.Item></Col>
-            <Col span={6}><Form.Item name="accounts_created" label="账号已开" valuePropName="checked"><Switch /></Form.Item></Col>
-            <Col span={6}><Form.Item name="equipment_assigned" label="设备已配" valuePropName="checked"><Switch /></Form.Item></Col>
-            <Col span={6}><Form.Item name="orientation_completed" label="入职引导完成" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="contract_signed" label="合同已签" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="accounts_created" label="账号已开" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="equipment_assigned" label="设备已配" valuePropName="checked"><Switch /></Form.Item></Col>
+            <Col xs={24} sm={12} md={8}><Form.Item name="orientation_completed" label="入职引导完成" valuePropName="checked"><Switch /></Form.Item></Col>
           </Row>)}
           <Form.Item name="notes" label="备注"><TextArea rows={2} /></Form.Item>
         </Form>
-      </Modal>
+      </ResponsiveModal>
       <Drawer size="large" title="入职详情" open={detailVisible} onClose={() => setDetailVisible(false)}>
         {current && (
           <Descriptions column={1} bordered>

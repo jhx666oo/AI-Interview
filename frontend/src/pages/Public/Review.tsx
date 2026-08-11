@@ -130,14 +130,14 @@ const PublicReview: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: 40, maxWidth: 1000, margin: '0 auto' }}>
+    <div style={{ padding: 'clamp(16px, 5vw, 40px)', maxWidth: 1000, margin: '0 auto' }}>
       <Card>
         <Title level={3}>简历审核</Title>
         <Text type="secondary">请仔细阅读简历信息并给出您的评审意见</Text>
 
         <Divider />
 
-        <Descriptions title="候选人信息" bordered column={2} style={{ marginBottom: 24 }}>
+        <Descriptions title="候选人信息" bordered column={{ xs: 1, sm: 2 }} style={{ marginBottom: 24 }}>
           <Descriptions.Item label="姓名">{resume.candidate_name}</Descriptions.Item>
           <Descriptions.Item label="应聘岗位">{resume.standard_position || resume.position?.title || resume.position_applied || '-'}</Descriptions.Item>
           <Descriptions.Item label="邮箱">{resume.email}</Descriptions.Item>
@@ -151,13 +151,13 @@ const PublicReview: React.FC = () => {
 
         {resume.ai_review && (
           <Card title="AI 初筛意见" style={{ marginBottom: 24 }} size="small">
-            <div style={{ whiteSpace: 'pre-wrap' }}>{resume.ai_review}</div>
+            <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{resume.ai_review}</div>
           </Card>
         )}
 
         {resume.resume_markdown && (
           <Card title="简历详情" style={{ marginBottom: 24 }} size="small">
-            <div style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto' }}>
+            <div style={{ whiteSpace: 'pre-wrap', maxHeight: 400, overflow: 'auto', overflowWrap: 'anywhere' }}>
               {resume.resume_markdown}
             </div>
           </Card>
@@ -194,7 +194,7 @@ const PublicReview: React.FC = () => {
         <div style={{ marginBottom: 24 }}>
           <Text>推荐意见</Text>
           <div style={{ marginTop: 8 }}>
-            <Space>
+            <Space wrap>
               <Button
                 type={recommendation === 'recommend' ? 'primary' : 'default'}
                 icon={<CheckCircleOutlined />}

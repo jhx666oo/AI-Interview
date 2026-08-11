@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 // @ts-ignore
 import html2pdf from 'html2pdf.js';
+import { PageHeader } from '../../components/Responsive/PageHeader';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -253,7 +254,9 @@ const InterviewResultPage: React.FC = () => {
   const isPendingReview = interview.status !== 'completed' && interview.result === 'pending';
 
   return (
-    <Card id="interview-result-content">
+    <>
+      <PageHeader title="面试结果" />
+      <Card id="interview-result-content">
       {isPendingReview ? (
          // Pending review state
          <>
@@ -403,7 +406,8 @@ const InterviewResultPage: React.FC = () => {
           </List.Item>
         )}
       />
-    </Card>
+      </Card>
+    </>
   );
 };
 

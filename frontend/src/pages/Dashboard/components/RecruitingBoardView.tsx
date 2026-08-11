@@ -24,6 +24,7 @@ import {
 } from 'recharts';
 import type { DashboardMetric, FunnelStage, RecruitingBoard } from '../types';
 import { PositionSummaryTable } from './PositionSummaryTable';
+import { useViewportWidth } from '../../../components/Layout/responsive';
 import styles from '../dashboard.module.css';
 
 const kpiDefinitions: Array<{
@@ -70,6 +71,8 @@ function SectionTitle({
 }
 
 function KpiGrid({ board }: { board: RecruitingBoard }) {
+  const viewportWidth = useViewportWidth();
+  const columns = viewportWidth >= 1200 ? 4 : viewportWidth >= 480 ? 2 : 1;
   const dataCaption = board.data_mode === 'snapshot'
     ? `快照 · ${board.snapshot_date || '历史数据'}`
     : '实时汇总';
@@ -79,7 +82,7 @@ function KpiGrid({ board }: { board: RecruitingBoard }) {
       <SectionTitle eyebrow="Overview" description="聚焦招聘进程中的核心经营指标">
         <span id="dashboard-overview-title">总体概览</span>
       </SectionTitle>
-      <div className={styles.kpiGrid}>
+      <div className={styles.kpiGrid} style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
         {kpiDefinitions.map((item) => {
           const metric = board.kpis[item.key];
           const unavailable = !metric?.available || metric.value == null;
@@ -146,6 +149,8 @@ function InsightCard({ insights }: { insights: RecruitingBoard['insights'] }) {
 }
 
 function RecruitingFunnel({ stages }: { stages: FunnelStage[] }) {
+  const viewportWidth = useViewportWidth();
+  const chartHeight = viewportWidth < 480 ? 280 : viewportWidth < 768 ? 300 : 320;
   return (
     <section className={styles.boardSection} aria-labelledby="dashboard-funnel-title">
       <SectionTitle eyebrow="Pipeline" description="从简历入库到最终入职的全链路转化">
@@ -153,8 +158,8 @@ function RecruitingFunnel({ stages }: { stages: FunnelStage[] }) {
       </SectionTitle>
       <Card className={styles.funnelCard}>
         {stages.length === 0 ? <div className={styles.emptyState}>暂无漏斗数据</div> : (
-          <div className={styles.funnelChart}>
-            <ResponsiveContainer width="100%" height={320}>
+          <div className={styles.funnelChart} style={{ minWidth: 0, height: chartHeight }}>
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={stages} layout="vertical" margin={{ top: 4, right: 44, bottom: 4, left: 4 }}>
                 <CartesianGrid stroke="#E2E8F0" strokeDasharray="4 4" horizontal={false} />
                 <XAxis type="number" hide domain={[0, 'dataMax']} />
