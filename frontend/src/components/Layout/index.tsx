@@ -235,7 +235,6 @@ const AppLayout: React.FC = () => {
       )}
       <Layout
         className="app-shell__main"
-        style={{ marginLeft: isMobile ? 0 : (isCompact || collapsed ? 80 : 200) }}
       >
         <Header className="app-shell__header">
           <div className="app-shell__heading">
