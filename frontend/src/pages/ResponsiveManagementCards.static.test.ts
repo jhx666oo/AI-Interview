@@ -27,4 +27,11 @@ describe('high-frequency management pages use responsive data cards', () => {
     expect(readPage('Settings/InterviewerMappings.tsx')).toContain('handleSave');
     expect(readPage('Settings/Users.tsx')).toContain('handleDelete');
   });
+
+  it('keeps the users card view on the complete user data source', () => {
+    const source = readPage('Settings/Users.tsx');
+
+    expect(source).toContain('dataSource={data}');
+    expect(source).not.toContain('data.slice((tablePage - 1) * pageSize, tablePage * pageSize)');
+  });
 });

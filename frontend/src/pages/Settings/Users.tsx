@@ -375,7 +375,7 @@ const UsersList: React.FC = () => {
 
       <ResponsiveDataView
         columns={columns}
-        dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
+        dataSource={data}
         loading={loading}
         rowKey="id"
         card={userCard}
