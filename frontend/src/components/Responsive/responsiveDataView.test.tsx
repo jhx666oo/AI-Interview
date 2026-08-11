@@ -184,4 +184,35 @@ describe('ResponsiveDataView', () => {
     expect(screen.getByText('产品经理')).not.toBeNull();
     expect(screen.queryByText('招商主管')).toBeNull();
   });
+
+  it('returns an uncontrolled compact view to the last available page after its data shrinks', async () => {
+    const user = userEvent.setup();
+    const pagedData: Row[] = [
+      ...data,
+      { id: 'position-2', name: '产品经理', department: '产品部' },
+    ];
+    const { rerender } = render(
+      <ResponsiveDataView
+        {...props}
+        dataSource={pagedData}
+        pagination={{ defaultCurrent: 1, defaultPageSize: 1, total: 2 }}
+        testWidth={1024}
+      />,
+    );
+
+    await user.click(screen.getByTitle('2'));
+    expect(screen.getByText('产品经理')).not.toBeNull();
+
+    rerender(
+      <ResponsiveDataView
+        {...props}
+        dataSource={data}
+        pagination={{ defaultCurrent: 1, defaultPageSize: 1, total: 1 }}
+        testWidth={1024}
+      />,
+    );
+
+    expect(screen.getByText('招商主管')).not.toBeNull();
+    expect(screen.queryByText('产品经理')).toBeNull();
+  });
 });

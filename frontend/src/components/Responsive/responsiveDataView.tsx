@@ -1,5 +1,5 @@
 import { Pagination, Spin, Table, type TableProps } from 'antd';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Key, TablePaginationConfig } from 'antd/es/table/interface';
 import { ResponsiveCardList } from './responsiveCardList';
 import { useResponsiveMode, type ResponsiveMode } from './responsiveMode';
@@ -72,13 +72,24 @@ export function ResponsiveDataView<RecordType extends object>({
   const paginationConfig = pagination === false ? null : pagination ?? {};
   const current = paginationConfig?.current ?? internalCurrent;
   const pageSize = paginationConfig?.pageSize ?? internalPageSize;
+  const total = paginationConfig?.total ?? dataSource?.length ?? 0;
+  const maxPage = Math.max(1, Math.ceil(total / Math.max(pageSize, 1)));
+  const effectiveCurrent = Math.min(Math.max(current, 1), maxPage);
+  const isCurrentControlled = paginationConfig?.current !== undefined;
+
+  useEffect(() => {
+    if (!isCurrentControlled && internalCurrent !== effectiveCurrent) {
+      setInternalCurrent(effectiveCurrent);
+    }
+  }, [effectiveCurrent, internalCurrent, isCurrentControlled]);
+
   const updatePage = (page: number, nextPageSize: number) => {
-    if (paginationConfig?.current === undefined) setInternalCurrent(page);
+    if (!isCurrentControlled) setInternalCurrent(page);
     if (paginationConfig?.pageSize === undefined) setInternalPageSize(nextPageSize);
   };
   const sharedPagination: TableProps<RecordType>['pagination'] = paginationConfig && {
     ...paginationConfig,
-    current,
+    current: effectiveCurrent,
     pageSize,
     onChange: (page, nextPageSize) => {
       updatePage(page, nextPageSize);
@@ -92,7 +103,7 @@ export function ResponsiveDataView<RecordType extends object>({
   const cardPagination = getCardPaginationConfig(dataSource ?? [], sharedPagination);
   const hasAllRows = (dataSource?.length ?? 0) >= (cardPagination?.total ?? 0);
   const currentPageData = cardPagination && hasAllRows
-    ? (dataSource ?? []).slice((current - 1) * pageSize, current * pageSize)
+    ? (dataSource ?? []).slice((effectiveCurrent - 1) * pageSize, effectiveCurrent * pageSize)
     : (dataSource ?? []);
   const table = (
     <Table<RecordType>
@@ -127,7 +138,7 @@ export function ResponsiveDataView<RecordType extends object>({
             <Pagination
               {...cardPagination.config}
               className="responsive-data-view-pagination"
-              current={current}
+              current={effectiveCurrent}
               pageSize={pageSize}
               total={cardPagination.total}
               onChange={(page, nextPageSize) => {
