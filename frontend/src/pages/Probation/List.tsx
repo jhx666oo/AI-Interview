@@ -12,7 +12,7 @@ import {
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import dayjs from 'dayjs';
-import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveDataView } from '../../components/Responsive';
 import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { TextArea } = Input;
@@ -216,9 +216,22 @@ const ProbationList: React.FC = () => {
             <Button size="small" danger onClick={handleBatchDelete}>批量删除</Button>
           </div>
         )}
-        <TableViewport><Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
+        <ResponsiveDataView dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading}
           scroll={{ x: 1500 }} pagination={false}
-          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }} /></TableViewport>
+          rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
+          card={{
+            title: record => record.employee_name || '-',
+            subtitle: record => [record.probation_start ? dayjs(record.probation_start).format('YYYY-MM-DD') : '', record.probation_end ? dayjs(record.probation_end).format('YYYY-MM-DD') : ''].filter(Boolean).join(' · '),
+            status: record => (columns[6] as any).render(record.result),
+            fields: [
+              { key: 'employee_id', label: '工号', level: 'detail', render: record => record.employee_id || '-' },
+              { key: 'probation_months', label: '期限', level: 'detail', render: record => (columns[4] as any).render(record.probation_months) },
+              { key: 'reviews', label: '月度评估', level: 'detail', render: record => (columns[5] as any).render(null, record) },
+              { key: 'confirmed_at', label: '转正日期', level: 'detail', render: record => (columns[7] as any).render(record.confirmed_at) },
+            ],
+            actions: record => (columns[8] as any).render(null, record),
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
       <ResponsiveModal title={editing ? '编辑试用记录' : '新增试用记录'} open={modalVisible}

@@ -8,7 +8,7 @@ import {
   MinusCircleOutlined, AppstoreOutlined, UserOutlined, SearchOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
-import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 import { WEIGHTED_GATE_DIMENSIONS, WEIGHTED_SCORING_DIMENSIONS, WEIGHTED_SCREENING_DEFAULT_WEIGHTS } from '../../utils/resumeEvaluation';
 
 const { Text } = Typography;
@@ -308,8 +308,7 @@ const CapabilityDimensions: React.FC = () => {
           </Text>
         </div>
 
-        <TableViewport>
-          <Table
+        <ResponsiveDataView
           dataSource={data}
           columns={columns}
           rowKey="id"
@@ -321,8 +320,16 @@ const CapabilityDimensions: React.FC = () => {
             showSizeChanger: false,
             showTotal: (total) => `共 ${total} 条`,
           }}
-          />
-        </TableViewport>
+          card={{
+            title: record => record.position_name || '-',
+            subtitle: record => (columns[1] as any).render(null, record),
+            fields: [
+              { key: 'dimensions', label: '能力维度', level: 'secondary', render: record => (columns[1] as any).render(null, record) },
+              { key: 'personalized_requirements', label: '个性化需求', level: 'detail', render: record => (columns[2] as any).render(null, record) },
+            ],
+            actions: record => (columns[3] as any).render(null, record),
+          }}
+        />
       </Card>
 
       <ResponsiveModal

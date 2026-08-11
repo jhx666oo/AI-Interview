@@ -4,7 +4,7 @@ import SimplePagination from '../../components/SimplePagination';
 import { EditOutlined, ThunderboltOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
-import { PageHeader, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveToolbar } from '../../components/Responsive';
 
 const { Text } = Typography;
 
@@ -91,9 +91,18 @@ const JDManagementList: React.FC = () => {
         <ResponsiveToolbar actions={<Button icon={<ReloadOutlined />} onClick={fetchData}>刷新</Button>}>
           <span />
         </ResponsiveToolbar>
-        <TableViewport>
-          <Table dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading} pagination={false} />
-        </TableViewport>
+        <ResponsiveDataView dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)} columns={columns} rowKey="id" loading={loading} pagination={false}
+          card={{
+            title: record => record.title || '-',
+            subtitle: record => record.department || '-',
+            status: record => (columns[3] as any).render(record.status),
+            fields: [
+              { key: 'updated_at', label: '最近修改', level: 'secondary', render: record => (columns[4] as any).render(record.updated_at) },
+              { key: 'description', label: 'JD 预览', level: 'detail', render: record => (columns[2] as any).render(record.description) },
+            ],
+            actions: record => (columns[5] as any).render(null, record),
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
     </Card>
     </>

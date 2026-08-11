@@ -9,6 +9,19 @@ const pages = [
   'Settings/Users.tsx',
 ];
 
+const lifecycleAndConfigurationPages = [
+  'Onboarding/List.tsx',
+  'Probation/List.tsx',
+  'Interviews/List.tsx',
+  'TalentPool/List.tsx',
+  'Settings/CapabilityDimensions.tsx',
+  'Settings/Mail.tsx',
+  'Workflows/List.tsx',
+  'JDManagement/List.tsx',
+  'JDManagement/Editor.tsx',
+  'Reviews/MyReviews.tsx',
+];
+
 const readPage = (relativePath: string) =>
   readFileSync(new URL(`./${relativePath}`, import.meta.url), 'utf8');
 
@@ -33,5 +46,19 @@ describe('high-frequency management pages use responsive data cards', () => {
 
     expect(source).toContain('dataSource={data}');
     expect(source).not.toContain('data.slice((tablePage - 1) * pageSize, tablePage * pageSize)');
+  });
+});
+
+describe('lifecycle and configuration pages use responsive data cards', () => {
+  it.each(lifecycleAndConfigurationPages)('%s declares a ResponsiveDataView card configuration', (page) => {
+    const source = readPage(page);
+
+    expect(source).toContain('ResponsiveDataView');
+    expect(source).toContain('card=');
+  });
+
+  it('keeps interview reminders and mail attachments available to card users', () => {
+    expect(readPage('Interviews/List.tsx')).toContain('handleSendReminder');
+    expect(readPage('Settings/Mail.tsx')).toContain('attachment');
   });
 });

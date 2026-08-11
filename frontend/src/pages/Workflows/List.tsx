@@ -11,7 +11,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
-import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 
 const { Option } = Select;
 
@@ -323,16 +323,25 @@ const WorkflowsList: React.FC = () => {
         </Space> : undefined}>
           <span />
         </ResponsiveToolbar>
-        <TableViewport>
-          <Table
+        <ResponsiveDataView
             columns={columns}
             dataSource={workflows.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
             rowKey="id"
             loading={loading}
             pagination={false}
             rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
-          />
-        </TableViewport>
+          card={{
+            title: record => record.name || '-',
+            subtitle: record => record.trigger_type || '-',
+            status: record => (columns[2] as any).render(record.status),
+            fields: [
+              { key: 'description', label: '描述', level: 'detail', render: record => record.description || '-' },
+              { key: 'trigger_type', label: '触发方式', level: 'secondary', render: record => (columns[3] as any).render(record.trigger_type) },
+              { key: 'updated_at', label: '更新时间', level: 'detail', render: record => (columns[4] as any).render(record.updated_at) },
+            ],
+            actions: record => (columns[5] as any).render(null, record),
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={workflows.length} onChange={setTablePage} />
       </Card>
 

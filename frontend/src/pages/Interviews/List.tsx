@@ -13,7 +13,7 @@ import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import { getReminderFeedback, type ReminderDeliveryResponse } from './reminderFeedback';
-import { TableViewport } from '../../components/Responsive/TableViewport';
+import { ResponsiveDataView } from '../../components/Responsive';
 import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 
 const { TextArea } = Input;
@@ -703,7 +703,7 @@ const InterviewsList: React.FC = () => {
             </Space>
           </div>
         )}
-        <TableViewport><Table
+        <ResponsiveDataView
           dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
           columns={columns}
           rowKey="id"
@@ -715,7 +715,20 @@ const InterviewsList: React.FC = () => {
             onChange: setSelectedRowKeys,
             columnWidth: 40,
           }}
-        /></TableViewport>
+          card={{
+            title: record => record.candidate_name || '-',
+            subtitle: record => [record.position_applied || record.position, record.education, record.city, record.interview_time].filter(Boolean).join(' · '),
+            status: record => (columns[5] as any).render(null, record),
+            fields: [
+              { key: 'primary_interviewer', label: '一面面试官', level: 'detail', render: record => (columns[7] as any).render(record.primary_interviewer) },
+              { key: 'secondary_interviewer', label: '二面面试官', level: 'detail', render: record => (columns[8] as any).render(record.secondary_interviewer) },
+              { key: 'result1', label: '一面结果', level: 'detail', render: record => (columns[9] as any).render(null, record) },
+              { key: 'result2', label: '二面结果', level: 'detail', render: record => (columns[10] as any).render(null, record) },
+              { key: 'talent_status', label: '候选人状态', level: 'detail', render: record => record.talent_status || '-' },
+            ],
+            actions: record => (columns[11] as any).render(null, record),
+          }}
+        />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       </Card>
 
