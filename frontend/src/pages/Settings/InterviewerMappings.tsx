@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Table, Button, Input, message, Popconfirm, Space, Card, Modal } from 'antd';
 import { PlusOutlined, DeleteOutlined, SaveOutlined, BellOutlined, SearchOutlined, CloudSyncOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
-import { PageHeader, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveToolbar } from '../../components/Responsive';
 
 interface InterviewerMapping {
   name: string;
@@ -182,6 +182,22 @@ const InterviewerMappings: React.FC = () => {
     },
   ];
 
+  const interviewerCard = {
+    getKey: (_record: InterviewerMapping, index: number) => `${index}`,
+    title: (record: InterviewerMapping) => record.name || '未命名面试官',
+    subtitle: (record: InterviewerMapping) => record.open_id || '未配置 Open ID',
+    fields: [
+      { key: 'openId', label: 'Open ID', level: 'secondary' as const, render: (record: InterviewerMapping) => record.open_id || '—' },
+      { key: 'editableName', label: '姓名', level: 'detail' as const, render: (record: InterviewerMapping, index: number) => <Input placeholder="面试官姓名" value={record.name} onChange={(event) => handleChange(index, 'name', event.target.value)} /> },
+      { key: 'editableOpenId', label: 'Open ID', level: 'detail' as const, render: (record: InterviewerMapping, index: number) => <Input placeholder="ou_xxxxxxxx" value={record.open_id} onChange={(event) => handleChange(index, 'open_id', event.target.value)} /> },
+    ],
+    actions: (_record: InterviewerMapping, index: number) => (
+      <Popconfirm title="确认删除？" onConfirm={() => handleDelete(index)}>
+        <Button type="link" danger icon={<DeleteOutlined />} size="small">删除</Button>
+      </Popconfirm>
+    ),
+  };
+
   return (
     <div>
       <PageHeader
@@ -231,17 +247,16 @@ const InterviewerMappings: React.FC = () => {
             </Space>
           </div>
         )}
-        <TableViewport>
-          <Table
+        <ResponsiveDataView
           dataSource={data}
           columns={columns}
           rowKey={(_, idx) => `${idx}`}
           loading={loading}
+          card={interviewerCard}
           pagination={false}
           rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
           locale={{ emptyText: '暂无映射，请点击「添加」配置面试官姓名与飞书 Open ID' }}
-          />
-        </TableViewport>
+        />
       </Card>
     </div>
   );

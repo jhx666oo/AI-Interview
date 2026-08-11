@@ -8,7 +8,7 @@ import {
   PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, SyncOutlined, UserOutlined, SearchOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
-import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 
 const { Text } = Typography;
 
@@ -268,6 +268,25 @@ const PositionMappings: React.FC = () => {
     },
   ];
 
+  const positionMappingCard = {
+    title: (record: PositionGroup) => record.mapped_name,
+    subtitle: (record: PositionGroup) => record.raw_names.length ? record.raw_names.map((name) => <Tag key={name} color="blue">{name}</Tag>) : '—',
+    fields: [
+      { key: 'responsible', label: '负责人', level: 'secondary' as const, render: (record: PositionGroup) => record.responsible_person ? <Tag icon={<UserOutlined />} color="orange">{record.responsible_person}</Tag> : '—' },
+      { key: 'interviewers', label: '面试官', level: 'secondary' as const, render: (record: PositionGroup) => record.interviewers.length ? record.interviewers.map((interviewer) => <Tag key={interviewer.open_id || interviewer.name} color="geekblue">{interviewer.name}</Tag>) : '—' },
+      { key: 'openId', label: '负责人 Open ID', level: 'detail' as const, render: (record: PositionGroup) => record.responsible_person_open_id || '—' },
+      { key: 'rawNames', label: '全部 BOSS 岗位名称', level: 'detail' as const, render: (record: PositionGroup) => record.raw_names.join('、') || '—' },
+    ],
+    actions: (record: PositionGroup) => (
+      <Space>
+        <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+        <Popconfirm title={`删除「${record.mapped_name}」?`} onConfirm={() => handleDelete(record)}>
+          <Button size="small" danger icon={<DeleteOutlined />} loading={deletingId === record.key} />
+        </Popconfirm>
+      </Space>
+    ),
+  };
+
   return (
     <div>
       <PageHeader title="岗位映射管理" />
@@ -304,17 +323,16 @@ const PositionMappings: React.FC = () => {
           </Space>
         </div>
       )}
-      <TableViewport>
-        <Table
+      <ResponsiveDataView
         columns={columns}
         dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
         rowKey="key"
         loading={loading}
+        card={positionMappingCard}
         scroll={{ x: 930 }}
         pagination={false}
         rowSelection={{ selectedRowKeys, onChange: setSelectedRowKeys, columnWidth: 40 }}
-        />
-      </TableViewport>
+      />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
       <ResponsiveModal
         title={editing ? '编辑映射' : '新增映射'}

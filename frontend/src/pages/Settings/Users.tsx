@@ -4,7 +4,7 @@ import SimplePagination from '../../components/SimplePagination';
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, StopOutlined, CheckCircleOutlined, KeyOutlined, CopyOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
-import { PageHeader, ResponsiveModal, TableViewport } from '../../components/Responsive';
+import { PageHeader, ResponsiveDataView, ResponsiveModal } from '../../components/Responsive';
 
 const { Text } = Typography;
 
@@ -327,6 +327,26 @@ const UsersList: React.FC = () => {
     },
   ];
 
+  const userCard = {
+    title: (record: User) => record.full_name,
+    subtitle: (record: User) => record.email,
+    status: (record: User) => <Tag color={record.is_active ? 'success' : 'error'}>{record.is_active ? '启用' : '禁用'}</Tag>,
+    fields: [
+      { key: 'role', label: '角色', level: 'secondary' as const, render: (record: User) => getRoleTag(record.role) },
+      { key: 'feishu', label: '飞书绑定', level: 'secondary' as const, render: (record: User) => record.has_feishu ? <Tag color="purple">已绑定</Tag> : '—' },
+      { key: 'password', label: '密码', level: 'detail' as const, render: (record: User) => record.has_password ? '******' : '—' },
+      { key: 'createdAt', label: '创建时间', level: 'detail' as const, render: (record: User) => record.created_at ? new Date(record.created_at).toLocaleString('zh-CN') : '—' },
+    ],
+    actions: (record: User) => (
+      <Space size="small">
+        <Tooltip title="重置密码（123456）"><Button type="text" icon={<KeyOutlined />} onClick={() => handleResetPassword(record)} /></Tooltip>
+        <Tooltip title="编辑"><Button type="text" icon={<EditOutlined />} onClick={() => handleEdit(record)} /></Tooltip>
+        <Tooltip title={record.is_active ? '禁用' : '启用'}><Button type="text" icon={record.is_active ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => handleToggleStatus(record)} style={{ color: record.is_active ? '#ff4d4f' : '#52c41a' }} /></Tooltip>
+        <Popconfirm title="确定删除该用户吗？" description="此操作不可恢复" onConfirm={() => handleDelete(record.id)} okText="确定" cancelText="取消"><Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} /></Tooltip></Popconfirm>
+      </Space>
+    ),
+  };
+
   if (role !== 'admin') {
     return (
       <div style={{ padding: 40, textAlign: 'center' }}>
@@ -353,12 +373,12 @@ const UsersList: React.FC = () => {
         </Space>}
       />
 
-      <TableViewport>
-        <Table
+      <ResponsiveDataView
         columns={columns}
-        dataSource={data}
+        dataSource={data.slice((tablePage - 1) * pageSize, tablePage * pageSize)}
         loading={loading}
         rowKey="id"
+        card={userCard}
         scroll={{ x: 1550 }}
         pagination={false}
         rowSelection={{
@@ -366,8 +386,7 @@ const UsersList: React.FC = () => {
           onChange: (keys) => setSelectedRowKeys(keys),
           columnWidth: 48,
         }}
-        />
-      </TableViewport>
+      />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
 
       <ResponsiveModal
