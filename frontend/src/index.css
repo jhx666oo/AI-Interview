@@ -245,12 +245,18 @@ code {
 }
 
 .app-shell {
+  display: flex;
+  align-items: stretch;
+  min-height: 100vh;
   overflow-x: clip;
 }
 
 .app-shell__sider {
-  position: fixed !important;
-  inset: 0 auto 0 0;
+  position: sticky !important;
+  inset-block-start: 0;
+  align-self: flex-start;
+  height: 100vh;
+  max-height: 100vh;
   z-index: 100;
 }
 
@@ -280,7 +286,8 @@ code {
 }
 
 .app-shell__menu {
-  max-height: calc(100vh - 64px);
+  height: calc(100vh - 64px);
+  max-height: none;
   padding: 16px 8px;
   overflow-y: auto;
   border-inline-end: 0 !important;
@@ -296,7 +303,7 @@ code {
 
 .app-shell__main {
   min-width: 0;
-  transition: margin-left 0.2s;
+  flex: 1 1 auto;
 }
 
 .app-shell__header {
@@ -441,7 +448,7 @@ code {
 
 .resume-card__header {
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   margin-bottom: 8px;
   min-height: 32px;
 }
@@ -456,7 +463,8 @@ code {
 }
 
 .resume-card__identity {
-  flex: 1 1 240px;
+  flex: 0 1 auto;
+  white-space: nowrap;
 }
 
 .resume-card__name {
@@ -476,7 +484,15 @@ code {
 }
 
 .resume-card__status {
-  flex: 1 1 280px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.resume-card__status .ant-tag {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .resume-card__status .ant-tag,
@@ -541,6 +557,15 @@ code {
   :root {
     --page-gutter: 24px;
     --card-gutter: 16px;
+  }
+
+  .resume-card__header {
+    flex-wrap: wrap;
+  }
+
+  .resume-card__status {
+    overflow: visible;
+    white-space: normal;
   }
 }
 
