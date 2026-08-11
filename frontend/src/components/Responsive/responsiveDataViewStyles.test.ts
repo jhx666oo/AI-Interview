@@ -21,6 +21,8 @@ describe('responsive data view styles', () => {
 
   it('keeps controls keyboard-visible and avoids hidden actions', () => {
     expect(css).toMatch(/\.responsive-data-card-actions\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+    expect(css).toMatch(/\.responsive-data-card-actions\s+\.ant-space\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+    expect(css).toMatch(/\.responsive-data-card\s*\{[\s\S]*?overflow:\s*visible/);
     expect(css).toContain('.responsive-data-card-details-toggle:focus-visible');
     expect(css).toMatch(/\.responsive-data-card-details-toggle:focus-visible,[\s\S]*?\{[\s\S]*?outline:/);
     expect(css).toMatch(/\.responsive-data-card-actions\s+\.ant-btn[\s\S]*?min-height:\s*32px/);
@@ -28,6 +30,7 @@ describe('responsive data view styles', () => {
 
   it('keeps desktop table scrolling local and discoverable', () => {
     expect(css).toMatch(/\.table-viewport\s*\{[\s\S]*?overflow-x:\s*auto/);
-    expect(css).toMatch(/\.table-viewport::after\s*\{[\s\S]*?content:/);
+    expect(css).toMatch(/\.table-viewport--scroll-hint::after\s*\{[\s\S]*?content:/);
+    expect(css).not.toMatch(/\.table-viewport::after\s*\{/);
   });
 });

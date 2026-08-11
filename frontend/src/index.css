@@ -418,7 +418,7 @@ code {
   scrollbar-width: thin;
 }
 
-.table-viewport::after {
+.table-viewport--scroll-hint::after {
   content: '← 左右滚动查看完整字段 →';
   position: sticky;
   left: 12px;
@@ -502,7 +502,7 @@ code {
 
 .responsive-data-card {
   padding: 16px;
-  overflow: hidden;
+  overflow: visible;
   background: var(--surface-color);
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-md);
@@ -561,6 +561,19 @@ code {
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
+}
+
+.responsive-data-card-actions > *,
+.responsive-data-card-actions .ant-space,
+.responsive-data-card-actions .ant-space-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.responsive-data-card-actions .ant-space {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .responsive-data-card-actions .ant-btn,
