@@ -1,7 +1,15 @@
-import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { ResponsiveCardList } from './responsiveCardList';
+import {
+  ResponsiveCardList,
+  createCardSelectionChange,
+  getCardFieldGroups,
+  getResponsiveCardRecords,
+  isCardRecordSelectable,
+  toggleAllCardSelection,
+  toggleExpandedCardKey,
+  toggleRecordSelection,
+} from './responsiveCardList';
 import type { ResponsiveCardConfig } from './responsiveTypes';
 
 interface Row {
@@ -20,6 +28,12 @@ const row: Row = {
   city: '杭州',
   budget: '8k-10k',
   note: '',
+};
+
+const disabledRow: Row = {
+  ...row,
+  id: 'row-2',
+  name: '禁用岗位',
 };
 
 const config: ResponsiveCardConfig<Row> = {
@@ -47,14 +61,40 @@ describe('ResponsiveCardList', () => {
     expect(html).not.toContain('预算');
   });
 
-  it('defines accessible details, selection controls, and empty-field filtering', () => {
-    const source = readFileSync(new URL('./responsiveCardList.tsx', import.meta.url), 'utf8');
+  it('makes detail fields available only after the card is expanded and omits empty hidden fields', () => {
+    const collapsed = getCardFieldGroups(config, row, 0, false);
+    const expanded = getCardFieldGroups(config, row, 0, true);
 
-    expect(source).toContain('role="list"');
-    expect(source).toContain('aria-expanded');
-    expect(source).toContain('全选当前页');
-    expect(source).toContain('rowSelection?.onChange');
-    expect(source).toContain('getCheckboxProps');
-    expect(source).toContain('hideWhenEmpty');
+    expect(collapsed.secondary.map((field) => field.key)).toEqual(['city']);
+    expect(collapsed.detail).toEqual([]);
+    expect(expanded.detail.map((field) => field.key)).toEqual(['budget']);
+    expect(toggleExpandedCardKey(new Set(), row.id)).toEqual(new Set([row.id]));
+    expect(toggleExpandedCardKey(new Set([row.id]), row.id)).toEqual(new Set());
+  });
+
+  it('emits row selection payloads for an enabled single card without mutating records', () => {
+    const records = getResponsiveCardRecords([row, disabledRow], config);
+    const nextKeys = toggleRecordSelection([], row.id, true);
+    const payload = createCardSelectionChange(records, nextKeys);
+
+    expect(payload.selectedRowKeys).toEqual([row.id]);
+    expect(payload.selectedRows).toEqual([row]);
+    expect(records.map((entry) => entry.record)).toEqual([row, disabledRow]);
+  });
+
+  it('selects only enabled cards when selecting the current page', () => {
+    const records = getResponsiveCardRecords([row, disabledRow], config);
+    const nextKeys = toggleAllCardSelection(
+      [],
+      records,
+      (record) => isCardRecordSelectable(record, {
+        getCheckboxProps: (candidate) => ({ disabled: candidate.id === disabledRow.id }),
+      }),
+      true,
+    );
+    const payload = createCardSelectionChange(records, nextKeys);
+
+    expect(payload.selectedRowKeys).toEqual([row.id]);
+    expect(payload.selectedRows).toEqual([row]);
   });
 });

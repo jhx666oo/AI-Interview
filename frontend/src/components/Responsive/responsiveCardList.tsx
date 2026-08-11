@@ -1,6 +1,21 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import type { Key } from 'antd/es/table/interface';
-import type { ResponsiveCardListProps } from './responsiveTypes';
+import type { Key, TableRowSelection } from 'antd/es/table/interface';
+import type {
+  ResponsiveCardConfig,
+  ResponsiveCardListProps,
+  ResponsiveField,
+} from './responsiveTypes';
+
+export interface ResponsiveCardRecord<RecordType> {
+  record: RecordType;
+  index: number;
+  key: Key;
+}
+
+export interface ResponsiveCardSelectionChange<RecordType> {
+  selectedRowKeys: Key[];
+  selectedRows: RecordType[];
+}
 
 function isEmptyValue(value: ReactNode) {
   return value === null || value === undefined || value === '';
@@ -15,6 +30,77 @@ function getText(value: ReactNode): string {
   return '';
 }
 
+export function getResponsiveCardRecords<RecordType>(
+  data: RecordType[],
+  card: ResponsiveCardConfig<RecordType>,
+): ResponsiveCardRecord<RecordType>[] {
+  return data.map((record, index) => ({
+    record,
+    index,
+    key: card.getKey?.(record, index) ?? index,
+  }));
+}
+
+export function getCardFieldGroups<RecordType>(
+  card: ResponsiveCardConfig<RecordType>,
+  record: RecordType,
+  index: number,
+  isExpanded: boolean,
+): { secondary: ResponsiveField<RecordType>[]; detail: ResponsiveField<RecordType>[] } {
+  const visibleFields = (level: ResponsiveField<RecordType>['level']) => card.fields.filter((field) => {
+    if (field.level !== level) return false;
+    const value = field.render(record, index);
+    return !field.hideWhenEmpty || !isEmptyValue(value);
+  });
+
+  return {
+    secondary: visibleFields('secondary'),
+    detail: isExpanded ? visibleFields('detail') : [],
+  };
+}
+
+export function toggleExpandedCardKey(currentKeys: Set<Key>, key: Key): Set<Key> {
+  const nextKeys = new Set(currentKeys);
+  if (nextKeys.has(key)) nextKeys.delete(key);
+  else nextKeys.add(key);
+  return nextKeys;
+}
+
+export function toggleRecordSelection(selectedKeys: Key[], key: Key, checked: boolean): Key[] {
+  return checked
+    ? Array.from(new Set([...selectedKeys, key]))
+    : selectedKeys.filter((selectedKey) => selectedKey !== key);
+}
+
+export function isCardRecordSelectable<RecordType>(
+  record: RecordType,
+  rowSelection?: Pick<TableRowSelection<RecordType>, 'getCheckboxProps'>,
+): boolean {
+  return !rowSelection?.getCheckboxProps?.(record)?.disabled;
+}
+
+export function toggleAllCardSelection<RecordType>(
+  selectedKeys: Key[],
+  records: ResponsiveCardRecord<RecordType>[],
+  isEnabled: (record: RecordType) => boolean,
+  checked: boolean,
+): Key[] {
+  const enabledKeys = records.filter(({ record }) => isEnabled(record)).map(({ key }) => key);
+  return checked
+    ? Array.from(new Set([...selectedKeys, ...enabledKeys]))
+    : selectedKeys.filter((selectedKey) => !enabledKeys.includes(selectedKey));
+}
+
+export function createCardSelectionChange<RecordType>(
+  records: ResponsiveCardRecord<RecordType>[],
+  selectedRowKeys: Key[],
+): ResponsiveCardSelectionChange<RecordType> {
+  return {
+    selectedRowKeys,
+    selectedRows: records.filter(({ key }) => selectedRowKeys.includes(key)).map(({ record }) => record),
+  };
+}
+
 export function ResponsiveCardList<RecordType>({
   data,
   card,
@@ -22,39 +108,31 @@ export function ResponsiveCardList<RecordType>({
   className,
   emptyText = '暂无数据',
 }: ResponsiveCardListProps<RecordType>) {
-  const [expandedKeys, setExpandedKeys] = useState<Set<string | number>>(() => new Set());
+  const [expandedKeys, setExpandedKeys] = useState<Set<Key>>(() => new Set());
   const selectedKeys = rowSelection?.selectedRowKeys ?? [];
 
-  const records = useMemo(
-    () => data.map((record, index) => ({ record, index, key: card.getKey?.(record, index) ?? index })),
-    [card, data],
-  );
+  const records = useMemo(() => getResponsiveCardRecords(data, card), [card, data]);
 
   const selectedKeySet = useMemo(() => new Set(selectedKeys), [selectedKeys]);
-  const enabledRecords = records.filter(({ record, index }) => !rowSelection?.getCheckboxProps?.(record)?.disabled && index >= 0);
+  const isRecordEnabled = (record: RecordType) => isCardRecordSelectable(record, rowSelection);
+  const enabledRecords = records.filter(({ record }) => isRecordEnabled(record));
   const allSelected = enabledRecords.length > 0 && enabledRecords.every(({ key }) => selectedKeySet.has(key));
 
   const emitSelection = (nextKeys: Key[]) => {
+    const selection = createCardSelectionChange(records, nextKeys);
     rowSelection?.onChange?.(
-      nextKeys,
-      records.filter(({ key }) => nextKeys.includes(key)).map(({ record }) => record),
+      selection.selectedRowKeys,
+      selection.selectedRows,
       { type: 'multiple' },
     );
   };
 
-  const toggleRecord = (key: string | number, checked: boolean) => {
-    const nextKeys = checked
-      ? Array.from(new Set([...selectedKeys, key]))
-      : selectedKeys.filter((selectedKey) => selectedKey !== key);
-    emitSelection(nextKeys);
+  const toggleRecord = (key: Key, checked: boolean) => {
+    emitSelection(toggleRecordSelection(selectedKeys, key, checked));
   };
 
   const toggleAll = (checked: boolean) => {
-    const enabledKeys = enabledRecords.map(({ key }) => key);
-    const nextKeys = checked
-      ? Array.from(new Set([...selectedKeys, ...enabledKeys]))
-      : selectedKeys.filter((selectedKey) => !enabledKeys.some((key) => key === selectedKey));
-    emitSelection(nextKeys);
+    emitSelection(toggleAllCardSelection(selectedKeys, records, isRecordEnabled, checked));
   };
 
   if (!records.length) {
@@ -80,23 +158,14 @@ export function ResponsiveCardList<RecordType>({
           const titleText = getText(title) || '记录';
           const isExpanded = expandedKeys.has(key);
           const checkboxProps = rowSelection?.getCheckboxProps?.(record);
-          const secondaryFields = card.fields.filter((field) => field.level === 'secondary');
-          const detailFields = card.fields.filter((field) => field.level === 'detail');
-          const visibleSecondaryFields = secondaryFields.filter((field) => {
-            const value = field.render(record, index);
-            return !field.hideWhenEmpty || !isEmptyValue(value);
-          });
-          const visibleDetailFields = detailFields.filter((field) => {
-            const value = field.render(record, index);
-            return !field.hideWhenEmpty || !isEmptyValue(value);
-          });
+          const fieldGroups = getCardFieldGroups(card, record, index, isExpanded);
+          const visibleSecondaryFields = fieldGroups.secondary;
+          const visibleDetailFields = fieldGroups.detail;
+          const hasVisibleDetailFields = getCardFieldGroups(card, record, index, true).detail.length > 0;
 
           const toggleDetails = () => {
             setExpandedKeys((previous) => {
-              const next = new Set(previous);
-              if (next.has(key)) next.delete(key);
-              else next.add(key);
-              return next;
+              return toggleExpandedCardKey(previous, key);
             });
           };
 
@@ -132,7 +201,7 @@ export function ResponsiveCardList<RecordType>({
                 </dl>
               )}
 
-              {visibleDetailFields.length > 0 && (
+              {hasVisibleDetailFields && (
                 <>
                   <button
                     type="button"
