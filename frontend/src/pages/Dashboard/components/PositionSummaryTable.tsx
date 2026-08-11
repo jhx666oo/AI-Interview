@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Tag, Tooltip, type TableColumnsType } from 'antd';
 import { TableViewport } from '../../../components/Responsive';
+import { useResponsiveMode } from '../../../components/Responsive/responsiveMode';
 import type { BoardPosition, BoardTotals, DivisionBoard } from '../types';
 import styles from '../dashboard.module.css';
 
@@ -42,13 +43,27 @@ function displayNumber(value: number | null | undefined): number | string {
   return value ?? '—';
 }
 
+function SummaryMetric({ label, value }: { label: string; value: number | string | null | undefined }) {
+  return (
+    <div className={styles.summaryCardMetric}>
+      <span>{label}</span>
+      <strong>{value ?? '—'}</strong>
+    </div>
+  );
+}
+
 export function PositionSummaryTable({
   divisions,
   totals,
+  testWidth,
 }: {
   divisions: DivisionBoard[];
   totals: BoardTotals;
+  /** Test-only width override for responsive dashboard regression coverage. */
+  testWidth?: number;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mode = useResponsiveMode(containerRef, testWidth);
   const sortedDivisions = useMemo(
     () => [...divisions].sort((left, right) => left.division.localeCompare(right.division, 'zh-Hans-CN')),
     [divisions],
@@ -83,6 +98,16 @@ export function PositionSummaryTable({
       const next = new Set(current);
       if (next.has(division)) next.delete(division);
       else next.add(division);
+      return next;
+    });
+  };
+  const [expandedPositions, setExpandedPositions] = useState<Set<string>>(() => new Set());
+
+  const togglePosition = (positionId: string) => {
+    setExpandedPositions((current) => {
+      const next = new Set(current);
+      if (next.has(positionId)) next.delete(positionId);
+      else next.add(positionId);
       return next;
     });
   };
@@ -165,7 +190,7 @@ export function PositionSummaryTable({
     },
   ];
 
-  return (
+  const table = (
     <TableViewport>
       <Table<TableRow>
         className={styles.summaryTable}
@@ -199,5 +224,110 @@ export function PositionSummaryTable({
         )}
       />
     </TableViewport>
+  );
+
+  const cards = (
+    <section className={styles.summaryCardList} aria-label="全量岗位明细汇总">
+      {sortedDivisions.map((division) => {
+        const isExpanded = expanded.has(division.division);
+        return (
+          <article key={division.division} className={styles.divisionSummaryCard}>
+            <div className={styles.divisionSummaryHeader}>
+              <button
+                type="button"
+                className={styles.expandButton}
+                aria-expanded={isExpanded}
+                aria-label={`${isExpanded ? '收起' : '展开'}${division.division}`}
+                onClick={() => toggleDivision(division.division)}
+              >
+                <span aria-hidden="true">{isExpanded ? '▼' : '▶'}</span>
+                <span>{division.division}</span>
+                <span className={styles.positionCount}>{division.positions.length} 个职位</span>
+              </button>
+              <span className={styles.divisionHrbps}>HRBP：{division.hrbps.join('、') || '—'}</span>
+            </div>
+
+            <div className={styles.summaryCardMetrics}>
+              <SummaryMetric label="在招人数" value={division.total_headcount} />
+              <SummaryMetric label="简历" value={division.total_resumes} />
+              <SummaryMetric label="一面" value={division.first_interview} />
+              <SummaryMetric label="通过率" value={division.interview_pass_rate == null ? '—' : `${division.interview_pass_rate}%`} />
+              <SummaryMetric label="Offer" value={division.offers} />
+              <SummaryMetric label="入职" value={division.hired} />
+            </div>
+
+            {isExpanded && (
+              <div className={styles.positionSummaryCards}>
+                {division.positions.map((position) => {
+                  const positionExpanded = expandedPositions.has(position.position_id);
+                  const passRate = getPassRate(position.first_interview, position.third_pass);
+                  return (
+                    <article key={position.position_id} className={styles.positionSummaryCard}>
+                      <div className={styles.positionSummaryHeader}>
+                        <div>
+                          <strong>{position.position || '未命名职位'}</strong>
+                          <span>HRBP：{position.hrbp || '—'}</span>
+                        </div>
+                        <div className={styles.positionSummaryTags}>
+                          <Tag color={priorityColors[position.priority]}>{position.priority}</Tag>
+                          <PipelineTag status={position.status} />
+                        </div>
+                      </div>
+                      <div className={styles.summaryCardMetrics}>
+                        <SummaryMetric label="在招人数" value={position.headcount} />
+                        <SummaryMetric label="简历" value={position.total_resumes} />
+                        <SummaryMetric label="一面" value={position.first_interview} />
+                        <SummaryMetric label="通过率" value={passRate == null ? '—' : `${passRate}%`} />
+                        <SummaryMetric label="Offer" value={position.offers} />
+                        <SummaryMetric label="入职" value={position.hired} />
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.positionDetailsToggle}
+                        aria-expanded={positionExpanded}
+                        aria-label={`${positionExpanded ? '收起' : '展开'}${position.position || '未命名职位'}详情`}
+                        onClick={() => togglePosition(position.position_id)}
+                      >
+                        {positionExpanded ? '收起详情' : '展开详情'}
+                      </button>
+                      {positionExpanded && (
+                        <dl className={styles.positionDetailGrid}>
+                          <div><dt>一面通过</dt><dd>{displayNumber(position.first_pass)}</dd></div>
+                          <div><dt>二面通过</dt><dd>{displayNumber(position.second_pass)}</dd></div>
+                          <div><dt>三面通过</dt><dd>{displayNumber(position.third_pass)}</dd></div>
+                          <div><dt>AI 初筛</dt><dd>{displayNumber(position.ai_screened)}</dd></div>
+                          <div className={styles.positionNotes}><dt>备注</dt><dd>{position.notes || '—'}</dd></div>
+                        </dl>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </article>
+        );
+      })}
+
+      <article className={`${styles.divisionSummaryCard} ${styles.totalSummaryCard}`} aria-label="合计">
+        <div className={styles.divisionSummaryHeader}><strong>合计</strong><Tag color="blue">全部</Tag></div>
+        <div className={styles.summaryCardMetrics}>
+          <SummaryMetric label="在招人数" value={totals.total_headcount} />
+          <SummaryMetric label="简历" value={totals.total_resumes} />
+          <SummaryMetric label="一面" value={totals.first_interview} />
+          <SummaryMetric label="一面通过" value={totals.first_pass} />
+          <SummaryMetric label="二面通过" value={totals.second_pass} />
+          <SummaryMetric label="三面通过" value={totals.third_pass} />
+          <SummaryMetric label="通过率" value={totals.interview_pass_rate == null ? '—' : `${totals.interview_pass_rate}%`} />
+          <SummaryMetric label="Offer" value={totals.offers} />
+          <SummaryMetric label="入职" value={totals.hired} />
+        </div>
+      </article>
+    </section>
+  );
+
+  return (
+    <div ref={containerRef} data-responsive-mode={mode}>
+      {mode === 'full' ? table : cards}
+    </div>
   );
 }
