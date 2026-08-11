@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { TableRowSelection } from 'antd/es/table/interface';
 
 export interface ResponsiveField<RecordType> {
   key: string;
@@ -15,4 +16,12 @@ export interface ResponsiveCardConfig<RecordType> {
   status?: (record: RecordType, index: number) => ReactNode;
   fields: ResponsiveField<RecordType>[];
   actions?: (record: RecordType, index: number) => ReactNode;
+}
+
+export interface ResponsiveCardListProps<RecordType> {
+  data: RecordType[];
+  card: ResponsiveCardConfig<RecordType>;
+  rowSelection?: TableRowSelection<RecordType>;
+  className?: string;
+  emptyText?: ReactNode;
 }
