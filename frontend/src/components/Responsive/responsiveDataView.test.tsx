@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ResponsiveDataView } from './responsiveDataView';
 import type { ResponsiveCardConfig } from './responsiveTypes';
 
@@ -56,7 +57,7 @@ describe('ResponsiveDataView', () => {
     render(<ResponsiveDataView {...props} testWidth={1024} />);
 
     expect(screen.queryByRole('table')).toBeNull();
-    expect(screen.getByRole('list')).not.toBeNull();
+    expect(screen.getByRole('list', { name: '数据卡片' })).not.toBeNull();
     expect(screen.getByTestId('responsive-data-view').getAttribute('data-responsive-mode')).toBe('compact');
   });
 
@@ -66,7 +67,62 @@ describe('ResponsiveDataView', () => {
 
     rerender(<ResponsiveDataView {...props} testWidth={700} />);
 
-    expect(screen.getByRole('list')).not.toBeNull();
+    expect(screen.getByRole('list', { name: '数据卡片' })).not.toBeNull();
     expect(screen.getByTestId('responsive-data-view').getAttribute('data-responsive-mode')).toBe('narrow');
+  });
+
+  it('uses a function rowKey for card selection when the card does not provide a key', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    const cardWithoutKey: ResponsiveCardConfig<Row> = {
+      title: (record) => record.name,
+      subtitle: (record) => record.department,
+      fields: [],
+    };
+
+    render(
+      <ResponsiveDataView
+        {...props}
+        card={cardWithoutKey}
+        rowKey={(record) => `candidate:${record.id}`}
+        rowSelection={{ selectedRowKeys: [], onChange }}
+        testWidth={1024}
+      />,
+    );
+
+    await user.click(screen.getByRole('checkbox', { name: '选择招商主管' }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      ['candidate:position-1'],
+      [data[0]],
+      expect.objectContaining({ type: 'multiple' }),
+    );
+  });
+
+  it('keeps compact cards on the configured page and forwards pagination changes', async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    const pagedData: Row[] = [
+      ...data,
+      { id: 'position-2', name: '产品经理', department: '产品部' },
+    ];
+
+    render(
+      <ResponsiveDataView
+        {...props}
+        dataSource={pagedData}
+        pagination={{ current: 1, pageSize: 1, total: 2, showSizeChanger: true, onChange }}
+        testWidth={1024}
+      />,
+    );
+
+    expect(screen.getByText('招商主管')).not.toBeNull();
+    expect(screen.queryByText('产品经理')).toBeNull();
+    expect(screen.getByRole('list', { name: '数据卡片' })).not.toBeNull();
+    expect(screen.getByRole('combobox')).not.toBeNull();
+
+    await user.click(screen.getByTitle('2'));
+
+    expect(onChange).toHaveBeenCalledWith(2, 1);
   });
 });

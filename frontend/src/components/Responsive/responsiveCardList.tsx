@@ -152,7 +152,7 @@ export function ResponsiveCardList<RecordType>({
           全选当前页
         </label>
       )}
-      <div role="list" className="responsive-card-list-items">
+      <div role="list" aria-label="数据卡片" className="responsive-card-list-items">
         {records.map(({ record, index, key }) => {
           const title = card.title(record, index);
           const titleText = getText(title) || '记录';

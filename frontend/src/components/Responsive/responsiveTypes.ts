@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { TableRowSelection } from 'antd/es/table/interface';
+import type { Key, TableRowSelection } from 'antd/es/table/interface';
 
 export interface ResponsiveField<RecordType> {
   key: string;
@@ -10,7 +10,7 @@ export interface ResponsiveField<RecordType> {
 }
 
 export interface ResponsiveCardConfig<RecordType> {
-  getKey?: (record: RecordType, index: number) => string | number;
+  getKey?: (record: RecordType, index: number) => Key;
   title: (record: RecordType, index: number) => ReactNode;
   subtitle?: (record: RecordType, index: number) => ReactNode;
   status?: (record: RecordType, index: number) => ReactNode;
