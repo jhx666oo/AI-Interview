@@ -31,7 +31,7 @@ function getText(value: ReactNode): string {
 }
 
 export function getResponsiveCardRecords<RecordType>(
-  data: RecordType[],
+  data: readonly RecordType[],
   card: ResponsiveCardConfig<RecordType>,
 ): ResponsiveCardRecord<RecordType>[] {
   return data.map((record, index) => ({

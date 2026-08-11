@@ -6,5 +6,5 @@ export interface TableViewportProps {
 }
 
 export function TableViewport({ children, className = '' }: TableViewportProps) {
-  return <div className={`table-viewport ${className}`}>{children}</div>;
+  return <div className={['table-viewport', className].filter(Boolean).join(' ')}>{children}</div>;
 }

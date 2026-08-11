@@ -19,7 +19,7 @@ export interface ResponsiveCardConfig<RecordType> {
 }
 
 export interface ResponsiveCardListProps<RecordType> {
-  data: RecordType[];
+  data: readonly RecordType[];
   card: ResponsiveCardConfig<RecordType>;
   rowSelection?: TableRowSelection<RecordType>;
   className?: string;
