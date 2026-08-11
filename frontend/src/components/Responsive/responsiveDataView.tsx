@@ -114,7 +114,7 @@ export function ResponsiveDataView<RecordType extends object>({
       data-testid="responsive-data-view"
     >
       {mode === 'full' ? (
-        <TableViewport>{table}</TableViewport>
+        <TableViewport showScrollHint>{table}</TableViewport>
       ) : (
         <Spin spinning={Boolean(loading)}>
           <ResponsiveCardList
