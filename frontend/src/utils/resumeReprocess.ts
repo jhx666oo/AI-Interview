@@ -73,7 +73,11 @@ export function getEvaluationCardState(record: any): {
   if (jobStatus === 'queued') return { status: 'queued', label: '排队中' };
   if (jobStatus === 'running') return { status: 'running', label: getEvaluationStepLabel(record.evaluation_job_step) || '评估中' };
   if (jobStatus === 'failed') {
-    const error = record.evaluation_job_error || record.parse_error || '评估失败';
+    const errorCode = record.evaluation_job_error?.split(':')[0] || '';
+    if (errorCode === 'OCR_PAGE_LIMIT_EXCEEDED') {
+      return { status: 'failed', label: 'PDF 超过 MinerU 20 页限制', error: 'PDF 页数超过 MinerU 限制，请拆分 PDF 或提供文本版简历后重新评估' };
+    }
+    const error = record.evaluation_job_error?.split(':').slice(1).join(':').trim() || record.parse_error || '评估失败';
     return { status: 'failed', label: '评估失败', error };
   }
   return { status: 'idle', label: '' };

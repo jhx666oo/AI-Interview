@@ -477,10 +477,9 @@ export async function enqueueResumeReprocessBatchPage(
       const result = await enqueueResumeReprocess(db, queue, row.id, batchId);
       if (result.queued) {
         queued++;
-        await db.prepare(
-          `UPDATE resume_reprocess_batch_items SET job_id=?, status='queued', updated_at=?
-           WHERE batch_id=? AND resume_id=?`,
-        ).bind(result.jobId, timestamp, batchId, row.id).run();
+        // Do NOT write status='queued' here. The consumer will sync the item state
+        // idempotently via syncReprocessBatchItemByJob. Writing queued here races with
+        // consumer completion and can overwrite failed items.
       } else {
         alreadyProcessing++;
         skipped++;

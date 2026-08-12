@@ -22,6 +22,29 @@ export class RetryableResumeError extends Error {
   }
 }
 
+const PAGE_LIMIT_ERROR_PATTERNS = [
+  'file page count exceeds API limit',
+  'page count exceeds',
+  '-30003',
+];
+
+export function isPageLimitError(error: unknown): boolean {
+  const msg = String(error ?? '').toLowerCase();
+  return PAGE_LIMIT_ERROR_PATTERNS.some((p) => msg.includes(p.toLowerCase()));
+}
+
+export function classifyResumeError(code: string, message: string): Error {
+  if (isPageLimitError(message)) {
+    const classified = new Error(`OCR_PAGE_LIMIT_EXCEEDED: ${message.slice(0, 200)}`);
+    (classified as any).code = 'OCR_PAGE_LIMIT_EXCEEDED';
+    return classified;
+  }
+  if (code === 'OCR_PENDING' || code === 'OCR_STATUS_FAILED') {
+    return new RetryableResumeError(code, message);
+  }
+  return new Error(message);
+}
+
 type QueueMessage = {
   body: ResumeQueueMessage;
   ack(): void;
@@ -195,7 +218,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         update: (id, update) => updateResume(env.DB, id, update),
       });
       if (resolved.state === 'pending') throw new RetryableResumeError('OCR_PENDING', '扫描件 OCR 尚未完成');
-      if (resolved.state === 'failed') throw new Error(resolved.error);
+      if (resolved.state === 'failed') throw classifyResumeError('OCR_FAILED', resolved.error || 'MinerU OCR 失败');
       return resolved.text.slice(0, 80000);
     },
     extractFields: async (text) => {
@@ -449,7 +472,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         update: (id, update) => updateResume(env.DB, id, update),
       });
       if (resolved.state === 'pending') throw new RetryableResumeError('OCR_PENDING', '扫描件 OCR 尚未完成');
-      if (resolved.state === 'failed') throw new Error(resolved.error);
+      if (resolved.state === 'failed') throw classifyResumeError('OCR_FAILED', resolved.error || 'MinerU OCR 失败');
       return resolved.text;
     },
     extractFields: async (text, resume) => {
@@ -611,8 +634,9 @@ export default {
               .bind(timestamp, timestamp, jobId).run();
           },
           fail: async (jobId, error) => {
+            const errorCode = (error as any)?.code || 'PROCESSING_FAILED';
             await env.DB.prepare("UPDATE resume_processing_jobs SET status='failed', error_code=?, error_message=?, updated_at=? WHERE id=?")
-              .bind('PROCESSING_FAILED', error.message.slice(0, 500), new Date().toISOString(), jobId).run();
+              .bind(errorCode, error.message.slice(0, 500), new Date().toISOString(), jobId).run();
             await env.DB.prepare("UPDATE resumes SET parse_status='failed', parse_error=?, updated_at=? WHERE id=?")
               .bind(error.message.slice(0, 500), new Date().toISOString(), resumeBody.resumeId).run();
           },
@@ -621,9 +645,10 @@ export default {
           await syncReprocessBatchItemByJob(env.DB, jobId, { status: 'completed', completed_at: new Date().toISOString() }).catch(() => undefined);
         },
         async (jobId, error) => {
+          const errorCode = (error as any)?.code || 'PROCESSING_FAILED';
           await syncReprocessBatchItemByJob(env.DB, jobId, {
             status: 'failed',
-            error_code: 'PROCESSING_FAILED',
+            error_code: errorCode,
             error_message: error.message.slice(0, 500),
           }).catch(() => undefined);
         },

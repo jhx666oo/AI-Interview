@@ -5,6 +5,7 @@ import type {
   ReprocessBatchFailedItem,
   ReprocessBatchStatus,
   ReprocessScope,
+  ResumeJobStatus,
 } from './types';
 
 type Db = Pick<D1Database, 'prepare'>;
@@ -93,19 +94,46 @@ export async function attachReprocessBatchItemToJob(
     'SELECT id, status FROM resume_reprocess_batch_items WHERE batch_id=? AND resume_id=?',
   ).bind(batchId, resumeId).first() as { id: string; status: string } | null;
   if (!row) return;
-  if (row.status === 'completed' || row.status === 'failed' || row.status === 'skipped') return;
+  // Terminal states are final — never overwrite
+  if (TERMINAL_ITEM_STATUSES.has(row.status as ReprocessBatchItemStatus)) return;
 
   const job = await db.prepare(
     "SELECT status, step, error_code, error_message FROM resume_processing_jobs WHERE id=?",
   ).bind(jobId).first() as { status: string; step: string; error_code: string | null; error_message: string | null } | null;
 
-  const status: ReprocessBatchItemStatus = 'queued';
-  const step = job?.step ?? null;
+  // Map job status to item status; respect terminal protection
+  let itemStatus: ReprocessBatchItemStatus = 'pending';
+  if (job) {
+    if (job.status === 'completed') itemStatus = 'completed';
+    else if (job.status === 'failed') itemStatus = 'failed';
+    else if (job.status === 'running') itemStatus = 'running';
+    else itemStatus = 'queued';
+  }
+
+  const parts: string[] = ['job_id=?', 'step=?', 'updated_at=?'];
+  const values: unknown[] = [jobId, job?.step ?? null, timestamp];
+
+  // Only update status if it would change (prevents overwriting terminal states from concurrent consumers)
+  if (itemStatus !== row.status) {
+    parts.push('status=?');
+    values.push(itemStatus);
+    if (itemStatus === 'completed') {
+      parts.push('completed_at=?');
+      values.push(timestamp);
+    }
+  }
+  if (job?.error_code) {
+    parts.push('error_code=?');
+    values.push(job.error_code);
+  }
+  if (job?.error_message) {
+    parts.push('error_message=?');
+    values.push(job.error_message);
+  }
+
   await db.prepare(
-    `UPDATE resume_reprocess_batch_items
-       SET job_id=?, status=?, step=?, updated_at=?
-     WHERE batch_id=? AND resume_id=?`,
-  ).bind(jobId, status, step, timestamp, batchId, resumeId).run();
+    `UPDATE resume_reprocess_batch_items SET ${parts.join(', ')} WHERE batch_id=? AND resume_id=?`,
+  ).bind(...values, batchId, resumeId).run();
 }
 
 interface BatchItemUpdate {
@@ -192,11 +220,65 @@ export async function refreshReprocessBatchStatus(
   ).bind(status, completed ? timestamp : null, timestamp, batchId).run();
 }
 
+/**
+ * Reconcile batch items whose job has reached a terminal state but the item hasn't been updated.
+ */
+export async function reconcileReprocessBatchItems(db: Db, batchId: string): Promise<void> {
+  const rows = await db.prepare(
+    `SELECT i.id, i.job_id, i.status, j.status AS job_status, j.step, j.error_code, j.error_message
+     FROM resume_reprocess_batch_items i
+     LEFT JOIN resume_processing_jobs j ON i.job_id = j.id
+     WHERE i.batch_id=? AND i.job_id IS NOT NULL AND i.status IN ('pending', 'queued', 'running')`,
+  ).bind(batchId).all() as any[];
+
+  const itemRows = rows.results || [];
+  if (itemRows.length === 0) return;
+
+  const timestamp = new Date().toISOString();
+  for (const item of itemRows) {
+    const jobStatus = item.job_status as ResumeJobStatus | null;
+    if (!jobStatus) continue;
+
+    let newItemStatus: ReprocessBatchItemStatus | null = null;
+    const parts: string[] = ['updated_at=?'];
+    const values: unknown[] = [timestamp];
+
+    if (jobStatus === 'completed') {
+      newItemStatus = 'completed';
+      parts.push('status=?', 'completed_at=?');
+      values.push('completed', timestamp);
+    } else if (jobStatus === 'failed') {
+      newItemStatus = 'failed';
+      parts.push('status=?', 'error_code=?', 'error_message=?');
+      values.push('failed', item.error_code ?? 'PROCESSING_FAILED', item.error_message ?? null);
+    } else if (jobStatus === 'running' && item.status !== 'running') {
+      newItemStatus = 'running';
+      parts.push('status=?', 'step=?');
+      values.push('running', item.step ?? null);
+    } else if (jobStatus === 'queued' && item.status !== 'queued') {
+      newItemStatus = 'queued';
+      parts.push('status=?');
+      values.push('queued');
+    }
+
+    if (newItemStatus && newItemStatus !== item.status) {
+      await db.prepare(
+        `UPDATE resume_reprocess_batch_items SET ${parts.join(', ')} WHERE id=?`,
+      ).bind(...values, item.id).run();
+    }
+  }
+
+  await refreshReprocessBatchStatus(db, batchId);
+}
+
 export async function getReprocessBatchView(
   db: Db,
   batchId: string,
   owner: string | null,
 ): Promise<ReprocessBatchView | null> {
+  // Reconcile any stale items before aggregating
+  await reconcileReprocessBatchItems(db, batchId).catch(() => undefined);
+
   const batch = await db.prepare(
     'SELECT id, owner, status, scope, total_count, created_at, updated_at, completed_at FROM resume_reprocess_batches WHERE id=?',
   ).bind(batchId).first() as any;
@@ -284,6 +366,7 @@ export async function getActiveReprocessBatchView(
      ORDER BY created_at DESC LIMIT 1`,
   ).bind(...(owner ? [owner] : [])).first() as any;
   if (!batch) return null;
+  await reconcileReprocessBatchItems(db, batch.id).catch(() => undefined);
   return getReprocessBatchView(db, batch.id, owner);
 }
 

@@ -79,11 +79,19 @@ describe('getEvaluationCardState', () => {
   });
 
   it('returns failed state when evaluation_job_status is failed', () => {
-    const record = { evaluation_job_status: 'failed', evaluation_job_error: '文本不可用' };
+    const record = { evaluation_job_status: 'failed', evaluation_job_error: 'PROCESSING_FAILED:文本不可用' };
     const state = getEvaluationCardState(record);
     expect(state.status).toBe('failed');
     expect(state.label).toBe('评估失败');
     expect(state.error).toBe('文本不可用');
+  });
+
+  it('shows page limit error with specific label', () => {
+    const record = { evaluation_job_status: 'failed', evaluation_job_error: 'OCR_PAGE_LIMIT_EXCEEDED: file page count exceeds API limit' };
+    const state = getEvaluationCardState(record);
+    expect(state.status).toBe('failed');
+    expect(state.label).toBe('PDF 超过 MinerU 20 页限制');
+    expect(state.error).toContain('MinerU');
   });
 
   it('returns idle state when no job projection exists', () => {
