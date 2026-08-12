@@ -2,7 +2,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import ResumeReprocessProgress from './ResumeReprocessProgress';
-import type { ReprocessBatchView } from '../../utils/resumeReprocess';
+import { type ReprocessBatchView } from '../utils/resumeReprocess';
 
 afterEach(() => {
   cleanup();

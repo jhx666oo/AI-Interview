@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card, Progress, Tag, Space, Typography, Modal, Button } from 'antd';
 import { ExclamationCircleOutlined } from '@ant-design/icons';
-import type { ReprocessBatchView } from '../../utils/resumeReprocess';
+import type { ReprocessBatchView } from '../utils/resumeReprocess';
 
 const { Text } = Typography;
 
