@@ -15,7 +15,7 @@ import { buildResumeExportRows } from '../../utils/resumeExport';
 import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 import ResumeReprocessProgress from '../../components/ResumeReprocessProgress';
 import { getEvaluationCardState } from '../../utils/resumeReprocess';
-import type { ReprocessBatchView } from '../../utils/resumeReprocess';
+import { type ReprocessBatchView } from '../../utils/resumeReprocess';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;

@@ -160,4 +160,57 @@ describe('optimized resume list response', () => {
     expect(item.standard_position).toBe('软件产品经理（智能硬件方向）');
     expect(item.mapped_position).toBe('IoT产品经理（双休｜入职五险一金）');
   });
+
+  it('includes evaluation_job_status field when a job exists', async () => {
+    const context = makeContext();
+    let capturedSql = '';
+    context.env.DB.prepare = (sql: string) => {
+      capturedSql = sql;
+      return {
+        all: async () => {
+          if (sql.includes('COUNT(*)')) return { results: [{ total: 1, pending_screening: 0, approved: 1, rejected: 0 }] };
+          if (sql.includes('resume_processing_jobs')) {
+            return { results: [{ id: 'job-1', resume_id: 'resume-1', status: 'running', step: 'screening', error_code: null, error_message: null, created_at: '2026-01-01T00:00:00Z' }] };
+          }
+          return { results: [{ id: 'resume-1', candidate_name: '测试', status: 'approved', ai_evaluation: null, parsed_data: null }] };
+        },
+        bind: (..._params: unknown[]) => ({
+          first: async () => sql.includes('COUNT(*)') ? { total: 1, pending_screening: 0, approved: 1, rejected: 0 } : null,
+          all: async () => {
+            if (sql.includes('resume_processing_jobs')) {
+              return { results: [{ id: 'job-1', resume_id: 'resume-1', status: 'running', step: 'screening', error_code: null, error_message: null, created_at: '2026-01-01T00:00:00Z' }] };
+            }
+            return { results: [{ id: 'resume-1', candidate_name: '测试', status: 'approved', ai_evaluation: null, parsed_data: null }] };
+          },
+        }),
+      };
+    };
+
+    const response = await handleOptimizedResumeList(context);
+    const payload = await response.json() as any;
+    expect(payload.items[0].evaluation_job_status).toBe('running');
+    expect(payload.items[0].evaluation_job_step).toBe('screening');
+    expect(payload.items[0].evaluation_batch_id).toBeNull();
+  });
+
+  it('derives failed status from parse_status when no job exists', async () => {
+    const context = makeContext();
+    context.env.DB.prepare = (sql: string) => {
+      return {
+        all: async () => {
+          if (sql.includes('COUNT(*)')) return { results: [{ total: 1, pending_screening: 0, approved: 0, rejected: 0 }] };
+          return { results: [{ id: 'resume-failed', candidate_name: '失败者', status: 'approved', parse_status: 'failed', parse_error: 'OCR失败', ai_evaluation: null, parsed_data: null }] };
+        },
+        bind: (..._params: unknown[]) => ({
+          first: async () => sql.includes('COUNT(*)') ? { total: 1 } : null,
+          all: async () => ({ results: [{ id: 'resume-failed', candidate_name: '失败者', status: 'approved', parse_status: 'failed', parse_error: 'OCR失败', ai_evaluation: null, parsed_data: null }] }),
+        }),
+      };
+    };
+
+    const response = await handleOptimizedResumeList(context);
+    const payload = await response.json() as any;
+    expect(payload.items[0].evaluation_job_status).toBe('failed');
+    expect(payload.items[0].evaluation_job_error).toBe('OCR失败');
+  });
 });

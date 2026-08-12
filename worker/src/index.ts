@@ -10,8 +10,9 @@ import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
-import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess } from './resume-processing/reprocess';
-import type { ResumeProcessingQueueMessage } from './resume-processing/types';
+import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess, selectResumeIdsForBatchScope } from './resume-processing/reprocess';
+import { getReprocessBatchView, getActiveReprocessBatchView, appendEvaluationJobProjection } from './resume-processing/batch-repository';
+import type { ReprocessScope, ResumeProcessingQueueMessage } from './resume-processing/types';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
 import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
@@ -5297,6 +5298,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
 
     // 分页支持（修复冷启动/大列表返回 2026-07-24）：
     // 传 page/page_size 时返回 { items, total, page, page_size }；不传时保持全量数组（向后兼容）。
+    await appendEvaluationJobProjection(c.env.DB, filtered);
     const pageParam = c.req.query('page');
     const pageSizeParam = c.req.query('page_size');
     if (pageParam || pageSizeParam) {
@@ -6113,6 +6115,99 @@ export async function handleBatchResumeReprocess(c: any) {
 }
 
 app.post('/api/resumes/batch-reprocess', authMiddleware, handleBatchResumeReprocess);
+
+// 新建 scope 参数批量重评入口
+export async function handleScopedBatchResumeReprocess(c: any) {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const scope = body?.scope;
+    const ids = body?.ids;
+
+    const hasScope = scope !== undefined && scope !== null;
+    const hasIds = Array.isArray(ids) && ids.length > 0;
+    if (hasScope && hasIds) {
+      return c.json({ detail: '不能同时传递 scope 和 ids' }, 400);
+    }
+    if (!hasScope && !hasIds) {
+      return c.json({ detail: '必须传递 scope 或 ids' }, 400);
+    }
+    if (hasScope && scope !== 'all' && scope !== 'incomplete_or_failed') {
+      return c.json({ detail: '非法 scope 参数' }, 400);
+    }
+
+    const owner = getOwnerName(c);
+
+    if (hasIds) {
+      const validIds = ids.filter((id: unknown): id is string => typeof id === 'string' && id.trim() !== '');
+      if (validIds.length > 50) return c.json({ detail: '一次最多提交 50 份简历' }, 400);
+      const visibleIds = await selectVisibleResumeIdsForReprocess(c.env.DB, validIds, owner);
+      const result = await enqueueResumeReprocessBatchForIds(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, visibleIds);
+      return c.json({ ok: true, ...result, requested: validIds.length }, 202);
+    }
+
+    // scope-based path
+    const rows = await selectResumeIdsForBatchScope(c.env.DB, scope as ReprocessScope, owner);
+    if (rows.length === 0) {
+      return c.json({ ok: true, batch_id: null, scope, total: 0, queued: 0, already_processing: 0, skipped: 0, failed: 0, message: '当前没有需要重新评估的简历' });
+    }
+
+    // Check for active batch
+    const ownerPredicate = owner ? 'owner=?' : 'owner IS NULL';
+    const active = await c.env.DB.prepare(
+      `SELECT id, scope FROM resume_reprocess_batches WHERE ${ownerPredicate} AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1`,
+    ).bind(...(owner ? [owner] : [])).first() as any;
+    if (active) {
+      return c.json({ detail: '当前已有活动批次在处理中，请稍后再试', batch_id: active.id }, 409);
+    }
+
+    const result = await startHistoricalResumeReprocess(
+      c.env.DB,
+      c.env.RESUME_PROCESSING_QUEUE,
+      owner,
+      scope as ReprocessScope,
+    );
+
+    return c.json({
+      ok: true,
+      ...result,
+      scope,
+      total: rows.length,
+    }, 202);
+  } catch (error: any) {
+    console.error('[scoped-batch-reprocess] failed', error);
+    return c.json({ detail: '批量重新评估失败: ' + (error?.message || error) }, 500);
+  }
+}
+
+app.post('/api/resumes/batch-reprocess-scoped', authMiddleware, handleScopedBatchResumeReprocess);
+
+// 查询当前用户活动批次
+app.get('/api/resumes/reprocess-batches/active', authMiddleware, async (c) => {
+  try {
+    const owner = getOwnerName(c);
+    const view = await getActiveReprocessBatchView(c.env.DB, owner);
+    return c.json({ batch: view || null });
+  } catch (error: any) {
+    console.error('[reprocess-batches/active] failed', error);
+    return c.json({ detail: '查询失败: ' + error.message }, 500);
+  }
+});
+
+// 查询指定批次
+app.get('/api/resumes/reprocess-batches/:batchId', authMiddleware, async (c) => {
+  try {
+    const batchId = c.req.param('batchId');
+    const owner = getOwnerName(c);
+    const view = await getReprocessBatchView(c.env.DB, batchId, owner);
+    if (!view) {
+      return c.json({ detail: '批次不存在或无权限' }, 404);
+    }
+    return c.json(view);
+  } catch (error: any) {
+    console.error('[reprocess-batches/:batchId] failed', error);
+    return c.json({ detail: '查询失败: ' + error.message }, 500);
+  }
+});
 
 // 批量清除已淘汰（HR复核结果='未通过'）
 app.post('/api/resumes/clear-rejected', authMiddleware, async (c) => {

@@ -78,4 +78,3 @@ export function getEvaluationCardState(record: any): {
   }
   return { status: 'idle', label: '' };
 }
-export type _TEST = string;

@@ -3,16 +3,13 @@ import type {
   ReprocessBatchView,
   ReprocessBatchCurrentTask,
   ReprocessBatchFailedItem,
-  ResumeEvaluationJobProjection,
+  ReprocessBatchStatus,
   ReprocessScope,
 } from './types';
-import { hasValidAiEvaluation } from './types';
 
 type Db = Pick<D1Database, 'prepare'>;
 
-const ITEM_STATUSES: ReprocessBatchItemStatus[] = ['pending', 'queued', 'running', 'completed', 'failed', 'skipped'];
 const TERMINAL_ITEM_STATUSES = new Set(['completed', 'failed', 'skipped']);
-const ACTIVE_ITEM_STATUSES = new Set(['queued', 'running']);
 const BATCH_SIZE = 100;
 
 export async function ensureResumeReprocessBatchSchema(db: Db): Promise<void> {
@@ -71,7 +68,7 @@ export async function insertReprocessBatchItems(
     const placeholders: string[] = [];
     for (const item of chunk) {
       const id = `${item.batchId}:${item.resumeId}`;
-      placeholders.push(`(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`);
+      placeholders.push(`(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       values.push(
         id, item.batchId, item.resumeId, null,
         'pending', null, item.candidateName, null,
@@ -160,6 +157,39 @@ export async function syncReprocessBatchItemByJob(
   await db.prepare(
     `UPDATE resume_reprocess_batch_items SET ${parts.join(', ')} WHERE job_id=?`,
   ).bind(...values, jobId).run();
+  await refreshReprocessBatchStatus(db, row.batch_id);
+}
+
+export async function refreshReprocessBatchStatus(
+  db: Db,
+  batchId: string,
+): Promise<void> {
+  const batch = await db.prepare(
+    'SELECT status, total_count FROM resume_reprocess_batches WHERE id=?',
+  ).bind(batchId).first() as { status: ReprocessBatchStatus | null; total_count: number | null } | null;
+  if (!batch) return;
+
+  const counts = await db.prepare(
+    `SELECT COUNT(*) AS item_total,
+            SUM(CASE WHEN status IN ('completed', 'failed', 'skipped') THEN 1 ELSE 0 END) AS terminal_total,
+            SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_total
+       FROM resume_reprocess_batch_items WHERE batch_id=?`,
+  ).bind(batchId).first() as { item_total?: number; terminal_total?: number; running_total?: number } | null;
+  const itemTotal = Number(counts?.item_total || 0);
+  const terminalTotal = Number(counts?.terminal_total || 0);
+  const targetTotal = Number(batch.total_count || 0) || itemTotal;
+  const completed = targetTotal === itemTotal && terminalTotal === itemTotal;
+  const status: ReprocessBatchStatus = completed
+    ? 'completed'
+    : Number(counts?.running_total || 0) > 0 || batch.status === 'running'
+      ? 'running'
+      : 'queued';
+  const timestamp = new Date().toISOString();
+  await db.prepare(
+    `UPDATE resume_reprocess_batches
+        SET status=?, completed_at=?, updated_at=?
+      WHERE id=? AND status != 'failed'`,
+  ).bind(status, completed ? timestamp : null, timestamp, batchId).run();
 }
 
 export async function getReprocessBatchView(
@@ -172,7 +202,7 @@ export async function getReprocessBatchView(
   ).bind(batchId).first() as any;
   if (!batch) return null;
   const batchOwner = batch.owner || null;
-  if (owner && batchOwner && batchOwner !== owner) return null;
+  if (owner && batchOwner !== owner) return null;
 
   const rows = (await db.prepare(
     `SELECT i.resume_id, i.status, i.step, i.candidate_name, i.error_code, i.error_message,
@@ -217,13 +247,17 @@ export async function getReprocessBatchView(
   }
 
   const total = Number(batch.total_count) || list.length || 0;
+  pending += Math.max(0, total - list.length);
   const finished = completed + failed + skipped;
   const percent = total === 0 ? 100 : Math.round((finished / total) * 100);
+  const status = finished >= total && total >= 0
+    ? 'completed'
+    : batch.status;
 
   return {
     batch_id: batch.id,
     scope: (batch.scope as ReprocessScope) || 'all',
-    status: batch.status,
+    status,
     total,
     completed,
     processing,
@@ -248,7 +282,7 @@ export async function getActiveReprocessBatchView(
     `SELECT * FROM resume_reprocess_batches
      WHERE (${owner ? 'owner=?' : 'owner IS NULL'}) AND status IN ('queued', 'running')
      ORDER BY created_at DESC LIMIT 1`,
-  ).bind(owner ?? '').first() as any;
+  ).bind(...(owner ? [owner] : [])).first() as any;
   if (!batch) return null;
   return getReprocessBatchView(db, batch.id, owner);
 }

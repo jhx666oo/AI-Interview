@@ -1,6 +1,7 @@
 import type { ResumeProcessingQueueMessage, ResumeQueueMessage } from './resume-processing/types';
 import { processHistoricalResumeReprocessPage, resetHistoricalResumeReprocessBatch } from './resume-processing/reprocess';
 import { claimJob } from './resume-processing/job-repository';
+import { syncReprocessBatchItemByJob } from './resume-processing/batch-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
@@ -38,6 +39,9 @@ type ResumeConsumerDeps = {
 export async function handleResumeQueueMessage(
   message: QueueMessage,
   deps: ResumeConsumerDeps,
+  onComplete?: (jobId: string) => Promise<void>,
+  onFail?: (jobId: string, error: Error) => Promise<void>,
+  onRetry?: (jobId: string) => Promise<void>,
 ): Promise<void> {
   logResumeProcessing('consumer.claim.start', {
     jobId: message.body.jobId,
@@ -60,6 +64,7 @@ export async function handleResumeQueueMessage(
     await deps.process(message.body);
     logResumeProcessing('consumer.process.ok', { jobId: message.body.jobId, resumeId: message.body.resumeId });
     await deps.complete(message.body.jobId);
+    if (onComplete) await onComplete(message.body.jobId).catch(() => undefined);
     logResumeProcessing('consumer.complete.ok', { jobId: message.body.jobId, resumeId: message.body.resumeId });
     message.ack();
   } catch (error) {
@@ -70,6 +75,7 @@ export async function handleResumeQueueMessage(
         retryDelaySeconds: 30,
       });
       await deps.resetJob(message.body.jobId);
+      if (onRetry) await onRetry(message.body.jobId).catch(() => undefined);
       message.retry({ delaySeconds: 30 });
       return;
     }
@@ -78,6 +84,7 @@ export async function handleResumeQueueMessage(
       resumeId: message.body.resumeId,
     });
     await deps.fail(message.body.jobId, error instanceof Error ? error : new Error(String(error)));
+    if (onFail) await onFail(message.body.jobId, error instanceof Error ? error : new Error(String(error))).catch(() => undefined);
     message.ack();
   }
 }
@@ -380,6 +387,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
     setJobStep: async (jobId, step) => {
       await env.DB.prepare("UPDATE resume_processing_jobs SET step=?, updated_at=? WHERE id=? AND status='running'")
         .bind(step, new Date().toISOString(), jobId).run();
+      await syncReprocessBatchItemByJob(env.DB, jobId, { status: 'running', step }).catch(() => undefined);
     },
   });
 }
@@ -561,6 +569,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
     setJobStep: async (jobId, step) => {
       await env.DB.prepare("UPDATE resume_processing_jobs SET step=?, updated_at=? WHERE id=? AND status='running'")
         .bind(step, new Date().toISOString(), jobId).run();
+      await syncReprocessBatchItemByJob(env.DB, jobId, { status: 'running', step }).catch(() => undefined);
     },
   });
 }
@@ -607,11 +616,25 @@ export default {
             await env.DB.prepare("UPDATE resumes SET parse_status='failed', parse_error=?, updated_at=? WHERE id=?")
               .bind(error.message.slice(0, 500), new Date().toISOString(), resumeBody.resumeId).run();
           },
-        });
-        logResumeProcessing('consumer.message.ok', {
-          jobId: resumeBody.jobId,
-          resumeId: resumeBody.resumeId,
-          messageId: message.id,
+        },
+        async (jobId) => {
+          await syncReprocessBatchItemByJob(env.DB, jobId, { status: 'completed', completed_at: new Date().toISOString() }).catch(() => undefined);
+        },
+        async (jobId, error) => {
+          await syncReprocessBatchItemByJob(env.DB, jobId, {
+            status: 'failed',
+            error_code: 'PROCESSING_FAILED',
+            error_message: error.message.slice(0, 500),
+          }).catch(() => undefined);
+        },
+        async (jobId) => {
+          await syncReprocessBatchItemByJob(env.DB, jobId, { status: 'queued' }).catch(() => undefined);
+        },
+      );
+      logResumeProcessing('consumer.message.ok', {
+        jobId: resumeBody.jobId,
+        resumeId: resumeBody.resumeId,
+        messageId: message.id,
           durationMs: Date.now() - startedAt,
         });
       } catch (error) {

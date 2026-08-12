@@ -6,6 +6,7 @@
 
 import { normalizeAiScreeningResult } from '../ai-screening-result';
 import { exposeStructuredEvaluation } from '../resume-schema';
+import { appendEvaluationJobProjection } from '../resume-processing/batch-repository';
 
 const LIST_COLUMNS = `
   r.id, r.candidate_name, r.position_applied, r.mapped_position,
@@ -199,6 +200,8 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     item.standard_position = rawPosition ? (positionMap.get(rawPosition) || rawPosition) : '';
     return item;
   });
+
+  await appendEvaluationJobProjection(c.env.DB, items);
 
   return c.json({ items, total, stats, page, page_size: pageSize });
 }

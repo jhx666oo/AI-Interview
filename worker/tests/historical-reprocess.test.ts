@@ -5,6 +5,9 @@ import {
   enqueueResumeReprocessBatchForIds,
   runHistoricalReprocessCoordinator,
   selectVisibleResumeIdsForReprocess,
+  selectResumeIdsForBatchScope,
+  enqueueResumeReprocessBatchPage,
+  startHistoricalResumeReprocess,
 } from '../src/resume-processing/reprocess';
 import { handleBatchResumeReprocess } from '../src/index';
 
@@ -46,7 +49,7 @@ describe('historical resume reprocess', () => {
         loadedLimits.push(limit);
         return Array.from({ length: 25 }, (_, index) => ({ id: `resume-${String(index + 1).padStart(2, '0')}` }));
       },
-      enqueuePage: async (ids) => ({ queued: ids.length, already_processing: 0, failed: 0 }),
+      enqueuePage: async (rows) => ({ queued: rows.length, already_processing: 0, failed: 0 }),
       saveProgress: async () => undefined,
       complete: async () => undefined,
       sendNext: async (message) => { sent.push(message); },
@@ -85,6 +88,33 @@ describe('historical resume reprocess', () => {
     expect(queue.messages).toHaveLength(2);
     expect(db.resetResumeIds).toEqual(['resume-1', 'resume-2']);
   });
+
+  it('selectResumeIdsForBatchScope with all scope returns all visible resumes', async () => {
+    const db = createHistoricalDb(['resume-1', 'resume-2']);
+    const rows = await selectResumeIdsForBatchScope(db as never, 'all', null);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.id)).toEqual(['resume-1', 'resume-2']);
+  });
+
+  it('enqueueResumeReprocessBatchPage creates batch items and enqueues jobs', async () => {
+    const db = createHistoricalDb(['resume-1', 'resume-2']);
+    const queue = createQueue();
+    const result = await enqueueResumeReprocessBatchPage(db as never, queue as never, 'batch-1', [
+      { id: 'resume-1', candidate_name: '张三' },
+      { id: 'resume-2', candidate_name: '李四' },
+    ]);
+    expect(result.queued).toBe(2);
+    expect(result.skipped).toBe(0);
+    expect(queue.messages).toHaveLength(2);
+  });
+
+  it('startHistoricalResumeReprocess accepts scope parameter and creates items', async () => {
+    const db = createHistoricalDbWithItems(['resume-1', 'resume-2']);
+    const queue = createQueue();
+    const response = await startHistoricalResumeReprocess(db as never, queue as never, null, 'all');
+    expect(response.batch_id).toBeDefined();
+    expect(queue.messages).toHaveLength(1);
+  });
 });
 
 function createQueue() {
@@ -106,6 +136,12 @@ function createHistoricalDb(resumeIds: string[]) {
             async all() {
               if (sql.startsWith('SELECT id FROM resumes WHERE 1=1')) {
                 return { results: resumeIds.map((id) => ({ id })) };
+              }
+              if (sql.includes('SELECT r.id, r.candidate_name') && sql.includes('resume_processing_jobs')) {
+                return { results: resumeIds.map((id) => ({ id, candidate_name: `Candidate-${id}` })) };
+              }
+              if (sql.includes('SELECT r.id, r.candidate_name FROM resumes r WHERE 1=1')) {
+                return { results: resumeIds.map((id) => ({ id, candidate_name: `Candidate-${id}` })) };
               }
               return { results: [] };
             },
@@ -138,6 +174,12 @@ function createHistoricalDb(resumeIds: string[]) {
                 activeJobs.set(resumeId, { id: `job-${++jobNumber}`, status: 'queued' });
               }
               if (sql.startsWith('UPDATE resumes SET')) resetResumeIds.push(values.at(-1) as string);
+              if (sql.includes('INSERT OR IGNORE INTO resume_reprocess_batch_items')) {
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes('UPDATE resume_reprocess_batch_items')) {
+                return { meta: { changes: 1 } };
+              }
               return { meta: { changes: 1 } };
             },
           };
@@ -145,4 +187,9 @@ function createHistoricalDb(resumeIds: string[]) {
       };
     },
   };
+}
+
+function createHistoricalDbWithItems(resumeIds: string[]) {
+  const db = createHistoricalDb(resumeIds);
+  return db;
 }
