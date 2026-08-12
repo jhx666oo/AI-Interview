@@ -17,6 +17,7 @@ export interface BusinessScreeningResume {
   position_applied?: string | null;
   position_id?: string | null;
   business_screening_status?: BusinessScreeningStatus | null;
+  business_screening_dispatch_group_id?: string | null;
 }
 
 export interface InterviewerDirectoryEntry {
@@ -56,6 +57,7 @@ export interface ResumePushBatchRow {
   created_by: string;
   created_at: string;
   last_sent_at: string | null;
+  dispatch_group_id: string | null;
 }
 
 export interface ResumePushBatchItemRow {
@@ -67,6 +69,7 @@ export interface ResumePushBatchItemRow {
   remark: string | null;
   processed_at: string | null;
   created_at: string;
+  dispatch_group_id: string | null;
 }
 
 export interface CreateResumePushBatchInput {
@@ -80,6 +83,7 @@ export interface CreateResumePushBatchInput {
   createdBy: string;
   createdAt?: string;
   lastSentAt?: string | null;
+  dispatchGroupId: string;
 }
 
 export interface CreateResumePushBatchItemInput {
@@ -91,6 +95,7 @@ export interface CreateResumePushBatchItemInput {
   remark?: string | null;
   processedAt?: string | null;
   createdAt?: string;
+  dispatchGroupId: string;
 }
 
 export interface RecordBusinessScreeningDecisionInput {

@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS resume_push_batches (
   status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'revoked', 'expired')),
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  last_sent_at TEXT
+  last_sent_at TEXT,
+  dispatch_group_id TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_push_batches_token_hash
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS resume_push_batch_items (
   remark TEXT,
   processed_at TEXT,
   created_at TEXT NOT NULL,
+  dispatch_group_id TEXT,
   FOREIGN KEY (batch_id) REFERENCES resume_push_batches(id),
   FOREIGN KEY (resume_id) REFERENCES resumes(id),
   FOREIGN KEY (position_id) REFERENCES positions(id)

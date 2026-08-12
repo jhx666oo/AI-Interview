@@ -26,6 +26,7 @@ export interface BusinessScreeningResumeRecord extends BusinessScreeningResume {
   business_screened_at?: string | null;
   business_screened_by?: string | null;
   business_screening_batch_id?: string | null;
+  business_screening_dispatch_group_id?: string | null;
   hr_review?: string | null;
   rejected_at?: string | null;
 }
@@ -50,6 +51,7 @@ export interface BusinessScreeningBatchItemView {
   business_screening_status?: string | null;
   business_screening_remark?: string | null;
   business_screened_at?: string | null;
+  dispatch_group_id?: string | null;
 }
 
 export interface BusinessScreeningRouteStore {
@@ -68,10 +70,11 @@ export interface BusinessScreeningRouteStore {
       createdBy: string;
       createdAt: string;
       lastSentAt?: string | null;
+      dispatchGroupId: string;
     },
     items: CreateResumePushBatchItemInput[],
   ): Promise<void>;
-  markResumesPushed(db: D1Database, resumeIds: string[], batchId: string): Promise<void>;
+  markResumesPushed(db: D1Database, resumeIds: string[], batchId: string, dispatchGroupId: string): Promise<void>;
   loadBatchByTokenHash(db: D1Database, tokenHash: string): Promise<ResumePushBatchRow | null>;
   loadBatchById(db: D1Database, batchId: string): Promise<ResumePushBatchRow | null>;
   listBatchItems(db: D1Database, batchId: string): Promise<BusinessScreeningBatchItemView[]>;
@@ -243,6 +246,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const pushedResumeIds = uniqueStrings([...grouped.values()].flatMap((group) => group.resumes.map((resume) => resume.id)));
     const failed: Array<{ interviewer: string; reason: string }> = [];
     const batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number }> = [];
+    const dispatchGroupId = deps.uuid();
 
     for (const group of grouped.values()) {
       const issued = await deps.createPublicToken();
@@ -255,6 +259,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         resumeId: resume.id,
         positionId: resume.position_id || positionsByTitle.get(text(resume.mapped_position) || text(resume.position_applied))?.id || null,
         createdAt: itemCreatedAt,
+        dispatchGroupId,
       }));
 
       await deps.store.createBatch(db, {
@@ -267,8 +272,9 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         createdBy: user.email || 'system',
         createdAt: nowIso,
         lastSentAt: null,
+        dispatchGroupId,
       }, items);
-      await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId);
+      await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId, dispatchGroupId);
 
       batches.push({
         batchId,
@@ -453,6 +459,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const currentUserToken = user.email ? await deps.getCurrentUserToken(c.env, user.email) : null;
     const issued = await deps.createPublicToken();
     const nextBatchId = deps.uuid();
+    const dispatchGroupId = deps.uuid();
     const nowIso = deps.now();
     const url = `${new URL(c.req.url).origin}/api/public/business-screening/${issued.token}`;
     const nextItems = pendingItems.map((item) => ({
@@ -461,6 +468,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       resumeId: item.resume_id,
       positionId: item.position_id,
       createdAt: nowIso,
+      dispatchGroupId,
     }));
 
     await deps.store.createBatch(db, {
@@ -473,7 +481,9 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       createdBy: user.email || 'system',
       createdAt: nowIso,
       lastSentAt: null,
+      dispatchGroupId,
     }, nextItems);
+    await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
     await deps.store.setBatchStatus(db, batchId, 'revoked');
 
     if (!currentUserToken) {
@@ -535,7 +545,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         `SELECT id, candidate_name, email, contact, screening_result, status, hr_disposition,
                 mapped_position, position_applied, position_id, business_screening_status,
                 business_screening_remark, business_screened_at, business_screened_by,
-                business_screening_batch_id, education, work_experience, hr_review, rejected_at
+                business_screening_batch_id, business_screening_dispatch_group_id, education, work_experience, hr_review, rejected_at
            FROM resumes
           WHERE id IN (${placeholders(ids.length)})`,
         ids,
@@ -579,18 +589,19 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         createdBy: batch.createdBy,
         createdAt: batch.createdAt,
         lastSentAt: batch.lastSentAt || null,
+        dispatchGroupId: batch.dispatchGroupId,
       });
       await insertResumePushBatchItems(db, items);
     },
-    async markResumesPushed(db, resumeIds, batchId) {
-      await markResumesPushed(db, resumeIds, batchId);
+    async markResumesPushed(db, resumeIds, batchId, dispatchGroupId) {
+      await markResumesPushed(db, resumeIds, batchId, dispatchGroupId);
     },
     async loadBatchByTokenHash(db, tokenHash) {
       return loadResumePushBatchByTokenHash(db, tokenHash);
     },
     async loadBatchById(db, batchId) {
       return await db.prepare(
-        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at
+        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id
            FROM resume_push_batches
           WHERE id = ?
           LIMIT 1`,
@@ -599,7 +610,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     async listBatchItems(db, batchId) {
       return queryAll<BusinessScreeningBatchItemView>(
         db,
-        `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at,
+        `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
                 r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience,
                 r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at
            FROM resume_push_batch_items i
@@ -611,7 +622,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     },
     async loadBatchItem(db, batchId, resumeId) {
       return await db.prepare(
-        `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at,
+        `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
                 r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience,
                 r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at
            FROM resume_push_batch_items i

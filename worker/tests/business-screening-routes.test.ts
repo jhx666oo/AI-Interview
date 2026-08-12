@@ -19,6 +19,7 @@ type BatchRow = {
   created_by: string;
   created_at: string;
   last_sent_at: string | null;
+  dispatch_group_id?: string | null;
   rawToken?: string;
 };
 
@@ -45,6 +46,7 @@ function buildHarness(options?: {
         position_applied: '标准运营',
         business_screening_status: 'not_ready',
         business_screening_batch_id: '',
+        business_screening_dispatch_group_id: '',
         education: '本科',
         work_experience: '5年',
       },
@@ -90,6 +92,7 @@ function buildHarness(options?: {
         created_by: batch.createdBy,
         created_at: batch.createdAt,
         last_sent_at: batch.lastSentAt || null,
+        dispatch_group_id: batch.dispatchGroupId,
       });
       for (const item of items) {
         const resume = resumes.get(item.resumeId);
@@ -102,6 +105,7 @@ function buildHarness(options?: {
           remark: item.remark || null,
           processed_at: item.processedAt || null,
           created_at: item.createdAt || '2026-08-12T12:00:00.000Z',
+          dispatch_group_id: item.dispatchGroupId,
           candidate_name: resume?.candidate_name || null,
           mapped_position: resume?.mapped_position || null,
           position_applied: resume?.position_applied || null,
@@ -116,13 +120,14 @@ function buildHarness(options?: {
         });
       }
     },
-    async markResumesPushed(_db, resumeIds, batchId) {
+    async markResumesPushed(_db, resumeIds, batchId, dispatchGroupId) {
       for (const id of resumeIds) {
         const resume = resumes.get(id);
         if (!resume) continue;
         resume.hr_disposition = 'pushed';
         resume.business_screening_status = 'pending';
         resume.business_screening_batch_id = batchId;
+        resume.business_screening_dispatch_group_id = dispatchGroupId;
       }
     },
     async loadBatchByTokenHash(_db, tokenHash) {
@@ -149,6 +154,8 @@ function buildHarness(options?: {
       const nextItemStatus = input.status === 'passed' ? 'passed' : 'rejected';
       const nextResumeStatus = input.status === 'passed' ? 'approved' : 'rejected';
       const nextResumeStage = input.status === 'passed' ? 'talent_pool' : 'rejected';
+      const itemDispatchGroupId = item.dispatch_group_id || item.batch_id;
+      const resumeDispatchGroupId = resume?.business_screening_dispatch_group_id || resume?.business_screening_batch_id || '';
       if (
         resume
         && (
@@ -173,6 +180,14 @@ function buildHarness(options?: {
             : 'business screening already completed',
         };
       }
+      if (!resume || !itemDispatchGroupId || !resumeDispatchGroupId || itemDispatchGroupId !== resumeDispatchGroupId) {
+        return {
+          applied: false,
+          idempotent: false,
+          status: input.status,
+          reason: 'business screening dispatch group changed',
+        };
+      }
       if (item.status !== 'pending') {
         if (item.status === nextItemStatus) {
           return { applied: false, idempotent: true, status: input.status };
@@ -188,7 +203,12 @@ function buildHarness(options?: {
       item.remark = input.remark || null;
       item.processed_at = input.screenedAt || '2026-08-12T12:00:00.000Z';
       for (const sibling of batchItems) {
-        if (sibling.resume_id === input.resumeId && sibling.id !== item.id && sibling.status === 'pending') {
+        if (
+          sibling.resume_id === input.resumeId
+          && sibling.id !== item.id
+          && sibling.status === 'pending'
+          && (sibling.dispatch_group_id || sibling.batch_id) === itemDispatchGroupId
+        ) {
           sibling.status = nextItemStatus;
           sibling.remark = sibling.remark ?? (input.remark || null);
           sibling.processed_at = sibling.processed_at ?? item.processed_at;
@@ -204,6 +224,7 @@ function buildHarness(options?: {
           resume.business_screened_at = item.processed_at;
           resume.business_screened_by = input.screenedBy || '';
           resume.business_screening_batch_id = input.batchId;
+          resume.business_screening_dispatch_group_id = itemDispatchGroupId;
           resume.status = nextResumeStatus;
           resume.stage = nextResumeStage;
           if (nextResumeStatus === 'approved') {
@@ -960,6 +981,116 @@ describe('business screening routes', () => {
       status: 'pending',
       remark: null,
       processed_at: null,
+    });
+  });
+
+  it('conflicts active stale old-group callbacks and leaves resume plus items untouched', async () => {
+    const { request, resumes, batchItems } = buildHarness({
+      initialBatches: [
+        {
+          id: 'batch-old-active',
+          interviewer_id: 'user-zhang',
+          interviewer_name: '张三',
+          interviewer_open_id: 'ou_zhang',
+          token_hash: 'hash-old-active',
+          expires_at: '2026-08-19T00:00:00.000Z',
+          status: 'active',
+          created_by: 'hr@example.com',
+          created_at: '2026-08-12T00:00:00.000Z',
+          last_sent_at: '2026-08-12T00:00:00.000Z',
+          dispatch_group_id: 'dispatch-old',
+          rawToken: 'old-active-token',
+        },
+        {
+          id: 'batch-current',
+          interviewer_id: 'user-li',
+          interviewer_name: '李四',
+          interviewer_open_id: 'ou_li',
+          token_hash: 'hash-current',
+          expires_at: '2026-08-19T01:00:00.000Z',
+          status: 'active',
+          created_by: 'hr@example.com',
+          created_at: '2026-08-12T01:00:00.000Z',
+          last_sent_at: '2026-08-12T01:00:00.000Z',
+          dispatch_group_id: 'dispatch-current',
+          rawToken: 'current-token',
+        },
+      ],
+      initialItems: [
+        {
+          id: 'item-old-active',
+          batch_id: 'batch-old-active',
+          resume_id: 'resume-1',
+          position_id: 'position-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          created_at: '2026-08-12T00:00:00.000Z',
+          dispatch_group_id: 'dispatch-old',
+          candidate_name: '候选人甲',
+          mapped_position: '标准运营',
+          hr_disposition: 'pushed',
+          business_screening_status: 'pending',
+        },
+        {
+          id: 'item-current',
+          batch_id: 'batch-current',
+          resume_id: 'resume-1',
+          position_id: 'position-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          created_at: '2026-08-12T01:00:00.000Z',
+          dispatch_group_id: 'dispatch-current',
+          candidate_name: '候选人甲',
+          mapped_position: '标准运营',
+          hr_disposition: 'pushed',
+          business_screening_status: 'pending',
+        },
+      ],
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        stage: 'screening',
+        hr_disposition: 'pushed',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+        business_screening_batch_id: 'batch-current',
+        business_screening_dispatch_group_id: 'dispatch-current',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/old-active-token/resumes/resume-1/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '旧活跃批次不应生效' }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      detail: 'business screening dispatch group changed',
+    });
+    expect(resumes.get('resume-1')).toMatchObject({
+      business_screening_status: 'pending',
+      business_screening_batch_id: 'batch-current',
+      business_screening_dispatch_group_id: 'dispatch-current',
+      status: 'pending_review',
+      stage: 'screening',
+    });
+    expect(batchItems.find((item) => item.id === 'item-old-active')).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+      dispatch_group_id: 'dispatch-old',
+    });
+    expect(batchItems.find((item) => item.id === 'item-current')).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+      dispatch_group_id: 'dispatch-current',
     });
   });
 

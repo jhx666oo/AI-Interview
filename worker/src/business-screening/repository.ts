@@ -16,6 +16,12 @@ export const BUSINESS_SCREENING_RESUME_MIGRATIONS = [
   "ALTER TABLE resumes ADD COLUMN business_screened_at TEXT",
   "ALTER TABLE resumes ADD COLUMN business_screened_by TEXT DEFAULT ''",
   "ALTER TABLE resumes ADD COLUMN business_screening_batch_id TEXT DEFAULT ''",
+  "ALTER TABLE resumes ADD COLUMN business_screening_dispatch_group_id TEXT DEFAULT ''",
+] as const;
+
+export const BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS = [
+  'ALTER TABLE resume_push_batches ADD COLUMN dispatch_group_id TEXT DEFAULT NULL',
+  'ALTER TABLE resume_push_batch_items ADD COLUMN dispatch_group_id TEXT DEFAULT NULL',
 ] as const;
 
 export const BUSINESS_SCREENING_SCHEMA_STATEMENTS = [
@@ -29,7 +35,8 @@ export const BUSINESS_SCREENING_SCHEMA_STATEMENTS = [
     status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'revoked', 'expired')),
     created_by TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    last_sent_at TEXT
+    last_sent_at TEXT,
+    dispatch_group_id TEXT
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_push_batches_token_hash
     ON resume_push_batches(token_hash)`,
@@ -44,6 +51,7 @@ export const BUSINESS_SCREENING_SCHEMA_STATEMENTS = [
     remark TEXT,
     processed_at TEXT,
     created_at TEXT NOT NULL,
+    dispatch_group_id TEXT,
     FOREIGN KEY (batch_id) REFERENCES resume_push_batches(id),
     FOREIGN KEY (resume_id) REFERENCES resumes(id),
     FOREIGN KEY (position_id) REFERENCES positions(id)
@@ -72,6 +80,13 @@ export async function ensureBusinessScreeningSchema(db: Db): Promise<void> {
   for (const sql of BUSINESS_SCREENING_SCHEMA_STATEMENTS) {
     await db.prepare(sql).run();
   }
+  for (const sql of BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS) {
+    try {
+      await db.prepare(sql).run();
+    } catch (error) {
+      if (!isIgnorableMigrationError(error)) throw error;
+    }
+  }
 }
 
 export async function createResumePushBatch(
@@ -82,8 +97,8 @@ export async function createResumePushBatch(
   const status: ResumePushBatchStatus = input.status || 'active';
   await db.prepare(
     `INSERT INTO resume_push_batches
-      (id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     input.id,
     input.interviewerId || null,
@@ -95,6 +110,7 @@ export async function createResumePushBatch(
     input.createdBy,
     createdAt,
     input.lastSentAt || null,
+    input.dispatchGroupId,
   ).run();
 }
 
@@ -105,8 +121,8 @@ export async function insertResumePushBatchItems(
   for (const item of items) {
     await db.prepare(
       `INSERT INTO resume_push_batch_items
-        (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       item.id,
       item.batchId,
@@ -116,6 +132,7 @@ export async function insertResumePushBatchItems(
       item.remark || null,
       item.processedAt || null,
       item.createdAt || new Date().toISOString(),
+      item.dispatchGroupId,
     ).run();
   }
 }
@@ -124,6 +141,7 @@ export async function markResumesPushed(
   db: Db,
   resumeIds: string[],
   batchId: string,
+  dispatchGroupId: string,
 ): Promise<void> {
   const timestamp = new Date().toISOString();
   for (const resumeId of resumeIds) {
@@ -132,9 +150,10 @@ export async function markResumesPushed(
           SET hr_disposition = 'pushed',
               business_screening_status = 'pending',
               business_screening_batch_id = ?,
+              business_screening_dispatch_group_id = ?,
               updated_at = ?
         WHERE id = ?`,
-    ).bind(batchId, timestamp, resumeId).run();
+    ).bind(batchId, dispatchGroupId, timestamp, resumeId).run();
   }
 }
 
@@ -143,7 +162,7 @@ export async function loadResumePushBatchByTokenHash(
   tokenHash: string,
 ): Promise<ResumePushBatchRow | null> {
   return await db.prepare(
-    `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at
+    `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id
        FROM resume_push_batches
       WHERE token_hash = ?
       LIMIT 1`,
@@ -170,6 +189,7 @@ type CurrentResumeDecisionRow = {
   hr_disposition: string | null;
   business_screening_status: 'not_ready' | 'pending' | 'passed' | 'rejected' | null;
   business_screening_batch_id: string | null;
+  business_screening_dispatch_group_id: string | null;
   status: string | null;
   stage: string | null;
 };
@@ -180,7 +200,22 @@ type CurrentBatchItemDecisionRow = {
   status: 'pending' | 'passed' | 'rejected';
   remark: string | null;
   processed_at: string | null;
+  dispatch_group_id: string | null;
 };
+
+type BatchCapableDb = Db & Partial<Pick<D1Database, 'batch'>>;
+
+function resolveDispatchGroupId(
+  resume: Pick<CurrentResumeDecisionRow, 'business_screening_dispatch_group_id' | 'business_screening_batch_id'> | null | undefined,
+  item: Pick<CurrentBatchItemDecisionRow, 'dispatch_group_id' | 'batch_id'> | null | undefined,
+): string {
+  const itemGroup = item?.dispatch_group_id?.trim();
+  if (itemGroup) return itemGroup;
+  const resumeGroup = resume?.business_screening_dispatch_group_id?.trim();
+  if (resumeGroup) return resumeGroup;
+  const batchFallback = item?.batch_id?.trim() || resume?.business_screening_batch_id?.trim();
+  return batchFallback || '';
+}
 
 function buildBlockedDecisionResult(input: RecordBusinessScreeningDecisionInput, currentResume: CurrentResumeDecisionRow, currentItem: CurrentBatchItemDecisionRow): RecordBusinessScreeningDecisionResult {
   const requestedItemStatus = input.status === 'passed' ? 'passed' : 'rejected';
@@ -223,7 +258,7 @@ function buildBlockedDecisionResult(input: RecordBusinessScreeningDecisionInput,
 }
 
 export async function recordBusinessScreeningDecision(
-  db: Db,
+  db: BatchCapableDb,
   input: RecordBusinessScreeningDecisionInput,
 ): Promise<RecordBusinessScreeningDecisionResult> {
   const screenedAt = input.screenedAt || new Date().toISOString();
@@ -233,7 +268,7 @@ export async function recordBusinessScreeningDecision(
   const approvedAt = input.status === 'passed' ? screenedAt : null;
   const rejectedAt = input.status === 'rejected' ? screenedAt : null;
   const currentResume = await db.prepare(
-    `SELECT hr_disposition, business_screening_status, business_screening_batch_id, status, stage
+    `SELECT hr_disposition, business_screening_status, business_screening_batch_id, business_screening_dispatch_group_id, status, stage
        FROM resumes
       WHERE id = ?
       LIMIT 1`,
@@ -245,7 +280,7 @@ export async function recordBusinessScreeningDecision(
 
   const loadCurrentItem = async () => {
     const currentItem = await db.prepare(
-      `SELECT batch_id, resume_id, status, remark, processed_at
+      `SELECT batch_id, resume_id, status, remark, processed_at, dispatch_group_id
          FROM resume_push_batch_items
         WHERE id = ? AND batch_id = ? AND resume_id = ?
         LIMIT 1`,
@@ -258,6 +293,18 @@ export async function recordBusinessScreeningDecision(
     return currentItem;
   };
 
+  const currentItem = await loadCurrentItem();
+  const dispatchGroupId = resolveDispatchGroupId(currentResume, currentItem);
+  const resumeDispatchGroupId = resolveDispatchGroupId(currentResume, null);
+  if (!dispatchGroupId || !resumeDispatchGroupId || dispatchGroupId !== resumeDispatchGroupId) {
+    return {
+      applied: false,
+      idempotent: false,
+      status: input.status,
+      reason: 'business screening dispatch group changed',
+    };
+  }
+
   if (
     currentResume.hr_disposition === 'rejected'
     || currentResume.status === 'approved'
@@ -265,25 +312,10 @@ export async function recordBusinessScreeningDecision(
     || currentResume.business_screening_status === 'passed'
     || currentResume.business_screening_status === 'rejected'
   ) {
-    return buildBlockedDecisionResult(input, currentResume, await loadCurrentItem());
+    return buildBlockedDecisionResult(input, currentResume, currentItem);
   }
 
-  const itemUpdate = await db.prepare(
-    `UPDATE resume_push_batch_items
-        SET status = ?, remark = ?, processed_at = ?
-      WHERE id = ? AND batch_id = ? AND resume_id = ? AND status = 'pending'`,
-  ).bind(
-    itemStatus,
-    input.remark || null,
-    screenedAt,
-    input.batchItemId,
-    input.batchId,
-    input.resumeId,
-  ).run();
-
-  if ((itemUpdate.meta?.changes || 0) === 0) {
-    const currentItem = await loadCurrentItem();
-
+  if (currentItem.status !== 'pending') {
     if (currentItem.status === itemStatus) {
       return {
         applied: false,
@@ -291,102 +323,206 @@ export async function recordBusinessScreeningDecision(
         status: input.status,
       };
     }
-
-    const latestResume = await db.prepare(
-      `SELECT hr_disposition, business_screening_status, business_screening_batch_id, status, stage
-         FROM resumes
-        WHERE id = ?
-        LIMIT 1`,
-    ).bind(input.resumeId).first<CurrentResumeDecisionRow>();
-
-    if (!latestResume) {
-      throw new Error('resume not found');
-    }
-
-    return buildBlockedDecisionResult(input, latestResume, currentItem);
+    return buildBlockedDecisionResult(input, currentResume, currentItem);
   }
 
-  const resumeUpdate = await db.prepare(
+  const resumeUpdateStatement = db.prepare(
     `UPDATE resumes
         SET business_screening_status = ?,
             business_screening_remark = ?,
             business_screened_at = ?,
             business_screened_by = ?,
             business_screening_batch_id = ?,
+            business_screening_dispatch_group_id = ?,
             status = ?,
             stage = ?,
             approved_at = ?,
             rejected_at = ?,
             updated_at = ?
       WHERE id = ?
+        AND hr_disposition != 'rejected'
         AND business_screening_status IN ('not_ready', 'pending')
         AND status != 'approved'
-        AND status != 'rejected'`,
+        AND status != 'rejected'
+        AND COALESCE(NULLIF(business_screening_dispatch_group_id, ''), NULLIF(business_screening_batch_id, '')) = ?
+        AND EXISTS (
+          SELECT 1
+            FROM resume_push_batch_items
+           WHERE id = ?
+             AND batch_id = ?
+             AND resume_id = ?
+             AND status = 'pending'
+             AND COALESCE(NULLIF(dispatch_group_id, ''), batch_id) = ?
+        )`,
   ).bind(
     input.status,
     input.remark || '',
     screenedAt,
     input.screenedBy || '',
     input.batchId,
+    dispatchGroupId,
     resumeStatus,
     resumeStage,
     approvedAt,
     rejectedAt,
     screenedAt,
     input.resumeId,
-  ).run();
+    dispatchGroupId,
+    input.batchItemId,
+    input.batchId,
+    input.resumeId,
+    dispatchGroupId,
+  );
 
-  await db.prepare(
+  const itemUpdateStatement = db.prepare(
+    `UPDATE resume_push_batch_items
+        SET status = ?, remark = ?, processed_at = ?
+      WHERE id = ?
+        AND batch_id = ?
+        AND resume_id = ?
+        AND status = 'pending'
+        AND COALESCE(NULLIF(dispatch_group_id, ''), batch_id) = ?
+        AND EXISTS (
+          SELECT 1
+            FROM resumes
+           WHERE id = ?
+             AND business_screening_status = ?
+             AND business_screened_at = ?
+             AND business_screening_batch_id = ?
+             AND COALESCE(NULLIF(business_screening_dispatch_group_id, ''), NULLIF(business_screening_batch_id, '')) = ?
+        )`,
+  ).bind(
+    itemStatus,
+    input.remark || null,
+    screenedAt,
+    input.batchItemId,
+    input.batchId,
+    input.resumeId,
+    dispatchGroupId,
+    input.resumeId,
+    input.status,
+    screenedAt,
+    input.batchId,
+    dispatchGroupId,
+  );
+
+  const siblingUpdateStatement = db.prepare(
     `UPDATE resume_push_batch_items
         SET status = ?, remark = COALESCE(remark, ?), processed_at = COALESCE(processed_at, ?)
-      WHERE resume_id = ? AND id != ? AND status = 'pending'`,
+      WHERE resume_id = ?
+        AND COALESCE(NULLIF(dispatch_group_id, ''), batch_id) = ?
+        AND id != ?
+        AND status = 'pending'
+        AND EXISTS (
+          SELECT 1
+            FROM resumes
+           WHERE id = ?
+             AND business_screening_status = ?
+             AND business_screened_at = ?
+             AND business_screening_batch_id = ?
+             AND COALESCE(NULLIF(business_screening_dispatch_group_id, ''), NULLIF(business_screening_batch_id, '')) = ?
+        )`,
   ).bind(
     itemStatus,
     input.remark || null,
     screenedAt,
     input.resumeId,
+    dispatchGroupId,
     input.batchItemId,
-  ).run();
+    input.resumeId,
+    input.status,
+    screenedAt,
+    input.batchId,
+    dispatchGroupId,
+  );
 
-  if ((resumeUpdate.meta?.changes || 0) === 0) {
-    const currentResume = await db.prepare(
-      `SELECT business_screening_status, business_screening_batch_id, status, stage
-         FROM resumes
-        WHERE id = ?
-        LIMIT 1`,
-    ).bind(input.resumeId).first<{
-      business_screening_status: 'not_ready' | 'pending' | 'passed' | 'rejected' | null;
-      business_screening_batch_id: string | null;
-      status: string | null;
-      stage: string | null;
-    }>();
+  if (typeof db.batch === 'function') {
+    await db.batch([resumeUpdateStatement, itemUpdateStatement, siblingUpdateStatement]);
+  } else {
+    await resumeUpdateStatement.run();
+    await itemUpdateStatement.run();
+    await siblingUpdateStatement.run();
+  }
 
-    if (!currentResume) {
-      throw new Error('resume not found');
-    }
+  const finalizedResume = await db.prepare(
+    `SELECT hr_disposition, business_screening_status, business_screening_batch_id, business_screening_dispatch_group_id, status, stage
+       FROM resumes
+      WHERE id = ?
+      LIMIT 1`,
+  ).bind(input.resumeId).first<CurrentResumeDecisionRow>();
 
-    if (currentResume.business_screening_status === itemStatus) {
-      return {
-        applied: false,
-        idempotent: true,
-        status: input.status,
-      };
-    }
+  if (!finalizedResume) {
+    throw new Error('resume not found');
+  }
 
-    if (currentResume.business_screening_status === 'passed' || currentResume.business_screening_status === 'rejected') {
-      return {
-        applied: false,
-        idempotent: false,
-        status: currentResume.business_screening_status,
-        reason: 'business screening already completed',
-      };
-    }
+  const finalizedItem = await loadCurrentItem();
+  const finalizedDispatchGroupId = resolveDispatchGroupId(finalizedResume, finalizedItem);
+
+  if (
+    finalizedResume.business_screening_status === input.status
+    && finalizedResume.business_screening_batch_id === input.batchId
+    && finalizedDispatchGroupId === dispatchGroupId
+    && finalizedItem.status === itemStatus
+    && finalizedItem.processed_at === screenedAt
+  ) {
+    return {
+      applied: true,
+      idempotent: false,
+      status: input.status,
+    };
+  }
+
+  if (finalizedDispatchGroupId !== dispatchGroupId) {
+    return {
+      applied: false,
+      idempotent: false,
+      status: input.status,
+      reason: 'business screening dispatch group changed',
+    };
+  }
+
+  if (finalizedItem.status === itemStatus && finalizedResume.business_screening_status === input.status) {
+    return {
+      applied: false,
+      idempotent: true,
+      status: input.status,
+    };
+  }
+
+  if (finalizedItem.status === itemStatus) {
+    return {
+      applied: false,
+      idempotent: true,
+      status: input.status,
+    };
+  }
+
+  if (
+    finalizedResume.hr_disposition === 'rejected'
+    || finalizedResume.status === 'approved'
+    || finalizedResume.status === 'rejected'
+    || finalizedResume.business_screening_status === 'passed'
+    || finalizedResume.business_screening_status === 'rejected'
+    || finalizedItem.status === 'passed'
+    || finalizedItem.status === 'rejected'
+  ) {
+    return buildBlockedDecisionResult(input, finalizedResume, finalizedItem);
+  }
+
+  if (resolveDispatchGroupId(finalizedResume, null) !== dispatchGroupId) {
+    return {
+      applied: false,
+      idempotent: false,
+      status: input.status,
+      reason: 'business screening dispatch group changed',
+    };
   }
 
   return {
-    applied: true,
+    applied: false,
     idempotent: false,
     status: input.status,
+    reason: 'business screening already completed',
   };
 }
 

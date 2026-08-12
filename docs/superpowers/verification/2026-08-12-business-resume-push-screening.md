@@ -111,3 +111,47 @@ Verification commands and results:
 
    Result:
    - no whitespace or patch formatting errors
+
+---
+
+## 2026-08-12 Task 2 blocking review finding repair
+
+Scope:
+- Repair the blocking Task 2 stale-callback ownership bug only
+- Business-screening repository/routes/types/tests and migration/report updates only
+- No dashboard or unrelated pre-existing files touched
+
+Behavior verified:
+- `recordBusinessScreeningDecision` now rejects stale callbacks before any mutation when the resume’s current `business_screening_batch_id`/dispatch group points at a different active resend/current batch
+- Same-push multi-interviewer sibling batches stay valid because they share one durable dispatch group and can still complete from either sibling link
+- Resend creates a fresh dispatch group, updates the resume pointer to the new group, and keeps older-group callbacks from mutating either the batch item or the resume
+- Resume mutation is now the guarded first write, and the targeted item plus same-group sibling item transitions run only after the guarded resume transition succeeds
+- Same-group sibling closure no longer touches pending items from an older resend group
+
+Verification commands and results:
+
+1. Focused repository/route regression suite
+
+   Command:
+   `cd worker && npm test -- business-screening-repository.test.ts business-screening-routes.test.ts --run`
+
+   Result:
+   - 2 test files passed
+   - 29 tests passed
+
+2. Full Worker suite
+
+   Command:
+   `cd worker && npm test -- --run`
+
+   Result:
+   - 43 test files passed
+   - 310 tests passed
+
+3. Diff hygiene for scoped files
+
+   Command:
+   `git diff --check -- worker/migrations/0028_business_screening_push.sql worker/src/business-screening/repository.ts worker/src/business-screening/routes.ts worker/src/business-screening/types.ts worker/tests/business-screening-repository.test.ts worker/tests/business-screening-routes.test.ts docs/superpowers/verification/2026-08-12-business-resume-push-screening.md`
+
+   Result:
+   - no whitespace or patch formatting errors

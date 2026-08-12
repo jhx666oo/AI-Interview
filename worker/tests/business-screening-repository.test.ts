@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   BUSINESS_SCREENING_RESUME_MIGRATIONS,
+  BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS,
   BUSINESS_SCREENING_SCHEMA_STATEMENTS,
   applyTerminalResumeOutcome,
   createResumePushBatch,
@@ -19,6 +20,7 @@ describe('business screening schema compatibility', () => {
     const sql = await readFile(resolve(process.cwd(), 'migrations/0028_business_screening_push.sql'), 'utf8');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS resume_push_batches');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS resume_push_batch_items');
+    expect(sql).toContain('dispatch_group_id TEXT');
     expect(sql).not.toContain('ALTER TABLE resumes ADD COLUMN hr_disposition');
     expect(sql).not.toContain('ALTER TABLE resumes ADD COLUMN business_screening_status');
   });
@@ -31,6 +33,7 @@ describe('business screening schema compatibility', () => {
       'business_screened_at',
       'business_screened_by',
       'business_screening_batch_id',
+      'business_screening_dispatch_group_id',
     ];
 
     const migrationSql = BUSINESS_SCREENING_RESUME_MIGRATIONS.join('\n');
@@ -39,6 +42,9 @@ describe('business screening schema compatibility', () => {
     }
     expect(BUSINESS_SCREENING_SCHEMA_STATEMENTS.join('\n')).toContain('CREATE TABLE IF NOT EXISTS resume_push_batches');
     expect(BUSINESS_SCREENING_SCHEMA_STATEMENTS.join('\n')).toContain('CREATE TABLE IF NOT EXISTS resume_push_batch_items');
+    expect(BUSINESS_SCREENING_SCHEMA_STATEMENTS.join('\n')).toContain('dispatch_group_id TEXT');
+    expect(BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS.join('\n')).toContain('ALTER TABLE resume_push_batches ADD COLUMN dispatch_group_id');
+    expect(BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS.join('\n')).toContain('ALTER TABLE resume_push_batch_items ADD COLUMN dispatch_group_id');
   });
 
   it('attempts every compatibility migration and ignores duplicate-column errors', async () => {
@@ -59,6 +65,7 @@ describe('business screening schema compatibility', () => {
     expect(attempted).toEqual([
       ...BUSINESS_SCREENING_RESUME_MIGRATIONS,
       ...BUSINESS_SCREENING_SCHEMA_STATEMENTS,
+      ...BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS,
     ]);
   });
 });
@@ -88,6 +95,7 @@ describe('business screening repository writes', () => {
                     created_by: 'hr@example.com',
                     created_at: '2026-08-12T12:00:00.000Z',
                     last_sent_at: null,
+                    dispatch_group_id: 'dispatch-1',
                   };
                 }
                 return null;
@@ -106,6 +114,7 @@ describe('business screening repository writes', () => {
       tokenHash: 'hash-1',
       createdBy: 'hr@example.com',
       createdAt: '2026-08-12T12:00:00.000Z',
+      dispatchGroupId: 'dispatch-1',
     });
     await insertResumePushBatchItems(db as never, [{
       id: 'item-1',
@@ -113,8 +122,9 @@ describe('business screening repository writes', () => {
       resumeId: 'resume-1',
       positionId: 'position-1',
       createdAt: '2026-08-12T12:00:00.000Z',
+      dispatchGroupId: 'dispatch-1',
     }]);
-    await markResumesPushed(db as never, ['resume-1'], 'batch-1');
+    await markResumesPushed(db as never, ['resume-1'], 'batch-1', 'dispatch-1');
     await expect(loadResumePushBatchByTokenHash(db as never, 'hash-1')).resolves.toMatchObject({
       id: 'batch-1',
       interviewer_name: '张三',
@@ -122,13 +132,13 @@ describe('business screening repository writes', () => {
     });
 
     expect(calls.find((call) => call.sql.includes('INSERT INTO resume_push_batches'))?.values).toEqual([
-      'batch-1', 'user-1', '张三', 'ou_123', 'hash-1', null, 'active', 'hr@example.com', '2026-08-12T12:00:00.000Z', null,
+      'batch-1', 'user-1', '张三', 'ou_123', 'hash-1', null, 'active', 'hr@example.com', '2026-08-12T12:00:00.000Z', null, 'dispatch-1',
     ]);
     expect(calls.find((call) => call.sql.includes('INSERT INTO resume_push_batch_items'))?.values).toEqual([
-      'item-1', 'batch-1', 'resume-1', 'position-1', 'pending', null, null, '2026-08-12T12:00:00.000Z',
+      'item-1', 'batch-1', 'resume-1', 'position-1', 'pending', null, null, '2026-08-12T12:00:00.000Z', 'dispatch-1',
     ]);
     expect(calls.find((call) => call.sql.includes("SET hr_disposition = 'pushed'"))?.values).toEqual([
-      'batch-1', expect.any(String), 'resume-1',
+      'batch-1', 'dispatch-1', expect.any(String), 'resume-1',
     ]);
     expect(calls.find((call) => call.sql.includes('FROM resume_push_batches'))?.values).toEqual(['hash-1']);
   });
@@ -219,6 +229,7 @@ describe('business screening repository writes', () => {
         business_screened_at: null,
         business_screened_by: '',
         business_screening_batch_id: 'batch-b',
+        business_screening_dispatch_group_id: 'dispatch-b',
       },
       items: {
         'item-a': {
@@ -227,6 +238,7 @@ describe('business screening repository writes', () => {
           status: 'rejected',
           remark: null,
           processed_at: null,
+          dispatch_group_id: 'dispatch-a',
         },
       },
     });
@@ -241,7 +253,8 @@ describe('business screening repository writes', () => {
       screenedBy: '张三',
     })).resolves.toMatchObject({
       applied: false,
-      idempotent: true,
+      idempotent: false,
+      reason: 'business screening dispatch group changed',
     });
 
     expect(db.items['item-a']).toEqual({
@@ -250,6 +263,7 @@ describe('business screening repository writes', () => {
       status: 'rejected',
       remark: null,
       processed_at: null,
+      dispatch_group_id: 'dispatch-a',
     });
     expect(db.resume).toMatchObject({
       hr_disposition: 'pushed',
@@ -262,6 +276,7 @@ describe('business screening repository writes', () => {
       business_screened_at: null,
       business_screened_by: '',
       business_screening_batch_id: 'batch-b',
+      business_screening_dispatch_group_id: 'dispatch-b',
     });
   });
 
@@ -278,6 +293,7 @@ describe('business screening repository writes', () => {
         business_screened_at: '2026-08-12T11:59:00.000Z',
         business_screened_by: 'HR',
         business_screening_batch_id: 'batch-1',
+        business_screening_dispatch_group_id: 'dispatch-1',
       },
     });
 
@@ -323,6 +339,7 @@ describe('business screening repository writes', () => {
         business_screened_at: null,
         business_screened_by: '',
         business_screening_batch_id: 'batch-b',
+        business_screening_dispatch_group_id: 'dispatch-1',
       },
       items: {
         'item-a': {
@@ -331,6 +348,7 @@ describe('business screening repository writes', () => {
           status: 'pending',
           remark: null,
           processed_at: null,
+          dispatch_group_id: 'dispatch-1',
         },
         'item-b': {
           batch_id: 'batch-b',
@@ -338,6 +356,7 @@ describe('business screening repository writes', () => {
           status: 'pending',
           remark: null,
           processed_at: null,
+          dispatch_group_id: 'dispatch-1',
         },
       },
     });
@@ -357,6 +376,7 @@ describe('business screening repository writes', () => {
       status: 'approved',
       stage: 'talent_pool',
       business_screening_batch_id: 'batch-a',
+      business_screening_dispatch_group_id: 'dispatch-1',
     });
     expect(db.items['item-a']).toMatchObject({
       status: 'passed',
@@ -387,6 +407,233 @@ describe('business screening repository writes', () => {
       status: 'approved',
       stage: 'talent_pool',
       business_screening_remark: '张三通过',
+    });
+  });
+
+  it('conflicts stale old-group callbacks before any mutation when the resume points at a different current dispatch group', async () => {
+    const db = createDecisionDb({
+      resume: {
+        status: 'pending_review',
+        stage: 'screening',
+        approved_at: null,
+        rejected_at: null,
+        business_screening_status: 'pending',
+        business_screening_remark: '',
+        business_screened_at: null,
+        business_screened_by: '',
+        business_screening_batch_id: 'batch-b',
+        business_screening_dispatch_group_id: 'dispatch-new',
+      },
+      items: {
+        'item-a': {
+          batch_id: 'batch-a',
+          resume_id: 'resume-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          dispatch_group_id: 'dispatch-old',
+        },
+        'item-b': {
+          batch_id: 'batch-b',
+          resume_id: 'resume-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          dispatch_group_id: 'dispatch-new',
+        },
+      },
+    });
+
+    await expect(recordBusinessScreeningDecision(db as never, {
+      batchItemId: 'item-a',
+      resumeId: 'resume-1',
+      batchId: 'batch-a',
+      status: 'rejected',
+      remark: '旧批次回调',
+      screenedAt: '2026-08-12T12:00:00.000Z',
+      screenedBy: '张三',
+    })).resolves.toEqual({
+      applied: false,
+      idempotent: false,
+      status: 'rejected',
+      reason: 'business screening dispatch group changed',
+    });
+
+    expect(db.items['item-a']).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+      dispatch_group_id: 'dispatch-old',
+    });
+    expect(db.items['item-b']).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+      dispatch_group_id: 'dispatch-new',
+    });
+    expect(db.resume).toMatchObject({
+      business_screening_status: 'pending',
+      business_screening_batch_id: 'batch-b',
+      business_screening_dispatch_group_id: 'dispatch-new',
+      status: 'pending_review',
+      stage: 'screening',
+    });
+  });
+
+  it('allows same-push sibling batches sharing a dispatch group and only closes sibling items from that same group', async () => {
+    const db = createDecisionDb({
+      resume: {
+        status: 'pending_review',
+        stage: 'screening',
+        approved_at: null,
+        rejected_at: null,
+        business_screening_status: 'pending',
+        business_screening_remark: '',
+        business_screened_at: null,
+        business_screened_by: '',
+        business_screening_batch_id: 'batch-b',
+        business_screening_dispatch_group_id: 'dispatch-shared',
+      },
+      items: {
+        'item-a': {
+          batch_id: 'batch-a',
+          resume_id: 'resume-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          dispatch_group_id: 'dispatch-shared',
+        },
+        'item-b': {
+          batch_id: 'batch-b',
+          resume_id: 'resume-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          dispatch_group_id: 'dispatch-shared',
+        },
+        'item-c': {
+          batch_id: 'batch-c',
+          resume_id: 'resume-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          dispatch_group_id: 'dispatch-older',
+        },
+      },
+    });
+
+    await expect(recordBusinessScreeningDecision(db as never, {
+      batchItemId: 'item-a',
+      resumeId: 'resume-1',
+      batchId: 'batch-a',
+      status: 'passed',
+      remark: '同推送批次通过',
+      screenedAt: '2026-08-12T12:00:00.000Z',
+      screenedBy: '张三',
+    })).resolves.toEqual({ applied: true, idempotent: false, status: 'passed' });
+
+    expect(db.items['item-a']).toMatchObject({ status: 'passed', dispatch_group_id: 'dispatch-shared' });
+    expect(db.items['item-b']).toMatchObject({ status: 'passed', dispatch_group_id: 'dispatch-shared' });
+    expect(db.items['item-c']).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+      dispatch_group_id: 'dispatch-older',
+    });
+    expect(db.resume).toMatchObject({
+      business_screening_status: 'passed',
+      business_screening_batch_id: 'batch-a',
+      business_screening_dispatch_group_id: 'dispatch-shared',
+      status: 'approved',
+      stage: 'talent_pool',
+    });
+  });
+
+  it('accepts the resend replacement group while the older group remains blocked and untouched', async () => {
+    const db = createDecisionDb({
+      resume: {
+        status: 'pending_review',
+        stage: 'screening',
+        approved_at: null,
+        rejected_at: null,
+        business_screening_status: 'pending',
+        business_screening_remark: '',
+        business_screened_at: null,
+        business_screened_by: '',
+        business_screening_batch_id: 'batch-new',
+        business_screening_dispatch_group_id: 'dispatch-new',
+      },
+      items: {
+        'item-old': {
+          batch_id: 'batch-old',
+          resume_id: 'resume-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          dispatch_group_id: 'dispatch-old',
+        },
+        'item-new': {
+          batch_id: 'batch-new',
+          resume_id: 'resume-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          dispatch_group_id: 'dispatch-new',
+        },
+      },
+    });
+
+    await expect(recordBusinessScreeningDecision(db as never, {
+      batchItemId: 'item-new',
+      resumeId: 'resume-1',
+      batchId: 'batch-new',
+      status: 'passed',
+      remark: '重发后通过',
+      screenedAt: '2026-08-12T12:00:00.000Z',
+      screenedBy: '张三',
+    })).resolves.toEqual({ applied: true, idempotent: false, status: 'passed' });
+
+    expect(db.items['item-new']).toMatchObject({ status: 'passed', dispatch_group_id: 'dispatch-new' });
+    expect(db.items['item-old']).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+      dispatch_group_id: 'dispatch-old',
+    });
+    expect(db.resume).toMatchObject({
+      business_screening_status: 'passed',
+      business_screening_batch_id: 'batch-new',
+      business_screening_dispatch_group_id: 'dispatch-new',
+      status: 'approved',
+      stage: 'talent_pool',
+    });
+
+    await expect(recordBusinessScreeningDecision(db as never, {
+      batchItemId: 'item-old',
+      resumeId: 'resume-1',
+      batchId: 'batch-old',
+      status: 'rejected',
+      remark: '旧重发链接不应生效',
+      screenedAt: '2026-08-12T12:01:00.000Z',
+      screenedBy: '张三',
+    })).resolves.toEqual({
+      applied: false,
+      idempotent: false,
+      status: 'rejected',
+      reason: 'business screening dispatch group changed',
+    });
+
+    expect(db.items['item-old']).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+      dispatch_group_id: 'dispatch-old',
+    });
+    expect(db.resume).toMatchObject({
+      business_screening_status: 'passed',
+      business_screening_batch_id: 'batch-new',
+      business_screening_dispatch_group_id: 'dispatch-new',
+      business_screening_remark: '重发后通过',
     });
   });
 
@@ -442,6 +689,7 @@ function createDecisionDb(overrides?: {
     business_screened_at: string | null;
     business_screened_by: string;
     business_screening_batch_id: string;
+    business_screening_dispatch_group_id: string;
     updated_at?: string;
   };
   items?: Record<string, {
@@ -450,6 +698,7 @@ function createDecisionDb(overrides?: {
     status: string;
     remark: string | null;
     processed_at: string | null;
+    dispatch_group_id: string;
   }>;
 }) {
   const items = overrides?.items || {
@@ -459,6 +708,7 @@ function createDecisionDb(overrides?: {
       status: 'pending',
       remark: null as string | null,
       processed_at: null as string | null,
+      dispatch_group_id: 'dispatch-1',
     },
   };
   const resume = {
@@ -472,6 +722,7 @@ function createDecisionDb(overrides?: {
     business_screened_at: overrides?.resume?.business_screened_at ?? null,
     business_screened_by: overrides?.resume?.business_screened_by || '',
     business_screening_batch_id: overrides?.resume?.business_screening_batch_id || 'batch-1',
+    business_screening_dispatch_group_id: overrides?.resume?.business_screening_dispatch_group_id || 'dispatch-1',
     updated_at: overrides?.resume?.updated_at || '',
   };
 
@@ -496,6 +747,7 @@ function createDecisionDb(overrides?: {
                   status: current.status,
                   remark: current.remark,
                   processed_at: current.processed_at,
+                  dispatch_group_id: current.dispatch_group_id,
                 };
               }
               if (sql.includes('FROM resumes') && sql.includes('business_screening_status')) {
@@ -505,12 +757,25 @@ function createDecisionDb(overrides?: {
             },
             async run() {
               if (sql.includes('UPDATE resume_push_batch_items')) {
-                if (sql.includes('WHERE id = ? AND batch_id = ? AND resume_id = ? AND status = \'pending\'')) {
+                if (
+                  sql.includes('WHERE id = ?')
+                  && sql.includes('batch_id = ?')
+                  && sql.includes('resume_id = ?')
+                  && sql.includes("status = 'pending'")
+                  && !sql.includes("AND id != ?")
+                ) {
                   const itemId = values[3] as string;
                   const batchId = values[4] as string;
                   const resumeId = values[5] as string;
+                  const dispatchGroupId = values[6] as string;
                   const current = items[itemId];
-                  if (!current || current.batch_id !== batchId || current.resume_id !== resumeId || current.status !== 'pending') {
+                  if (
+                    !current
+                    || current.batch_id !== batchId
+                    || current.resume_id !== resumeId
+                    || current.status !== 'pending'
+                    || current.dispatch_group_id !== dispatchGroupId
+                  ) {
                     return { meta: { changes: 0 } };
                   }
                   current.status = values[0] as string;
@@ -518,12 +783,18 @@ function createDecisionDb(overrides?: {
                   current.processed_at = values[2] as string | null;
                   return { meta: { changes: 1 } };
                 }
-                if (sql.includes('WHERE resume_id = ? AND id != ? AND status = \'pending\'')) {
+                if (sql.includes('WHERE resume_id = ?') && sql.includes('dispatch_group_id') && sql.includes("AND id != ?") && sql.includes("status = 'pending'")) {
                   const resumeId = values[3] as string;
-                  const itemId = values[4] as string;
+                  const dispatchGroupId = values[4] as string;
+                  const itemId = values[5] as string;
                   let changes = 0;
                   for (const [key, current] of Object.entries(items)) {
-                    if (key === itemId || current.resume_id !== resumeId || current.status !== 'pending') continue;
+                    if (
+                      key === itemId
+                      || current.resume_id !== resumeId
+                      || current.dispatch_group_id !== dispatchGroupId
+                      || current.status !== 'pending'
+                    ) continue;
                     current.status = values[0] as string;
                     current.remark = current.remark ?? (values[1] as string | null);
                     current.processed_at = current.processed_at ?? (values[2] as string | null);
@@ -535,18 +806,39 @@ function createDecisionDb(overrides?: {
               if (sql.includes('UPDATE resumes')) {
                 const resumeEligible = ['not_ready', 'pending'].includes(resume.business_screening_status)
                   && resume.status !== 'approved'
-                  && resume.status !== 'rejected';
+                  && resume.status !== 'rejected'
+                  && resume.hr_disposition !== 'rejected';
+                const expectedResumeId = values[11] as string;
+                const expectedDispatchGroupId = values[12] as string;
+                const expectedItemId = values[13] as string;
+                const expectedBatchId = values[14] as string;
+                const expectedItemResumeId = values[15] as string;
+                const expectedItemDispatchGroupId = values[16] as string;
+                const currentItem = items[expectedItemId];
                 if (!resumeEligible) return { meta: { changes: 0 } };
+                if (
+                  expectedResumeId !== 'resume-1'
+                  || expectedItemResumeId !== 'resume-1'
+                  || resume.business_screening_dispatch_group_id !== expectedDispatchGroupId
+                  || !currentItem
+                  || currentItem.batch_id !== expectedBatchId
+                  || currentItem.resume_id !== expectedItemResumeId
+                  || currentItem.status !== 'pending'
+                  || currentItem.dispatch_group_id !== expectedItemDispatchGroupId
+                ) {
+                  return { meta: { changes: 0 } };
+                }
                 resume.business_screening_status = values[0] as string;
                 resume.business_screening_remark = values[1] as string;
                 resume.business_screened_at = values[2] as string | null;
                 resume.business_screened_by = values[3] as string;
                 resume.business_screening_batch_id = values[4] as string;
-                resume.status = values[5] as string;
-                resume.stage = values[6] as string;
-                resume.approved_at = values[7] as string | null;
-                resume.rejected_at = values[8] as string | null;
-                resume.updated_at = values[9] as string;
+                resume.business_screening_dispatch_group_id = values[5] as string;
+                resume.status = values[6] as string;
+                resume.stage = values[7] as string;
+                resume.approved_at = values[8] as string | null;
+                resume.rejected_at = values[9] as string | null;
+                resume.updated_at = values[10] as string;
                 return { meta: { changes: 1 } };
               }
               return { meta: { changes: 1 } };
