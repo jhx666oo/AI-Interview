@@ -22,6 +22,8 @@ import { buildInterviewReminderView, deliverInterviewReminder } from './feishu-n
 import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveReminderInterviewer } from './feishu-notifications/reminder-source';
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
 import { ensureBusinessScreeningSchema } from './business-screening/repository';
+import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from './business-screening/routes';
+import { createPublicToken } from './business-screening/token';
 import {
   assertDailyReportDate,
   claimScreeningQueueRecord,
@@ -1232,6 +1234,19 @@ function requireRole(roles: string[]) {
     await next();
   };
 }
+
+const businessScreeningRoutes = createBusinessScreeningRoutes({
+  authMiddleware,
+  requireRole,
+  getCurrentUserToken: (env, email) => getValidUserAccessToken(env, email),
+  sendFeishuMessageToUser,
+  recordResumeDecisionTimestamp,
+  now,
+  uuid,
+  createPublicToken,
+  store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
+});
+app.route('/', businessScreeningRoutes);
 
 // HR 权限隔离：非 admin 用户自动过滤为自己的数据
 function getOwnerName(c: any): string | null {

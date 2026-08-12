@@ -1,0 +1,675 @@
+import { describe, expect, it } from 'vitest';
+import type {
+  BusinessScreeningBatchItemView,
+  BusinessScreeningResumeRecord,
+  BusinessScreeningRouteStore,
+  BusinessScreeningRouteDeps,
+} from '../src/business-screening/routes';
+import { createBusinessScreeningRoutes } from '../src/business-screening/routes';
+import { hashPublicToken } from '../src/business-screening/token';
+
+type BatchRow = {
+  id: string;
+  interviewer_id: string | null;
+  interviewer_name: string;
+  interviewer_open_id: string;
+  token_hash: string;
+  expires_at: string | null;
+  status: 'active' | 'completed' | 'revoked' | 'expired';
+  created_by: string;
+  created_at: string;
+  last_sent_at: string | null;
+  rawToken?: string;
+};
+
+function buildHarness(options?: {
+  resumes?: BusinessScreeningResumeRecord[];
+  positions?: Array<{ id: string; title: string; primary_interviewer?: string; secondary_interviewer?: string }>;
+  interviewerDirectory?: Array<{ name: string; openId?: string | null; userId?: string | null }>;
+  sendFailuresByOpenId?: Record<string, string>;
+  initialBatches?: BatchRow[];
+  initialItems?: BusinessScreeningBatchItemView[];
+}) {
+  const resumes = new Map(
+    (options?.resumes || [
+      {
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        email: 'jia@example.com',
+        contact: '13800000000',
+        screening_result: '通过',
+        status: 'pending_review',
+        hr_disposition: 'pending',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'not_ready',
+        business_screening_batch_id: '',
+        education: '本科',
+        work_experience: '5年',
+      },
+    ]).map((resume) => [resume.id, { ...resume }]),
+  );
+  const positions = (options?.positions || [
+    { id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四' },
+  ]).map((position) => ({ ...position }));
+  const interviewerDirectory = new Map(
+    (options?.interviewerDirectory || [
+      { name: '张三', openId: 'ou_zhang', userId: 'user-zhang' },
+      { name: '李四', openId: 'ou_li', userId: 'user-li' },
+    ]).map((entry) => [entry.name, { ...entry }]),
+  );
+  const batches = new Map((options?.initialBatches || []).map((batch) => [batch.id, { ...batch }]));
+  const batchItems = (options?.initialItems || []).map((item) => ({ ...item }));
+  const sentMessages: Array<{ token: string; openId: string; card: unknown }> = [];
+  const createdTokens: Array<{ token: string; tokenHash: string }> = [];
+  let tokenCounter = 0;
+
+  const store: BusinessScreeningRouteStore = {
+    async listResumesByIds(_db, ids) {
+      return ids.map((id) => resumes.get(id)).filter(Boolean) as BusinessScreeningResumeRecord[];
+    },
+    async listPositionsByTitles(_db, titles) {
+      const allowed = new Set(titles);
+      return positions.filter((position) => allowed.has(position.title));
+    },
+    async listInterviewerDirectory(_db, names) {
+      return names
+        .map((name) => interviewerDirectory.get(name))
+        .filter(Boolean) as Array<{ name: string; openId?: string | null; userId?: string | null }>;
+    },
+    async createBatch(_db, batch, items) {
+      batches.set(batch.id, {
+        id: batch.id,
+        interviewer_id: batch.interviewerId || null,
+        interviewer_name: batch.interviewerName,
+        interviewer_open_id: batch.interviewerOpenId,
+        token_hash: batch.tokenHash,
+        expires_at: batch.expiresAt,
+        status: 'active',
+        created_by: batch.createdBy,
+        created_at: batch.createdAt,
+        last_sent_at: batch.lastSentAt || null,
+      });
+      for (const item of items) {
+        const resume = resumes.get(item.resumeId);
+        batchItems.push({
+          id: item.id,
+          batch_id: item.batchId,
+          resume_id: item.resumeId,
+          position_id: item.positionId || null,
+          status: item.status || 'pending',
+          remark: item.remark || null,
+          processed_at: item.processedAt || null,
+          created_at: item.createdAt || '2026-08-12T12:00:00.000Z',
+          candidate_name: resume?.candidate_name || null,
+          mapped_position: resume?.mapped_position || null,
+          position_applied: resume?.position_applied || null,
+          email: resume?.email || null,
+          contact: resume?.contact || null,
+          education: resume?.education || null,
+          work_experience: resume?.work_experience || null,
+          hr_disposition: resume?.hr_disposition || null,
+          business_screening_status: resume?.business_screening_status || null,
+          business_screening_remark: resume?.business_screening_remark || null,
+          business_screened_at: resume?.business_screened_at || null,
+        });
+      }
+    },
+    async markResumesPushed(_db, resumeIds, batchId) {
+      for (const id of resumeIds) {
+        const resume = resumes.get(id);
+        if (!resume) continue;
+        resume.hr_disposition = 'pushed';
+        resume.business_screening_status = 'pending';
+        resume.business_screening_batch_id = batchId;
+      }
+    },
+    async loadBatchByTokenHash(_db, tokenHash) {
+      for (const batch of batches.values()) {
+        if (batch.token_hash === tokenHash) return batch;
+        if (batch.rawToken && await hashPublicToken(batch.rawToken) === tokenHash) return batch;
+      }
+      return null;
+    },
+    async loadBatchById(_db, batchId) {
+      return batches.get(batchId) || null;
+    },
+    async listBatchItems(_db, batchId) {
+      return batchItems.filter((item) => item.batch_id === batchId).map((item) => ({ ...item }));
+    },
+    async loadBatchItem(_db, batchId, resumeId) {
+      const item = batchItems.find((candidate) => candidate.batch_id === batchId && candidate.resume_id === resumeId);
+      return item ? { ...item } : null;
+    },
+    async recordDecision(_db, input) {
+      const item = batchItems.find((candidate) => candidate.batch_id === input.batchId && candidate.resume_id === input.resumeId);
+      if (!item) throw new Error('business screening batch item not found');
+      const resume = resumes.get(input.resumeId);
+      const nextItemStatus = input.status === 'passed' ? 'passed' : 'rejected';
+      if (item.status !== 'pending') {
+        if (item.status === nextItemStatus) {
+          return { applied: false, idempotent: true, status: input.status };
+        }
+        return {
+          applied: false,
+          idempotent: false,
+          status: item.status === 'passed' ? 'passed' : 'rejected',
+          reason: 'business screening already completed',
+        };
+      }
+      item.status = nextItemStatus;
+      item.remark = input.remark || null;
+      item.processed_at = input.screenedAt || '2026-08-12T12:00:00.000Z';
+      if (resume) {
+        resume.business_screening_status = input.status;
+        resume.business_screening_remark = input.remark || '';
+        resume.business_screened_at = item.processed_at;
+        resume.business_screened_by = input.screenedBy || '';
+        resume.business_screening_batch_id = input.batchId;
+      }
+      return { applied: true, idempotent: false, status: input.status };
+    },
+    async setBatchStatus(_db, batchId, status) {
+      const batch = batches.get(batchId);
+      if (batch) batch.status = status;
+    },
+    async setBatchLastSentAt(_db, batchId, sentAt) {
+      const batch = batches.get(batchId);
+      if (batch) batch.last_sent_at = sentAt;
+    },
+    async countPendingBatchItems(_db, batchId) {
+      return batchItems.filter((item) => item.batch_id === batchId && item.status === 'pending').length;
+    },
+  };
+
+  const deps: BusinessScreeningRouteDeps = {
+    authMiddleware: async (c, next) => {
+      const auth = c.req.header('Authorization') || '';
+      if (auth === 'Bearer hr-token') {
+        c.set('user', { id: 'user-hr', email: 'hr@example.com', role: 'hr', full_name: '人事甲' });
+        await next();
+        return;
+      }
+      if (auth === 'Bearer admin-token') {
+        c.set('user', { id: 'user-admin', email: 'admin@example.com', role: 'admin', full_name: '管理员' });
+        await next();
+        return;
+      }
+      return c.json({ detail: 'Not authenticated' }, 401);
+    },
+    requireRole: (roles) => async (c, next) => {
+      const user = c.get('user');
+      if (!user || !roles.includes(user.role)) {
+        return c.json({ detail: 'Operation not permitted' }, 403);
+      }
+      await next();
+    },
+    getCurrentUserToken: async () => 'user-token',
+    sendFeishuMessageToUser: async (token, openId, card) => {
+      const failure = options?.sendFailuresByOpenId?.[openId];
+      if (failure) throw new Error(failure);
+      sentMessages.push({ token, openId, card });
+      return { message_id: `msg-${openId}` };
+    },
+    recordResumeDecisionTimestamp: async (_db, resumeId, event, at) => {
+      const resume = resumes.get(resumeId);
+      if (!resume) return;
+      if (event === 'rejected') {
+        resume.rejected_at = at || '2026-08-12T12:00:00.000Z';
+      }
+    },
+    now: () => '2026-08-12T12:00:00.000Z',
+    uuid: () => {
+      tokenCounter += 1;
+      return `uuid-${tokenCounter}`;
+    },
+    createPublicToken: async () => {
+      tokenCounter += 1;
+      const token = `public-token-${tokenCounter}`;
+      const next = {
+        token,
+        tokenHash: await hashPublicToken(token),
+      };
+      createdTokens.push(next);
+      return next;
+    },
+    store,
+  };
+
+  const app = createBusinessScreeningRoutes(deps);
+  const env = { DB: {} as D1Database };
+  const request = (input: string, init?: RequestInit) => app.request(input, init, env);
+
+  return {
+    app,
+    request,
+    store,
+    resumes,
+    positions,
+    interviewerDirectory,
+    batches,
+    batchItems,
+    sentMessages,
+    createdTokens,
+  };
+}
+
+describe('business screening routes', () => {
+  it('rejects an unauthenticated HR push request', async () => {
+    const { request } = buildHarness();
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it('rejects HR elimination when business screening is already completed', async () => {
+    const { request } = buildHarness({
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        hr_disposition: 'pushed',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'passed',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/resume-1/business-screening/reject', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ comment: '已完成业务筛选，不允许淘汰' }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      detail: expect.stringContaining('completed'),
+    });
+  });
+
+  it('groups eligible resumes by interviewer and returns public URLs', async () => {
+    const { request, resumes, sentMessages } = buildHarness({
+      resumes: [
+        {
+          id: 'resume-1',
+          candidate_name: '候选人甲',
+          email: 'jia@example.com',
+          contact: '13800000000',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-2',
+          candidate_name: '候选人乙',
+          screening_result: '不通过',
+          status: 'pending_review',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+      ],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids: ['resume-1', 'resume-2'] }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      ok: true,
+      pushed: ['resume-1'],
+      skipped: [{ id: 'resume-2', reason: 'AI初筛未通过' }],
+      failed: [],
+    });
+    expect(body.batches).toHaveLength(2);
+    expect(body.batches[0].url).toMatch(/^https:\/\/ai-interview-88r\.pages\.dev\/api\/public\/business-screening\//);
+    expect(resumes.get('resume-1')).toMatchObject({
+      hr_disposition: 'pushed',
+      business_screening_status: 'pending',
+    });
+    expect(sentMessages).toHaveLength(2);
+  });
+
+  it('keeps successful interviewer groups when another delivery fails', async () => {
+    const { request, batches, sentMessages } = buildHarness({
+      sendFailuresByOpenId: {
+        ou_li: '发送用户消息失败: mock fail',
+      },
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(false);
+    expect(body.failed).toEqual([{ interviewer: '李四', reason: expect.stringContaining('mock fail') }]);
+    expect(body.batches).toHaveLength(2);
+    expect(sentMessages).toHaveLength(1);
+    expect([...batches.values()].every((batch) => batch.status === 'active')).toBe(true);
+  });
+
+  it('returns only the token-scoped interviewer batch view and sanitizes candidate payloads', async () => {
+    const { request, createdTokens } = buildHarness();
+
+    const pushResponse = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(pushResponse.status).toBe(200);
+
+    const [firstToken] = createdTokens;
+    const response = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${firstToken.token}`);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.batch.interviewer).toBe('张三');
+    expect(body.resumes).toEqual([
+      expect.objectContaining({
+        id: 'resume-1',
+        candidateName: '候选人甲',
+        position: '标准运营',
+        status: 'pending',
+      }),
+    ]);
+    expect(body.resumes[0].email).toBeUndefined();
+    expect(body.resumes[0].contact).toBeUndefined();
+  });
+
+  it('blocks expired or revoked public links', async () => {
+    const { request } = buildHarness({
+      initialBatches: [{
+        id: 'batch-expired',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-expired',
+        expires_at: '2026-08-01T00:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-01T00:00:00.000Z',
+        last_sent_at: null,
+        rawToken: 'expired-token',
+      }],
+      initialItems: [{
+        id: 'item-expired',
+        batch_id: 'batch-expired',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-01T00:00:00.000Z',
+        candidate_name: '候选人甲',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/expired-token');
+
+    expect(response.status).toBe(410);
+  });
+
+  it('records public approve callbacks and keeps duplicate callbacks idempotent', async () => {
+    const { request } = buildHarness({
+      initialBatches: [{
+        id: 'batch-approve',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-approve',
+        expires_at: '2026-08-19T00:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T00:00:00.000Z',
+        last_sent_at: '2026-08-12T00:00:00.000Z',
+        rawToken: 'approve-token',
+      }],
+      initialItems: [{
+        id: 'item-approve',
+        batch_id: 'batch-approve',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T00:00:00.000Z',
+        candidate_name: '候选人甲',
+        mapped_position: '标准运营',
+        hr_disposition: 'pushed',
+        business_screening_status: 'pending',
+      }],
+    });
+
+    const first = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/approve-token/resumes/resume-1/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '建议入库' }),
+    });
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({
+      ok: true,
+      status: 'passed',
+      idempotent: false,
+    });
+
+    const duplicate = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/approve-token/resumes/resume-1/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '重复点击' }),
+    });
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({
+      ok: true,
+      status: 'passed',
+      idempotent: true,
+    });
+  });
+
+  it('rejects the opposite public callback after a completion has already been recorded', async () => {
+    const { request } = buildHarness({
+      initialBatches: [{
+        id: 'batch-opposite',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-opposite',
+        expires_at: '2026-08-19T00:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T00:00:00.000Z',
+        last_sent_at: '2026-08-12T00:00:00.000Z',
+        rawToken: 'opposite-token',
+      }],
+      initialItems: [{
+        id: 'item-opposite',
+        batch_id: 'batch-opposite',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'passed',
+        remark: '已入库',
+        processed_at: '2026-08-12T01:00:00.000Z',
+        created_at: '2026-08-12T00:00:00.000Z',
+        candidate_name: '候选人甲',
+        mapped_position: '标准运营',
+        hr_disposition: 'pushed',
+        business_screening_status: 'passed',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/opposite-token/resumes/resume-1/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '反向改判' }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      detail: expect.stringContaining('already'),
+    });
+  });
+
+  it('keeps public errors generic and free of unrelated ids', async () => {
+    const { request } = buildHarness({
+      initialBatches: [{
+        id: 'batch-generic',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-generic',
+        expires_at: '2026-08-19T00:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T00:00:00.000Z',
+        last_sent_at: '2026-08-12T00:00:00.000Z',
+        rawToken: 'generic-token',
+      }],
+      initialItems: [{
+        id: 'item-generic',
+        batch_id: 'batch-generic',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T00:00:00.000Z',
+        candidate_name: '候选人甲',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/generic-token/resumes/resume-404/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '伪造简历 id' }),
+    });
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.detail).not.toContain('resume-404');
+    expect(body.detail).not.toContain('generic-token');
+    expect(body.detail).not.toContain('ou_zhang');
+  });
+
+  it('reissues only the selected batch on resend and revokes the old link', async () => {
+    const { request, batches, batchItems, sentMessages, createdTokens } = buildHarness({
+      initialBatches: [{
+        id: 'batch-old',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-old',
+        expires_at: '2026-08-19T00:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T00:00:00.000Z',
+        last_sent_at: '2026-08-12T00:00:00.000Z',
+        rawToken: 'old-token',
+      }],
+      initialItems: [
+        {
+          id: 'item-pending',
+          batch_id: 'batch-old',
+          resume_id: 'resume-1',
+          position_id: 'position-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          created_at: '2026-08-12T00:00:00.000Z',
+          candidate_name: '候选人甲',
+          mapped_position: '标准运营',
+          hr_disposition: 'pushed',
+          business_screening_status: 'pending',
+        },
+        {
+          id: 'item-complete',
+          batch_id: 'batch-old',
+          resume_id: 'resume-2',
+          position_id: 'position-1',
+          status: 'passed',
+          remark: '已入库',
+          processed_at: '2026-08-12T01:00:00.000Z',
+          created_at: '2026-08-12T00:00:00.000Z',
+          candidate_name: '候选人乙',
+          mapped_position: '标准运营',
+          hr_disposition: 'pushed',
+          business_screening_status: 'passed',
+        },
+      ],
+      resumes: [
+        {
+          id: 'resume-1',
+          candidate_name: '候选人甲',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pushed',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'pending',
+          business_screening_batch_id: 'batch-old',
+        },
+        {
+          id: 'resume-2',
+          candidate_name: '候选人乙',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pushed',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'passed',
+          business_screening_batch_id: 'batch-old',
+        },
+      ],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches/batch-old/resend', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      ok: true,
+      resentFromBatchId: 'batch-old',
+      itemCount: 1,
+    });
+    expect(batches.get('batch-old')?.status).toBe('revoked');
+    expect([...batches.values()].some((batch) => batch.id !== 'batch-old' && batch.status === 'active')).toBe(true);
+    expect(batchItems.filter((item) => item.batch_id !== 'batch-old')).toHaveLength(1);
+    expect(sentMessages).toHaveLength(1);
+    expect(createdTokens).toHaveLength(1);
+  });
+});
