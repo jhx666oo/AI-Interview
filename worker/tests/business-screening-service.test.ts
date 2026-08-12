@@ -9,27 +9,32 @@ import type { InterviewerDirectoryEntry } from '../src/business-screening/types'
 describe('business screening service', () => {
   it('allows pushing only AI-passed resumes that are not HR-rejected and have an interviewer binding', () => {
     expect(isEligibleForPush(
-      { screening_result: '通过', status: 'pending_review', mapped_position: '标准运营' },
+      { id: 'r-ok', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营' },
       { name: '张三', openId: 'ou_123' },
     )).toEqual({ ok: true });
 
     expect(isEligibleForPush(
-      { screening_result: '不通过', status: 'pending_review', mapped_position: '标准运营' },
+      { id: 'r-ai-fail', screening_result: '不通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营' },
       { name: '张三', openId: 'ou_123' },
     )).toEqual({ ok: false, reason: 'AI初筛未通过' });
 
     expect(isEligibleForPush(
-      { screening_result: '通过', status: 'rejected', mapped_position: '标准运营' },
+      { id: 'r-legacy-rejected', screening_result: '通过', status: 'rejected', hr_disposition: 'pending', mapped_position: '标准运营' },
       { name: '张三', openId: 'ou_123' },
     )).toEqual({ ok: false, reason: 'HR已淘汰该简历' });
 
     expect(isEligibleForPush(
-      { screening_result: '通过', status: 'pending_review', mapped_position: '' },
+      { id: 'r-hr-rejected', screening_result: '通过', status: 'pending_review', hr_disposition: 'rejected', mapped_position: '标准运营' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: 'HR已淘汰该简历' });
+
+    expect(isEligibleForPush(
+      { id: 'r-no-position', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '' },
       { name: '张三', openId: 'ou_123' },
     )).toEqual({ ok: false, reason: '缺少标准岗位' });
 
     expect(isEligibleForPush(
-      { screening_result: '通过', status: 'pending_review', mapped_position: '标准运营' },
+      { id: 'r-no-interviewer', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营' },
       { name: '', openId: '' },
     )).toEqual({ ok: false, reason: '岗位未配置有效面试官' });
   });
@@ -45,10 +50,10 @@ describe('business screening service', () => {
     ];
     const groups = groupEligibleResumesByInterviewer(
       [
-        { id: 'r1', screening_result: '通过', status: 'pending_review', mapped_position: '标准运营', position_applied: '运营专员' },
-        { id: 'r2', screening_result: '通过', status: 'pending_review', mapped_position: '销售', position_applied: '销售' },
-        { id: 'r3', screening_result: '不通过', status: 'pending_review', mapped_position: '标准运营', position_applied: '运营专员' },
-        { id: 'r4', screening_result: '通过', status: 'rejected', mapped_position: '标准运营', position_applied: '运营专员' },
+        { id: 'r1', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营', position_applied: '运营专员' },
+        { id: 'r2', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '销售', position_applied: '销售' },
+        { id: 'r3', screening_result: '不通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营', position_applied: '运营专员' },
+        { id: 'r4', screening_result: '通过', status: 'pending_review', hr_disposition: 'rejected', mapped_position: '标准运营', position_applied: '运营专员' },
       ],
       positions,
       interviewerDirectory,

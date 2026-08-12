@@ -12,6 +12,7 @@ export interface BusinessScreeningResume {
   id: string;
   screening_result?: string | null;
   status?: string | null;
+  hr_disposition?: HrDisposition | string | null;
   mapped_position?: string | null;
   position_applied?: string | null;
   position_id?: string | null;
@@ -99,4 +100,11 @@ export interface RecordBusinessScreeningDecisionInput {
   remark?: string | null;
   screenedAt?: string;
   screenedBy?: string | null;
+}
+
+export interface RecordBusinessScreeningDecisionResult {
+  applied: boolean;
+  idempotent: boolean;
+  status: Extract<BusinessScreeningStatus, 'passed' | 'rejected'>;
+  reason?: string;
 }

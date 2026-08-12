@@ -2,6 +2,7 @@ import type {
   CreateResumePushBatchInput,
   CreateResumePushBatchItemInput,
   RecordBusinessScreeningDecisionInput,
+  RecordBusinessScreeningDecisionResult,
   ResumePushBatchRow,
   ResumePushBatchStatus,
 } from './types';
@@ -152,14 +153,48 @@ export async function loadResumePushBatchByTokenHash(
 export async function recordBusinessScreeningDecision(
   db: Db,
   input: RecordBusinessScreeningDecisionInput,
-): Promise<void> {
+): Promise<RecordBusinessScreeningDecisionResult> {
   const screenedAt = input.screenedAt || new Date().toISOString();
   const itemStatus = input.status === 'passed' ? 'passed' : 'rejected';
-  await db.prepare(
+  const itemUpdate = await db.prepare(
     `UPDATE resume_push_batch_items
         SET status = ?, remark = ?, processed_at = ?
-      WHERE batch_id = ? AND resume_id = ?`,
+      WHERE batch_id = ? AND resume_id = ? AND status = 'pending'`,
   ).bind(itemStatus, input.remark || null, screenedAt, input.batchId, input.resumeId).run();
+
+  if ((itemUpdate.meta?.changes || 0) === 0) {
+    const current = await db.prepare(
+      `SELECT batch_id, resume_id, status, remark, processed_at
+         FROM resume_push_batch_items
+        WHERE batch_id = ? AND resume_id = ?
+        LIMIT 1`,
+    ).bind(input.batchId, input.resumeId).first<{
+      batch_id: string;
+      resume_id: string;
+      status: 'pending' | 'passed' | 'rejected';
+      remark: string | null;
+      processed_at: string | null;
+    }>();
+
+    if (!current) {
+      throw new Error('business screening batch item not found');
+    }
+
+    if (current.status === itemStatus) {
+      return {
+        applied: false,
+        idempotent: true,
+        status: input.status,
+      };
+    }
+
+    return {
+      applied: false,
+      idempotent: false,
+      status: current.status === 'passed' ? 'passed' : 'rejected',
+      reason: 'business screening already completed',
+    };
+  }
 
   await db.prepare(
     `UPDATE resumes
@@ -179,4 +214,10 @@ export async function recordBusinessScreeningDecision(
     screenedAt,
     input.resumeId,
   ).run();
+
+  return {
+    applied: true,
+    idempotent: false,
+    status: input.status,
+  };
 }

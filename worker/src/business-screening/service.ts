@@ -31,13 +31,13 @@ function resolvePositionTitle(resume: Pick<BusinessScreeningResume, 'mapped_posi
 }
 
 export function isEligibleForPush(
-  resume: { screening_result?: string; status?: string; mapped_position?: string; position_applied?: string },
+  resume: Pick<BusinessScreeningResume, 'screening_result' | 'status' | 'hr_disposition' | 'mapped_position' | 'position_applied'>,
   interviewer: { name: string; openId?: string },
 ): { ok: true } | { ok: false; reason: string } {
   if (text(resume.screening_result) !== '通过') {
     return { ok: false, reason: 'AI初筛未通过' };
   }
-  if (text(resume.status) === 'rejected') {
+  if (text(resume.hr_disposition) === 'rejected' || text(resume.status) === 'rejected') {
     return { ok: false, reason: 'HR已淘汰该简历' };
   }
   if (!resolvePositionTitle(resume)) {

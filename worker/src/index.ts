@@ -21,6 +21,7 @@ import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror
 import { buildInterviewReminderView, deliverInterviewReminder } from './feishu-notifications/interview-reminder';
 import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveReminderInterviewer } from './feishu-notifications/reminder-source';
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
+import { ensureBusinessScreeningSchema } from './business-screening/repository';
 import {
   assertDailyReportDate,
   claimScreeningQueueRecord,
@@ -8152,6 +8153,7 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
   for (const sql of migrations) {
     try { await c.env.DB.prepare(sql).run(); } catch { /* column may already exist */ }
   }
+  await ensureBusinessScreeningSchema(c.env.DB);
 
   // v2.0: create jd_versions table
   try {

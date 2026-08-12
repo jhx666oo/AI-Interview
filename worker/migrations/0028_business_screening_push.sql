@@ -1,9 +1,6 @@
-ALTER TABLE resumes ADD COLUMN hr_disposition TEXT DEFAULT 'pending';
-ALTER TABLE resumes ADD COLUMN business_screening_status TEXT DEFAULT 'not_ready';
-ALTER TABLE resumes ADD COLUMN business_screening_remark TEXT DEFAULT '';
-ALTER TABLE resumes ADD COLUMN business_screened_at TEXT;
-ALTER TABLE resumes ADD COLUMN business_screened_by TEXT DEFAULT '';
-ALTER TABLE resumes ADD COLUMN business_screening_batch_id TEXT DEFAULT '';
+-- Resume additive columns are applied through the guarded code-side compatibility
+-- migration path because this SQLite target does not support
+-- ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
 
 CREATE TABLE IF NOT EXISTS resume_push_batches (
   id TEXT PRIMARY KEY,
