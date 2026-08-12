@@ -5,6 +5,11 @@ const source = readFileSync(new URL('./List.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../../index.css', import.meta.url), 'utf8');
 
 describe('resume card layout contracts', () => {
+  it('keeps candidate name as a server-side filter', () => {
+    expect(source).toContain("params.candidate_name = searchCandidateName.trim()");
+    expect(source).toContain('placeholder="搜索面试者姓名"');
+  });
+
   it('keeps header groups separate from the evaluation dimension row', () => {
     const headerStart = source.indexOf('className="resume-card__header"');
     const evaluationStart = source.indexOf('className="resume-card__evaluation"', headerStart);

@@ -5212,6 +5212,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     });
 
     const statusFilter = c.req.query('status');
+    const candidateNameFilter = (c.req.query('candidate_name') || '').trim();
     const screeningResultFilter = c.req.query('screening_result');
     const fileSha256Filter = c.req.query('file_sha256');
     const positionFilter = c.req.query('position');
@@ -5225,6 +5226,10 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       .map((s: string) => s.trim())
       .filter(Boolean);
     let filtered = items;
+    if (candidateNameFilter) {
+      const keyword = candidateNameFilter.toLocaleLowerCase();
+      filtered = filtered.filter((i: any) => String(i.candidate_name || '').toLocaleLowerCase().includes(keyword));
+    }
     if (statusFilter) {
       if (statusFilter === 'pending_screening') {
         filtered = filtered.filter(i => i.status === 'pending_screening' && (!i.screening_result || i.screening_result === '' || i.screening_result === 'pending'));

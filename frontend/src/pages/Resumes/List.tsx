@@ -143,6 +143,8 @@ const ResumesList: React.FC = () => {
   };
   const searchStatus = filterVal('status');
   const setSearchStatus = (v: string | undefined) => setFilter('status', v);
+  const searchCandidateName = filterVal('candidate_name');
+  const setSearchCandidateName = (v: string | undefined) => setFilter('candidate_name', v);
   const searchPosition = filterVal('position');
   const setSearchPosition = (v: string | undefined) => setFilter('position', v);
   const searchMajor = filterVal('major');
@@ -392,6 +394,7 @@ const ResumesList: React.FC = () => {
 
   const buildListParams = (page: number, pageSize: number) => {
     const params: any = { page, page_size: pageSize };
+    if (searchCandidateName?.trim()) params.candidate_name = searchCandidateName.trim();
     if (searchStatus) {
       if (searchStatus === 'screening_passed') {
         params.screening_result = '通过';
@@ -578,6 +581,7 @@ const ResumesList: React.FC = () => {
 
   const handleReset = () => {
     setSearchStatus(undefined);
+    setSearchCandidateName(undefined);
     setSearchPosition(undefined);
     setSearchMajor(undefined);
     setMinimumAge(null);
@@ -1335,6 +1339,19 @@ const handleUploadClick = () => {
               </div>
             </>}
           >
+            <div className="resume-toolbar__field">
+              <Space size={4}>
+                <Text style={{ fontSize: 13, color: '#333' }}>面试者：</Text>
+                <Input
+                  allowClear
+                  value={searchCandidateName}
+                  onChange={event => setSearchCandidateName(event.target.value)}
+                  onPressEnter={handleSearch}
+                  placeholder="搜索面试者姓名"
+                  style={{ width: 150 }}
+                />
+              </Space>
+            </div>
             <div className="resume-toolbar__field">
               <Space size={4}>
               <Text style={{ fontSize: 13, color: '#333' }}>筛选：</Text>

@@ -91,7 +91,7 @@ describe('optimized resume list response', () => {
         };
       },
     });
-    const queries = (key: string) => ({ position: '软件工程师', major: '计算机', min_age: '25', max_age: '35', genders: '男,未识别' } as Record<string, string>)[key];
+    const queries = (key: string) => ({ candidate_name: '张三', position: '软件工程师', major: '计算机', min_age: '25', max_age: '35', genders: '男,未识别' } as Record<string, string>)[key];
     context.req = { query: (name: string) => name === 'page' ? '1' : name === 'page_size' ? '20' : queries(name) };
 
     const response = await handleOptimizedResumeList(context);
@@ -100,6 +100,7 @@ describe('optimized resume list response', () => {
     expect(payload.stats).toMatchObject({ total: 3, approved: 2, rejected: 1 });
 
     const dataSql = captured.find(c => c.sql.includes('ORDER BY r.created_at DESC'));
+    expect(dataSql!.sql).toContain('r.candidate_name LIKE ?');
     expect(dataSql!.sql).toContain('r.mapped_position = ?');
     expect(dataSql!.sql).toContain('r.mapped_position IN (SELECT raw_name FROM position_mappings WHERE mapped_name = ?)');
     expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.major') LIKE ?");
@@ -107,8 +108,8 @@ describe('optimized resume list response', () => {
     expect(dataSql!.sql).toContain("json_extract(r.parsed_data, '$.birthday')");
     expect(dataSql!.sql).toContain("LIKE '%岁%'");
     expect(dataSql!.sql).toContain("COALESCE(NULLIF(r.gender, '')");
-    expect(dataSql!.params.slice(0, 4)).toEqual(['软件工程师', '软件工程师', '%计算机%', 25]);
-    expect(dataSql!.params.slice(4, 6)).toEqual([35, '男']);
+    expect(dataSql!.params.slice(0, 5)).toEqual(['%张三%', '软件工程师', '软件工程师', '%计算机%', 25]);
+    expect(dataSql!.params.slice(5, 7)).toEqual([35, '男']);
   });
 
   it('includes newly uploaded pending rows in the pending-screening filter', async () => {
