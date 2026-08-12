@@ -10,7 +10,7 @@ import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
-import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess, selectResumeIdsForBatchScope } from './resume-processing/reprocess';
+import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, recoverStalledHistoricalResumeReprocess, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess, selectResumeIdsForBatchScope } from './resume-processing/reprocess';
 import { cancelReprocessBatch, getReprocessBatchView, getActiveReprocessBatchView, appendEvaluationJobProjection } from './resume-processing/batch-repository';
 import type { ReprocessScope, ResumeProcessingQueueMessage } from './resume-processing/types';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
@@ -6190,6 +6190,16 @@ app.post('/api/resumes/batch-reprocess-scoped', authMiddleware, handleScopedBatc
 app.get('/api/resumes/reprocess-batches/active', authMiddleware, async (c) => {
   try {
     const owner = getOwnerName(c);
+    const active = await c.env.DB.prepare(
+      `SELECT id FROM resume_reprocess_batches
+       WHERE (${owner ? 'owner=?' : 'owner IS NULL'}) AND status IN ('queued', 'running')
+       ORDER BY created_at DESC LIMIT 1`,
+    ).bind(...(owner ? [owner] : [])).first() as { id?: string } | null;
+    if (active?.id) {
+      await recoverStalledHistoricalResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, active.id, owner).catch((error) => {
+        console.error('[reprocess-batches/active] recovery failed', error);
+      });
+    }
     const view = await getActiveReprocessBatchView(c.env.DB, owner);
     return c.json({ batch: view || null });
   } catch (error: any) {
@@ -6203,6 +6213,9 @@ app.get('/api/resumes/reprocess-batches/:batchId', authMiddleware, async (c) => 
   try {
     const batchId = c.req.param('batchId');
     const owner = getOwnerName(c);
+    await recoverStalledHistoricalResumeReprocess(c.env.DB, c.env.RESUME_PROCESSING_QUEUE, batchId, owner).catch((error) => {
+      console.error('[reprocess-batches/:batchId] recovery failed', error);
+    });
     const view = await getReprocessBatchView(c.env.DB, batchId, owner);
     if (!view) {
       return c.json({ detail: '批次不存在或无权限' }, 404);

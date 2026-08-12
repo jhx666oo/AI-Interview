@@ -7,9 +7,10 @@ import {
   selectVisibleResumeIdsForReprocess,
   selectResumeIdsForBatchScope,
   enqueueResumeReprocessBatchPage,
+  recoverStalledHistoricalResumeReprocess,
   startHistoricalResumeReprocess,
 } from '../src/resume-processing/reprocess';
-import { insertReprocessBatchItems } from '../src/resume-processing/batch-repository';
+import { insertReprocessBatchItems, refreshReprocessBatchStatus } from '../src/resume-processing/batch-repository';
 import { handleBatchResumeReprocess } from '../src/index';
 
 describe('historical resume reprocess', () => {
@@ -77,6 +78,75 @@ describe('historical resume reprocess', () => {
 
     expect(result).toMatchObject({ processed: 25, has_more: true });
     expect(sent).toEqual([]);
+  });
+
+  it('requeues a stale coordinator when no current page items remain active', async () => {
+    const db = createStalledBatchDb();
+    const queue = createQueue();
+    const now = Date.parse('2026-08-12T12:00:00.000Z');
+
+    await expect(recoverStalledHistoricalResumeReprocess(
+      db as never,
+      queue as never,
+      'batch-stalled',
+      null,
+      now,
+    )).resolves.toBe(true);
+
+    expect(db.batch.status).toBe('queued');
+    expect(queue.messages).toEqual([{ kind: 'historical_reprocess', batchId: 'batch-stalled' }]);
+
+    await expect(recoverStalledHistoricalResumeReprocess(
+      db as never,
+      queue as never,
+      'batch-stalled',
+      null,
+      now,
+    )).resolves.toBe(false);
+    expect(queue.messages).toHaveLength(1);
+  });
+
+  it('does not requeue a stale batch while the current page still has active items', async () => {
+    const db = createStalledBatchDb(1);
+    const queue = createQueue();
+
+    await expect(recoverStalledHistoricalResumeReprocess(
+      db as never,
+      queue as never,
+      'batch-stalled',
+      null,
+      Date.parse('2026-08-12T12:00:00.000Z'),
+    )).resolves.toBe(false);
+
+    expect(db.batch.status).toBe('running');
+    expect(queue.messages).toHaveLength(0);
+  });
+
+  it('does not promote a queued coordinator back to running when page jobs are active', async () => {
+    let finalValues: unknown[] | null = null;
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            return {
+              async first() {
+                if (sql.includes('SELECT status, total_count')) return { status: 'queued', total_count: 226 };
+                if (sql.includes('SELECT COUNT(*) AS item_total')) return { item_total: 25, terminal_total: 24, running_total: 1 };
+                return null;
+              },
+              async run() {
+                finalValues = values;
+                return { meta: { changes: 1 } };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await refreshReprocessBatchStatus(db as never, 'batch-1');
+    expect(finalValues).not.toBeNull();
+    expect(finalValues?.[0]).toBe('queued');
   });
 
   it('keeps batch item inserts within D1 bound parameter limits', async () => {
@@ -225,4 +295,39 @@ function createHistoricalDb(resumeIds: string[]) {
 function createHistoricalDbWithItems(resumeIds: string[]) {
   const db = createHistoricalDb(resumeIds);
   return db;
+}
+
+function createStalledBatchDb(activeTotal = 0) {
+  const batch = {
+    id: 'batch-stalled',
+    owner: null,
+    status: 'running',
+    total_count: 226,
+    updated_at: '2026-08-12T09:00:00.000Z',
+  };
+
+  return {
+    batch,
+    prepare(sql: string) {
+      return {
+        bind(...values: unknown[]) {
+          return {
+            async first() {
+              if (sql.includes('SELECT id, owner, status, updated_at, total_count')) return { ...batch };
+              if (sql.includes('SELECT COUNT(*) AS item_total')) return { item_total: 25, active_total: activeTotal };
+              return null;
+            },
+            async run() {
+              if (sql.includes("SET status='queued'")) {
+                batch.status = 'queued';
+                batch.updated_at = String(values[0]);
+                return { meta: { changes: 1 } };
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
 }

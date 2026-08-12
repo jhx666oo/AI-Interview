@@ -8,6 +8,7 @@ type ReprocessDb = Pick<D1Database, 'prepare'>;
 type ReprocessQueue = { send(message: ResumeProcessingQueueMessage): Promise<unknown> };
 type ReprocessOwner = string | null;
 export const HISTORICAL_REPROCESS_PAGE_SIZE = 25;
+export const HISTORICAL_REPROCESS_STALL_TIMEOUT_MS = 30_000;
 
 function batchCount(...values: unknown[]): number {
   for (const value of values) {
@@ -150,6 +151,7 @@ export async function processHistoricalResumeReprocessPage(
   queue: ReprocessQueue,
   batchId: string,
 ) {
+  logResumeProcessing('historical_reprocess.page.start', { batchId });
   return runHistoricalReprocessCoordinator(batchId, {
     claimBatch: async () => {
       const timestamp = new Date().toISOString();
@@ -193,6 +195,84 @@ export async function processHistoricalResumeReprocessPage(
     },
     sendNext: (message) => queue.send(message).then(() => undefined),
   });
+}
+
+/**
+ * Recover a coordinator message that disappeared after a page was persisted.
+ *
+ * Queue delivery is at-least-once, but a batch can still be left in an active
+ * state if the worker invocation ends after saving the cursor and before the
+ * next coordinator message is observed. The UI polls the batch while it is
+ * active, so this function provides an atomic, rate-limited recovery path.
+ */
+export async function recoverStalledHistoricalResumeReprocess(
+  db: ReprocessDb,
+  queue: ReprocessQueue,
+  batchId: string,
+  owner: ReprocessOwner,
+  now = Date.now(),
+): Promise<boolean> {
+  const batch = await db.prepare(
+    `SELECT id, owner, status, updated_at, total_count
+       FROM resume_reprocess_batches
+      WHERE id=?`,
+  ).bind(batchId).first() as {
+    id: string;
+    owner: string | null;
+    status: string;
+    updated_at: string | null;
+    total_count: number | null;
+  } | null;
+
+  if (!batch || (batch.status !== 'queued' && batch.status !== 'running')) return false;
+  if (owner && (batch.owner || null) !== owner) return false;
+
+  const updatedAt = Date.parse(String(batch.updated_at || ''));
+  if (!Number.isFinite(updatedAt) || now - updatedAt < HISTORICAL_REPROCESS_STALL_TIMEOUT_MS) {
+    return false;
+  }
+
+  const counts = await db.prepare(
+    `SELECT COUNT(*) AS item_total,
+            SUM(CASE WHEN status IN ('pending', 'queued', 'running') THEN 1 ELSE 0 END) AS active_total
+       FROM resume_reprocess_batch_items
+      WHERE batch_id=?`,
+  ).bind(batchId).first() as { item_total?: number; active_total?: number } | null;
+  const itemTotal = Number(counts?.item_total || 0);
+  const activeTotal = Number(counts?.active_total || 0);
+  const total = Number(batch.total_count || 0);
+
+  // A coordinator is still doing useful work when the current page has any
+  // pending/queued/running item. Also do not requeue a batch whose snapshot is
+  // fully materialized; its final status is handled by normal reconciliation.
+  if (activeTotal > 0 || total <= 0 || itemTotal >= total) return false;
+
+  const timestamp = new Date(now).toISOString();
+  const recovered = await db.prepare(
+    `UPDATE resume_reprocess_batches
+        SET status='queued', updated_at=?
+      WHERE id=?
+        AND status IN ('queued', 'running')
+        AND updated_at=?`,
+  ).bind(timestamp, batchId, batch.updated_at).run();
+  if (!recovered.meta?.changes) return false;
+
+  logResumeProcessing('historical_reprocess.recovery.queued', {
+    batchId,
+    previousStatus: batch.status,
+    itemTotal,
+    total,
+  });
+
+  try {
+    await queue.send({ kind: 'historical_reprocess', batchId });
+    logResumeProcessing('historical_reprocess.recovery.sent', { batchId });
+    return true;
+  } catch (error) {
+    await failHistoricalResumeReprocessBatch(db, batchId, error);
+    logResumeProcessingError('historical_reprocess.recovery.error', error, { batchId });
+    throw error;
+  }
 }
 
 export async function failHistoricalResumeReprocessBatch(

@@ -215,7 +215,9 @@ export async function refreshReprocessBatchStatus(
   }
   const status: ReprocessBatchStatus = completed
     ? 'completed'
-    : Number(counts?.running_total || 0) > 0 || batch.status === 'running'
+    : batch.status === 'queued'
+      ? 'queued'
+      : Number(counts?.running_total || 0) > 0 || batch.status === 'running'
       ? 'running'
       : 'queued';
   const timestamp = new Date().toISOString();
