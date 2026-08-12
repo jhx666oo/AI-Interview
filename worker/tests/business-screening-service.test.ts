@@ -1,0 +1,94 @@
+import { describe, expect, it } from 'vitest';
+import {
+  decideBusinessScreening,
+  groupEligibleResumesByInterviewer,
+  isEligibleForPush,
+} from '../src/business-screening/service';
+import type { InterviewerDirectoryEntry } from '../src/business-screening/types';
+
+describe('business screening service', () => {
+  it('allows pushing only AI-passed resumes that are not HR-rejected and have an interviewer binding', () => {
+    expect(isEligibleForPush(
+      { screening_result: '通过', status: 'pending_review', mapped_position: '标准运营' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: true });
+
+    expect(isEligibleForPush(
+      { screening_result: '不通过', status: 'pending_review', mapped_position: '标准运营' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: 'AI初筛未通过' });
+
+    expect(isEligibleForPush(
+      { screening_result: '通过', status: 'rejected', mapped_position: '标准运营' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: 'HR已淘汰该简历' });
+
+    expect(isEligibleForPush(
+      { screening_result: '通过', status: 'pending_review', mapped_position: '' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: '缺少标准岗位' });
+
+    expect(isEligibleForPush(
+      { screening_result: '通过', status: 'pending_review', mapped_position: '标准运营' },
+      { name: '', openId: '' },
+    )).toEqual({ ok: false, reason: '岗位未配置有效面试官' });
+  });
+
+  it('groups only eligible resumes into one batch per interviewer', () => {
+    const interviewerDirectory: InterviewerDirectoryEntry[] = [
+      { name: '张三', openId: 'ou_zhang' },
+      { name: '李四', openId: 'ou_li' },
+    ];
+    const positions = [
+      { id: 'p1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四' },
+      { id: 'p2', title: '销售', primary_interviewer: '李四', secondary_interviewer: '' },
+    ];
+    const groups = groupEligibleResumesByInterviewer(
+      [
+        { id: 'r1', screening_result: '通过', status: 'pending_review', mapped_position: '标准运营', position_applied: '运营专员' },
+        { id: 'r2', screening_result: '通过', status: 'pending_review', mapped_position: '销售', position_applied: '销售' },
+        { id: 'r3', screening_result: '不通过', status: 'pending_review', mapped_position: '标准运营', position_applied: '运营专员' },
+        { id: 'r4', screening_result: '通过', status: 'rejected', mapped_position: '标准运营', position_applied: '运营专员' },
+      ],
+      positions,
+      interviewerDirectory,
+    );
+
+    expect([...groups.keys()]).toEqual(['张三', '李四']);
+    expect(groups.get('张三')).toMatchObject({
+      interviewer: { name: '张三', openId: 'ou_zhang' },
+      positionTitles: ['标准运营'],
+    });
+    expect(groups.get('李四')).toMatchObject({
+      interviewer: { name: '李四', openId: 'ou_li' },
+      positionTitles: ['标准运营', '销售'],
+    });
+    expect(groups.get('张三')?.resumes.map((resume) => resume.id)).toEqual(['r1']);
+    expect(groups.get('李四')?.resumes.map((resume) => resume.id)).toEqual(['r1', 'r2']);
+  });
+
+  it('keeps completed interviewer decisions idempotent', () => {
+    expect(decideBusinessScreening('pending', 'approve')).toEqual({
+      nextStatus: 'passed',
+      changed: true,
+      terminal: true,
+    });
+    expect(decideBusinessScreening('passed', 'approve')).toEqual({
+      nextStatus: 'passed',
+      changed: false,
+      terminal: true,
+    });
+    expect(decideBusinessScreening('passed', 'reject')).toEqual({
+      nextStatus: 'passed',
+      changed: false,
+      terminal: true,
+      reason: 'business screening already completed',
+    });
+    expect(decideBusinessScreening('rejected', 'approve')).toEqual({
+      nextStatus: 'rejected',
+      changed: false,
+      terminal: true,
+      reason: 'business screening already completed',
+    });
+  });
+});
