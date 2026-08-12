@@ -13,6 +13,9 @@ import { getCurrentPageSelectionState, toggleCurrentPageSelection } from '../../
 import { createRefreshVersion } from '../../utils/resumeRefresh';
 import { buildResumeExportRows } from '../../utils/resumeExport';
 import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
+import ResumeReprocessProgress from '../../components/ResumeReprocessProgress';
+import { getEvaluationCardState } from '../../utils/resumeReprocess';
+import type { ReprocessBatchView } from '../../utils/resumeReprocess';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -96,6 +99,11 @@ const ResumesList: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [batchApproving, setBatchApproving] = useState(false);
   const canBatchApproveToTalentPool = user?.role === 'admin' || user?.role === 'hr';
+
+  // Batch reprocess state
+  const [reprocessBatch, setReprocessBatch] = useState<ReprocessBatchView | null>(null);
+  const reprocessPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reprocessVersionRef = useRef(0);
   
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [interviewModalVisible, setInterviewModalVisible] = useState(false);
@@ -271,30 +279,94 @@ const ResumesList: React.FC = () => {
     }
   };
 
-  const handleBatchReparse = async () => {
+  const handleStartReprocess = async (scope: 'all' | 'incomplete_or_failed') => {
+    const scopeLabel = scope === 'all' ? '全部重评' : '重评未评估/失败简历';
     Modal.confirm({
-      title: selectedRowKeys.length > 0 ? `批量重新评估 ${selectedRowKeys.length} 份简历` : '批量重新评估全部简历',
-      content: selectedRowKeys.length > 0
-        ? '将重新提取选中简历的字段，并根据当前岗位能力维度重新进行 AI 评分。人工复核状态和面试记录不会被修改。'
-        : '将重新提取当前用户可见简历的字段，并根据当前岗位能力维度重新进行 AI 评分。人工复核状态和面试记录不会被修改。',
-      okText: '确认重新评估',
+      title: `确认${scopeLabel}`,
+      content: scope === 'all'
+        ? `将对当前登录用户可见的全部简历进行重新评估。本次会清除这些简历当前的 AI 评估结果，并重新提取字段和评分。人工复核状态、面试记录和候选人业务状态不会被修改。`
+        : `将对当前用户可见且符合未评估或最近评估失败规则的简历进行重新评估。本次会清除这些简历当前的 AI 评估结果，并重新提取字段和评分。`,
+      okText: '确认',
       cancelText: '取消',
       okType: 'primary',
       onOk: async () => {
         const hide = message.loading('正在提交批量重新评估...', 0);
         try {
-          const ids = selectedRowKeys.map(String);
-          const res = await request.post('/resumes/batch-reprocess', ids.length > 0 ? { ids } : {});
+          const res = await request.post('/resumes/batch-reprocess-scoped', { scope });
           hide();
-          message.success(`已提交 ${res.queued || 0} 份重新评估任务${res.already_processing ? `，${res.already_processing} 份正在处理中` : ''}`);
-          setSelectedRowKeys([]);
-          fetchResumes();
+          if (res.batch_id) {
+            setReprocessBatch(null);
+            await fetchReprocessBatch(res.batch_id);
+            fetchResumes(false, 1, cardPageSizeRef.current);
+            message.success(`已提交 ${scopeLabel}，共 ${res.total || 0} 份简历`);
+          } else if (res.message) {
+            message.info(res.message);
+          }
         } catch (error: any) {
           hide();
-          message.error(error?.response?.data?.detail || '批量重新评估失败');
+          const detail = error?.response?.data?.detail || '批量重新评估失败';
+          if (error?.response?.status === 409) {
+            const existingBatchId = error?.response?.data?.batch_id;
+            if (existingBatchId) {
+              await fetchReprocessBatch(existingBatchId);
+              message.warning('当前已有批次在处理中，请等待完成');
+            }
+          } else {
+            message.error(detail);
+          }
         }
       },
     });
+  };
+
+  const fetchReprocessBatch = async (batchId: string, silent = false) => {
+    try {
+      const res = await request.get(`/resumes/reprocess-batches/${batchId}`);
+      setReprocessBatch(res);
+      if (!silent) fetchResumes(false, cardPageRef.current, cardPageSizeRef.current);
+    } catch {
+      if (!silent) {}
+    }
+  };
+
+  const fetchActiveReprocessBatch = async () => {
+    try {
+      const res = await request.get('/resumes/reprocess-batches/active');
+      const batch = res?.batch || null;
+      setReprocessBatch(batch);
+      return batch;
+    } catch {
+      return null;
+    }
+  };
+
+  const startReprocessPolling = () => {
+    stopReprocessPolling();
+    const poll = async () => {
+      const version = ++reprocessVersionRef.current;
+      if (reprocessBatch?.batch_id) {
+        try {
+          const res = await request.get(`/resumes/reprocess-batches/${reprocessBatch.batch_id}`);
+          if (version === reprocessVersionRef.current) {
+            setReprocessBatch(res);
+            fetchResumes(false, cardPageRef.current, cardPageSizeRef.current);
+          }
+        } catch {}
+      }
+    };
+    poll();
+    reprocessPollingRef.current = setInterval(poll, 4000);
+  };
+
+  const stopReprocessPolling = () => {
+    if (reprocessPollingRef.current) {
+      clearInterval(reprocessPollingRef.current);
+      reprocessPollingRef.current = null;
+    }
+  };
+
+  const handleBatchReparse = async () => {
+    // Deprecated: use handleStartReprocess('all') instead
   };
 
   const buildListParams = (page: number, pageSize: number) => {
@@ -399,6 +471,16 @@ const ResumesList: React.FC = () => {
     };
   }, [pollingEnabled, searchStatus, searchPosition, searchMajor, searchEducation, minimumAge, maximumAge, genderFilters]);
 
+  // Batch reprocess polling
+  useEffect(() => {
+    if (reprocessBatch && (reprocessBatch.status === 'queued' || reprocessBatch.status === 'running')) {
+      startReprocessPolling();
+    } else {
+      stopReprocessPolling();
+    }
+    return stopReprocessPolling;
+  }, [reprocessBatch?.batch_id, reprocessBatch?.status]);
+
   const fetchPositions = async () => {
     try {
       // 优先从岗位管理获取标准岗位名
@@ -449,6 +531,7 @@ const ResumesList: React.FC = () => {
   useEffect(() => {
     fetchPositions();
     fetchResumes(false, 1, cardPageSizeRef.current);
+    fetchActiveReprocessBatch();
     const loadDeferredConfig = () => {
       fetchQuestionBanks();
       fetchInterviewers();
@@ -1139,7 +1222,8 @@ const handleUploadClick = () => {
               </Button>
               <Dropdown menu={{
                 items: [
-                  { key: 'reparse', label: selectedRowKeys.length > 0 ? `批量重新评估（${selectedRowKeys.length}）` : '批量重新评估全部', icon: <SyncOutlined />, onClick: handleBatchReparse },
+                  { key: 'all-reprocess', label: '全部重评', icon: <SyncOutlined />, onClick: () => handleStartReprocess('all') },
+                  { key: 'incomplete-reprocess', label: '重评未评估/失败简历', icon: <SyncOutlined />, onClick: () => handleStartReprocess('incomplete_or_failed') },
                   { type: 'divider' },
                   { key: 'clear', label: '清除已淘汰', icon: <CloseCircleOutlined />, danger: true, onClick: handleClearRejected },
                 ]
@@ -1149,6 +1233,11 @@ const handleUploadClick = () => {
             </Space>
           </>
         }
+      />
+
+      <ResumeReprocessProgress
+        batch={reprocessBatch}
+        onShowFailed={() => handleStartReprocess('incomplete_or_failed')}
       />
 
       {/* 统计卡片：精简为 4 项 */}
@@ -1331,6 +1420,7 @@ const handleUploadClick = () => {
               const matchCount = scoreDetails?.filter(d => d.score >= 3).length || 0;
               const totalDims = scoreDetails?.length || 0;
               const hardResult = parseHardRequirementResult(record.hard_requirement_result);
+              const evalCardState = getEvaluationCardState(record);
 
               return (
                 <Card
@@ -1395,8 +1485,17 @@ const handleUploadClick = () => {
                     </div>
                   </div>
 
+                  {/* 评估任务状态提示 */}
+                  {evalCardState.status !== 'idle' && (
+                    <div className="resume-card__evaluation">
+                      <span className="resume-card__long-label" style={{ color: evalCardState.status === 'failed' ? '#ff4d4f' : '#1677ff', fontSize: 12 }}>
+                        {evalCardState.label}{evalCardState.error ? `：${evalCardState.error}` : ''}
+                      </span>
+                    </div>
+                  )}
+
                   {/* AI 评估维度 — 横向标签式 */}
-                  {scoreDetails && scoreDetails.length > 0 && (
+                  {evalCardState.status === 'idle' && scoreDetails && scoreDetails.length > 0 && (
                     <div className="resume-card__evaluation">
                       <div className="resume-card__evaluation-summary">
                         <span style={{ fontSize: 12, color: '#1677ff', fontWeight: 600, background: '#f0f5ff', padding: '1px 8px', borderRadius: 4 }}>
@@ -1424,19 +1523,19 @@ const handleUploadClick = () => {
                       </div>
                     </div>
                   )}
-                  {scoreDetails.length === 0 && normalizedEvaluation.overallScore != null && (
+                  {evalCardState.status === 'idle' && scoreDetails.length === 0 && normalizedEvaluation.overallScore != null && (
                     <div className="resume-card__evaluation">
                       <span className="resume-card__long-label" style={{ color: '#1677ff', fontSize: 12 }}>AI 加权分 {formatWeightedScore(normalizedEvaluation.overallScore)}</span>
                     </div>
                   )}
-                  {normalizedEvaluation.screeningReason && (
+                  {evalCardState.status === 'idle' && normalizedEvaluation.screeningReason && (
                     <div className="resume-card__evaluation">
                       <span className="resume-card__long-label" style={{ color: hasGateResults && normalizedEvaluation.overallScore == null ? '#cf1322' : '#8c8c8c', fontSize: 12 }}>
                         初筛结论：{normalizedEvaluation.screeningReason}
                       </span>
                     </div>
                   )}
-                  {scoreDetails.length === 0 && normalizedEvaluation.overallScore == null && (
+                  {evalCardState.status === 'idle' && scoreDetails.length === 0 && normalizedEvaluation.overallScore == null && (
                     <div className="resume-card__evaluation">
                       <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无 AI 评估</span>
                     </div>
