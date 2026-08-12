@@ -221,3 +221,106 @@ export async function recordBusinessScreeningDecision(
     status: input.status,
   };
 }
+
+export interface ApplyTerminalResumeOutcomeInput {
+  resumeId: string;
+  outcome: 'approved' | 'rejected';
+  timestamp?: string;
+}
+
+export interface ApplyTerminalResumeOutcomeResult {
+  applied: boolean;
+  idempotent: boolean;
+  status: 'approved' | 'rejected';
+  stage: 'talent_pool' | 'rejected';
+  reason?: string;
+}
+
+type ResumeTerminalStateRow = {
+  status: string | null;
+  stage: string | null;
+  approved_at?: string | null;
+  rejected_at?: string | null;
+};
+
+export async function applyTerminalResumeOutcome(
+  db: Db,
+  input: ApplyTerminalResumeOutcomeInput,
+): Promise<ApplyTerminalResumeOutcomeResult> {
+  const timestamp = input.timestamp || new Date().toISOString();
+  const targetStatus = input.outcome;
+  const targetStage = input.outcome === 'approved' ? 'talent_pool' : 'rejected';
+  const update = targetStatus === 'approved'
+    ? await db.prepare(
+      `UPDATE resumes
+          SET status = 'approved',
+              stage = 'talent_pool',
+              approved_at = ?,
+              rejected_at = NULL,
+              updated_at = ?
+        WHERE id = ?
+          AND status != 'approved'
+          AND status != 'rejected'`,
+    ).bind(timestamp, timestamp, input.resumeId).run()
+    : await db.prepare(
+      `UPDATE resumes
+          SET status = 'rejected',
+              stage = 'rejected',
+              rejected_at = ?,
+              approved_at = NULL,
+              updated_at = ?
+        WHERE id = ?
+          AND status != 'rejected'
+          AND status != 'approved'`,
+    ).bind(timestamp, timestamp, input.resumeId).run();
+
+  if ((update.meta?.changes || 0) > 0) {
+    return {
+      applied: true,
+      idempotent: false,
+      status: targetStatus,
+      stage: targetStage,
+    };
+  }
+
+  const current = await db.prepare(
+    `SELECT status, stage, approved_at, rejected_at
+       FROM resumes
+      WHERE id = ?
+      LIMIT 1`,
+  ).bind(input.resumeId).first<ResumeTerminalStateRow>();
+
+  if (!current) {
+    throw new Error('resume not found');
+  }
+
+  if (current.status === targetStatus && current.stage === targetStage) {
+    return {
+      applied: false,
+      idempotent: true,
+      status: targetStatus,
+      stage: targetStage,
+    };
+  }
+
+  if (
+    (current.status === 'approved' && current.stage === 'talent_pool')
+    || (current.status === 'rejected' && current.stage === 'rejected')
+  ) {
+    return {
+      applied: false,
+      idempotent: false,
+      status: current.status === 'approved' ? 'approved' : 'rejected',
+      stage: current.status === 'approved' ? 'talent_pool' : 'rejected',
+      reason: 'resume terminal outcome already completed',
+    };
+  }
+
+  return {
+    applied: false,
+    idempotent: false,
+    status: current.status === 'approved' ? 'approved' : targetStatus,
+    stage: current.stage === 'talent_pool' ? 'talent_pool' : targetStage,
+    reason: 'resume terminal outcome already completed',
+  };
+}

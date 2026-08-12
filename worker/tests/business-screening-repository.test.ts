@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BUSINESS_SCREENING_RESUME_MIGRATIONS,
   BUSINESS_SCREENING_SCHEMA_STATEMENTS,
+  applyTerminalResumeOutcome,
   createResumePushBatch,
   ensureBusinessScreeningSchema,
   insertResumePushBatchItems,
@@ -170,6 +171,45 @@ describe('business screening repository writes', () => {
     expect(db.item.status).toBe('passed');
     expect(db.resume.business_screening_status).toBe('passed');
   });
+
+  it('updates terminal resume status/stage idempotently without undoing a completed opposite outcome', async () => {
+    const db = createTerminalOutcomeDb();
+
+    await expect(applyTerminalResumeOutcome(db as never, {
+      resumeId: 'resume-1',
+      outcome: 'approved',
+      timestamp: '2026-08-12T12:00:00.000Z',
+    })).resolves.toEqual({ applied: true, idempotent: false, status: 'approved', stage: 'talent_pool' });
+
+    expect(db.resume.status).toBe('approved');
+    expect(db.resume.stage).toBe('talent_pool');
+    expect(db.resume.approved_at).toBe('2026-08-12T12:00:00.000Z');
+    expect(db.resume.rejected_at).toBeNull();
+
+    await expect(applyTerminalResumeOutcome(db as never, {
+      resumeId: 'resume-1',
+      outcome: 'approved',
+      timestamp: '2026-08-12T12:01:00.000Z',
+    })).resolves.toEqual({ applied: false, idempotent: true, status: 'approved', stage: 'talent_pool' });
+
+    expect(db.resume.approved_at).toBe('2026-08-12T12:00:00.000Z');
+
+    await expect(applyTerminalResumeOutcome(db as never, {
+      resumeId: 'resume-1',
+      outcome: 'rejected',
+      timestamp: '2026-08-12T12:02:00.000Z',
+    })).resolves.toEqual({
+      applied: false,
+      idempotent: false,
+      status: 'approved',
+      stage: 'talent_pool',
+      reason: 'resume terminal outcome already completed',
+    });
+
+    expect(db.resume.status).toBe('approved');
+    expect(db.resume.stage).toBe('talent_pool');
+    expect(db.resume.rejected_at).toBeNull();
+  });
 });
 
 function createDecisionDb() {
@@ -221,6 +261,61 @@ function createDecisionDb() {
                 resume.business_screened_by = values[3] as string;
                 resume.business_screening_batch_id = values[4] as string;
                 resume.updated_at = values[5] as string;
+                return { meta: { changes: 1 } };
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+function createTerminalOutcomeDb() {
+  const resume = {
+    status: 'pending_review',
+    stage: 'screening',
+    approved_at: null as string | null,
+    rejected_at: null as string | null,
+    updated_at: '',
+  };
+
+  return {
+    resume,
+    prepare(sql: string) {
+      return {
+        bind(...values: unknown[]) {
+          return {
+            async first() {
+              if (
+                sql.includes('FROM resumes')
+                && sql.includes('status')
+                && sql.includes('stage')
+                && sql.includes('approved_at')
+                && sql.includes('rejected_at')
+              ) {
+                return { ...resume };
+              }
+              return null;
+            },
+            async run() {
+              if (sql.includes("SET status = 'approved'") && sql.includes("stage = 'talent_pool'")) {
+                if (resume.status === 'approved' || resume.status === 'rejected') return { meta: { changes: 0 } };
+                resume.status = 'approved';
+                resume.stage = 'talent_pool';
+                resume.approved_at = values[0] as string;
+                resume.rejected_at = null;
+                resume.updated_at = values[1] as string;
+                return { meta: { changes: 1 } };
+              }
+              if (sql.includes("SET status = 'rejected'") && sql.includes("stage = 'rejected'")) {
+                if (resume.status === 'approved' || resume.status === 'rejected') return { meta: { changes: 0 } };
+                resume.status = 'rejected';
+                resume.stage = 'rejected';
+                resume.rejected_at = values[0] as string;
+                resume.approved_at = null;
+                resume.updated_at = values[1] as string;
                 return { meta: { changes: 1 } };
               }
               return { meta: { changes: 1 } };

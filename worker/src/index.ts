@@ -1240,7 +1240,6 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
   requireRole,
   getCurrentUserToken: (env, email) => getValidUserAccessToken(env, email),
   sendFeishuMessageToUser,
-  recordResumeDecisionTimestamp,
   now,
   uuid,
   createPublicToken,
