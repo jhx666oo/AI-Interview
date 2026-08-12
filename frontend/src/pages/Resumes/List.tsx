@@ -16,6 +16,7 @@ import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '.
 import ResumeReprocessProgress from '../../components/ResumeReprocessProgress';
 import { getEvaluationCardState } from '../../utils/resumeReprocess';
 import { type ReprocessBatchView } from '../../utils/resumeReprocess';
+import { getBusinessScreeningActions, inferBusinessScreeningStatus, summarizePushResult } from './businessScreening';
 
 // PdfViewer 只在使用时动态加载（参见 renderPreviewModal）
 let PdfViewer: any = null;
@@ -50,6 +51,19 @@ type ResumeListStats = {
   completed: number;
 };
 
+type BusinessScreeningOverlay = {
+  hr_disposition?: string;
+  business_screening_status?: 'not_ready' | 'pending' | 'passed' | 'rejected';
+};
+
+type BusinessScreeningPushResult = {
+  ok?: boolean;
+  pushed?: string[];
+  skipped?: Array<{ id: string; reason: string }>;
+  failed?: Array<{ interviewer: string; reason: string }>;
+  batches?: Array<{ batchId: string; interviewer: string; url: string; itemCount: number }>;
+};
+
 const EMPTY_RESUME_LIST_STATS: ResumeListStats = {
   total: 0,
   pending_screening: 0,
@@ -61,6 +75,18 @@ const EMPTY_RESUME_LIST_STATS: ResumeListStats = {
   onboarding: 0,
   completed: 0,
 };
+
+const BUSINESS_SCREENING_STATE_KEY = 'resume_business_screening_state';
+const BUSINESS_SCREENING_RESULT_KEY = 'resume_business_screening_last_result';
+
+function loadStoredJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function getResumeListStats(response: any, items: any[]): ResumeListStats {
   const supplied = !Array.isArray(response) && response?.stats && typeof response.stats === 'object'
@@ -97,8 +123,14 @@ const ResumesList: React.FC = () => {
   const [pollingEnabled, setPollingEnabled] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-  const [batchApproving, setBatchApproving] = useState(false);
-  const canBatchApproveToTalentPool = user?.role === 'admin' || user?.role === 'hr';
+  const [batchPushing, setBatchPushing] = useState(false);
+  const canBatchPush = user?.role === 'admin' || user?.role === 'hr';
+  const [businessScreeningState, setBusinessScreeningState] = useState<Record<string, BusinessScreeningOverlay>>(
+    () => loadStoredJson<Record<string, BusinessScreeningOverlay>>(BUSINESS_SCREENING_STATE_KEY, {}),
+  );
+  const [lastPushResult, setLastPushResult] = useState<BusinessScreeningPushResult | null>(
+    () => loadStoredJson<BusinessScreeningPushResult | null>(BUSINESS_SCREENING_RESULT_KEY, null),
+  );
 
   // Batch reprocess state
   const [reprocessBatch, setReprocessBatch] = useState<ReprocessBatchView | null>(null);
@@ -164,6 +196,31 @@ const ResumesList: React.FC = () => {
   const dataCache = useRef<any[]>([]);
   const loadedRef = useRef(false);
   const resumeRefreshVersion = useRef(createRefreshVersion());
+
+  const persistBusinessScreeningState = (next: Record<string, BusinessScreeningOverlay>) => {
+    setBusinessScreeningState(next);
+    try { sessionStorage.setItem(BUSINESS_SCREENING_STATE_KEY, JSON.stringify(next)); } catch {}
+  };
+
+  const mergeBusinessScreeningState = (resumeIds: string[], overlay: BusinessScreeningOverlay) => {
+    persistBusinessScreeningState(resumeIds.reduce<Record<string, BusinessScreeningOverlay>>((acc, id) => {
+      acc[id] = { ...(acc[id] || {}), ...overlay };
+      return acc;
+    }, { ...businessScreeningState }));
+  };
+
+  const storePushResult = (result: BusinessScreeningPushResult | null) => {
+    setLastPushResult(result);
+    try {
+      if (result) sessionStorage.setItem(BUSINESS_SCREENING_RESULT_KEY, JSON.stringify(result));
+      else sessionStorage.removeItem(BUSINESS_SCREENING_RESULT_KEY);
+    } catch {}
+  };
+
+  const applyBusinessScreeningOverlay = (items: any[]) => items.map((item: any) => ({
+    ...item,
+    ...(businessScreeningState[item.id] || {}),
+  }));
 
   // 能力维度（评估依据）
   const [capDims, setCapDims] = useState<Record<string, any>>({});
@@ -400,6 +457,12 @@ const ResumesList: React.FC = () => {
         params.screening_result = '通过';
       } else if (searchStatus === 'screening_failed') {
         params.screening_result = '不通过';
+      } else if (searchStatus === 'business_screening_pending') {
+        params.business_screening_status = 'pending';
+      } else if (searchStatus === 'business_screening_passed') {
+        params.business_screening_status = 'passed';
+      } else if (searchStatus === 'business_screening_rejected') {
+        params.business_screening_status = 'rejected';
       } else {
         params.status = searchStatus;
       }
@@ -427,7 +490,7 @@ const ResumesList: React.FC = () => {
       if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return res;
       const items = Array.isArray(res) ? res : (res.items || []);
       // 岗位/专业/年龄/性别筛选已由服务端 SQL 完成（支持跨页 + 分页统计）
-      const sorted = sortResumesNewestFirst(items);
+      const sorted = sortResumesNewestFirst(applyBusinessScreeningOverlay(items));
       setData(sorted);
       const nextStats = getResumeListStats(res, items);
       const lastPage = Math.max(1, Math.ceil(nextStats.total / requestedPageSize));
@@ -437,7 +500,7 @@ const ResumesList: React.FC = () => {
         return fetchResumes(silent, lastPage, requestedPageSize);
       }
       setListStats(nextStats);
-      dataCache.current = sortResumesNewestFirst(items);
+      dataCache.current = sortResumesNewestFirst(applyBusinessScreeningOverlay(items));
       loadedRef.current = true;
 
       // 页面只观察 D1 中的任务状态，绝不因加载/刷新/路由切换而创建 AI 任务。
@@ -465,7 +528,7 @@ const ResumesList: React.FC = () => {
           const pollItems = Array.isArray(res) ? res : (res.items || []);
           if (pollItems.length > 0 || Array.isArray(res)) {
             // 更新数据展示（让用户看到实时进度）
-            setData(sortResumesNewestFirst(pollItems));
+            setData(sortResumesNewestFirst(applyBusinessScreeningOverlay(pollItems)));
             setListStats(getResumeListStats(res, pollItems));
             
             const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
@@ -598,7 +661,7 @@ const ResumesList: React.FC = () => {
       .then(res => {
         if (!resumeRefreshVersion.current.isCurrent(resetVersion)) return;
         const items = Array.isArray(res) ? res : (res.items || []);
-        setData(items);
+        setData(applyBusinessScreeningOverlay(items));
         setListStats(getResumeListStats(res, items));
         const hasProcessing = items.some((r: any) => r.parse_status === 'processing' || r.parse_status === 'pending_screening');
         setPollingEnabled(hasProcessing);
@@ -751,18 +814,25 @@ const ResumesList: React.FC = () => {
   };
 
   const handleReject = async (record: any) => {
-    // 乐观更新：立即更新本地状态
+    const previous = businessScreeningState[record.id];
     setData(prev => prev.map(item =>
-      item.id === record.id ? { ...item, status: 'rejected' } : item
+      item.id === record.id ? { ...item, status: 'rejected', hr_disposition: 'rejected', business_screening_status: previous?.hr_disposition === 'pushed' ? 'rejected' : 'not_ready' } : item
     ));
+    mergeBusinessScreeningState([record.id], {
+      hr_disposition: 'rejected',
+      business_screening_status: previous?.hr_disposition === 'pushed' ? 'rejected' : 'not_ready',
+    });
     try {
-      await request.post(`/resumes/${record.id}/reject-from-screening`);
+      await request.post(`/resumes/${record.id}/business-screening/reject`, { comment: 'HR淘汰' });
       message.success(`${record.candidate_name} 已淘汰`);
     } catch (error: any) {
-      message.error(error?.response?.data?.detail || '操作失败');
-      // 回滚
+      message.error(error?.response?.data?.detail || '淘汰失败');
+      persistBusinessScreeningState({
+        ...businessScreeningState,
+        ...(previous ? { [record.id]: previous } : {}),
+      });
       setData(prev => prev.map(item =>
-        item.id === record.id ? { ...item, status: record.status } : item
+        item.id === record.id ? { ...item, status: record.status, ...(previous || {}) } : item
       ));
     }
   };
@@ -853,11 +923,11 @@ const ResumesList: React.FC = () => {
       okType: 'danger',
       onOk: async () => {
         try {
-          await Promise.all(selectedRowKeys.map(id => 
-            request.post(`/resumes/${id}/confirm-rejection`, null, {
-              params: { reason_category: 'other', reason_detail: '批量淘汰' }
-            })
+          await Promise.all(selectedRowKeys.map(id =>
+            request.post(`/resumes/${id}/business-screening/reject`, { comment: '批量淘汰' })
           ));
+          mergeBusinessScreeningState(selectedRowKeys.map(String), { hr_disposition: 'rejected' });
+          setData(prev => prev.map(item => selectedRowKeys.includes(item.id) ? { ...item, status: 'rejected', hr_disposition: 'rejected' } : item));
           message.success(`成功淘汰 ${selectedRowKeys.length} 份简历`);
           setSelectedRowKeys([]);
           fetchResumes();
@@ -868,52 +938,55 @@ const ResumesList: React.FC = () => {
     });
   };
 
-  const handleBatchApproveToTalentPool = () => {
+  const handleBatchPush = () => {
     if (selectedRowKeys.length === 0) {
-      message.warning('请先选择要入库的简历');
+      message.warning('请先选择要推送的简历');
       return;
     }
     const selectedIds = selectedRowKeys.map(String);
     Modal.confirm({
-      title: '确认批量入库',
-      content: `确定将选中的 ${selectedIds.length} 份简历入人才库吗？`,
-      okText: '确认入库',
+      title: '确认批量推送',
+      content: `确定将选中的 ${selectedIds.length} 份简历推送给岗位配置的业务面试官吗？`,
+      okText: '确认推送',
       cancelText: '取消',
       onOk: async () => {
-        setBatchApproving(true);
+        setBatchPushing(true);
         try {
-          const res = await request.post('/resumes/batch-approve-to-talent-pool', { ids: selectedIds });
-          const approvedIds = Array.isArray(res.approved) ? res.approved : [];
-          const skipped = Array.isArray(res.skipped) ? res.skipped.length : 0;
-          const failed = Array.isArray(res.failed) ? res.failed.length : 0;
-          message.success(`批量入库完成：成功 ${approvedIds.length} 份，跳过 ${skipped} 份，失败 ${failed} 份`);
-          setSelectedRowKeys(keys => keys.filter(id => !approvedIds.includes(String(id))));
+          const res = await request.post('/resumes/business-screening/push', { ids: selectedIds }) as BusinessScreeningPushResult;
+          const pushedIds = Array.isArray(res.pushed) ? res.pushed : [];
+          mergeBusinessScreeningState(pushedIds, { hr_disposition: 'pushed', business_screening_status: 'pending' });
+          setData(prev => prev.map(item => pushedIds.includes(item.id) ? { ...item, hr_disposition: 'pushed', business_screening_status: 'pending' } : item));
+          storePushResult(res);
+          message.success(summarizePushResult(res));
+          setSelectedRowKeys(keys => keys.filter(id => !pushedIds.includes(String(id))));
           dataCache.current = [];
           loadedRef.current = false;
           fetchResumes();
         } catch (error: any) {
-          message.error(error?.response?.data?.detail || '批量入库失败');
+          message.error(error?.response?.data?.detail || '批量推送失败');
         } finally {
-          setBatchApproving(false);
+          setBatchPushing(false);
         }
       },
     });
   };
 
-  const handleApproveToTalentPool = async (record: any) => {
-    // 乐观更新：立即更新本地卡片状态，不等后端返回
-    resumeRefreshVersion.current.invalidate();
-    setData(prev => prev.map(r => r.id === record.id ? { ...r, status: 'approved', screening_result: '通过' } : r));
-    dataCache.current = [];
-    loadedRef.current = false;
+  const handlePush = async (record: any) => {
     try {
-      await request.post(`/resumes/${record.id}/approve-to-talent-pool`);
-      message.success(`${record.candidate_name} 已入库`);
+      const res = await request.post('/resumes/business-screening/push', { ids: [record.id] }) as BusinessScreeningPushResult;
+      const pushedIds = Array.isArray(res.pushed) ? res.pushed : [];
+      if (pushedIds.includes(record.id)) {
+        mergeBusinessScreeningState([record.id], { hr_disposition: 'pushed', business_screening_status: 'pending' });
+        setData(prev => prev.map(item => item.id === record.id ? { ...item, hr_disposition: 'pushed', business_screening_status: 'pending' } : item));
+      }
+      storePushResult(res);
+      message.success(summarizePushResult(res));
+      dataCache.current = [];
+      loadedRef.current = false;
+      fetchResumes(true);
     } catch (error: any) {
-      message.error(error?.response?.data?.detail || '入库失败');
+      message.error(error?.response?.data?.detail || '推送失败');
     }
-    // 后台刷新，不阻塞 UI
-    fetchResumes(true);
   };
 
   // 从 PDF 文件提取纯文本（零 Token，带超时保护）
@@ -1130,9 +1203,8 @@ const handleUploadClick = () => {
   };
 
   const renderActionButtons = (record: any) => {
-    const isPending = record.status === 'pending_screening';
-    const isApproved = record.status === 'approved';
-    const isRejected = record.status === 'rejected';
+    const businessActions = getBusinessScreeningActions(record);
+    const businessStatus = inferBusinessScreeningStatus(record);
     const hardResult = record.hard_requirement_result ? (typeof record.hard_requirement_result === 'string' ? JSON.parse(record.hard_requirement_result) : record.hard_requirement_result) : null;
     const capScores = record.capability_scores ? (typeof record.capability_scores === 'string' ? JSON.parse(record.capability_scores) : record.capability_scores) : null;
 
@@ -1141,14 +1213,20 @@ const handleUploadClick = () => {
         <Tooltip title="预览"><Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handlePreview(record)} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
         {hardResult?.passed === false && <Tag color="error">❌ 硬性不通过</Tag>}
-        {isPending && (
-          <>
-            <Button type="primary" size="small" icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => handleApproveToTalentPool(record)}>入库</Button>
-            <Button size="small" icon={<CloseOutlined />} onClick={() => handleReject(record)}>不入库</Button>
-          </>
+        {businessActions.primary && (
+          <Button type="primary" size="small" icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => handlePush(record)}>
+            {businessActions.primary.label}
+          </Button>
         )}
-        {isApproved && <Tag color="success">已入库</Tag>}
-        {isRejected && <Tag color="error">已淘汰</Tag>}
+        {businessActions.secondary && (
+          <Button size="small" icon={<CloseOutlined />} onClick={() => handleReject(record)}>
+            {businessActions.secondary.label}
+          </Button>
+        )}
+        {businessStatus === 'passed' && <Tag color="success">业务已通过</Tag>}
+        {businessStatus === 'rejected' && record.hr_disposition === 'pushed' && <Tag color="error">业务不通过</Tag>}
+        {businessStatus === 'pending' && <Tag color="processing">待业务筛选</Tag>}
+        {record.status === 'rejected' && record.hr_disposition !== 'pushed' && <Tag color="error">已淘汰</Tag>}
         {capScores?.scores?.length > 0 && (
           <Tooltip title={capScores.scores.map((s: any) => `${s.dimension}: ${'⭐'.repeat(s.score)}`).join('\n')}>
             <Tag color="purple">能力已评分</Tag>
@@ -1162,7 +1240,7 @@ const handleUploadClick = () => {
   const statusTag = (status: string) => {
     const m: Record<string, { color: string; text: string }> = {
       'pending_screening': { color: 'warning', text: '待初筛' },
-      'approved': { color: 'success', text: '已入库' },
+      'approved': { color: 'success', text: '已通过' },
       'rejected': { color: 'error', text: '已淘汰' },
     };
     const c = m[status] || { color: 'default', text: status || '待初筛' };
@@ -1269,6 +1347,24 @@ const handleUploadClick = () => {
         onCancel={handleCancelReprocess}
       />
 
+      {lastPushResult && (
+        <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div>
+              <Text strong>最近一次业务推送</Text>
+              <div style={{ color: '#64748B', marginTop: 4 }}>{summarizePushResult(lastPushResult)}</div>
+              {Array.isArray(lastPushResult.skipped) && lastPushResult.skipped.length > 0 && (
+                <div style={{ marginTop: 4, color: '#d46b08' }}>跳过：{lastPushResult.skipped.map((item) => `${item.id}（${item.reason}）`).join('；')}</div>
+              )}
+              {Array.isArray(lastPushResult.failed) && lastPushResult.failed.length > 0 && (
+                <div style={{ marginTop: 4, color: '#cf1322' }}>发送失败：{lastPushResult.failed.map((item) => `${item.interviewer}（${item.reason}）`).join('；')}</div>
+              )}
+            </div>
+            <Button size="small" onClick={() => storePushResult(null)}>关闭</Button>
+          </div>
+        </Card>
+      )}
+
       {/* 统计卡片：精简为 4 项 */}
       <Row gutter={12} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={12} md={12} lg={6}>
@@ -1319,8 +1415,8 @@ const handleUploadClick = () => {
               {selectedRowKeys.length > 0 && (
                 <>
                   <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
-                  {canBatchApproveToTalentPool && (
-                    <Button type="primary" size="small" loading={batchApproving} disabled={batchApproving} onClick={handleBatchApproveToTalentPool}>批量入库</Button>
+                  {canBatchPush && (
+                    <Button type="primary" size="small" loading={batchPushing} disabled={batchPushing} onClick={handleBatchPush}>批量推送</Button>
                   )}
                   <Button danger size="small" onClick={handleBatchReject}>批量淘汰</Button>
                   <Button danger size="small" onClick={handleBatchDelete}>批量删除</Button>
@@ -1366,10 +1462,13 @@ const handleUploadClick = () => {
                 allowClear
               >
                 <Select.Option value="pending_screening">待初筛</Select.Option>
-                <Select.Option value="approved">已入库</Select.Option>
+                <Select.Option value="approved">已通过</Select.Option>
                 <Select.Option value="rejected">已淘汰</Select.Option>
                 <Select.Option value="screening_passed">AI 通过</Select.Option>
                 <Select.Option value="screening_failed">AI 不通过</Select.Option>
+                <Select.Option value="business_screening_pending">待业务筛选</Select.Option>
+                <Select.Option value="business_screening_passed">业务已通过</Select.Option>
+                <Select.Option value="business_screening_rejected">业务不通过</Select.Option>
               </Select>
               </Space>
             </div>
@@ -1505,6 +1604,11 @@ const handleUploadClick = () => {
                       ) : (
                         statusTag(record.status)
                       )}
+                      {getBusinessScreeningActions(record).tags.map((tag) => (
+                        <Tag key={tag.key} color={tag.color} style={{ margin: 0 }}>
+                          {tag.label}
+                        </Tag>
+                      ))}
                       {hasGateResults && gateRows.map((gate) => (
                         <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
                           {gate.passed ? `${gate.label}已通过` : gate.reason}

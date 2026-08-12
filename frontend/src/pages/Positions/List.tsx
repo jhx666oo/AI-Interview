@@ -9,6 +9,7 @@ import JDGeneratorModal from '../../components/JDGeneratorModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildPositionCapabilitySave } from './capabilitySave';
+import { buildInterviewerOptions } from './interviewerOptions';
 import { WEIGHTED_GATE_DIMENSIONS, WEIGHTED_SCORING_DIMENSIONS, WEIGHTED_SCREENING_DEFAULT_WEIGHTS } from '../../utils/resumeEvaluation';
 import { PageHeader } from '../../components/Responsive/PageHeader';
 import { ResponsiveToolbar } from '../../components/Responsive/ResponsiveToolbar';
@@ -97,6 +98,7 @@ const PositionsList: React.FC = () => {
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
+  const [interviewers, setInterviewers] = useState<any[]>([]);
   const [jdModalVisible, setJdModalVisible] = useState(false);
   const [aiMatchingId, setAiMatchingId] = useState<string | null>(null);
   const [aiMatchResult, setAiMatchResult] = useState<any>(null);
@@ -121,6 +123,8 @@ const PositionsList: React.FC = () => {
   const [tablePage, setTablePage] = useState(1);
   const pageSize = 10;
   const { selectedOwner } = useOwner();
+  const primaryInterviewer = Form.useWatch('primary_interviewer', form);
+  const secondaryInterviewer = Form.useWatch('secondary_interviewer', form);
 
   // 检测重复岗位
   const duplicateGroups = useMemo(() => {
@@ -222,9 +226,29 @@ const PositionsList: React.FC = () => {
     }
   };
 
+  const fetchInterviewers = async () => {
+    const cached = sessionStorage.getItem('_cached_interviewers');
+    if (cached) {
+      try {
+        setInterviewers(JSON.parse(cached));
+        return;
+      } catch {
+        // ignore malformed cache
+      }
+    }
+    try {
+      const res = await request.get('/auth/interviewers');
+      sessionStorage.setItem('_cached_interviewers', JSON.stringify(res));
+      setInterviewers(Array.isArray(res) ? res : []);
+    } catch (error) {
+      console.error('Failed to fetch interviewers');
+    }
+  };
+
   useEffect(() => {
     fetchPositions();
     fetchUsers();
+    fetchInterviewers();
     fetchDimensionsMap();
     fetchAllDimNames();
   }, [searchTitle, searchStatus, selectedOwner]);
@@ -272,6 +296,8 @@ const PositionsList: React.FC = () => {
       urgency: 'medium',
       position_type: 'full_time',
       headcount: 1,
+      primary_interviewer: '杜雁玲',
+      secondary_interviewer: '何雨菱',
       capability_dimensions: defaultCapabilityDimensions(),
     });
     setIsModalVisible(true);
@@ -619,6 +645,15 @@ const PositionsList: React.FC = () => {
       </Tooltip>
     );
   };
+
+  const primaryInterviewerOptions = useMemo(
+    () => buildInterviewerOptions(interviewers, [primaryInterviewer, secondaryInterviewer], '杜雁玲'),
+    [interviewers, primaryInterviewer, secondaryInterviewer],
+  );
+  const secondaryInterviewerOptions = useMemo(
+    () => buildInterviewerOptions(interviewers, [primaryInterviewer, secondaryInterviewer], '何雨菱'),
+    [interviewers, primaryInterviewer, secondaryInterviewer],
+  );
 
   const columns = [
     { 
@@ -973,11 +1008,25 @@ const PositionsList: React.FC = () => {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-            <Form.Item name="primary_interviewer" label="一面面试官" initialValue="杜雁玲">
-              <Input placeholder="默认：杜雁玲" size="large" />
+            <Form.Item name="primary_interviewer" label="一面面试官">
+              <Select
+                size="large"
+                showSearch
+                allowClear
+                placeholder="选择一面面试官"
+                optionFilterProp="label"
+                options={primaryInterviewerOptions}
+              />
             </Form.Item>
-            <Form.Item name="secondary_interviewer" label="二面面试官" initialValue="何雨菱">
-              <Input placeholder="默认：何雨菱" size="large" />
+            <Form.Item name="secondary_interviewer" label="二面面试官">
+              <Select
+                size="large"
+                showSearch
+                allowClear
+                placeholder="选择二面面试官"
+                optionFilterProp="label"
+                options={secondaryInterviewerOptions}
+              />
             </Form.Item>
           </div>
 

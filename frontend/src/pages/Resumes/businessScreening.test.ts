@@ -1,0 +1,77 @@
+import { describe, expect, it } from 'vitest';
+import {
+  getBusinessScreeningActions,
+  getBusinessScreeningStatusMeta,
+  summarizePushResult,
+} from './businessScreening';
+
+describe('resume business screening helpers', () => {
+  it('shows push and reject actions for AI-passed resumes that are not yet pushed', () => {
+    const actions = getBusinessScreeningActions({
+      status: 'pending_review',
+      screening_result: '通过',
+      hr_disposition: 'pending',
+      business_screening_status: 'not_ready',
+    });
+
+    expect(actions.primary?.label).toBe('推送');
+    expect(actions.secondary?.label).toBe('淘汰');
+    expect(actions.tags).toEqual([]);
+  });
+
+  it('shows waiting state after HR push and hides the old primary action', () => {
+    const actions = getBusinessScreeningActions({
+      status: 'pending_review',
+      screening_result: '通过',
+      hr_disposition: 'pushed',
+      business_screening_status: 'pending',
+    });
+
+    expect(actions.primary).toBeNull();
+    expect(actions.secondary).toBeNull();
+    expect(actions.tags.map((tag) => tag.label)).toContain('待业务筛选');
+  });
+
+  it('shows completed business screening outcomes instead of the old HR approval action', () => {
+    expect(getBusinessScreeningActions({
+      status: 'approved',
+      screening_result: '通过',
+      hr_disposition: 'pushed',
+      business_screening_status: 'passed',
+    }).tags.map((tag) => tag.label)).toContain('业务已通过');
+
+    expect(getBusinessScreeningActions({
+      status: 'rejected',
+      screening_result: '通过',
+      hr_disposition: 'pushed',
+      business_screening_status: 'rejected',
+    }).tags.map((tag) => tag.label)).toContain('业务不通过');
+  });
+
+  it('maps status filter values to the correct list params', () => {
+    expect(getBusinessScreeningStatusMeta('business_screening_pending')).toEqual({
+      color: 'processing',
+      text: '待业务筛选',
+      params: { business_screening_status: 'pending' },
+    });
+    expect(getBusinessScreeningStatusMeta('business_screening_passed')).toEqual({
+      color: 'success',
+      text: '业务已通过',
+      params: { business_screening_status: 'passed' },
+    });
+    expect(getBusinessScreeningStatusMeta('business_screening_rejected')).toEqual({
+      color: 'error',
+      text: '业务不通过',
+      params: { business_screening_status: 'rejected' },
+    });
+  });
+
+  it('summarizes batch push results with pushed, skipped, failed, and interviewer batches', () => {
+    expect(summarizePushResult({
+      pushed: ['1', '2'],
+      skipped: [{ id: '3', reason: '岗位未配置有效面试官' }],
+      failed: [{ interviewer: '张三', reason: '当前账号未授权飞书身份，无法发送业务筛选链接' }],
+      batches: [{ batchId: 'batch-1', interviewer: '李四', url: 'https://example.com', itemCount: 2 }],
+    })).toBe('推送完成：成功 2 份，跳过 1 份，发送失败 1 个面试官批次，生成 1 个推送批次');
+  });
+});

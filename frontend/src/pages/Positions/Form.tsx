@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
-import { Form, Input, Button, Card, message, Select, Typography, Tag } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Form, Input, Button, Card, message, Select, Typography } from 'antd';
 import { useNavigate, useParams } from 'react-router-dom';
 import { RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
 import { PageHeader } from '../../components/Responsive/PageHeader';
+import { buildInterviewerOptions } from './interviewerOptions';
 
 const { Title, Text } = Typography;
 
@@ -14,14 +15,18 @@ const PositionForm: React.FC = () => {
   const { id } = useParams();
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
+  const [interviewers, setInterviewers] = useState<any[]>([]);
   const [jdModalVisible, setJdModalVisible] = useState(false);
   const [allDimensionNames, setAllDimensionNames] = useState<string[]>([]);
+  const primaryInterviewer = Form.useWatch('primary_interviewer', form);
+  const secondaryInterviewer = Form.useWatch('secondary_interviewer', form);
 
   useEffect(() => {
     if (id) {
       fetchPosition(id);
     }
     fetchUsers();
+    fetchInterviewers();
     fetchDimensionNames();
   }, [id]);
 
@@ -44,6 +49,25 @@ const PositionForm: React.FC = () => {
       setUsers(res);
     } catch (error) {
       console.error('Failed to fetch users');
+    }
+  };
+
+  const fetchInterviewers = async () => {
+    const cached = sessionStorage.getItem('_cached_interviewers');
+    if (cached) {
+      try {
+        setInterviewers(JSON.parse(cached));
+        return;
+      } catch {
+        // ignore malformed cache
+      }
+    }
+    try {
+      const res = await request.get('/auth/interviewers');
+      sessionStorage.setItem('_cached_interviewers', JSON.stringify(res));
+      setInterviewers(Array.isArray(res) ? res : []);
+    } catch (error) {
+      console.error('Failed to fetch interviewers');
     }
   };
 
@@ -98,6 +122,15 @@ const PositionForm: React.FC = () => {
     }
   };
 
+  const primaryInterviewerOptions = useMemo(
+    () => buildInterviewerOptions(interviewers, [primaryInterviewer, secondaryInterviewer], '杜雁玲'),
+    [interviewers, primaryInterviewer, secondaryInterviewer],
+  );
+  const secondaryInterviewerOptions = useMemo(
+    () => buildInterviewerOptions(interviewers, [primaryInterviewer, secondaryInterviewer], '何雨菱'),
+    [interviewers, primaryInterviewer, secondaryInterviewer],
+  );
+
   return (
     <div>
       <PageHeader title={id ? '编辑岗位' : '新增岗位'} actions={<Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/positions')}>返回列表</Button>} />
@@ -107,7 +140,14 @@ const PositionForm: React.FC = () => {
           form={form}
           layout="vertical"
           onFinish={onFinish}
-          initialValues={{ status: 'open', urgency: 'medium', position_type: 'full_time', headcount: 1 }}
+          initialValues={{
+            status: 'open',
+            urgency: 'medium',
+            position_type: 'full_time',
+            headcount: 1,
+            primary_interviewer: '杜雁玲',
+            secondary_interviewer: '何雨菱',
+          }}
           style={{ maxWidth: 800 }}
         >
           <Form.Item
@@ -177,11 +217,25 @@ const PositionForm: React.FC = () => {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
-            <Form.Item name="primary_interviewer" label="一面面试官" initialValue="杜雁玲">
-              <Input placeholder="默认：杜雁玲" size="large" />
+            <Form.Item name="primary_interviewer" label="一面面试官">
+              <Select
+                size="large"
+                showSearch
+                allowClear
+                placeholder="选择一面面试官"
+                optionFilterProp="label"
+                options={primaryInterviewerOptions}
+              />
             </Form.Item>
-            <Form.Item name="secondary_interviewer" label="二面面试官" initialValue="何雨菱">
-              <Input placeholder="默认：何雨菱" size="large" />
+            <Form.Item name="secondary_interviewer" label="二面面试官">
+              <Select
+                size="large"
+                showSearch
+                allowClear
+                placeholder="选择二面面试官"
+                optionFilterProp="label"
+                options={secondaryInterviewerOptions}
+              />
             </Form.Item>
           </div>
 
