@@ -7,10 +7,16 @@
 import { normalizeAiScreeningResult } from '../ai-screening-result';
 import { exposeStructuredEvaluation } from '../resume-schema';
 import { appendEvaluationJobProjection } from '../resume-processing/batch-repository';
+import {
+  buildBusinessScreeningStatusSqlClause,
+  exposeBusinessScreeningState,
+  isBusinessScreeningStatusFilter,
+} from './business-screening-status';
 
 const LIST_COLUMNS = `
   r.id, r.candidate_name, r.position_applied, r.mapped_position,
   r.status, r.stage, r.match_score, r.screening_result,
+  r.hr_disposition, r.business_screening_status,
   r.gender, r.birthday, r.education, r.work_experience,
   r.ai_review, r.ai_evaluation,
   r.parsed_data, r.capability_scores, r.hard_requirement_result,
@@ -26,6 +32,10 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   const nameFilter = c.req.query('candidate_name');
   const statusFilter = c.req.query('status');
   const screeningResultFilter = c.req.query('screening_result');
+  const businessScreeningStatusFilterRaw = c.req.query('business_screening_status');
+  const businessScreeningStatusFilter = isBusinessScreeningStatusFilter(businessScreeningStatusFilterRaw)
+    ? businessScreeningStatusFilterRaw
+    : null;
   const positionFilter = c.req.query('position');
   const majorFilter = c.req.query('major');
   const educationFilter = c.req.query('education');
@@ -57,6 +67,11 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   if (screeningResultFilter) {
     whereClause += ' AND r.screening_result = ?';
     params.push(screeningResultFilter);
+  }
+  if (businessScreeningStatusFilter) {
+    const businessFilter = buildBusinessScreeningStatusSqlClause(businessScreeningStatusFilter);
+    whereClause += ` AND ${businessFilter.clause}`;
+    params.push(...businessFilter.params);
   }
   if (positionFilter) {
     // position 参数为标准岗位名（mapped_name）：匹配映射表里对应的所有原始岗位名，
@@ -179,7 +194,7 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   const dataResult = await c.env.DB.prepare(dataSql).bind(...params, pageSize, offset).all();
 
   const items = (dataResult.results || []).map((r: any) => {
-    const item: any = { ...r };
+    const item: any = exposeBusinessScreeningState({ ...r });
     if (r.contact) item.phone = r.contact;
     if (r.birthday) {
       try { const b = new Date(r.birthday); const diff = Date.now() - b.getTime(); item.age = Math.floor(diff / (365.25 * 24 * 3600 * 1000)); } catch {}

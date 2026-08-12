@@ -8,6 +8,11 @@ import { createUploadRoutes } from './resume-uploads/routes';
 import { createMaintenanceRoutes } from './resume-maintenance/routes';
 import { handleR2Upload } from './resume-uploads/refactored-upload';
 import { handleOptimizedResumeList } from './resume-list/optimized-handler';
+import {
+  exposeBusinessScreeningState,
+  isBusinessScreeningStatusFilter,
+  matchesBusinessScreeningStatusFilter,
+} from './resume-list/business-screening-status';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, recoverStalledHistoricalResumeReprocess, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess, selectResumeIdsForBatchScope } from './resume-processing/reprocess';
@@ -5203,10 +5208,10 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     await ensureResumeListSchema(c.env.DB);
     // 纯 D1 驱动：直接从 resumes 表读取，不依赖飞书
     const d1Rows = await c.env.DB.prepare(
-      'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY created_at DESC, updated_at DESC'
+      'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, hr_disposition, business_screening_status, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY created_at DESC, updated_at DESC'
     ).all();
     let items = (d1Rows.results || []).map((r: any) => {
-      const item: any = { ...r };
+      const item: any = exposeBusinessScreeningState({ ...r });
       // 字段别名映射（前端期望的字段名）
       if (r.contact) item.phone = r.contact; // contact → phone
       if (r.birthday) { // birthday → age
@@ -5230,6 +5235,10 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     const statusFilter = c.req.query('status');
     const candidateNameFilter = (c.req.query('candidate_name') || '').trim();
     const screeningResultFilter = c.req.query('screening_result');
+    const businessScreeningStatusFilterRaw = c.req.query('business_screening_status');
+    const businessScreeningStatusFilter = isBusinessScreeningStatusFilter(businessScreeningStatusFilterRaw)
+      ? businessScreeningStatusFilterRaw
+      : null;
     const fileSha256Filter = c.req.query('file_sha256');
     const positionFilter = c.req.query('position');
     const majorFilter = c.req.query('major');
@@ -5254,6 +5263,9 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       }
     }
     if (screeningResultFilter) filtered = filtered.filter(i => i.screening_result === screeningResultFilter);
+    if (businessScreeningStatusFilter) {
+      filtered = filtered.filter((i: any) => matchesBusinessScreeningStatusFilter(i, businessScreeningStatusFilter));
+    }
     if (fileSha256Filter) filtered = filtered.filter(i => i.file_sha256 === fileSha256Filter);
     // 列表返回标准岗位名：优先岗位映射（raw_name → mapped_name），未映射时保留原岗位名
     try {

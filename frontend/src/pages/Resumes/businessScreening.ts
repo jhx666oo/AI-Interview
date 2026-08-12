@@ -39,11 +39,6 @@ const clean = (value: unknown): string => (typeof value === 'string' ? value.tri
 
 export function inferBusinessScreeningStatus(record: ResumeBusinessScreeningRecord): BusinessScreeningStatus {
   const explicit = clean(record.business_screening_status);
-  if (explicit === 'pending') {
-    if (record.status === 'approved') return 'passed';
-    if (record.status === 'rejected' && clean(record.hr_disposition) === 'pushed') return 'rejected';
-    return 'pending';
-  }
   if (explicit === 'pending' || explicit === 'passed' || explicit === 'rejected' || explicit === 'not_ready') {
     return explicit;
   }
@@ -54,9 +49,6 @@ export function inferBusinessScreeningStatus(record: ResumeBusinessScreeningReco
     if (record.status === 'rejected') return 'rejected';
     return 'pending';
   }
-
-  const screeningResult = clean(record.screening_label) || clean(record.screening_result);
-  if (record.status === 'approved' && screeningResult === '通过') return 'passed';
 
   return 'not_ready';
 }

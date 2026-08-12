@@ -134,6 +134,50 @@ describe('optimized resume list response', () => {
     expect(dataSql).toContain("r.status = 'pending_screening'");
   });
 
+  it('filters by business screening status and exposes business screening fields', async () => {
+    const context = makeContext();
+    const captured: { sql: string; params: unknown[] }[] = [];
+    context.env.DB.prepare = (sql: string) => ({
+      all: async () => ({ results: [] }),
+      bind: (...params: unknown[]) => {
+        captured.push({ sql, params });
+        return {
+          first: async () => sql.includes('COUNT(*)')
+            ? { total: 1, pending_screening: 0, approved: 0, rejected: 1 }
+            : null,
+          all: async () => ({ results: [{
+            id: 'resume-business-1',
+            candidate_name: '候选人',
+            status: 'rejected',
+            hr_disposition: 'pushed',
+            business_screening_status: 'rejected',
+            screening_result: '通过',
+            parsed_data: JSON.stringify({ name: '候选人' }),
+          }] }),
+        };
+      },
+    });
+    context.req = {
+      query: (name: string) => ({
+        page: '1',
+        page_size: '20',
+        business_screening_status: 'rejected',
+      } as Record<string, string | undefined>)[name],
+    };
+
+    const response = await handleOptimizedResumeList(context);
+    const payload = await response.json() as any;
+
+    expect(payload.items[0]).toMatchObject({
+      hr_disposition: 'pushed',
+      business_screening_status: 'rejected',
+    });
+
+    const dataSql = captured.find((entry) => entry.sql.includes('ORDER BY r.created_at DESC'));
+    expect(dataSql?.sql).toContain('business_screening_status');
+    expect(dataSql?.params).toContain('rejected');
+  });
+
   it('maps raw position names to standard position names for display', async () => {
     const context = makeContext();
     const mappings = [{ raw_name: 'IoT产品经理（双休｜入职五险一金）', mapped_name: '软件产品经理（智能硬件方向）' }];

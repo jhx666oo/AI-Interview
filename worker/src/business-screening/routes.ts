@@ -251,7 +251,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     for (const group of grouped.values()) {
       const issued = await deps.createPublicToken();
       const batchId = deps.uuid();
-      const url = `${new URL(c.req.url).origin}/api/public/business-screening/${issued.token}`;
+      const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
       const itemCreatedAt = deps.now();
       const items: CreateResumePushBatchItemInput[] = group.resumes.map((resume) => ({
         id: deps.uuid(),
@@ -461,7 +461,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const nextBatchId = deps.uuid();
     const dispatchGroupId = deps.uuid();
     const nowIso = deps.now();
-    const url = `${new URL(c.req.url).origin}/api/public/business-screening/${issued.token}`;
+    const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
     const nextItems = pendingItems.map((item) => ({
       id: deps.uuid(),
       batchId: nextBatchId,

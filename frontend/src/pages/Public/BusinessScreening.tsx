@@ -5,6 +5,7 @@ import {
   applyBusinessScreeningDecision,
   buildBusinessScreeningDecisionPayload,
   classifyBusinessScreeningLoadError,
+  mapBusinessScreeningDecisionError,
   pickActiveBusinessScreeningResumeId,
   type BusinessScreeningResume,
   type BusinessScreeningView,
@@ -116,7 +117,7 @@ const BusinessScreeningPage: React.FC = () => {
         }),
       } : current);
     } catch (error: any) {
-      setActionError(error?.response?.data?.detail || '提交失败，请稍后重试');
+      setActionError(mapBusinessScreeningDecisionError(error));
     } finally {
       setSubmitting(null);
     }

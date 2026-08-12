@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getBusinessScreeningActions,
   getBusinessScreeningStatusMeta,
+  inferBusinessScreeningStatus,
   summarizePushResult,
 } from './businessScreening';
 
@@ -46,6 +47,15 @@ describe('resume business screening helpers', () => {
       hr_disposition: 'pushed',
       business_screening_status: 'rejected',
     }).tags.map((tag) => tag.label)).toContain('业务不通过');
+  });
+
+  it('defaults resumes without business push state to not_ready even when they were approved after AI screening', () => {
+    expect(inferBusinessScreeningStatus({
+      status: 'approved',
+      screening_result: '通过',
+      hr_disposition: 'pending',
+      business_screening_status: undefined,
+    })).toBe('not_ready');
   });
 
   it('maps status filter values to the correct list params', () => {

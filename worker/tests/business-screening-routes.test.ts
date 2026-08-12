@@ -541,7 +541,8 @@ describe('business screening routes', () => {
       failed: [],
     });
     expect(body.batches).toHaveLength(2);
-    expect(body.batches[0].url).toMatch(/^https:\/\/ai-interview-88r\.pages\.dev\/api\/public\/business-screening\//);
+    expect(body.batches[0].url).toMatch(/^https:\/\/ai-interview-88r\.pages\.dev\/business-screening\//);
+    expect(body.batches[0].url).not.toContain('/api/public/business-screening/');
     expect(resumes.get('resume-1')).toMatchObject({
       hr_disposition: 'pushed',
       business_screening_status: 'pending',
@@ -1284,6 +1285,8 @@ describe('business screening routes', () => {
       resentFromBatchId: 'batch-old',
       itemCount: 1,
     });
+    expect(body.url).toMatch(/^https:\/\/ai-interview-88r\.pages\.dev\/business-screening\//);
+    expect(body.url).not.toContain('/api/public/business-screening/');
     expect(batches.get('batch-old')?.status).toBe('revoked');
     expect([...batches.values()].some((batch) => batch.id !== 'batch-old' && batch.status === 'active')).toBe(true);
     expect(batchItems.filter((item) => item.batch_id !== 'batch-old')).toHaveLength(1);

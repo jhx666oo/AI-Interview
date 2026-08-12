@@ -3,6 +3,7 @@ import {
   applyBusinessScreeningDecision,
   buildBusinessScreeningDecisionPayload,
   classifyBusinessScreeningLoadError,
+  mapBusinessScreeningDecisionError,
   pickActiveBusinessScreeningResumeId,
 } from './businessScreeningLogic';
 
@@ -27,6 +28,15 @@ describe('business screening public helpers', () => {
   it('trims optional callback remarks before posting them', () => {
     expect(buildBusinessScreeningDecisionPayload('  保留到终面  ')).toEqual({ remark: '保留到终面' });
     expect(buildBusinessScreeningDecisionPayload('   ')).toEqual({});
+  });
+
+  it('maps known backend conflict reasons to Chinese user-facing messages', () => {
+    expect(mapBusinessScreeningDecisionError({ response: { status: 409, data: { detail: 'business screening already completed' } } }))
+      .toBe('该候选人已被其他人完成业务筛选，请刷新页面查看最新结果。');
+    expect(mapBusinessScreeningDecisionError({ response: { status: 409, data: { detail: 'business screening dispatch group changed' } } }))
+      .toBe('当前链接已失效，HR 可能已重新发送，请联系 HR 获取最新链接。');
+    expect(mapBusinessScreeningDecisionError({ response: { status: 409, data: { detail: 'HR already rejected resume' } } }))
+      .toBe('该候选人已被 HR 淘汰，无法继续处理。');
   });
 
   it('updates only the decided resume while preserving other cards', () => {
