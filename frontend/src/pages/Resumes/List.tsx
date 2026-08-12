@@ -418,7 +418,8 @@ const ResumesList: React.FC = () => {
     requestedPage = cardPageRef.current,
     requestedPageSize = cardPageSizeRef.current,
   ) => {
-    const requestVersion = resumeRefreshVersion.current.capture();
+    // 新查询会使之前的初始加载/轮询请求失效，避免旧响应覆盖当前筛选结果。
+    const requestVersion = resumeRefreshVersion.current.invalidate();
     if (!silent) setLoading(true);
     try {
       const params = buildListParams(requestedPage, requestedPageSize);
@@ -493,7 +494,7 @@ const ResumesList: React.FC = () => {
         pollingRef.current = null;
       }
     };
-  }, [pollingEnabled, searchStatus, searchPosition, searchMajor, searchEducation, minimumAge, maximumAge, genderFilters]);
+  }, [pollingEnabled, searchCandidateName, searchStatus, searchPosition, searchMajor, searchEducation, minimumAge, maximumAge, genderFilters]);
 
   // Batch reprocess polling
   useEffect(() => {
@@ -580,6 +581,7 @@ const ResumesList: React.FC = () => {
   };
 
   const handleReset = () => {
+    const resetVersion = resumeRefreshVersion.current.invalidate();
     setSearchStatus(undefined);
     setSearchCandidateName(undefined);
     setSearchPosition(undefined);
@@ -594,6 +596,7 @@ const ResumesList: React.FC = () => {
     setLoading(true);
     request.get('/resumes', { params: { page: 1, page_size: cardPageSizeRef.current } })
       .then(res => {
+        if (!resumeRefreshVersion.current.isCurrent(resetVersion)) return;
         const items = Array.isArray(res) ? res : (res.items || []);
         setData(items);
         setListStats(getResumeListStats(res, items));

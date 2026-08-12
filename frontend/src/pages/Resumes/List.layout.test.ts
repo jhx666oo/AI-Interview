@@ -10,6 +10,11 @@ describe('resume card layout contracts', () => {
     expect(source).toContain('placeholder="搜索面试者姓名"');
   });
 
+  it('invalidates stale list responses when a new search starts', () => {
+    expect(source).toContain('const requestVersion = resumeRefreshVersion.current.invalidate();');
+    expect(source).toContain('pollingEnabled, searchCandidateName, searchStatus');
+  });
+
   it('keeps header groups separate from the evaluation dimension row', () => {
     const headerStart = source.indexOf('className="resume-card__header"');
     const evaluationStart = source.indexOf('className="resume-card__evaluation"', headerStart);
