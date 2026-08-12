@@ -1,0 +1,26 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+const source = readFileSync(new URL('./BusinessScreening.tsx', import.meta.url), 'utf8');
+
+describe('public business screening page contract', () => {
+  it('keeps anonymous loading, expired, and generic error states in the page source', () => {
+    expect(source).toContain('加载中...');
+    expect(source).toContain('链接已失效');
+    expect(source).toContain('请联系 HR 重新发送业务筛选链接。');
+    expect(source).toContain('加载失败');
+  });
+
+  it('loads the token-scoped public API and posts approve/reject callbacks', () => {
+    expect(source).toContain('`/public/business-screening/${token}`');
+    expect(source).toContain('`/public/business-screening/${token}/resumes/${activeResume.id}/${action === \'approve\' ? \'approve\' : \'reject\'}`');
+    expect(source).toContain('buildBusinessScreeningDecisionPayload(remark)');
+  });
+
+  it('renders card/detail layout with a mobile-safe grid fallback', () => {
+    expect(source).toContain('business-screening-grid');
+    expect(source).toContain('@media (max-width: 900px)');
+    expect(source).toContain('筛选备注');
+    expect(source).toContain('候选人列表');
+  });
+});

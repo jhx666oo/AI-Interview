@@ -15,6 +15,7 @@ import { useOwner } from '../../contexts/OwnerContext';
 import { getReminderFeedback, type ReminderDeliveryResponse } from './reminderFeedback';
 import { ResponsiveDataView } from '../../components/Responsive';
 import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
+import { buildCreateFromTalentPayload, resolveScheduleInterviewerDefaults } from './interviewerDefaults';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -69,6 +70,13 @@ interface MergedRow {
   create_time: number;           // 飞书多维表格入库时间戳（毫秒），用于排序
 }
 
+type PositionAssignment = {
+  id: string;
+  title: string;
+  primary_interviewer?: string | null;
+  secondary_interviewer?: string | null;
+};
+
 const InterviewsList: React.FC = () => {
   const { user } = useAuth();
   const { selectedOwner } = useOwner();
@@ -82,6 +90,8 @@ const InterviewsList: React.FC = () => {
   const [scheduleRecord, setScheduleRecord] = useState<MergedRow | null>(null);
   const [scheduleForm] = Form.useForm();
   const [scheduling, setScheduling] = useState(false);
+  const [scheduleDefaults, setScheduleDefaults] = useState<ReturnType<typeof resolveScheduleInterviewerDefaults> | null>(null);
+  const [positions, setPositions] = useState<PositionAssignment[]>([]);
 
   // 新建面试弹窗（手动创建）
   const [createModalVisible, setCreateModalVisible] = useState(false);
@@ -185,6 +195,21 @@ const InterviewsList: React.FC = () => {
   const [viewEvalRecord, setViewEvalRecord] = useState<MergedRow | null>(null);
   const [tablePage, setTablePage] = useState(1);
   const pageSize = 10;
+
+  const fetchPositions = useCallback(async () => {
+    try {
+      const response = await request.get('/positions');
+      const items = Array.isArray(response) ? response : (response?.positions || []);
+      setPositions(items.map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        primary_interviewer: item.primary_interviewer,
+        secondary_interviewer: item.secondary_interviewer,
+      })));
+    } catch {
+      setPositions([]);
+    }
+  }, []);
 
   const fetchMergedData = useCallback(async () => {
     setLoading(true);
@@ -312,6 +337,7 @@ const InterviewsList: React.FC = () => {
   }, [search, filterStatus, selectedOwner]);
 
   useEffect(() => { fetchMergedData(); }, [fetchMergedData]);
+  useEffect(() => { fetchPositions(); }, [fetchPositions]);
 
   // == 飞书导入 ==
   const handleFeishuSync = async () => {
@@ -330,6 +356,12 @@ const InterviewsList: React.FC = () => {
   const handleOpenSchedule = (record: MergedRow) => {
     setScheduleRecord(record);
     scheduleForm.resetFields();
+    const defaults = resolveScheduleInterviewerDefaults(record, positions);
+    setScheduleDefaults(defaults);
+    scheduleForm.setFieldsValue({
+      interviewer_name: defaults.interviewerName || undefined,
+      secondary_interviewer: defaults.secondaryInterviewer || undefined,
+    });
     setScheduleModalVisible(true);
   };
 
@@ -347,19 +379,15 @@ const InterviewsList: React.FC = () => {
         interviewTime = values.interview_date.format('YYYY-MM-DD');
       }
 
-      await request.post('/interviews/create-from-talent', {
-        candidate_name: name,
-        position_applied: scheduleRecord.position_applied,
-        standard_position: scheduleRecord.standard_position,
-        city: scheduleRecord.city || '',
-        feishu_record_id: scheduleRecord.feishu_record_id || scheduleRecord.resume_id,
-        interview_time: interviewTime,
-        interview_location: values.interview_location || '',
-        interviewer_name: values.interviewer_name || '',
-        secondary_interviewer: values.secondary_interviewer || '',
-      });
+      await request.post('/interviews/create-from-talent', buildCreateFromTalentPayload({
+        record: scheduleRecord,
+        values,
+        defaults: scheduleDefaults,
+        interviewTime,
+      }));
       message.success(`已安排面试：${name}`);
       setScheduleModalVisible(false);
+      setScheduleDefaults(null);
       fetchMergedData();
     } catch (e: any) {
       if (e.errorFields) return;
@@ -742,7 +770,10 @@ const InterviewsList: React.FC = () => {
         }
         open={scheduleModalVisible}
         onOk={handleScheduleSubmit}
-        onCancel={() => setScheduleModalVisible(false)}
+        onCancel={() => {
+          setScheduleModalVisible(false);
+          setScheduleDefaults(null);
+        }}
         confirmLoading={scheduling}
         okText="确认安排"
         width={520}
