@@ -178,33 +178,32 @@ describe('business screening repository writes', () => {
     expect(db.resume.stage).toBe('talent_pool');
   });
 
-  it('rejects stale opposite batch callbacks before mutating business-screening or terminal resume fields', async () => {
+  it('rejects stale batch callbacks before mutating business-screening or terminal resume fields', async () => {
     const db = createDecisionDb({
       resume: {
-        status: 'approved',
-        stage: 'talent_pool',
-        approved_at: '2026-08-12T12:00:00.000Z',
+        status: 'pending_review',
+        stage: 'screening',
+        approved_at: null,
         rejected_at: null,
-        business_screening_status: 'passed',
-        business_screening_remark: '建议入库',
-        business_screened_at: '2026-08-12T12:00:00.000Z',
-        business_screened_by: '张三',
-        business_screening_batch_id: 'batch-a',
+        business_screening_status: 'pending',
+        business_screening_remark: '',
+        business_screened_at: null,
+        business_screened_by: '',
+        business_screening_batch_id: 'batch-b',
       },
     });
 
     await expect(recordBusinessScreeningDecision(db as never, {
       resumeId: 'resume-1',
-      batchId: 'batch-b',
+      batchId: 'batch-a',
       status: 'rejected',
       remark: '过期批次不入库',
       screenedAt: '2026-08-12T12:05:00.000Z',
       screenedBy: '张三',
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       applied: false,
       idempotent: false,
-      status: 'passed',
-      reason: 'business screening already completed',
+      reason: 'business screening batch mismatch',
     });
 
     expect(db.item).toEqual({
@@ -213,15 +212,15 @@ describe('business screening repository writes', () => {
       processed_at: null,
     });
     expect(db.resume).toMatchObject({
-      status: 'approved',
-      stage: 'talent_pool',
-      approved_at: '2026-08-12T12:00:00.000Z',
+      status: 'pending_review',
+      stage: 'screening',
+      approved_at: null,
       rejected_at: null,
-      business_screening_status: 'passed',
-      business_screening_remark: '建议入库',
-      business_screened_at: '2026-08-12T12:00:00.000Z',
-      business_screened_by: '张三',
-      business_screening_batch_id: 'batch-a',
+      business_screening_status: 'pending',
+      business_screening_remark: '',
+      business_screened_at: null,
+      business_screened_by: '',
+      business_screening_batch_id: 'batch-b',
     });
   });
 
@@ -293,7 +292,7 @@ function createDecisionDb(overrides?: {
     business_screening_remark: overrides?.resume?.business_screening_remark || '',
     business_screened_at: overrides?.resume?.business_screened_at ?? null,
     business_screened_by: overrides?.resume?.business_screened_by || '',
-    business_screening_batch_id: overrides?.resume?.business_screening_batch_id || '',
+    business_screening_batch_id: overrides?.resume?.business_screening_batch_id || 'batch-1',
     updated_at: overrides?.resume?.updated_at || '',
   };
 
@@ -329,6 +328,7 @@ function createDecisionDb(overrides?: {
               }
               if (sql.includes('UPDATE resumes')) {
                 const resumeEligible = ['not_ready', 'pending'].includes(resume.business_screening_status)
+                  && resume.business_screening_batch_id === values[11]
                   && resume.status !== 'approved'
                   && resume.status !== 'rejected';
                 if (!resumeEligible) return { meta: { changes: 0 } };

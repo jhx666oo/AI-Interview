@@ -160,6 +160,14 @@ function buildHarness(options?: {
           reason: 'business screening already completed',
         };
       }
+      if (resume && (resume.business_screening_batch_id || '') !== input.batchId) {
+        return {
+          applied: false,
+          idempotent: false,
+          status: input.status,
+          reason: 'business screening batch mismatch',
+        };
+      }
       if (
         resume
         && (
@@ -505,6 +513,20 @@ describe('business screening routes', () => {
 
   it('records public approve callbacks and keeps duplicate callbacks idempotent', async () => {
     const { request, resumes } = buildHarness({
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        email: 'jia@example.com',
+        contact: '13800000000',
+        screening_result: '通过',
+        status: 'pending_review',
+        stage: 'screening',
+        hr_disposition: 'pushed',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+        business_screening_batch_id: 'batch-approve',
+      }],
       initialBatches: [{
         id: 'batch-approve',
         interviewer_id: 'user-zhang',
@@ -629,7 +651,7 @@ describe('business screening routes', () => {
     });
   });
 
-  it('rejects stale opposite callbacks from another active batch without corrupting resume or stale item state', async () => {
+  it('rejects stale callbacks from an older batch when the resume now points at a newer batch and leaves all state untouched', async () => {
     const { request, resumes, batchItems } = buildHarness({
       initialBatches: [
         {
@@ -703,31 +725,29 @@ describe('business screening routes', () => {
       }],
     });
 
-    const approve = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/token-a/resumes/resume-1/approve', {
+    const staleApprove = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/token-a/resumes/resume-1/approve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ remark: '建议入库' }),
     });
-    expect(approve.status).toBe(200);
 
-    const staleReject = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/token-b/resumes/resume-1/reject', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ remark: '过期批次不入库' }),
-    });
-
-    expect(staleReject.status).toBe(409);
-    await expect(staleReject.json()).resolves.toMatchObject({
-      detail: expect.stringContaining('already'),
+    expect(staleApprove.status).toBe(409);
+    await expect(staleApprove.json()).resolves.toMatchObject({
+      detail: expect.stringContaining('batch'),
     });
     expect(resumes.get('resume-1')).toMatchObject({
-      business_screening_status: 'passed',
-      business_screening_remark: '建议入库',
-      business_screened_by: '张三',
-      business_screened_at: '2026-08-12T12:00:00.000Z',
-      business_screening_batch_id: 'batch-a',
-      status: 'approved',
-      stage: 'talent_pool',
+      business_screening_status: 'pending',
+      business_screening_batch_id: 'batch-b',
+      status: 'pending_review',
+      stage: 'screening',
+    });
+    expect(resumes.get('resume-1')).not.toHaveProperty('business_screening_remark');
+    expect(resumes.get('resume-1')).not.toHaveProperty('business_screened_by');
+    expect(resumes.get('resume-1')).not.toHaveProperty('business_screened_at');
+    expect(batchItems.find((item) => item.id === 'item-a')).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
     });
     expect(batchItems.find((item) => item.id === 'item-b')).toMatchObject({
       status: 'pending',

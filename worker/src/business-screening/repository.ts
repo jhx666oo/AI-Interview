@@ -173,6 +173,7 @@ export async function recordBusinessScreeningDecision(
             rejected_at = ?,
             updated_at = ?
       WHERE id = ?
+        AND business_screening_batch_id = ?
         AND business_screening_status IN ('not_ready', 'pending')
         AND status != 'approved'
         AND status != 'rejected'`,
@@ -188,6 +189,7 @@ export async function recordBusinessScreeningDecision(
     rejectedAt,
     screenedAt,
     input.resumeId,
+    input.batchId,
   ).run();
 
   if ((resumeUpdate.meta?.changes || 0) === 0) {
@@ -217,18 +219,28 @@ export async function recordBusinessScreeningDecision(
     }
 
     const currentResume = await db.prepare(
-      `SELECT business_screening_status, status, stage
+      `SELECT business_screening_status, business_screening_batch_id, status, stage
          FROM resumes
         WHERE id = ?
         LIMIT 1`,
     ).bind(input.resumeId).first<{
       business_screening_status: 'not_ready' | 'pending' | 'passed' | 'rejected' | null;
+      business_screening_batch_id: string | null;
       status: string | null;
       stage: string | null;
     }>();
 
     if (!currentResume) {
       throw new Error('resume not found');
+    }
+
+    if ((currentResume.business_screening_batch_id || '') !== input.batchId) {
+      return {
+        applied: false,
+        idempotent: false,
+        status: input.status,
+        reason: 'business screening batch mismatch',
+      };
     }
 
     if (currentResume.business_screening_status === 'passed' || currentResume.business_screening_status === 'rejected') {
