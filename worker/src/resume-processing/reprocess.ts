@@ -114,6 +114,7 @@ type HistoricalCoordinatorDeps = {
   enqueuePage(rows: Array<{ id: string; candidate_name?: string | null }>): Promise<{ queued: number; already_processing: number; failed: number }>;
   saveProgress(batch: HistoricalBatch, cursor: string, counts: { queued: number; already_processing: number; failed: number }): Promise<void>;
   complete(batch: HistoricalBatch, counts: { queued: number; already_processing: number; failed: number }): Promise<void>;
+  shouldContinue?: () => Promise<boolean>;
   sendNext(message: HistoricalReprocessQueueMessage): Promise<void>;
 };
 
@@ -121,6 +122,9 @@ export async function runHistoricalReprocessCoordinator(batchId: string, deps: H
   const pageSize = Math.max(1, Math.min(HISTORICAL_REPROCESS_PAGE_SIZE, deps.pageSize || HISTORICAL_REPROCESS_PAGE_SIZE));
   const batch = await deps.claimBatch();
   if (!batch) return { claimed: false, processed: 0, has_more: false };
+  if (deps.shouldContinue && !(await deps.shouldContinue())) {
+    return { claimed: true, processed: 0, has_more: false, cancelled: true };
+  }
   const rows = await deps.loadPage(batch, pageSize);
   if (rows.length === 0) {
     await deps.complete(batch, { queued: 0, already_processing: 0, failed: 0 });
@@ -131,6 +135,9 @@ export async function runHistoricalReprocessCoordinator(batchId: string, deps: H
   const hasMore = rows.length === pageSize;
   if (hasMore) {
     await deps.saveProgress(batch, cursor, counts);
+    if (deps.shouldContinue && !(await deps.shouldContinue())) {
+      return { claimed: true, processed: rows.length, has_more: true, cancelled: true, ...counts };
+    }
     await deps.sendNext({ kind: 'historical_reprocess', batchId });
   } else {
     await deps.complete(batch, counts);
@@ -165,24 +172,39 @@ export async function processHistoricalResumeReprocessPage(
     }))),
     saveProgress: async (_batch, cursor, counts) => {
       await db.prepare(`UPDATE resume_reprocess_batches SET cursor=?, status='queued',
-        queued_count=queued_count+?, already_processing_count=already_processing_count+?, failed_count=failed_count+?, updated_at=? WHERE id=?`)
+        queued_count=queued_count+?, already_processing_count=already_processing_count+?, failed_count=failed_count+?, updated_at=?
+        WHERE id=? AND status='running'`)
         .bind(cursor, counts.queued, counts.already_processing, counts.failed, new Date().toISOString(), batchId).run();
     },
     complete: async (_batch, counts) => {
       const timestamp = new Date().toISOString();
       await db.prepare(`UPDATE resume_reprocess_batches SET status='running',
-        queued_count=queued_count+?, already_processing_count=already_processing_count+?, failed_count=failed_count+?, completed_at=?, updated_at=? WHERE id=?`)
+        queued_count=queued_count+?, already_processing_count=already_processing_count+?, failed_count=failed_count+?, completed_at=?, updated_at=?
+        WHERE id=? AND status IN ('queued', 'running')`)
         .bind(counts.queued, counts.already_processing, counts.failed, null, timestamp, batchId).run();
       const { refreshReprocessBatchStatus } = await import('./batch-repository');
       await refreshReprocessBatchStatus(db, batchId);
+    },
+    shouldContinue: async () => {
+      const current = await db.prepare(
+        'SELECT status FROM resume_reprocess_batches WHERE id=?',
+      ).bind(batchId).first() as { status?: string } | null;
+      return current?.status === 'queued' || current?.status === 'running';
     },
     sendNext: (message) => queue.send(message).then(() => undefined),
   });
 }
 
-export async function resetHistoricalResumeReprocessBatch(db: ReprocessDb, batchId: string): Promise<void> {
-  await db.prepare("UPDATE resume_reprocess_batches SET status='queued', updated_at=? WHERE id=? AND status='running'")
-    .bind(new Date().toISOString(), batchId).run();
+export async function failHistoricalResumeReprocessBatch(
+  db: ReprocessDb,
+  batchId: string,
+  error: unknown,
+): Promise<void> {
+  const detail = String((error as any)?.message || error || '批次协调失败').slice(0, 500);
+  const timestamp = new Date().toISOString();
+  await db.prepare(
+    "UPDATE resume_reprocess_batches SET status='failed', error_message=?, completed_at=?, updated_at=? WHERE id=? AND status IN ('queued', 'running')",
+  ).bind(`COORDINATOR_FAILED: ${detail}`, timestamp, timestamp, batchId).run();
 }
 
 export async function selectVisibleResumeIdsForReprocess(

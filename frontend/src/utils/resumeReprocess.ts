@@ -1,5 +1,5 @@
 export type ReprocessScope = 'all' | 'incomplete_or_failed';
-export type ReprocessBatchStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type ReprocessBatchStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type ReprocessBatchItemStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'skipped';
 
 export interface ReprocessBatchCurrentTask {
@@ -29,6 +29,7 @@ export interface ReprocessBatchView {
   percent: number;
   current: ReprocessBatchCurrentTask | null;
   failed_items: ReprocessBatchFailedItem[];
+  error_message: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
@@ -65,13 +66,14 @@ export function getEvaluationStepLabel(step: string | null): string {
 }
 
 export function getEvaluationCardState(record: any): {
-  status: 'queued' | 'running' | 'failed' | 'idle';
+  status: 'queued' | 'running' | 'failed' | 'cancelled' | 'idle';
   label: string;
   error?: string;
 } {
   const jobStatus = record.evaluation_job_status;
   if (jobStatus === 'queued') return { status: 'queued', label: '排队中' };
   if (jobStatus === 'running') return { status: 'running', label: getEvaluationStepLabel(record.evaluation_job_step) || '评估中' };
+  if (jobStatus === 'cancelled') return { status: 'cancelled', label: '已停止' };
   if (jobStatus === 'failed') {
     const errorCode = record.evaluation_job_error?.split(':')[0] || '';
     if (errorCode === 'OCR_PAGE_LIMIT_EXCEEDED') {

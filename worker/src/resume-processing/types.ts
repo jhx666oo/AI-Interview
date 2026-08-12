@@ -48,7 +48,7 @@ export function isTerminalJobStatus(status: ResumeJobStatus): boolean {
 
 export type ReprocessScope = 'all' | 'incomplete_or_failed';
 
-export type ReprocessBatchStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type ReprocessBatchStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
 export type ReprocessBatchItemStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'skipped';
 
@@ -95,6 +95,7 @@ export interface ReprocessBatchView {
   percent: number;
   current: ReprocessBatchCurrentTask | null;
   failed_items: ReprocessBatchFailedItem[];
+  error_message: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;

@@ -1,5 +1,5 @@
 import type { ResumeProcessingQueueMessage, ResumeQueueMessage } from './resume-processing/types';
-import { processHistoricalResumeReprocessPage, resetHistoricalResumeReprocessBatch } from './resume-processing/reprocess';
+import { failHistoricalResumeReprocessBatch, processHistoricalResumeReprocessPage } from './resume-processing/reprocess';
 import { claimJob } from './resume-processing/job-repository';
 import { syncReprocessBatchItemByJob } from './resume-processing/batch-repository';
 import { processResume } from './resume-processing/processor';
@@ -608,8 +608,11 @@ export default {
           message.ack();
         } catch (error) {
           logResumeProcessingError('historical_reprocess.page.error', error, { batchId: message.body.batchId });
-          await resetHistoricalResumeReprocessBatch(env.DB, message.body.batchId);
-          message.retry({ delaySeconds: 30 });
+          // Do not put a coordinator D1 error back into an endless retry loop.
+          // The failed batch is visible in the UI and can be started again after
+          // the underlying issue is fixed.
+          await failHistoricalResumeReprocessBatch(env.DB, message.body.batchId, error);
+          message.ack();
         }
         continue;
       }

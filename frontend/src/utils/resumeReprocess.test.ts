@@ -13,7 +13,7 @@ describe('getReprocessPercent', () => {
       batch_id: 'b1', scope: 'all', status: 'running',
       total: 120, completed: 42, processing: 5, queued: 68,
       pending: 0, failed: 4, skipped: 1, percent: 0,
-      current: null, failed_items: [],
+      current: null, failed_items: [], error_message: null,
       created_at: '', updated_at: '', completed_at: null,
     };
     expect(getReprocessPercent(batch)).toBe(39);
@@ -24,7 +24,7 @@ describe('getReprocessPercent', () => {
       batch_id: 'b1', scope: 'all', status: 'completed',
       total: 0, completed: 0, processing: 0, queued: 0,
       pending: 0, failed: 0, skipped: 0, percent: 0,
-      current: null, failed_items: [],
+      current: null, failed_items: [], error_message: null,
       created_at: '', updated_at: '', completed_at: '',
     };
     expect(getReprocessPercent(batch)).toBe(100);
@@ -42,6 +42,10 @@ describe('isReprocessBatchActive', () => {
 
   it('returns false for completed batch', () => {
     expect(isReprocessBatchActive({ status: 'completed' } as ReprocessBatchView)).toBe(false);
+  });
+
+  it('returns false for cancelled batch', () => {
+    expect(isReprocessBatchActive({ status: 'cancelled' } as ReprocessBatchView)).toBe(false);
   });
 
   it('returns false for null', () => {
@@ -98,6 +102,15 @@ describe('getEvaluationCardState', () => {
     const record = { evaluation_job_status: null };
     const state = getEvaluationCardState(record);
     expect(state.status).toBe('idle');
+  });
+
+  it('hides stale evaluation while a job is cancelled', () => {
+    const state = getEvaluationCardState({
+      evaluation_job_status: 'cancelled',
+      ai_evaluation: { weighted_score: 80, summary: '旧结果' },
+    });
+    expect(state.status).toBe('cancelled');
+    expect(state.label).toBe('已停止');
   });
 
   it('queued/running wins over old ai_evaluation', () => {

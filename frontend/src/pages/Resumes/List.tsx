@@ -349,7 +349,7 @@ const ResumesList: React.FC = () => {
           const res = await request.get(`/resumes/reprocess-batches/${reprocessBatch.batch_id}`);
           if (version === reprocessVersionRef.current) {
             setReprocessBatch(res);
-            fetchResumes(false, cardPageRef.current, cardPageSizeRef.current);
+            fetchResumes(true, cardPageRef.current, cardPageSizeRef.current);
           }
         } catch {}
       }
@@ -359,9 +359,30 @@ const ResumesList: React.FC = () => {
   };
 
   const stopReprocessPolling = () => {
+    reprocessVersionRef.current += 1;
     if (reprocessPollingRef.current) {
       clearInterval(reprocessPollingRef.current);
       reprocessPollingRef.current = null;
+    }
+  };
+
+  const handleCancelReprocess = async () => {
+    const batchId = reprocessBatch?.batch_id;
+    if (!batchId) return;
+    stopReprocessPolling();
+    setPollingEnabled(false);
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+    try {
+      const res = await request.post(`/resumes/reprocess-batches/${batchId}/cancel`);
+      setReprocessBatch(res);
+      message.success('已停止批量重新评估');
+    } catch (error: any) {
+      const detail = error?.response?.data?.detail || '停止批量重新评估失败';
+      message.error(detail);
+      await fetchReprocessBatch(batchId, true);
     }
   };
 
@@ -1238,6 +1259,7 @@ const handleUploadClick = () => {
       <ResumeReprocessProgress
         batch={reprocessBatch}
         onShowFailed={() => handleStartReprocess('incomplete_or_failed')}
+        onCancel={handleCancelReprocess}
       />
 
       {/* 统计卡片：精简为 4 项 */}
@@ -1488,7 +1510,7 @@ const handleUploadClick = () => {
                   {/* 评估任务状态提示 */}
                   {evalCardState.status !== 'idle' && (
                     <div className="resume-card__evaluation">
-                      <span className="resume-card__long-label" style={{ color: evalCardState.status === 'failed' ? '#ff4d4f' : '#1677ff', fontSize: 12 }}>
+                      <span className="resume-card__long-label" style={{ color: evalCardState.status === 'failed' ? '#ff4d4f' : evalCardState.status === 'cancelled' ? '#8c8c8c' : '#1677ff', fontSize: 12 }}>
                         {evalCardState.label}{evalCardState.error ? `：${evalCardState.error}` : ''}
                       </span>
                     </div>

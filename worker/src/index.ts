@@ -11,7 +11,7 @@ import { handleOptimizedResumeList } from './resume-list/optimized-handler';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
 import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess, selectResumeIdsForBatchScope } from './resume-processing/reprocess';
-import { getReprocessBatchView, getActiveReprocessBatchView, appendEvaluationJobProjection } from './resume-processing/batch-repository';
+import { cancelReprocessBatch, getReprocessBatchView, getActiveReprocessBatchView, appendEvaluationJobProjection } from './resume-processing/batch-repository';
 import type { ReprocessScope, ResumeProcessingQueueMessage } from './resume-processing/types';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
@@ -6206,6 +6206,24 @@ app.get('/api/resumes/reprocess-batches/:batchId', authMiddleware, async (c) => 
   } catch (error: any) {
     console.error('[reprocess-batches/:batchId] failed', error);
     return c.json({ detail: '查询失败: ' + error.message }, 500);
+  }
+});
+
+// 停止当前用户的批量重新评估。已完成的单份评估保留，排队中的任务取消。
+app.post('/api/resumes/reprocess-batches/:batchId/cancel', authMiddleware, async (c) => {
+  try {
+    const batchId = c.req.param('batchId');
+    const owner = getOwnerName(c);
+    const cancelled = await cancelReprocessBatch(c.env.DB, batchId, owner);
+    if (!cancelled) {
+      return c.json({ detail: '批次不存在或无权限' }, 404);
+    }
+    const view = await getReprocessBatchView(c.env.DB, batchId, owner);
+    if (!view) return c.json({ detail: '批次不存在或无权限' }, 404);
+    return c.json(view);
+  } catch (error: any) {
+    console.error('[reprocess-batches/:batchId/cancel] failed', error);
+    return c.json({ detail: '停止批量重新评估失败: ' + error.message }, 500);
   }
 });
 

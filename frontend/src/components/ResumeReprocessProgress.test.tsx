@@ -22,6 +22,7 @@ const makeBatch = (overrides: Partial<ReprocessBatchView> = {}): ReprocessBatchV
   percent: 40,
   current: { resume_id: 'r1', candidate_name: '张三', step: 'screening' },
   failed_items: [{ resume_id: 'r5', candidate_name: '李四', error_code: 'ERR', error_message: '文本不可用' }],
+  error_message: null,
   created_at: '2026-08-12T00:00:00Z',
   updated_at: '2026-08-12T00:05:00Z',
   completed_at: null,
@@ -38,6 +39,15 @@ describe('ResumeReprocessProgress', () => {
     render(<ResumeReprocessProgress batch={makeBatch()} />);
     expect(screen.getByText('全部重评')).toBeTruthy();
     expect(screen.getByText('处理中')).toBeTruthy();
+  });
+
+  it('shows stop button only while the batch is active', () => {
+    render(<ResumeReprocessProgress batch={makeBatch()} onCancel={() => undefined} />);
+    expect(screen.getByRole('button', { name: '停止处理' })).toBeTruthy();
+
+    cleanup();
+    render(<ResumeReprocessProgress batch={makeBatch({ status: 'cancelled' })} onCancel={() => undefined} />);
+    expect(screen.queryByRole('button', { name: '停止处理' })).toBeNull();
   });
 
   it('displays completed/total counts', () => {

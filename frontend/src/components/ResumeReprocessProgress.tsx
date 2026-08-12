@@ -8,15 +8,37 @@ const { Text } = Typography;
 interface ResumeReprocessProgressProps {
   batch: ReprocessBatchView | null;
   onShowFailed?: (items: ReprocessBatchView['failed_items']) => void;
+  onCancel?: () => Promise<void> | void;
 }
 
-const ResumeReprocessProgress: React.FC<ResumeReprocessProgressProps> = ({ batch, onShowFailed }) => {
+const ResumeReprocessProgress: React.FC<ResumeReprocessProgressProps> = ({ batch, onShowFailed, onCancel }) => {
   const [failedVisible, setFailedVisible] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   if (!batch) return null;
 
   const scopeLabel = batch.scope === 'all' ? '全部重评' : '重评未评估/失败简历';
-  const statusColor = batch.status === 'completed' ? 'success' : batch.status === 'failed' ? 'error' : 'processing';
+  const isActive = batch.status === 'queued' || batch.status === 'running';
+  const statusColor = batch.status === 'completed' ? 'success' : batch.status === 'failed' ? 'error' : batch.status === 'cancelled' ? 'default' : 'processing';
+  const statusLabel = batch.status === 'completed' ? '已完成' : batch.status === 'failed' ? '已失败' : batch.status === 'cancelled' ? '已停止' : '处理中';
+
+  const handleCancel = () => {
+    Modal.confirm({
+      title: '停止批量重新评估？',
+      content: '已完成的评估会保留，排队中的任务会停止；正在执行的单份评估可能会自然结束。',
+      okText: '停止处理',
+      cancelText: '继续处理',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setCancelling(true);
+        try {
+          await onCancel?.();
+        } finally {
+          setCancelling(false);
+        }
+      },
+    });
+  };
 
   return (
     <>
@@ -27,13 +49,18 @@ const ResumeReprocessProgress: React.FC<ResumeReprocessProgressProps> = ({ batch
         <Space direction="vertical" style={{ width: '100%' }} size={4}>
           <Space style={{ width: '100%', justifyContent: 'space-between' }}>
             <Text strong>{scopeLabel}</Text>
-            <Tag color={statusColor}>{batch.status === 'completed' ? '已完成' : batch.status === 'failed' ? '已失败' : '处理中'}</Tag>
+            <Space size="small">
+              {isActive && onCancel && (
+                <Button size="small" danger loading={cancelling} onClick={handleCancel}>停止处理</Button>
+              )}
+              <Tag color={statusColor}>{statusLabel}</Tag>
+            </Space>
           </Space>
           <Progress
             percent={batch.percent}
             showInfo={false}
             status={batch.status === 'failed' ? 'exception' : undefined}
-            strokeColor={{ '0%': '#1677ff', '100%': '#3f8600' }}
+            strokeColor={batch.status === 'cancelled' ? '#bfbfbf' : { '0%': '#1677ff', '100%': '#3f8600' }}
           />
           <Space wrap size="large">
             <Text type="secondary">已完成 {batch.completed} / {batch.total}</Text>

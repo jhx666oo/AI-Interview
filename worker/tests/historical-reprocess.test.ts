@@ -9,6 +9,7 @@ import {
   enqueueResumeReprocessBatchPage,
   startHistoricalResumeReprocess,
 } from '../src/resume-processing/reprocess';
+import { insertReprocessBatchItems } from '../src/resume-processing/batch-repository';
 import { handleBatchResumeReprocess } from '../src/index';
 
 describe('historical resume reprocess', () => {
@@ -58,6 +59,35 @@ describe('historical resume reprocess', () => {
     expect(loadedLimits).toEqual([25]);
     expect(result).toMatchObject({ processed: 25, has_more: true });
     expect(sent).toEqual([{ kind: 'historical_reprocess', batchId: 'batch-1' }]);
+  });
+
+  it('does not schedule another page when the batch is cancelled while saving progress', async () => {
+    const sent: unknown[] = [];
+    let shouldContinueCalls = 0;
+    const result = await runHistoricalReprocessCoordinator('batch-1', {
+      pageSize: 25,
+      claimBatch: async () => ({ id: 'batch-1', cursor: null }),
+      loadPage: async () => Array.from({ length: 25 }, (_, index) => ({ id: `resume-${index}` })),
+      enqueuePage: async (rows) => ({ queued: rows.length, already_processing: 0, failed: 0 }),
+      saveProgress: async () => undefined,
+      complete: async () => undefined,
+      shouldContinue: async () => shouldContinueCalls++ === 0,
+      sendNext: async (message) => { sent.push(message); },
+    });
+
+    expect(result).toMatchObject({ processed: 25, has_more: true });
+    expect(sent).toEqual([]);
+  });
+
+  it('keeps batch item inserts within D1 bound parameter limits', async () => {
+    const db = createHistoricalDb([]);
+    await insertReprocessBatchItems(db as never, Array.from({ length: 8 }, (_, index) => ({
+      batchId: 'batch-1',
+      resumeId: `resume-${index}`,
+      candidateName: `Candidate-${index}`,
+    })));
+
+    expect(db.maxBindCount).toBeLessThanOrEqual(100);
   });
 
   it('binds the resume consumer as a producer so the coordinator can schedule pages and resume jobs', async () => {
@@ -127,11 +157,14 @@ function createHistoricalDb(resumeIds: string[]) {
   const resetResumeIds: string[] = [];
   const batches = new Map<string, any>();
   let jobNumber = 0;
+  let maxBindCount = 0;
   return {
     resetResumeIds,
+    get maxBindCount() { return maxBindCount; },
     prepare(sql: string) {
       return {
         bind(...values: unknown[]) {
+          maxBindCount = Math.max(maxBindCount, values.length);
           return {
             async all() {
               if (sql.startsWith('SELECT id FROM resumes WHERE 1=1')) {

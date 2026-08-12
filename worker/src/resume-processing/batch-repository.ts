@@ -11,7 +11,10 @@ import type {
 type Db = Pick<D1Database, 'prepare'>;
 
 const TERMINAL_ITEM_STATUSES = new Set(['completed', 'failed', 'skipped']);
-const BATCH_SIZE = 100;
+const D1_MAX_BOUND_PARAMETERS = 100;
+const BATCH_ITEM_COLUMNS = 13;
+const BATCH_ITEM_INSERT_BATCH_SIZE = Math.floor(D1_MAX_BOUND_PARAMETERS / BATCH_ITEM_COLUMNS);
+const RESUME_QUERY_BATCH_SIZE = D1_MAX_BOUND_PARAMETERS;
 
 export async function ensureResumeReprocessBatchSchema(db: Db): Promise<void> {
   await db.prepare(`
@@ -63,8 +66,8 @@ export async function insertReprocessBatchItems(
 ): Promise<void> {
   if (items.length === 0) return;
   const timestamp = new Date().toISOString();
-  for (let start = 0; start < items.length; start += BATCH_SIZE) {
-    const chunk = items.slice(start, start + BATCH_SIZE);
+  for (let start = 0; start < items.length; start += BATCH_ITEM_INSERT_BATCH_SIZE) {
+    const chunk = items.slice(start, start + BATCH_ITEM_INSERT_BATCH_SIZE);
     const values: unknown[] = [];
     const placeholders: string[] = [];
     for (const item of chunk) {
@@ -207,6 +210,9 @@ export async function refreshReprocessBatchStatus(
   const terminalTotal = Number(counts?.terminal_total || 0);
   const targetTotal = Number(batch.total_count || 0) || itemTotal;
   const completed = targetTotal === itemTotal && terminalTotal === itemTotal;
+  if (batch.status === 'failed' || batch.status === 'cancelled') {
+    return;
+  }
   const status: ReprocessBatchStatus = completed
     ? 'completed'
     : Number(counts?.running_total || 0) > 0 || batch.status === 'running'
@@ -229,7 +235,7 @@ export async function reconcileReprocessBatchItems(db: Db, batchId: string): Pro
      FROM resume_reprocess_batch_items i
      LEFT JOIN resume_processing_jobs j ON i.job_id = j.id
      WHERE i.batch_id=? AND i.job_id IS NOT NULL AND i.status IN ('pending', 'queued', 'running')`,
-  ).bind(batchId).all() as any[];
+  ).bind(batchId).all() as unknown as { results?: any[] };
 
   const itemRows = rows.results || [];
   if (itemRows.length === 0) return;
@@ -280,7 +286,7 @@ export async function getReprocessBatchView(
   await reconcileReprocessBatchItems(db, batchId).catch(() => undefined);
 
   const batch = await db.prepare(
-    'SELECT id, owner, status, scope, total_count, created_at, updated_at, completed_at FROM resume_reprocess_batches WHERE id=?',
+    'SELECT id, owner, status, scope, total_count, error_message, created_at, updated_at, completed_at FROM resume_reprocess_batches WHERE id=?',
   ).bind(batchId).first() as any;
   if (!batch) return null;
   const batchOwner = batch.owner || null;
@@ -332,9 +338,11 @@ export async function getReprocessBatchView(
   pending += Math.max(0, total - list.length);
   const finished = completed + failed + skipped;
   const percent = total === 0 ? 100 : Math.round((finished / total) * 100);
-  const status = finished >= total && total >= 0
+  const cancelled = batch.status === 'failed' && String(batch.error_message || '').startsWith('BATCH_CANCELLED:');
+  const viewStatus: ReprocessBatchStatus = cancelled ? 'cancelled' : batch.status;
+  const status: ReprocessBatchStatus = !cancelled && viewStatus !== 'failed' && finished >= total && total >= 0
     ? 'completed'
-    : batch.status;
+    : viewStatus;
 
   return {
     batch_id: batch.id,
@@ -350,10 +358,68 @@ export async function getReprocessBatchView(
     percent,
     current,
     failed_items: failedItems.slice(0, 100),
+    error_message: batch.error_message || null,
     created_at: batch.created_at,
     updated_at: batch.updated_at,
     completed_at: batch.completed_at,
   };
+}
+
+/**
+ * Stop a historical batch without changing already completed evaluations.
+ * D1 stores this as failed for schema compatibility; the view maps the
+ * BATCH_CANCELLED marker to the user-facing cancelled status.
+ */
+export async function cancelReprocessBatch(
+  db: Db,
+  batchId: string,
+  owner: string | null,
+): Promise<boolean> {
+  const batch = await db.prepare(
+    'SELECT id, owner, status FROM resume_reprocess_batches WHERE id=?',
+  ).bind(batchId).first() as { id: string; owner: string | null; status: string } | null;
+  if (!batch || (owner && (batch.owner || null) !== owner)) return false;
+  if (batch.status !== 'queued' && batch.status !== 'running') return true;
+
+  const timestamp = new Date().toISOString();
+  const message = 'BATCH_CANCELLED: 用户已停止批量重新评估';
+
+  // Mark the batch first so a coordinator that is between pages observes the
+  // terminal state and cannot schedule another coordinator message.
+  await db.prepare(
+    `UPDATE resume_reprocess_batches
+        SET status='failed', error_message=?, completed_at=?, updated_at=?
+      WHERE id=? AND status IN ('queued', 'running')`,
+  ).bind(message, timestamp, timestamp, batchId).run();
+
+  await db.prepare(
+    `UPDATE resume_processing_jobs
+        SET status='cancelled', error_code='BATCH_CANCELLED', error_message=?, completed_at=?, updated_at=?
+      WHERE status='queued'
+        AND id IN (
+          SELECT job_id FROM resume_reprocess_batch_items
+           WHERE batch_id=? AND status IN ('pending', 'queued') AND job_id IS NOT NULL
+        )`,
+  ).bind(message, timestamp, timestamp, batchId).run();
+
+  // Reprocess reset these resumes to queued before sending the job. Mark jobs
+  // that never started as failed/stopped as well, otherwise the regular resume
+  // list polling would keep treating them as active parse work forever.
+  await db.prepare(
+    `UPDATE resumes
+        SET parse_status='failed', parse_error=?, updated_at=?
+      WHERE id IN (
+        SELECT resume_id FROM resume_reprocess_batch_items
+         WHERE batch_id=? AND status IN ('pending', 'queued') AND job_id IS NOT NULL
+      )`,
+  ).bind(message, timestamp, batchId).run();
+
+  await db.prepare(
+    `UPDATE resume_reprocess_batch_items
+        SET status='skipped', skip_reason='cancelled', error_code='BATCH_CANCELLED', error_message=?, updated_at=?
+      WHERE batch_id=? AND status IN ('pending', 'queued')`,
+  ).bind(message, timestamp, batchId).run();
+  return true;
 }
 
 export async function getActiveReprocessBatchView(
@@ -379,8 +445,8 @@ export async function appendEvaluationJobProjection(
   const jobById: Map<string, any> = new Map();
   const jobByResume: Map<string, any> = new Map();
 
-  for (let start = 0; start < items.length; start += BATCH_SIZE) {
-    const chunk = items.slice(start, start + BATCH_SIZE);
+  for (let start = 0; start < items.length; start += RESUME_QUERY_BATCH_SIZE) {
+    const chunk = items.slice(start, start + RESUME_QUERY_BATCH_SIZE);
     const ids = chunk.map((item: any) => item.id);
     const placeholders = ids.map(() => '?').join(',');
     const rows = (await db.prepare(
