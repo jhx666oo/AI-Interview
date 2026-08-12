@@ -9,7 +9,7 @@ import type { InterviewerDirectoryEntry } from '../src/business-screening/types'
 describe('business screening service', () => {
   it('allows pushing only AI-passed resumes that are not HR-rejected and have an interviewer binding', () => {
     expect(isEligibleForPush(
-      { id: 'r-ok', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营' },
+      { id: 'r-ok', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营', business_screening_status: 'not_ready' },
       { name: '张三', openId: 'ou_123' },
     )).toEqual({ ok: true });
 
@@ -27,6 +27,21 @@ describe('business screening service', () => {
       { id: 'r-hr-rejected', screening_result: '通过', status: 'pending_review', hr_disposition: 'rejected', mapped_position: '标准运营' },
       { name: '张三', openId: 'ou_123' },
     )).toEqual({ ok: false, reason: 'HR已淘汰该简历' });
+
+    expect(isEligibleForPush(
+      { id: 'r-business-pending', screening_result: '通过', status: 'pending_review', hr_disposition: 'pushed', mapped_position: '标准运营', business_screening_status: 'pending' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: '业务筛选已发起，请使用批次重发' });
+
+    expect(isEligibleForPush(
+      { id: 'r-business-passed', screening_result: '通过', status: 'pending_review', hr_disposition: 'pushed', mapped_position: '标准运营', business_screening_status: 'passed' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: '业务筛选已完成' });
+
+    expect(isEligibleForPush(
+      { id: 'r-business-rejected', screening_result: '通过', status: 'pending_review', hr_disposition: 'pushed', mapped_position: '标准运营', business_screening_status: 'rejected' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: '业务筛选已完成' });
 
     expect(isEligibleForPush(
       { id: 'r-no-position', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '' },

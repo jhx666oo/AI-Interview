@@ -31,7 +31,7 @@ function resolvePositionTitle(resume: Pick<BusinessScreeningResume, 'mapped_posi
 }
 
 export function isEligibleForPush(
-  resume: Pick<BusinessScreeningResume, 'screening_result' | 'status' | 'hr_disposition' | 'mapped_position' | 'position_applied'>,
+  resume: Pick<BusinessScreeningResume, 'screening_result' | 'status' | 'hr_disposition' | 'mapped_position' | 'position_applied' | 'business_screening_status'>,
   interviewer: { name: string; openId?: string },
 ): { ok: true } | { ok: false; reason: string } {
   if (text(resume.screening_result) !== '通过') {
@@ -39,6 +39,12 @@ export function isEligibleForPush(
   }
   if (text(resume.hr_disposition) === 'rejected' || text(resume.status) === 'rejected') {
     return { ok: false, reason: 'HR已淘汰该简历' };
+  }
+  if (resume.business_screening_status === 'pending') {
+    return { ok: false, reason: '业务筛选已发起，请使用批次重发' };
+  }
+  if (resume.business_screening_status === 'passed' || resume.business_screening_status === 'rejected') {
+    return { ok: false, reason: '业务筛选已完成' };
   }
   if (!resolvePositionTitle(resume)) {
     return { ok: false, reason: '缺少标准岗位' };

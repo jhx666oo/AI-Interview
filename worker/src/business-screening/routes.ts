@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import {
-  applyTerminalResumeOutcome,
   createResumePushBatch,
   insertResumePushBatchItems,
   loadResumePushBatchByTokenHash,
@@ -87,20 +86,6 @@ export interface BusinessScreeningRouteStore {
       screenedBy?: string | null;
     },
   ): Promise<RecordBusinessScreeningDecisionResult>;
-  applyTerminalResumeOutcome(
-    db: D1Database,
-    input: {
-      resumeId: string;
-      outcome: 'approved' | 'rejected';
-      timestamp?: string;
-    },
-  ): Promise<{
-    applied: boolean;
-    idempotent: boolean;
-    status: 'approved' | 'rejected';
-    stage: 'talent_pool' | 'rejected';
-    reason?: string;
-  }>;
   setBatchStatus(db: D1Database, batchId: string, status: 'active' | 'completed' | 'revoked' | 'expired'): Promise<void>;
   setBatchLastSentAt(db: D1Database, batchId: string, sentAt: string): Promise<void>;
   countPendingBatchItems(db: D1Database, batchId: string): Promise<number>;
@@ -411,17 +396,6 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       return c.json({ detail: result.reason }, 409);
     }
 
-    if (result.applied) {
-      const terminal = await deps.store.applyTerminalResumeOutcome(db, {
-        resumeId,
-        outcome: status === 'passed' ? 'approved' : 'rejected',
-        timestamp: deps.now(),
-      });
-      if (!terminal.applied && !terminal.idempotent && terminal.reason) {
-        return c.json({ detail: terminal.reason }, 409);
-      }
-    }
-
     const pendingCount = await deps.store.countPendingBatchItems(db, batch.id);
     if (pendingCount === 0) {
       await deps.store.setBatchStatus(db, batch.id, 'completed');
@@ -626,9 +600,6 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     },
     async recordDecision(db, input) {
       return recordBusinessScreeningDecision(db, input);
-    },
-    async applyTerminalResumeOutcome(db, input) {
-      return applyTerminalResumeOutcome(db, input);
     },
     async setBatchStatus(db, batchId, status) {
       await db.prepare('UPDATE resume_push_batches SET status = ? WHERE id = ?')

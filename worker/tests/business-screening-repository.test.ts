@@ -146,6 +146,8 @@ describe('business screening repository writes', () => {
 
     expect(db.item.status).toBe('passed');
     expect(db.resume.business_screening_status).toBe('passed');
+    expect(db.resume.status).toBe('approved');
+    expect(db.resume.stage).toBe('talent_pool');
 
     await expect(recordBusinessScreeningDecision(db as never, {
       resumeId: 'resume-1',
@@ -158,6 +160,8 @@ describe('business screening repository writes', () => {
 
     expect(db.item.remark).toBe('通过');
     expect(db.resume.business_screening_remark).toBe('通过');
+    expect(db.resume.approved_at).toBe('2026-08-12T12:00:00.000Z');
+    expect(db.resume.rejected_at).toBeNull();
 
     await expect(recordBusinessScreeningDecision(db as never, {
       resumeId: 'resume-1',
@@ -170,6 +174,55 @@ describe('business screening repository writes', () => {
 
     expect(db.item.status).toBe('passed');
     expect(db.resume.business_screening_status).toBe('passed');
+    expect(db.resume.status).toBe('approved');
+    expect(db.resume.stage).toBe('talent_pool');
+  });
+
+  it('rejects stale opposite batch callbacks before mutating business-screening or terminal resume fields', async () => {
+    const db = createDecisionDb({
+      resume: {
+        status: 'approved',
+        stage: 'talent_pool',
+        approved_at: '2026-08-12T12:00:00.000Z',
+        rejected_at: null,
+        business_screening_status: 'passed',
+        business_screening_remark: '建议入库',
+        business_screened_at: '2026-08-12T12:00:00.000Z',
+        business_screened_by: '张三',
+        business_screening_batch_id: 'batch-a',
+      },
+    });
+
+    await expect(recordBusinessScreeningDecision(db as never, {
+      resumeId: 'resume-1',
+      batchId: 'batch-b',
+      status: 'rejected',
+      remark: '过期批次不入库',
+      screenedAt: '2026-08-12T12:05:00.000Z',
+      screenedBy: '张三',
+    })).resolves.toEqual({
+      applied: false,
+      idempotent: false,
+      status: 'passed',
+      reason: 'business screening already completed',
+    });
+
+    expect(db.item).toEqual({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+    });
+    expect(db.resume).toMatchObject({
+      status: 'approved',
+      stage: 'talent_pool',
+      approved_at: '2026-08-12T12:00:00.000Z',
+      rejected_at: null,
+      business_screening_status: 'passed',
+      business_screening_remark: '建议入库',
+      business_screened_at: '2026-08-12T12:00:00.000Z',
+      business_screened_by: '张三',
+      business_screening_batch_id: 'batch-a',
+    });
   });
 
   it('updates terminal resume status/stage idempotently without undoing a completed opposite outcome', async () => {
@@ -212,19 +265,36 @@ describe('business screening repository writes', () => {
   });
 });
 
-function createDecisionDb() {
+function createDecisionDb(overrides?: {
+  resume?: {
+    status: string;
+    stage: string;
+    approved_at: string | null;
+    rejected_at: string | null;
+    business_screening_status: string;
+    business_screening_remark: string;
+    business_screened_at: string | null;
+    business_screened_by: string;
+    business_screening_batch_id: string;
+    updated_at?: string;
+  };
+}) {
   const item = {
     status: 'pending',
     remark: null as string | null,
     processed_at: null as string | null,
   };
   const resume = {
-    business_screening_status: 'pending',
-    business_screening_remark: '',
-    business_screened_at: null as string | null,
-    business_screened_by: '',
-    business_screening_batch_id: '',
-    updated_at: '',
+    status: overrides?.resume?.status || 'pending_review',
+    stage: overrides?.resume?.stage || 'screening',
+    approved_at: overrides?.resume?.approved_at ?? null,
+    rejected_at: overrides?.resume?.rejected_at ?? null,
+    business_screening_status: overrides?.resume?.business_screening_status || 'pending',
+    business_screening_remark: overrides?.resume?.business_screening_remark || '',
+    business_screened_at: overrides?.resume?.business_screened_at ?? null,
+    business_screened_by: overrides?.resume?.business_screened_by || '',
+    business_screening_batch_id: overrides?.resume?.business_screening_batch_id || '',
+    updated_at: overrides?.resume?.updated_at || '',
   };
 
   return {
@@ -244,6 +314,9 @@ function createDecisionDb() {
                   processed_at: item.processed_at,
                 };
               }
+              if (sql.includes('FROM resumes') && sql.includes('business_screening_status')) {
+                return { ...resume };
+              }
               return null;
             },
             async run() {
@@ -255,12 +328,20 @@ function createDecisionDb() {
                 return { meta: { changes: 1 } };
               }
               if (sql.includes('UPDATE resumes')) {
+                const resumeEligible = ['not_ready', 'pending'].includes(resume.business_screening_status)
+                  && resume.status !== 'approved'
+                  && resume.status !== 'rejected';
+                if (!resumeEligible) return { meta: { changes: 0 } };
                 resume.business_screening_status = values[0] as string;
                 resume.business_screening_remark = values[1] as string;
                 resume.business_screened_at = values[2] as string | null;
                 resume.business_screened_by = values[3] as string;
                 resume.business_screening_batch_id = values[4] as string;
-                resume.updated_at = values[5] as string;
+                resume.status = values[5] as string;
+                resume.stage = values[6] as string;
+                resume.approved_at = values[7] as string | null;
+                resume.rejected_at = values[8] as string | null;
+                resume.updated_at = values[9] as string;
                 return { meta: { changes: 1 } };
               }
               return { meta: { changes: 1 } };

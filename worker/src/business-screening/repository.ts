@@ -156,14 +156,42 @@ export async function recordBusinessScreeningDecision(
 ): Promise<RecordBusinessScreeningDecisionResult> {
   const screenedAt = input.screenedAt || new Date().toISOString();
   const itemStatus = input.status === 'passed' ? 'passed' : 'rejected';
-  const itemUpdate = await db.prepare(
-    `UPDATE resume_push_batch_items
-        SET status = ?, remark = ?, processed_at = ?
-      WHERE batch_id = ? AND resume_id = ? AND status = 'pending'`,
-  ).bind(itemStatus, input.remark || null, screenedAt, input.batchId, input.resumeId).run();
+  const resumeStatus = input.status === 'passed' ? 'approved' : 'rejected';
+  const resumeStage = input.status === 'passed' ? 'talent_pool' : 'rejected';
+  const approvedAt = input.status === 'passed' ? screenedAt : null;
+  const rejectedAt = input.status === 'rejected' ? screenedAt : null;
+  const resumeUpdate = await db.prepare(
+    `UPDATE resumes
+        SET business_screening_status = ?,
+            business_screening_remark = ?,
+            business_screened_at = ?,
+            business_screened_by = ?,
+            business_screening_batch_id = ?,
+            status = ?,
+            stage = ?,
+            approved_at = ?,
+            rejected_at = ?,
+            updated_at = ?
+      WHERE id = ?
+        AND business_screening_status IN ('not_ready', 'pending')
+        AND status != 'approved'
+        AND status != 'rejected'`,
+  ).bind(
+    input.status,
+    input.remark || '',
+    screenedAt,
+    input.screenedBy || '',
+    input.batchId,
+    resumeStatus,
+    resumeStage,
+    approvedAt,
+    rejectedAt,
+    screenedAt,
+    input.resumeId,
+  ).run();
 
-  if ((itemUpdate.meta?.changes || 0) === 0) {
-    const current = await db.prepare(
+  if ((resumeUpdate.meta?.changes || 0) === 0) {
+    const currentItem = await db.prepare(
       `SELECT batch_id, resume_id, status, remark, processed_at
          FROM resume_push_batch_items
         WHERE batch_id = ? AND resume_id = ?
@@ -176,11 +204,11 @@ export async function recordBusinessScreeningDecision(
       processed_at: string | null;
     }>();
 
-    if (!current) {
+    if (!currentItem) {
       throw new Error('business screening batch item not found');
     }
 
-    if (current.status === itemStatus) {
+    if (currentItem.status === itemStatus) {
       return {
         applied: false,
         idempotent: true,
@@ -188,32 +216,47 @@ export async function recordBusinessScreeningDecision(
       };
     }
 
+    const currentResume = await db.prepare(
+      `SELECT business_screening_status, status, stage
+         FROM resumes
+        WHERE id = ?
+        LIMIT 1`,
+    ).bind(input.resumeId).first<{
+      business_screening_status: 'not_ready' | 'pending' | 'passed' | 'rejected' | null;
+      status: string | null;
+      stage: string | null;
+    }>();
+
+    if (!currentResume) {
+      throw new Error('resume not found');
+    }
+
+    if (currentResume.business_screening_status === 'passed' || currentResume.business_screening_status === 'rejected') {
+      return {
+        applied: false,
+        idempotent: false,
+        status: currentResume.business_screening_status,
+        reason: 'business screening already completed',
+      };
+    }
+
     return {
       applied: false,
       idempotent: false,
-      status: current.status === 'passed' ? 'passed' : 'rejected',
+      status: currentItem.status === 'passed' ? 'passed' : 'rejected',
       reason: 'business screening already completed',
     };
   }
 
-  await db.prepare(
-    `UPDATE resumes
-        SET business_screening_status = ?,
-            business_screening_remark = ?,
-            business_screened_at = ?,
-            business_screened_by = ?,
-            business_screening_batch_id = ?,
-            updated_at = ?
-      WHERE id = ?`,
-  ).bind(
-    input.status,
-    input.remark || '',
-    screenedAt,
-    input.screenedBy || '',
-    input.batchId,
-    screenedAt,
-    input.resumeId,
-  ).run();
+  const itemUpdate = await db.prepare(
+    `UPDATE resume_push_batch_items
+        SET status = ?, remark = ?, processed_at = ?
+      WHERE batch_id = ? AND resume_id = ? AND status = 'pending'`,
+  ).bind(itemStatus, input.remark || null, screenedAt, input.batchId, input.resumeId).run();
+
+  if ((itemUpdate.meta?.changes || 0) === 0) {
+    throw new Error('business screening batch item not found');
+  }
 
   return {
     applied: true,
