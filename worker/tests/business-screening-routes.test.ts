@@ -149,6 +149,30 @@ function buildHarness(options?: {
       const nextItemStatus = input.status === 'passed' ? 'passed' : 'rejected';
       const nextResumeStatus = input.status === 'passed' ? 'approved' : 'rejected';
       const nextResumeStage = input.status === 'passed' ? 'talent_pool' : 'rejected';
+      if (
+        resume
+        && (
+          resume.hr_disposition === 'rejected'
+          || resume.status === 'approved'
+          || resume.status === 'rejected'
+          || resume.business_screening_status === 'passed'
+          || resume.business_screening_status === 'rejected'
+        )
+      ) {
+        if (item.status === nextItemStatus) {
+          return { applied: false, idempotent: true, status: input.status };
+        }
+        return {
+          applied: false,
+          idempotent: false,
+          status: resume.business_screening_status === 'passed'
+            ? 'passed'
+            : 'rejected',
+          reason: resume.hr_disposition === 'rejected'
+            ? 'HR already rejected resume'
+            : 'business screening already completed',
+        };
+      }
       if (item.status !== 'pending') {
         if (item.status === nextItemStatus) {
           return { applied: false, idempotent: true, status: input.status };
@@ -157,22 +181,6 @@ function buildHarness(options?: {
           applied: false,
           idempotent: false,
           status: item.status === 'passed' ? 'passed' : 'rejected',
-          reason: 'business screening already completed',
-        };
-      }
-      if (
-        resume
-        && (
-          resume.business_screening_status === 'passed'
-          || resume.business_screening_status === 'rejected'
-          || (resume.status === 'approved' && resume.stage === 'talent_pool')
-          || (resume.status === 'rejected' && resume.stage === 'rejected')
-        )
-      ) {
-        return {
-          applied: false,
-          idempotent: false,
-          status: resume.business_screening_status === 'passed' ? 'passed' : 'rejected',
           reason: 'business screening already completed',
         };
       }
@@ -208,6 +216,17 @@ function buildHarness(options?: {
         }
       }
       return { applied: true, idempotent: false, status: input.status };
+    },
+    async revokeActiveBatchesForResume(_db, resumeId) {
+      const touchedBatchIds = new Set(
+        batchItems
+          .filter((item) => item.resume_id === resumeId)
+          .map((item) => item.batch_id),
+      );
+      for (const batchId of touchedBatchIds) {
+        const batch = batches.get(batchId);
+        if (batch?.status === 'active') batch.status = 'revoked';
+      }
     },
     async setBatchStatus(_db, batchId, status) {
       const batch = batches.get(batchId);
@@ -271,7 +290,44 @@ function buildHarness(options?: {
   };
 
   const app = createBusinessScreeningRoutes(deps);
-  const env = { DB: {} as D1Database };
+  const env = {
+    DB: {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            return {
+              async run() {
+                if (sql.includes('UPDATE resumes') && sql.includes("SET hr_disposition = 'rejected'")) {
+                  const comment = values[0] as string;
+                  const businessRemark = values[1] as string;
+                  const screenedAt = values[2] as string;
+                  const screenedBy = values[3] as string;
+                  const updatedAt = values[4] as string;
+                  const resumeId = values[5] as string;
+                  const resume = resumes.get(resumeId);
+                  if (!resume) return { meta: { changes: 0 } };
+                  const currentBusinessStatus = resume.business_screening_status;
+                  resume.hr_disposition = 'rejected';
+                  resume.hr_review = comment;
+                  if (currentBusinessStatus !== 'passed' && currentBusinessStatus !== 'rejected') {
+                    resume.business_screening_status = 'rejected';
+                    resume.business_screening_remark = businessRemark;
+                    resume.business_screened_at = screenedAt;
+                    resume.business_screened_by = screenedBy;
+                  }
+                  resume.status = 'rejected';
+                  resume.stage = 'rejected';
+                  resume.updated_at = updatedAt;
+                  return { meta: { changes: 1 } };
+                }
+                return { meta: { changes: 1 } };
+              },
+            };
+          },
+        };
+      },
+    } as D1Database,
+  };
   const request = (input: string, init?: RequestInit) => app.request(input, init, env);
 
   return {
@@ -327,6 +383,94 @@ describe('business screening routes', () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
       detail: expect.stringContaining('completed'),
+    });
+  });
+
+  it('HR rejection revokes old public links and keeps callback state unchanged', async () => {
+    const { request, resumes, batches, batchItems } = buildHarness({
+      initialBatches: [{
+        id: 'batch-hr-reject',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-hr-reject',
+        expires_at: '2026-08-19T00:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T00:00:00.000Z',
+        last_sent_at: '2026-08-12T00:00:00.000Z',
+        rawToken: 'hr-reject-token',
+      }],
+      initialItems: [{
+        id: 'item-hr-reject',
+        batch_id: 'batch-hr-reject',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T00:00:00.000Z',
+        candidate_name: '候选人甲',
+        mapped_position: '标准运营',
+        hr_disposition: 'pushed',
+        business_screening_status: 'pending',
+      }],
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        stage: 'screening',
+        hr_disposition: 'pushed',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+        business_screening_batch_id: 'batch-hr-reject',
+      }],
+    });
+
+    const rejectResponse = await request('https://ai-interview-88r.pages.dev/api/resumes/resume-1/business-screening/reject', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ comment: 'HR淘汰' }),
+    });
+
+    expect(rejectResponse.status).toBe(200);
+    expect(batches.get('batch-hr-reject')?.status).toBe('revoked');
+    expect(resumes.get('resume-1')).toMatchObject({
+      hr_disposition: 'rejected',
+      business_screening_status: 'rejected',
+      business_screening_remark: 'HR淘汰',
+      business_screened_by: 'HR',
+      status: 'rejected',
+      stage: 'rejected',
+    });
+
+    const callbackResponse = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/hr-reject-token/resumes/resume-1/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '旧链接不应生效' }),
+    });
+
+    expect(callbackResponse.status).toBe(410);
+    await expect(callbackResponse.json()).resolves.toMatchObject({
+      detail: 'Link unavailable',
+    });
+    expect(batchItems.find((item) => item.id === 'item-hr-reject')).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+    });
+    expect(resumes.get('resume-1')).toMatchObject({
+      hr_disposition: 'rejected',
+      business_screening_status: 'rejected',
+      business_screening_remark: 'HR淘汰',
+      business_screened_by: 'HR',
+      status: 'rejected',
+      stage: 'rejected',
     });
   });
 

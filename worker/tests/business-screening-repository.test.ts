@@ -11,6 +11,7 @@ import {
   loadResumePushBatchByTokenHash,
   markResumesPushed,
   recordBusinessScreeningDecision,
+  revokeActiveBusinessScreeningBatchesForResume,
 } from '../src/business-screening/repository';
 
 describe('business screening schema compatibility', () => {
@@ -132,6 +133,31 @@ describe('business screening repository writes', () => {
     expect(calls.find((call) => call.sql.includes('FROM resume_push_batches'))?.values).toEqual(['hash-1']);
   });
 
+  it('revokes every active batch containing the HR-rejected resume', async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            calls.push({ sql, values });
+            return {
+              async run() {
+                return { meta: { changes: 2 } };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await expect(revokeActiveBusinessScreeningBatchesForResume(db as never, 'resume-1')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{
+      sql: expect.stringContaining("UPDATE resume_push_batches"),
+      values: ['resume-1'],
+    }]);
+  });
+
   it('guards business-screening persistence so a pending item transitions once and cannot be overwritten', async () => {
     const db = createDecisionDb();
 
@@ -226,6 +252,7 @@ describe('business screening repository writes', () => {
       processed_at: null,
     });
     expect(db.resume).toMatchObject({
+      hr_disposition: 'pushed',
       status: 'pending_review',
       stage: 'screening',
       approved_at: null,
@@ -235,6 +262,52 @@ describe('business screening repository writes', () => {
       business_screened_at: null,
       business_screened_by: '',
       business_screening_batch_id: 'batch-b',
+    });
+  });
+
+  it('blocks an HR-rejected resume before any batch-item mutation and never reports applied=true', async () => {
+    const db = createDecisionDb({
+      resume: {
+        hr_disposition: 'rejected',
+        status: 'rejected',
+        stage: 'rejected',
+        approved_at: null,
+        rejected_at: '2026-08-12T11:59:00.000Z',
+        business_screening_status: 'rejected',
+        business_screening_remark: 'HR淘汰',
+        business_screened_at: '2026-08-12T11:59:00.000Z',
+        business_screened_by: 'HR',
+        business_screening_batch_id: 'batch-1',
+      },
+    });
+
+    await expect(recordBusinessScreeningDecision(db as never, {
+      batchItemId: 'item-1',
+      resumeId: 'resume-1',
+      batchId: 'batch-1',
+      status: 'passed',
+      remark: '面试官试图改判',
+      screenedAt: '2026-08-12T12:00:00.000Z',
+      screenedBy: '张三',
+    })).resolves.toEqual({
+      applied: false,
+      idempotent: false,
+      status: 'rejected',
+      reason: 'HR already rejected resume',
+    });
+
+    expect(db.item).toMatchObject({
+      status: 'pending',
+      remark: null,
+      processed_at: null,
+    });
+    expect(db.resume).toMatchObject({
+      hr_disposition: 'rejected',
+      business_screening_status: 'rejected',
+      business_screening_remark: 'HR淘汰',
+      business_screened_by: 'HR',
+      status: 'rejected',
+      stage: 'rejected',
     });
   });
 
@@ -359,6 +432,7 @@ describe('business screening repository writes', () => {
 
 function createDecisionDb(overrides?: {
   resume?: {
+    hr_disposition?: string;
     status: string;
     stage: string;
     approved_at: string | null;
@@ -388,6 +462,7 @@ function createDecisionDb(overrides?: {
     },
   };
   const resume = {
+    hr_disposition: overrides?.resume?.hr_disposition || 'pushed',
     status: overrides?.resume?.status || 'pending_review',
     stage: overrides?.resume?.stage || 'screening',
     approved_at: overrides?.resume?.approved_at ?? null,

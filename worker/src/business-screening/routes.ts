@@ -5,6 +5,7 @@ import {
   loadResumePushBatchByTokenHash,
   markResumesPushed,
   recordBusinessScreeningDecision,
+  revokeActiveBusinessScreeningBatchesForResume,
 } from './repository';
 import { groupEligibleResumesByInterviewer, isEligibleForPush } from './service';
 import { createPublicToken, hashPublicToken } from './token';
@@ -87,6 +88,7 @@ export interface BusinessScreeningRouteStore {
       screenedBy?: string | null;
     },
   ): Promise<RecordBusinessScreeningDecisionResult>;
+  revokeActiveBatchesForResume(db: D1Database, resumeId: string): Promise<void>;
   setBatchStatus(db: D1Database, batchId: string, status: 'active' | 'completed' | 'revoked' | 'expired'): Promise<void>;
   setBatchLastSentAt(db: D1Database, batchId: string, sentAt: string): Promise<void>;
   countPendingBatchItems(db: D1Database, batchId: string): Promise<number>;
@@ -324,11 +326,28 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       `UPDATE resumes
           SET hr_disposition = 'rejected',
               hr_review = ?,
+              business_screening_status = CASE
+                WHEN business_screening_status IN ('passed', 'rejected') THEN business_screening_status
+                ELSE 'rejected'
+              END,
+              business_screening_remark = CASE
+                WHEN business_screening_status IN ('passed', 'rejected') THEN business_screening_remark
+                ELSE ?
+              END,
+              business_screened_at = CASE
+                WHEN business_screening_status IN ('passed', 'rejected') THEN business_screened_at
+                ELSE ?
+              END,
+              business_screened_by = CASE
+                WHEN business_screening_status IN ('passed', 'rejected') THEN business_screened_by
+                ELSE ?
+              END,
               status = 'rejected',
               stage = 'rejected',
               updated_at = ?
         WHERE id = ?`,
-    ).bind(comment, decisionAt, id).run();
+    ).bind(comment, comment, decisionAt, 'HR', decisionAt, id).run();
+    await deps.store.revokeActiveBatchesForResume(db, id);
     await deps.recordResumeDecisionTimestamp(db, id, 'rejected', decisionAt);
     const updated = (await deps.store.listResumesByIds(db, [id]))[0];
     return c.json({
@@ -603,6 +622,9 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     },
     async recordDecision(db, input) {
       return recordBusinessScreeningDecision(db, input);
+    },
+    async revokeActiveBatchesForResume(db, resumeId) {
+      await revokeActiveBusinessScreeningBatchesForResume(db, resumeId);
     },
     async setBatchStatus(db, batchId, status) {
       await db.prepare('UPDATE resume_push_batches SET status = ? WHERE id = ?')

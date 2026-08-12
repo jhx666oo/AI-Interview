@@ -68,3 +68,46 @@ Not performed:
 - No production deploy
 - No production D1 writes
 - No dashboard edits
+
+---
+
+## 2026-08-12 latest Task 2 review fix follow-up
+
+Scope:
+- Fix latest Task 2 review issue only
+- Business-screening repository/route behavior and focused regression coverage only
+- No dashboard or unrelated pre-existing files touched
+
+Additional behavior verified:
+- HR `POST /api/resumes/:id/business-screening/reject` revokes every active business-screening batch containing that resume, so old public links return 410
+- `recordBusinessScreeningDecision` blocks interviewer callbacks before any batch-item mutation when the resume is already HR-rejected, already terminal, or business screening is already terminal
+- Blocked HR-rejected callbacks never return `applied=true`, and leave both batch items and resume fields unchanged
+- Existing multi-interviewer and resend behavior remains intact
+
+Verification commands and results:
+
+1. Focused repository/route regression suite
+
+   Command:
+   `cd worker && npm test -- business-screening-repository.test.ts business-screening-routes.test.ts --run`
+
+   Result:
+   - 2 test files passed
+   - 25 tests passed
+
+2. Full Worker suite
+
+   Command:
+   `cd worker && npm test -- --run`
+
+   Result:
+   - 43 test files passed
+   - 306 tests passed
+
+3. Diff hygiene for scoped files
+
+   Command:
+   `git diff --check -- worker/src/business-screening/repository.ts worker/src/business-screening/routes.ts worker/tests/business-screening-repository.test.ts worker/tests/business-screening-routes.test.ts`
+
+   Result:
+   - no whitespace or patch formatting errors

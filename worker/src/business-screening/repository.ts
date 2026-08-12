@@ -150,6 +150,78 @@ export async function loadResumePushBatchByTokenHash(
   ).bind(tokenHash).first<ResumePushBatchRow>();
 }
 
+export async function revokeActiveBusinessScreeningBatchesForResume(
+  db: Db,
+  resumeId: string,
+): Promise<void> {
+  await db.prepare(
+    `UPDATE resume_push_batches
+        SET status = 'revoked'
+      WHERE status = 'active'
+        AND id IN (
+          SELECT DISTINCT batch_id
+            FROM resume_push_batch_items
+           WHERE resume_id = ?
+        )`,
+  ).bind(resumeId).run();
+}
+
+type CurrentResumeDecisionRow = {
+  hr_disposition: string | null;
+  business_screening_status: 'not_ready' | 'pending' | 'passed' | 'rejected' | null;
+  business_screening_batch_id: string | null;
+  status: string | null;
+  stage: string | null;
+};
+
+type CurrentBatchItemDecisionRow = {
+  batch_id: string;
+  resume_id: string;
+  status: 'pending' | 'passed' | 'rejected';
+  remark: string | null;
+  processed_at: string | null;
+};
+
+function buildBlockedDecisionResult(input: RecordBusinessScreeningDecisionInput, currentResume: CurrentResumeDecisionRow, currentItem: CurrentBatchItemDecisionRow): RecordBusinessScreeningDecisionResult {
+  const requestedItemStatus = input.status === 'passed' ? 'passed' : 'rejected';
+  if (currentItem.status === requestedItemStatus) {
+    return {
+      applied: false,
+      idempotent: true,
+      status: input.status,
+    };
+  }
+
+  if (currentResume.hr_disposition === 'rejected') {
+    return {
+      applied: false,
+      idempotent: false,
+      status: currentItem.status === 'passed'
+        ? 'passed'
+        : currentResume.business_screening_status === 'passed'
+          ? 'passed'
+          : 'rejected',
+      reason: 'HR already rejected resume',
+    };
+  }
+
+  if (currentResume.business_screening_status === 'passed' || currentResume.business_screening_status === 'rejected') {
+    return {
+      applied: false,
+      idempotent: false,
+      status: currentResume.business_screening_status,
+      reason: 'business screening already completed',
+    };
+  }
+
+  return {
+    applied: false,
+    idempotent: false,
+    status: currentItem.status === 'passed' ? 'passed' : 'rejected',
+    reason: 'business screening already completed',
+  };
+}
+
 export async function recordBusinessScreeningDecision(
   db: Db,
   input: RecordBusinessScreeningDecisionInput,
@@ -160,6 +232,42 @@ export async function recordBusinessScreeningDecision(
   const resumeStage = input.status === 'passed' ? 'talent_pool' : 'rejected';
   const approvedAt = input.status === 'passed' ? screenedAt : null;
   const rejectedAt = input.status === 'rejected' ? screenedAt : null;
+  const currentResume = await db.prepare(
+    `SELECT hr_disposition, business_screening_status, business_screening_batch_id, status, stage
+       FROM resumes
+      WHERE id = ?
+      LIMIT 1`,
+  ).bind(input.resumeId).first<CurrentResumeDecisionRow>();
+
+  if (!currentResume) {
+    throw new Error('resume not found');
+  }
+
+  const loadCurrentItem = async () => {
+    const currentItem = await db.prepare(
+      `SELECT batch_id, resume_id, status, remark, processed_at
+         FROM resume_push_batch_items
+        WHERE id = ? AND batch_id = ? AND resume_id = ?
+        LIMIT 1`,
+    ).bind(input.batchItemId, input.batchId, input.resumeId).first<CurrentBatchItemDecisionRow>();
+
+    if (!currentItem) {
+      throw new Error('business screening batch item not found');
+    }
+
+    return currentItem;
+  };
+
+  if (
+    currentResume.hr_disposition === 'rejected'
+    || currentResume.status === 'approved'
+    || currentResume.status === 'rejected'
+    || currentResume.business_screening_status === 'passed'
+    || currentResume.business_screening_status === 'rejected'
+  ) {
+    return buildBlockedDecisionResult(input, currentResume, await loadCurrentItem());
+  }
+
   const itemUpdate = await db.prepare(
     `UPDATE resume_push_batch_items
         SET status = ?, remark = ?, processed_at = ?
@@ -174,22 +282,7 @@ export async function recordBusinessScreeningDecision(
   ).run();
 
   if ((itemUpdate.meta?.changes || 0) === 0) {
-    const currentItem = await db.prepare(
-      `SELECT batch_id, resume_id, status, remark, processed_at
-         FROM resume_push_batch_items
-        WHERE id = ? AND batch_id = ? AND resume_id = ?
-        LIMIT 1`,
-    ).bind(input.batchItemId, input.batchId, input.resumeId).first<{
-      batch_id: string;
-      resume_id: string;
-      status: 'pending' | 'passed' | 'rejected';
-      remark: string | null;
-      processed_at: string | null;
-    }>();
-
-    if (!currentItem) {
-      throw new Error('business screening batch item not found');
-    }
+    const currentItem = await loadCurrentItem();
 
     if (currentItem.status === itemStatus) {
       return {
@@ -199,37 +292,18 @@ export async function recordBusinessScreeningDecision(
       };
     }
 
-    const currentResume = await db.prepare(
-      `SELECT business_screening_status, business_screening_batch_id, status, stage
+    const latestResume = await db.prepare(
+      `SELECT hr_disposition, business_screening_status, business_screening_batch_id, status, stage
          FROM resumes
         WHERE id = ?
         LIMIT 1`,
-    ).bind(input.resumeId).first<{
-      business_screening_status: 'not_ready' | 'pending' | 'passed' | 'rejected' | null;
-      business_screening_batch_id: string | null;
-      status: string | null;
-      stage: string | null;
-    }>();
+    ).bind(input.resumeId).first<CurrentResumeDecisionRow>();
 
-    if (!currentResume) {
+    if (!latestResume) {
       throw new Error('resume not found');
     }
 
-    if (currentResume.business_screening_status === 'passed' || currentResume.business_screening_status === 'rejected') {
-      return {
-        applied: false,
-        idempotent: false,
-        status: currentResume.business_screening_status,
-        reason: 'business screening already completed',
-      };
-    }
-
-    return {
-      applied: false,
-      idempotent: false,
-      status: currentItem.status === 'passed' ? 'passed' : 'rejected',
-      reason: 'business screening already completed',
-    };
+    return buildBlockedDecisionResult(input, latestResume, currentItem);
   }
 
   const resumeUpdate = await db.prepare(
