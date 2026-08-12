@@ -94,6 +94,7 @@ export interface CreateResumePushBatchItemInput {
 }
 
 export interface RecordBusinessScreeningDecisionInput {
+  batchItemId: string;
   resumeId: string;
   batchId: string;
   status: Extract<BusinessScreeningStatus, 'passed' | 'rejected'>;

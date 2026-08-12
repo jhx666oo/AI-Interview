@@ -78,6 +78,7 @@ export interface BusinessScreeningRouteStore {
   recordDecision(
     db: D1Database,
     input: {
+      batchItemId: string;
       resumeId: string;
       batchId: string;
       status: 'passed' | 'rejected';
@@ -98,6 +99,7 @@ export interface BusinessScreeningRouteDeps {
   requireRole: (roles: string[]) => (c: any, next: any) => Promise<Response | void>;
   getCurrentUserToken: (env: any, email: string) => Promise<string | null>;
   sendFeishuMessageToUser: (token: string, openId: string, card: unknown) => Promise<unknown>;
+  recordResumeDecisionTimestamp: (db: D1Database, resumeId: string, action: 'approved' | 'rejected' | 'reset', timestamp?: string) => Promise<void>;
   now: () => string;
   uuid: () => string;
   createPublicToken: typeof createPublicToken;
@@ -384,6 +386,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     if (!item) return c.json({ detail: 'Not found' }, 404);
 
     const result = await deps.store.recordDecision(db, {
+      batchItemId: item.id,
       resumeId,
       batchId: batch.id,
       status,

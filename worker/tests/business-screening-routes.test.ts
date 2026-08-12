@@ -143,7 +143,7 @@ function buildHarness(options?: {
       return item ? { ...item } : null;
     },
     async recordDecision(_db, input) {
-      const item = batchItems.find((candidate) => candidate.batch_id === input.batchId && candidate.resume_id === input.resumeId);
+      const item = batchItems.find((candidate) => candidate.id === input.batchItemId && candidate.batch_id === input.batchId && candidate.resume_id === input.resumeId);
       if (!item) throw new Error('business screening batch item not found');
       const resume = resumes.get(input.resumeId);
       const nextItemStatus = input.status === 'passed' ? 'passed' : 'rejected';
@@ -158,14 +158,6 @@ function buildHarness(options?: {
           idempotent: false,
           status: item.status === 'passed' ? 'passed' : 'rejected',
           reason: 'business screening already completed',
-        };
-      }
-      if (resume && (resume.business_screening_batch_id || '') !== input.batchId) {
-        return {
-          applied: false,
-          idempotent: false,
-          status: input.status,
-          reason: 'business screening batch mismatch',
         };
       }
       if (
@@ -187,20 +179,32 @@ function buildHarness(options?: {
       item.status = nextItemStatus;
       item.remark = input.remark || null;
       item.processed_at = input.screenedAt || '2026-08-12T12:00:00.000Z';
+      for (const sibling of batchItems) {
+        if (sibling.resume_id === input.resumeId && sibling.id !== item.id && sibling.status === 'pending') {
+          sibling.status = nextItemStatus;
+          sibling.remark = sibling.remark ?? (input.remark || null);
+          sibling.processed_at = sibling.processed_at ?? item.processed_at;
+        }
+      }
       if (resume) {
-        resume.business_screening_status = input.status;
-        resume.business_screening_remark = input.remark || '';
-        resume.business_screened_at = item.processed_at;
-        resume.business_screened_by = input.screenedBy || '';
-        resume.business_screening_batch_id = input.batchId;
-        resume.status = nextResumeStatus;
-        resume.stage = nextResumeStage;
-        if (nextResumeStatus === 'approved') {
-          resume.approved_at = item.processed_at;
-          resume.rejected_at = null;
-        } else {
-          resume.rejected_at = item.processed_at;
-          resume.approved_at = null;
+        if (
+          resume.business_screening_status === 'not_ready'
+          || resume.business_screening_status === 'pending'
+        ) {
+          resume.business_screening_status = input.status;
+          resume.business_screening_remark = input.remark || '';
+          resume.business_screened_at = item.processed_at;
+          resume.business_screened_by = input.screenedBy || '';
+          resume.business_screening_batch_id = input.batchId;
+          resume.status = nextResumeStatus;
+          resume.stage = nextResumeStage;
+          if (nextResumeStatus === 'approved') {
+            resume.approved_at = item.processed_at;
+            resume.rejected_at = null;
+          } else {
+            resume.rejected_at = item.processed_at;
+            resume.approved_at = null;
+          }
         }
       }
       return { applied: true, idempotent: false, status: input.status };
@@ -247,6 +251,7 @@ function buildHarness(options?: {
       sentMessages.push({ token, openId, card });
       return { message_id: `msg-${openId}` };
     },
+    recordResumeDecisionTimestamp: async () => {},
     now: () => '2026-08-12T12:00:00.000Z',
     uuid: () => {
       tokenCounter += 1;
@@ -591,6 +596,64 @@ describe('business screening routes', () => {
     });
   });
 
+  it('keeps the same pushed resume actionable from every interviewer link in the same push and prevents sibling overwrite', async () => {
+    const { request, createdTokens, resumes, batchItems } = buildHarness();
+
+    const pushResponse = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(pushResponse.status).toBe(200);
+    expect(createdTokens).toHaveLength(2);
+
+    const firstDecision = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}/resumes/resume-1/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '张三建议入库' }),
+    });
+
+    expect(firstDecision.status).toBe(200);
+    await expect(firstDecision.json()).resolves.toMatchObject({
+      ok: true,
+      status: 'passed',
+      idempotent: false,
+    });
+    expect(resumes.get('resume-1')).toMatchObject({
+      business_screening_status: 'passed',
+      status: 'approved',
+      stage: 'talent_pool',
+    });
+    expect(batchItems.filter((item) => item.resume_id === 'resume-1')).toEqual([
+      expect.objectContaining({ status: 'passed' }),
+      expect.objectContaining({ status: 'passed' }),
+    ]);
+
+    const siblingDecision = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[1].token}/resumes/resume-1/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '李四试图改判' }),
+    });
+
+    expect(siblingDecision.status).toBe(409);
+    await expect(siblingDecision.json()).resolves.toMatchObject({
+      detail: expect.stringContaining('already'),
+    });
+    expect(resumes.get('resume-1')).toMatchObject({
+      business_screening_status: 'passed',
+      status: 'approved',
+      stage: 'talent_pool',
+      business_screening_remark: '张三建议入库',
+    });
+    expect(batchItems.filter((item) => item.resume_id === 'resume-1')).toEqual([
+      expect.objectContaining({ status: 'passed' }),
+      expect.objectContaining({ status: 'passed' }),
+    ]);
+  });
+
   it('rejects the opposite public callback after a completion has already been recorded', async () => {
     const { request, resumes } = buildHarness({
       initialBatches: [{
@@ -651,7 +714,7 @@ describe('business screening routes', () => {
     });
   });
 
-  it('rejects stale callbacks from an older batch when the resume now points at a newer batch and leaves all state untouched', async () => {
+  it('rejects callbacks from a revoked older batch and leaves all state untouched', async () => {
     const { request, resumes, batchItems } = buildHarness({
       initialBatches: [
         {
@@ -661,7 +724,7 @@ describe('business screening routes', () => {
           interviewer_open_id: 'ou_zhang',
           token_hash: 'hash-a',
           expires_at: '2026-08-19T00:00:00.000Z',
-          status: 'active',
+          status: 'revoked',
           created_by: 'hr@example.com',
           created_at: '2026-08-12T00:00:00.000Z',
           last_sent_at: '2026-08-12T00:00:00.000Z',
@@ -731,9 +794,9 @@ describe('business screening routes', () => {
       body: JSON.stringify({ remark: '建议入库' }),
     });
 
-    expect(staleApprove.status).toBe(409);
+    expect(staleApprove.status).toBe(410);
     await expect(staleApprove.json()).resolves.toMatchObject({
-      detail: expect.stringContaining('batch'),
+      detail: 'Link unavailable',
     });
     expect(resumes.get('resume-1')).toMatchObject({
       business_screening_status: 'pending',
@@ -860,7 +923,7 @@ describe('business screening routes', () => {
   });
 
   it('reissues only the selected batch on resend and revokes the old link', async () => {
-    const { request, batches, batchItems, sentMessages, createdTokens } = buildHarness({
+    const { request, batches, batchItems, sentMessages, createdTokens, resumes } = buildHarness({
       initialBatches: [{
         id: 'batch-old',
         interviewer_id: 'user-zhang',
@@ -951,5 +1014,38 @@ describe('business screening routes', () => {
     expect(batchItems.filter((item) => item.batch_id !== 'batch-old')).toHaveLength(1);
     expect(sentMessages).toHaveLength(1);
     expect(createdTokens).toHaveLength(1);
+
+    const newLinkDecision = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}/resumes/resume-1/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '重发后入库' }),
+    });
+
+    expect(newLinkDecision.status).toBe(200);
+    await expect(newLinkDecision.json()).resolves.toMatchObject({
+      ok: true,
+      status: 'passed',
+      idempotent: false,
+    });
+    expect(resumes.get('resume-1')).toMatchObject({
+      business_screening_status: 'passed',
+      status: 'approved',
+      stage: 'talent_pool',
+      business_screening_remark: '重发后入库',
+    });
+
+    const staleDecision = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/old-token/resumes/resume-1/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '过期链接不应生效' }),
+    });
+
+    expect(staleDecision.status).toBe(410);
+    expect(resumes.get('resume-1')).toMatchObject({
+      business_screening_status: 'passed',
+      status: 'approved',
+      stage: 'talent_pool',
+      business_screening_remark: '重发后入库',
+    });
   });
 });
