@@ -10,7 +10,8 @@
     "RESUME_SQL_LIST": "true",
     "RESUME_HYBRID_SEARCH": "false",
     "RECRUITMENT_EVENTS": "false",
-    "RECRUITMENT_EVENT_METRICS": "false"
+    "RECRUITMENT_EVENT_METRICS": "false",
+    "AI_FALLBACK_ENABLED": "false"
   },
   "d1_databases": [{
     "binding": "DB",
