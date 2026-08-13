@@ -16,6 +16,9 @@ export const RESUME_LIST_COMPATIBILITY_MIGRATIONS = [
   "ALTER TABLE resumes ADD COLUMN certifications TEXT DEFAULT ''",
   "ALTER TABLE resumes ADD COLUMN self_evaluation TEXT DEFAULT ''",
   "ALTER TABLE resumes ADD COLUMN updated_at TEXT DEFAULT ''",
+  // Business screening columns read by both resume list paths
+  "ALTER TABLE resumes ADD COLUMN hr_disposition TEXT DEFAULT 'pending'",
+  "ALTER TABLE resumes ADD COLUMN business_screening_status TEXT DEFAULT 'not_ready'",
 ] as const;
 
 /**

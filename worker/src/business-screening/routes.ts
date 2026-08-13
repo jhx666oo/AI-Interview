@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import {
   createResumePushBatch,
+  ensureBusinessScreeningSchema,
   insertResumePushBatchItems,
   loadResumePushBatchByTokenHash,
   markResumesPushed,
@@ -200,6 +201,18 @@ function summarizeSkipReason(
 
 export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) {
   const app = new Hono<{ Bindings: any }>();
+
+  // Ensure additive resumes columns and push tables exist (idempotent) before
+  // any business-screening handler reads/writes them. This covers deployments
+  // where only /api/resumes (not /api/init/status) has run so far.
+  app.use('*', async (c, next) => {
+    try {
+      await ensureBusinessScreeningSchema(c.env.DB as D1Database);
+    } catch (error) {
+      console.error('[business-screening] schema ensure failed', error);
+    }
+    return next();
+  });
 
   app.post('/api/resumes/business-screening/push', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     const body = await c.req.json().catch(() => ({}));
