@@ -19,7 +19,10 @@ describe('public business screening page contract', () => {
 
   it('renders card/detail layout with a mobile-safe grid fallback', () => {
     expect(source).toContain('business-screening-grid');
-    expect(source).toContain('@media (max-width: 900px)');
+    expect(source).toContain('@media (max-width: 1024px)');
+    expect(source).toContain('grid-template-columns: 1fr !important');
+    expect(source).toContain('overflowWrap: \'anywhere\'');
+    expect(source).toContain('business-screening-actions');
     expect(source).toContain('筛选备注');
     expect(source).toContain('候选人列表');
   });

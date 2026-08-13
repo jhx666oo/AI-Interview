@@ -161,20 +161,20 @@ const BusinessScreeningPage: React.FC = () => {
   }
 
   return (
-    <div style={shellStyle}>
-      <div style={{ maxWidth: 1160, margin: '0 auto' }}>
+    <div className="business-screening-page" style={shellStyle}>
+      <div className="business-screening-container" style={{ maxWidth: 1160, margin: '0 auto' }}>
         <div style={{ ...cardStyle, padding: 20 }}>
           <div style={{ marginBottom: 20 }}>
             <h1 style={{ margin: 0, fontSize: 32 }}>业务筛选</h1>
             <p style={{ margin: '8px 0 12px', color: '#64748b' }}>请查看候选人信息并完成入库 / 不入库决策。</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              <span style={{ borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', fontSize: 14 }}>
+            <div className="business-screening-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', fontSize: 14 }}>
                 {data?.batch.interviewer || '待分配'}
               </span>
-              <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>
+              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>
                 候选人 {data?.resumes.length || 0} 人
               </span>
-              <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>
+              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>
                 链接到期 {formatTime(data?.batch.expiresAt)}
               </span>
             </div>
@@ -189,7 +189,7 @@ const BusinessScreeningPage: React.FC = () => {
                 gap: 16,
               }}
             >
-              <section style={{ ...cardStyle, padding: 12 }}>
+              <section className="business-screening-candidates" style={{ ...cardStyle, padding: 12, minWidth: 0 }}>
                 <h2 style={{ margin: '4px 4px 12px', fontSize: 18 }}>候选人列表</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {data.resumes.map((resume) => {
@@ -199,6 +199,7 @@ const BusinessScreeningPage: React.FC = () => {
                         key={resume.id}
                         type="button"
                         onClick={() => setActiveResumeId(resume.id)}
+                        className="business-screening-candidate"
                         style={{
                           textAlign: 'left',
                           border: selected ? '1px solid #2563eb' : '1px solid #e2e8f0',
@@ -208,13 +209,13 @@ const BusinessScreeningPage: React.FC = () => {
                           cursor: 'pointer',
                         }}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                        <div className="business-screening-candidate-summary" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                           <strong>{resume.candidateName}</strong>
                           <span style={{ color: resume.status === 'passed' ? '#15803d' : resume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontSize: 13 }}>
                             {STATUS_LABELS[resume.status]}
                           </span>
                         </div>
-                        <div style={{ marginTop: 6, color: '#475569' }}>{resume.position}</div>
+                        <div className="business-screening-position" style={{ marginTop: 6, color: '#475569', overflowWrap: 'anywhere' }}>{resume.position}</div>
                         {resume.remark ? (
                           <div style={{ marginTop: 6, color: '#64748b', fontSize: 13 }}>{resume.remark}</div>
                         ) : null}
@@ -224,14 +225,14 @@ const BusinessScreeningPage: React.FC = () => {
                 </div>
               </section>
 
-              <section style={{ ...cardStyle, padding: 20 }}>
+              <section className="business-screening-detail" style={{ ...cardStyle, padding: 20, minWidth: 0 }}>
                 {activeResume ? (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                       <div>
                         <h2 style={{ margin: 0, fontSize: 24 }}>{activeResume.candidateName}</h2>
                         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                          <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>{activeResume.position}</span>
+                          <span className="business-screening-position" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14, overflowWrap: 'anywhere' }}>{activeResume.position}</span>
                           {activeResume.education ? <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>{activeResume.education}</span> : null}
                           {activeResume.workExperience ? <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>{activeResume.workExperience}</span> : null}
                         </div>
@@ -241,7 +242,7 @@ const BusinessScreeningPage: React.FC = () => {
                       </div>
                     </div>
 
-                    <div style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+                    <div className="business-screening-facts" style={{ marginTop: 20, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
                       <div>
                         <div style={{ color: '#64748b', fontSize: 13 }}>应聘岗位</div>
                         <div>{activeResume.position}</div>
@@ -291,7 +292,7 @@ const BusinessScreeningPage: React.FC = () => {
                       <div style={{ marginTop: 12, color: '#b91c1c' }}>{actionError}</div>
                     ) : null}
 
-                    <div style={{ marginTop: 20, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                    <div className="business-screening-actions" style={{ marginTop: 20, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                       <button
                         type="button"
                         disabled={submitting !== null}
@@ -342,9 +343,73 @@ const BusinessScreeningPage: React.FC = () => {
       </div>
 
       <style>{`
-        @media (max-width: 900px) {
+        .business-screening-page,
+        .business-screening-page * {
+          box-sizing: border-box;
+        }
+
+        @media (max-width: 1024px) {
           .business-screening-grid {
-            grid-template-columns: 1fr;
+            grid-template-columns: 1fr !important;
+          }
+        }
+
+        @media (max-width: 600px) {
+          .business-screening-page {
+            padding: 8px !important;
+          }
+
+          .business-screening-container > div {
+            padding: 14px !important;
+            border-radius: 14px;
+          }
+
+          .business-screening-page h1 {
+            font-size: clamp(26px, 8vw, 32px) !important;
+            line-height: 1.2;
+          }
+
+          .business-screening-page h2 {
+            line-height: 1.3;
+          }
+
+          .business-screening-meta {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .business-screening-meta-pill {
+            width: 100%;
+            border-radius: 10px !important;
+          }
+
+          .business-screening-candidates,
+          .business-screening-detail {
+            padding: 14px !important;
+          }
+
+          .business-screening-candidate-summary {
+            align-items: flex-start !important;
+          }
+
+          .business-screening-candidate-summary strong {
+            min-width: 0;
+            overflow-wrap: anywhere;
+          }
+
+          .business-screening-facts {
+            grid-template-columns: minmax(0, 1fr) !important;
+          }
+
+          .business-screening-actions {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .business-screening-actions button {
+            width: 100%;
+            min-height: 44px;
+            padding-inline: 10px !important;
           }
         }
       `}</style>
