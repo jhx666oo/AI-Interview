@@ -3,7 +3,7 @@ import {
   ACTIVE_JOB_STATUSES,
   isTerminalJobStatus,
 } from '../src/resume-processing/types';
-import { claimJob, createOrGetActiveJob, updateJobAIDiagnostics } from '../src/resume-processing/job-repository';
+import { claimJob, createOrGetActiveJob, updateJobAIDiagnostics, assertJobRunning, ResumeProcessingCancelledError } from '../src/resume-processing/job-repository';
 
 describe('resume processing job status contract', () => {
   it('only treats completed, failed, and cancelled as terminal', () => {
@@ -152,5 +152,22 @@ describe('structured log hygiene', () => {
     expect(source).not.toMatch(/logResumeProcessing(?:Error)?\([^)]*apiKey/);
     // 日志对象字段白名单只允许 ID、provider、model、attempt、长度、错误码、阶段
     expect(source).toMatch(/'ai.screening.validation_failed'/);
+  });
+});
+
+describe('job cancellation protection', () => {
+  it('assertJobRunning passes while the job is running', async () => {
+    const db = { prepare: () => ({ bind: () => ({ first: async () => ({ status: 'running' }) }) }) };
+    await expect(assertJobRunning(db as never, 'job-1')).resolves.toBeUndefined();
+  });
+
+  it('assertJobRunning rejects with BATCH_CANCELLED when the job was cancelled', async () => {
+    const db = { prepare: () => ({ bind: () => ({ first: async () => ({ status: 'cancelled' }) }) }) };
+    await expect(assertJobRunning(db as never, 'job-1')).rejects.toBeInstanceOf(ResumeProcessingCancelledError);
+  });
+
+  it('assertJobRunning rejects when the job no longer exists', async () => {
+    const db = { prepare: () => ({ bind: () => ({ first: async () => null }) }) };
+    await expect(assertJobRunning(db as never, 'job-1')).rejects.toBeInstanceOf(ResumeProcessingCancelledError);
   });
 });

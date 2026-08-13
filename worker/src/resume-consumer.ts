@@ -1,6 +1,6 @@
 import type { ResumeProcessingQueueMessage, ResumeQueueMessage } from './resume-processing/types';
 import { failHistoricalResumeReprocessBatch, processHistoricalResumeReprocessPage } from './resume-processing/reprocess';
-import { claimJob, updateJobAIDiagnostics } from './resume-processing/job-repository';
+import { assertJobRunning, claimJob, ResumeProcessingCancelledError, updateJobAIDiagnostics } from './resume-processing/job-repository';
 import { syncReprocessBatchItemByJob } from './resume-processing/batch-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
@@ -101,6 +101,15 @@ export async function handleResumeQueueMessage(
       await deps.resetJob(message.body.jobId);
       if (onRetry) await onRetry(message.body.jobId).catch(() => undefined);
       message.retry({ delaySeconds: 30 });
+      return;
+    }
+    if (error instanceof ResumeProcessingCancelledError) {
+      // 批次停止后 in-flight AI 不应写回结果；直接 ack，不把 job 标失败。
+      logResumeProcessingError('resume_processing.cancelled_before_write', error, {
+        jobId: message.body.jobId,
+        resumeId: message.body.resumeId,
+      });
+      message.ack();
       return;
     }
     logResumeProcessingError('consumer.process.fail', error, {
@@ -225,6 +234,7 @@ async function getResumeFileContent(env: ConsumerEnv, resumeId: string): Promise
 
 async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Promise<void> {
   await processResume(message, {
+    assertJobRunning: (jobId) => assertJobRunning(env.DB, jobId),
     getResume: async (id) => await env.DB.prepare('SELECT * FROM resumes WHERE id=?').bind(id).first() as any,
     getText: async (resume) => {
       const baseUrl = (env.MINERU_BASE || 'https://mineru.net').replace(/\/$/, '');
@@ -464,6 +474,8 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         fields,
       );
       const score = enrichedEvaluation.weighted_score ?? null;
+      // in-flight 保护：批次停止后不允许把本次评估写回简历
+      await assertJobRunning(env.DB, message.jobId);
       await updateResume(env.DB, message.resumeId, {
         ai_review: JSON.stringify(enrichedEvaluation),
         ai_evaluation: JSON.stringify(enrichedEvaluation),
@@ -484,6 +496,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
 
 async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Promise<void> {
   await processResume(message, {
+    assertJobRunning: (jobId) => assertJobRunning(env.DB, jobId),
     getResume: async (id) => await env.DB.prepare('SELECT * FROM resumes WHERE id=?').bind(id).first() as any,
     getText: async (resume) => {
       const baseUrl = (env.MINERU_BASE || 'https://mineru.net').replace(/\/$/, '');
@@ -639,6 +652,8 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         fields,
       );
       const score = enrichedEvaluation.weighted_score ?? null;
+      // in-flight 保护：批次停止后不允许把本次评估写回简历
+      await assertJobRunning(env.DB, message.jobId);
       await updateResume(env.DB, message.resumeId, {
         ai_review: JSON.stringify(enrichedEvaluation),
         ai_evaluation: JSON.stringify(enrichedEvaluation),

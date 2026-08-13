@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import {
   hasValidAiEvaluation,
 } from '../src/resume-processing/types';
+import { cancelReprocessBatch } from '../src/resume-processing/batch-repository';
 
 describe('hasValidAiEvaluation', () => {
   it('rejects null and undefined', () => {
@@ -50,3 +51,51 @@ describe('hasValidAiEvaluation', () => {
     expect(hasValidAiEvaluation('{ invalid')).toBe(false);
   });
 });
+
+describe('cancelReprocessBatch', () => {
+  it('cancels both queued and running jobs and skips active items', async () => {
+    const db = createCancelDb('b1', 'owner-1');
+    const ok = await cancelReprocessBatch(db as never, 'b1', 'owner-1');
+    expect(ok).toBe(true);
+
+    const jobUpdate = db.calls.find((sql: string) => sql.includes('UPDATE resume_processing_jobs') && sql.includes('status='));
+    expect(jobUpdate).toBeDefined();
+    expect(jobUpdate).not.toContain("WHERE status='queued'");
+    expect(jobUpdate).toContain("status IN ('queued', 'running')");
+
+    const itemUpdate = db.calls.find((sql: string) => sql.includes('UPDATE resume_reprocess_batch_items'));
+    expect(itemUpdate).toBeDefined();
+    expect(itemUpdate).toContain("status IN ('pending', 'queued', 'running')");
+  });
+
+  it('refuses to cancel another owner batch', async () => {
+    const db = createCancelDb('b1', 'owner-1');
+    const ok = await cancelReprocessBatch(db as never, 'b1', 'other-owner');
+    expect(ok).toBe(false);
+  });
+});
+
+function createCancelDb(batchId: string, owner: string | null) {
+  const calls: string[] = [];
+  return {
+    calls,
+    prepare(sql: string) {
+      return {
+        bind(..._values: unknown[]) {
+          return {
+            async first() {
+              if (sql.includes('FROM resume_reprocess_batches')) {
+                return { id: batchId, owner, status: 'running' };
+              }
+              return null;
+            },
+            async run() {
+              calls.push(sql);
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+}

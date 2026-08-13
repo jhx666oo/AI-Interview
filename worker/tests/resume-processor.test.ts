@@ -12,6 +12,7 @@ describe('resume processor', () => {
       screen: async () => { calls.push('screen'); return { match_score: 82, summary: 'good' }; },
       updateResume: async (id) => { writes.push(id); },
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
     expect(calls).toEqual(['fields', 'screen']);
     expect(writes).toEqual(['resume-1', 'resume-1', 'resume-1']);
@@ -26,6 +27,7 @@ describe('resume processor', () => {
       screen: async () => { aiCalls += 1; return {}; },
       updateResume: async () => undefined,
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
     expect(aiCalls).toBe(0);
   });
@@ -39,6 +41,7 @@ describe('resume processor', () => {
       screen: async () => { screenCalls += 1; return { weighted_score: 5, screening_result: '通过' }; },
       updateResume: async () => undefined,
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
     expect(screenCalls).toBe(1);
   });
@@ -61,6 +64,7 @@ describe('resume processor', () => {
       },
       updateResume: async (_id, update) => { updates.push(update); },
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
 
     expect(updates.some((update) => Object.prototype.hasOwnProperty.call(update, 'raw_text'))).toBe(false);
@@ -77,6 +81,7 @@ describe('resume processor', () => {
       screen: async () => ({}),
       updateResume: async (_id, update) => { updates.push(update); },
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
     expect(fieldCalls).toBe(1);
     expect(updates.at(-1)).toMatchObject({ parse_status: 'ai_screened' });
@@ -103,6 +108,7 @@ describe('resume processor', () => {
       },
       updateResume: async (_id, update) => { updates.push(update); },
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
 
     expect(fieldCalls).toBe(1);
@@ -129,6 +135,7 @@ describe('resume processor', () => {
       screen: async () => ({ weighted_score: 4, screening_result: '通过' }),
       updateResume: async () => undefined,
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
 
     expect(fieldCalls).toBe(1);
@@ -147,6 +154,7 @@ describe('resume processor', () => {
       }),
       updateResume: async (_id, update) => { updates.push(update); },
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
     expect(updates.at(-1)).toMatchObject({
       parse_status: 'ai_screened',

@@ -113,6 +113,31 @@ export interface JobAIDiagnostics {
   errorStage?: string | null;
 }
 
+/** Thrown when a job was cancelled (batch stopped) before an in-flight AI write. */
+export class ResumeProcessingCancelledError extends Error {
+  readonly code = 'BATCH_CANCELLED';
+  constructor(message = '任务已被用户停止，不再写入评估结果') {
+    super(message);
+  }
+}
+
+/**
+ * Guard called before every resume write. If the job is no longer running
+ * (cancelled by a batch stop, or already completed/failed by a duplicate
+ * consumer), throw so the in-flight result is never persisted.
+ */
+export async function assertJobRunning(
+  db: Pick<D1Database, 'prepare'>,
+  jobId: string,
+): Promise<void> {
+  const row = await db.prepare('SELECT status FROM resume_processing_jobs WHERE id=?')
+    .bind(jobId)
+    .first() as { status: string } | null;
+  if (!row || row.status !== 'running') {
+    throw new ResumeProcessingCancelledError('任务已停止，不再写入评估结果');
+  }
+}
+
 /** Persist AI provider/model/attempt/length/error-stage diagnostics for a job. */
 export async function updateJobAIDiagnostics(
   db: Pick<D1Database, 'prepare'>,

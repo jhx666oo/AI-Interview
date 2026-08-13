@@ -15,6 +15,7 @@ export type ResumeProcessorDeps = {
   screen(text: string, fields: Record<string, unknown>, resume: ResumeRow): Promise<Record<string, unknown>>;
   updateResume(resumeId: string, update: Record<string, unknown>): Promise<void>;
   setJobStep(jobId: string, step: ResumeJobStep): Promise<void>;
+  assertJobRunning(jobId: string): Promise<void>;
 };
 
 function jsonObject(value: string | null): Record<string, unknown> | null {
@@ -58,6 +59,7 @@ export async function processResume(
   await deps.setJobStep(message.jobId, 'extracting_text');
   const text = await deps.getText(resume);
   if (text.trim().length < 20) throw new Error('RESUME_TEXT_UNAVAILABLE');
+  await deps.assertJobRunning(message.jobId);
   await deps.updateResume(message.resumeId, message.reprocess
     ? { parse_status: 'extracting_fields' }
     : { raw_text: text, parse_status: 'extracting_fields' });
@@ -77,6 +79,7 @@ export async function processResume(
       ...extractedFields,
       _fields_extracted: true,
     };
+    await deps.assertJobRunning(message.jobId);
     fields = mergedFields;
     await deps.updateResume(message.resumeId, { parsed_data: JSON.stringify(mergedFields), parse_status: 'screening' });
   }
@@ -84,6 +87,7 @@ export async function processResume(
   if (message.reprocess || !jsonObject(resume.ai_evaluation)) {
     await deps.setJobStep(message.jobId, 'screening');
     const result = await deps.screen(text, fields, resume);
+    await deps.assertJobRunning(message.jobId);
     await deps.updateResume(message.resumeId, {
       ai_review: JSON.stringify(result),
       ai_evaluation: JSON.stringify(result),
@@ -99,6 +103,7 @@ export async function processResume(
     });
   } else {
     // 补字段任务不应把已有评估的简历永久留在 screening 状态。
+    await deps.assertJobRunning(message.jobId);
     await deps.updateResume(message.resumeId, { parse_status: 'ai_screened' });
   }
 }

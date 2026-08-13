@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleResumeQueueMessage, RetryableResumeError } from '../src/resume-consumer';
 import { processResume } from '../src/resume-processing/processor';
 import { enrichScreeningEvaluation } from '../src/index';
+import { ResumeProcessingCancelledError } from '../src/resume-processing/job-repository';
 
 describe('resume queue consumer', () => {
   it('acknowledges a completed job', async () => {
@@ -49,6 +50,7 @@ describe('resume queue consumer', () => {
       screen: async () => enrichScreeningEvaluation(rawAiEvaluation, config),
       updateResume: async (_id, update) => { updates.push(update); },
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
 
     const persisted = updates.at(-1)!;
@@ -74,6 +76,7 @@ describe('resume queue consumer', () => {
       screen: async () => enrichScreeningEvaluation({ match_score: 62, dimensions: config.map(({ name }) => ({ name, score: name === '避坑雷区' ? 4 : 5 })) }, config),
       updateResume: async (_id, update) => { updates.push(update); },
       setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
     });
 
     const persisted = updates.at(-1)!;
@@ -92,3 +95,19 @@ function fakeMessage() {
     retry: vi.fn(),
   };
 }
+
+describe('cancelled in-flight job', () => {
+  it('acks without marking the job failed when cancelled before write', async () => {
+    const message = fakeMessage();
+    const fail = vi.fn();
+    await handleResumeQueueMessage(message as never, {
+      claim: async () => ({ id: 'job-1' }),
+      process: async () => { throw new ResumeProcessingCancelledError(); },
+      complete: async () => undefined,
+      resetJob: async () => undefined,
+      fail,
+    });
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(fail).not.toHaveBeenCalled();
+  });
+});
