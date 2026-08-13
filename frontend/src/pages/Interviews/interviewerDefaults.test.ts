@@ -28,6 +28,15 @@ describe('interviewer scheduling defaults', () => {
       secondaryInterviewer: '',
       matchedPositionTitle: '运营经理',
     });
+
+    expect(resolveScheduleInterviewerDefaults({
+      standard_position: 'iot',
+      position_applied: 'iot',
+    }, [{ title: '软件产品经理（智能硬件方向）', primary_interviewer: '杜雁玲', secondary_interviewer: '何雨菱' }])).toEqual({
+      interviewerName: '杜雁玲',
+      secondaryInterviewer: '何雨菱',
+      matchedPositionTitle: '软件产品经理（智能硬件方向）',
+    });
   });
 
   it('stores frontend defaults when HR leaves the fields unchanged and keeps overrides when provided', () => {

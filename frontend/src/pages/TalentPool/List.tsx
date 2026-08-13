@@ -87,17 +87,16 @@ const TalentPoolList: React.FC = () => {
     {
       title: '标准岗位', key: 'position', width: 160,
       render: (_: any, record: any) => {
-        const mapped = record.mapped_position || '';
         const standard = record.standard_position || '';
         const original = record.position_applied || '';
-        if (mapped) {
+        if (standard) {
           return (
             <Tooltip title={`原始岗位: ${original || '-'}`}>
-              <Tag color="blue">{mapped}</Tag>
+              <Tag color="blue">{standard}</Tag>
             </Tooltip>
           );
         }
-        return <span>{standard || original || '-'}</span>;
+        return <span>{original || '-'}</span>;
       }
     },
     {

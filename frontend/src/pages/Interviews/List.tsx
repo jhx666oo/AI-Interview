@@ -98,6 +98,20 @@ const InterviewsList: React.FC = () => {
   const [createForm] = Form.useForm();
   const [creating, setCreating] = useState(false);
 
+  const applyCreatePositionDefaults = () => {
+    const positionName = createForm.getFieldValue('position_applied');
+    const defaults = resolveScheduleInterviewerDefaults({
+      standard_position: positionName,
+      position_applied: positionName,
+    }, positions);
+    if (!defaults.matchedPositionTitle) return;
+    createForm.setFieldsValue({
+      interviewer_name: defaults.interviewerName || undefined,
+      secondary_interviewer: defaults.secondaryInterviewer || undefined,
+      position_applied: defaults.matchedPositionTitle,
+    });
+  };
+
   // 编辑面试状态
   // 新建面试提交
   const handleCreateSubmit = async () => {
@@ -250,7 +264,7 @@ const InterviewsList: React.FC = () => {
         return {
           id: c.id || c.feishu_record_id,
           candidate_name: c.candidate_name || '未知',
-          position: c.mapped_position || '',
+          position: c.standard_position || c.mapped_position || c.position_applied || '',
           position_applied: c.position_applied || '',
           standard_position: c.standard_position || c.position_applied || '',
           education: c.education || '',
@@ -283,7 +297,7 @@ const InterviewsList: React.FC = () => {
           candidate_name: iv.candidate_name || iv._candidate_name || '未知',
           position: iv._position_title || '',
           position_applied: iv.position_applied || '',
-          standard_position: '',
+          standard_position: iv._position_title || iv.position_applied || '',
           education: '',
           city: '',
           talent_status: 'manual',
@@ -552,7 +566,7 @@ const InterviewsList: React.FC = () => {
         if (r.position) {
           return (
             <Tooltip title={`原始岗位: ${r.position_applied || '-'}`}>
-              <Tag color="blue">{r.position}</Tag>
+              <Tag color="blue">{r.standard_position || r.position}</Tag>
             </Tooltip>
           );
         }
@@ -895,7 +909,7 @@ const InterviewsList: React.FC = () => {
             <Input placeholder="输入候选人姓名" />
           </Form.Item>
           <Form.Item name="position_applied" label="应聘岗位">
-            <Input placeholder="例如：前端工程师（可选）" />
+            <Input placeholder="例如：前端工程师（可选）" onBlur={applyCreatePositionDefaults} />
           </Form.Item>
           <Form.Item name="interviewer_name" label="一面面试官">
             <Input placeholder="输入一面面试官姓名（可选）" />

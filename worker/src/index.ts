@@ -23,6 +23,7 @@ import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStor
 import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
 import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
 import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
+import { buildPositionMappingFromRows, resolveMappedPosition } from './position-mapping';
 import { buildInterviewReminderView, deliverInterviewReminder } from './feishu-notifications/interview-reminder';
 import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveReminderInterviewer } from './feishu-notifications/reminder-source';
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
@@ -2670,6 +2671,7 @@ function parseD1TalentRow(row: any): Record<string, any> {
     candidate_name: first(row?.candidate_name, parsed.name, parsed.candidate_name),
     position_applied: first(row?.position_applied, parsed.position_applied),
     mapped_position: first(row?.mapped_position, parsed.mapped_position, parsed.standard_position),
+    standard_position: first(row?.standard_position, parsed.standard_position),
     gender: first(row?.gender, parsed.gender),
     city: first(row?.city, parsed.city),
     age: first(row?.age, parsed.age),
@@ -3040,12 +3042,8 @@ function extractResumeFile(fieldValue: any): { file_token?: string; name?: strin
 
 // 从 position_mappings 表构建 raw_name → mapped_name 映射
 async function buildPositionMapping(db: any): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  const mappings = await db.prepare('SELECT raw_name, mapped_name FROM position_mappings').all();
-  (mappings.results || []).forEach((r: any) => {
-    if (r.raw_name && r.mapped_name) map.set(r.raw_name, r.mapped_name);
-  });
-  return map;
+  const mappings = await db.prepare('SELECT raw_name, raw_names, mapped_name FROM position_mappings').all();
+  return buildPositionMappingFromRows(mappings.results || []);
 }
 
 // 从招聘任务记录转成前端可用的格式
@@ -4044,6 +4042,14 @@ app.get('/api/talent-pool', authMiddleware, async (c) => {
       console.error(`[TalentPool] D1 query failed: ${error?.message || error}`);
     }
     let items = d1Rows.map(parseD1TalentRow);
+    try {
+      const mappings = await c.env.DB.prepare('SELECT raw_name, raw_names, mapped_name FROM position_mappings').all();
+      const positionMap = buildPositionMappingFromRows(mappings.results || []);
+      items = items.map((item: any) => ({
+        ...item,
+        standard_position: resolveMappedPosition(positionMap, item.mapped_position || item.position_applied || ''),
+      }));
+    } catch {}
 
     const nameFilter = c.req.query('candidate_name');
     const statusFilter = c.req.query('status');
@@ -4247,13 +4253,34 @@ export function resolveInterviewAssignments(body: any, position: any): {
   secondaryInterviewer: string;
 } {
   const clean = (value: any) => value === undefined || value === null ? '' : String(value).trim();
-  const primaryInterviewer = clean(body?.interviewer_name || body?.primary_interviewer || position?.primary_interviewer);
+  const primaryInterviewer = clean(body?.interviewer_name || body?.primary_interviewer || body?.interviewer || position?.primary_interviewer);
   const secondaryInterviewer = clean(body?.secondary_interviewer || position?.secondary_interviewer);
   return {
     interviewer: primaryInterviewer || '待分配',
     primaryInterviewer,
     secondaryInterviewer,
   };
+}
+
+async function findPositionByName(db: any, positionName: unknown): Promise<any | null> {
+  const rawName = typeof positionName === 'string' ? positionName.trim() : '';
+  if (!rawName) return null;
+  const direct = await db.prepare(
+    'SELECT id, title, primary_interviewer, secondary_interviewer FROM positions WHERE title = ? LIMIT 1'
+  ).bind(rawName).first();
+  if (direct) return direct;
+
+  const mappings = await db.prepare(
+    'SELECT raw_name, raw_names, mapped_name FROM position_mappings'
+  ).all();
+  const mappedName = resolveMappedPosition(
+    buildPositionMappingFromRows(mappings.results || []),
+    rawName,
+  );
+  if (!mappedName || mappedName === rawName) return null;
+  return db.prepare(
+    'SELECT id, title, primary_interviewer, secondary_interviewer FROM positions WHERE title = ? LIMIT 1'
+  ).bind(mappedName).first();
 }
 
 // 从人才库创建面试（人才库"面试"按钮调用）
@@ -4370,23 +4397,28 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
     // 创建面试记录
     const interviewId = crypto.randomUUID();
 
-    // 从 positions 表同步面试官信息（一面/二面）
-    // 只在用户没有手动指定面试官时补充
+    // 从岗位管理读取一面/二面默认面试官；岗位名支持原始岗位、别名和标准岗位名。
     let positionInterviewers: any = null;
-    if (!interviewer_name && position_applied) {
-      try {
-        positionInterviewers = await c.env.DB.prepare(
-          "SELECT primary_interviewer, secondary_interviewer FROM positions WHERE title = ? LIMIT 1"
-        ).bind(position_applied).first() as any;
-      } catch {}
-    }
+    try {
+      positionInterviewers = await findPositionByName(c.env.DB, position_applied);
+    } catch {}
     const assignment = resolveInterviewAssignments({ interviewer_name, secondary_interviewer }, positionInterviewers);
-    const interviewerStr = interviewerNames.length > 0 ? interviewerNames.join(', ') : assignment.interviewer;
+    const interviewerStr = assignment.primaryInterviewer || interviewerNames.join(', ') || assignment.interviewer;
 
     await c.env.DB.prepare(
-      `INSERT INTO interviews (id, resume_id, candidate_name, interviewer, position_id, status, created_at, comments, primary_interviewer, secondary_interviewer)
-       VALUES (?, ?, ?, ?, ?, 'scheduled', datetime('now'), ?, ?, ?)`
-    ).bind(interviewId, feishu_record_id || '', candidate_name, interviewerStr, position_applied || '', '', assignment.primaryInterviewer, assignment.secondaryInterviewer).run();
+      `INSERT INTO interviews (id, resume_id, candidate_name, interviewer, position_id, position_applied, status, created_at, comments, primary_interviewer, secondary_interviewer)
+       VALUES (?, ?, ?, ?, ?, ?, 'scheduled', datetime('now'), ?, ?, ?)`
+    ).bind(
+      interviewId,
+      feishu_record_id || '',
+      candidate_name,
+      interviewerStr,
+      positionInterviewers?.id || position_applied || '',
+      positionInterviewers?.title || resolveMappedPosition(await buildPositionMapping(c.env.DB), position_applied || ''),
+      '',
+      assignment.primaryInterviewer,
+      assignment.secondaryInterviewer,
+    ).run();
 
     // == 给面试官发飞书私信 ==
     const notificationResults: string[] = [];
@@ -5272,7 +5304,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       const positionMap = await buildPositionMapping(c.env.DB);
       filtered = filtered.map((i: any) => {
         const raw = i.mapped_position || i.position_applied || '';
-        i.standard_position = raw ? (positionMap.get(raw) || raw) : '';
+        i.standard_position = resolveMappedPosition(positionMap, raw);
         return i;
       });
     } catch {}
@@ -5282,7 +5314,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       const positionMap = await buildPositionMapping(c.env.DB);
       filtered = filtered.filter((i: any) => {
         const raw = i.mapped_position || i.position_applied || '';
-        return raw === positionFilter || positionMap.get(raw) === positionFilter;
+        return raw === positionFilter || resolveMappedPosition(positionMap, raw) === positionFilter;
       });
     }
     if (majorFilter) filtered = filtered.filter(i => (i.major || '').includes(majorFilter));
@@ -5362,18 +5394,11 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
     const records = await bitableListRecords(c.env, tableId);
 
     // 岗位映射：raw_name / raw_names 两种结构都兼容
-    const posMap = new Map<string, string>();
-    try {
-      const mps = await c.env.DB.prepare('SELECT raw_name, raw_names, mapped_name FROM position_mappings').all();
-      for (const r of (mps.results || []) as any[]) {
-        if (r.raw_name && r.mapped_name) posMap.set(r.raw_name, r.mapped_name);
-        if (r.raw_names) {
-          try {
-            for (const rn of JSON.parse(r.raw_names)) posMap.set(rn, r.mapped_name);
-          } catch {}
-        }
-      }
-    } catch {}
+      let posMap = new Map<string, string>();
+      try {
+        const mps = await c.env.DB.prepare('SELECT raw_name, raw_names, mapped_name FROM position_mappings').all();
+        posMap = buildPositionMappingFromRows(mps.results || []);
+      } catch {}
 
     let created = 0, updated = 0, needsScreening = 0;
     for (const rec of records) {
@@ -5389,8 +5414,8 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
       // status 复用已有映射（approved/rejected/pending_screening...）
       const status = item.status || 'pending_screening';
 
-      const positionName = posMap.get(item.position_applied) || item.mapped_position || item.position_applied || '';
-      const mappedPos = item.mapped_position || item.position_applied || '';
+      const positionName = resolveMappedPosition(posMap, item.mapped_position || item.position_applied || '');
+      const mappedPos = positionName || item.mapped_position || item.position_applied || '';
       const id = item.id; // = 飞书 record_id，保证幂等
       const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ? LIMIT 1').bind(id).first();
 
@@ -5787,7 +5812,7 @@ app.get('/api/resumes/:id', authMiddleware, async (c) => {
       applyParsedResumeFields(item);
       try {
         const map = await buildPositionMapping(c.env.DB);
-        item.standard_position = map.get(item.position_applied) || item.position_applied || item.mapped_position || '';
+        item.standard_position = resolveMappedPosition(map, item.position_applied || item.mapped_position || '');
       } catch { item.standard_position = item.position_applied || item.mapped_position || ''; }
       return c.json(item);
     }
@@ -5800,11 +5825,7 @@ app.get('/api/resumes/:id', authMiddleware, async (c) => {
     // 加载岗位映射
     try {
       const map = await buildPositionMapping(c.env.DB);
-      if (item.position_applied && map.has(item.position_applied)) {
-        item.standard_position = map.get(item.position_applied);
-      } else {
-        item.standard_position = item.position_applied || '';
-      }
+      item.standard_position = resolveMappedPosition(map, item.position_applied || item.mapped_position || '');
     } catch { item.standard_position = item.position_applied || ''; }
     // 合并 D1 中的 AI 初筛结果（飞书没有这些字段）
     try {
@@ -7035,12 +7056,17 @@ app.post('/api/interviews', authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const id = crypto.randomUUID();
   const time = body.interview_time || '';
+  let position: any = null;
+  try {
+    position = await findPositionByName(c.env.DB, body.position_applied);
+  } catch {}
+  const assignment = resolveInterviewAssignments(body, position);
   await c.env.DB.prepare(
-    `INSERT INTO interviews (id, candidate_name, position_applied, interviewer, primary_interviewer, secondary_interviewer, interview_time, interview_location, status, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`
-  ).bind(id, body.candidate_name || '', body.position_applied || '',
-    body.interviewer || body.primary_interviewer || '', body.primary_interviewer || '',
-    body.secondary_interviewer || '',
+    `INSERT INTO interviews (id, candidate_name, position_id, position_applied, interviewer, primary_interviewer, secondary_interviewer, interview_time, interview_location, status, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(id, body.candidate_name || '', position?.id || '', position?.title || body.position_applied || '',
+    assignment.interviewer, assignment.primaryInterviewer,
+    assignment.secondaryInterviewer,
     time, body.interview_location || '', 'scheduled', now()).run();
   // 埋点：面试安排创建
   await logOperation(c.env, {

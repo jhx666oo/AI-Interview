@@ -23,4 +23,15 @@ describe('interview assignments', () => {
       secondaryInterviewer: '岗位二面',
     });
   });
+
+  it('accepts the legacy interviewer field used by manual interview creation', () => {
+    expect(resolveInterviewAssignments({ interviewer: '岗位一面' }, {
+      primary_interviewer: '默认一面',
+      secondary_interviewer: '岗位二面',
+    })).toMatchObject({
+      interviewer: '岗位一面',
+      primaryInterviewer: '岗位一面',
+      secondaryInterviewer: '岗位二面',
+    });
+  });
 });

@@ -20,13 +20,24 @@ type ScheduleValues = {
 };
 
 const clean = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+const normalizePosition = (value: unknown) => clean(value).toLocaleLowerCase('zh-CN').replace(/[\s\u3000]+/g, '');
+
+function positionMatches(left: unknown, right: unknown): boolean {
+  const leftKey = normalizePosition(left);
+  const rightKey = normalizePosition(right);
+  if (!leftKey || !rightKey) return false;
+  if (leftKey === rightKey) return true;
+  const legacyIot = (value: string) => value === 'iot' || value.startsWith('iot产品经理');
+  return (legacyIot(leftKey) && rightKey.includes('软件产品经理'))
+    || (legacyIot(rightKey) && leftKey.includes('软件产品经理'));
+}
 
 export function resolveScheduleInterviewerDefaults(
   record: Pick<ScheduleRecord, 'standard_position' | 'position_applied'>,
   positions: PositionOption[],
 ) {
   const preferredTitles = [clean(record.standard_position), clean(record.position_applied)].filter(Boolean);
-  const matched = positions.find((position) => preferredTitles.includes(clean(position.title)));
+  const matched = positions.find((position) => preferredTitles.some((title) => positionMatches(title, position.title)));
   return {
     interviewerName: clean(matched?.primary_interviewer),
     secondaryInterviewer: clean(matched?.secondary_interviewer),

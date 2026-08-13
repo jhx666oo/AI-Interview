@@ -7,6 +7,7 @@
 import { normalizeAiScreeningResult } from '../ai-screening-result';
 import { ensureResumeListSchema, exposeStructuredEvaluation } from '../resume-schema';
 import { appendEvaluationJobProjection } from '../resume-processing/batch-repository';
+import { buildPositionMappingFromRows, resolveMappedPosition } from '../position-mapping';
 import {
   buildBusinessScreeningStatusSqlClause,
   exposeBusinessScreeningState,
@@ -159,12 +160,10 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   }
 
   // 加载岗位映射（raw_name → mapped_name），用于返回标准岗位名
-  const positionMap = new Map<string, string>();
+  let positionMap = new Map<string, string>();
   try {
-    const pmRes = await c.env.DB.prepare('SELECT raw_name, mapped_name FROM position_mappings').all();
-    for (const m of (pmRes.results || [])) {
-      if ((m as any).raw_name && (m as any).mapped_name) positionMap.set((m as any).raw_name, (m as any).mapped_name);
-    }
+    const pmRes = await c.env.DB.prepare('SELECT raw_name, raw_names, mapped_name FROM position_mappings').all();
+    positionMap = buildPositionMappingFromRows(pmRes.results || []);
   } catch {}
 
   const countSql = `SELECT
@@ -215,7 +214,7 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
     applyParsedResumeFields(item);
     // 岗位显示用标准岗位名（岗位映射 raw_name → mapped_name），未映射时保留原岗位名
     const rawPosition = item.mapped_position || item.position_applied || '';
-    item.standard_position = rawPosition ? (positionMap.get(rawPosition) || rawPosition) : '';
+    item.standard_position = resolveMappedPosition(positionMap, rawPosition);
     return item;
   });
 
