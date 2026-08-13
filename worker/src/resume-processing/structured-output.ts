@@ -35,6 +35,24 @@ type RepairInput = {
 
 const REPAIR_INPUT_MAX_CHARS = 12000;
 
+/**
+ * Build the bounded one-shot repair prompt. The model is only asked to turn the
+ * previous output into valid JSON — never to re-run the original screening.
+ */
+export function buildScreeningRepairPrompt(
+  kind: StructuredOutputKind,
+  rawResponse: string,
+  failureCode: StructuredOutputFailureCode,
+): { system: string; user: string } {
+  const raw = (typeof rawResponse === 'string' ? rawResponse : String(rawResponse ?? '')).slice(0, REPAIR_INPUT_MAX_CHARS);
+  const system = '你只负责把上一条模型输出转换为合法 JSON。不要解释，不要复述提示词，不要输出 Markdown，不要输出代码。只返回 JSON。';
+  const dimensionList = WEIGHTED_SCREENING_DIMENSION_NAMES.join('、');
+  const user = kind === 'screening'
+    ? `请把下面内容修复为一个合法的 screening 评估 JSON 对象，必须包含 summary（中文综合分析）和完整的七项 dimensions（${dimensionList}）。无法判断的 score 使用 0，reason 写“信息不足”。失败原因：${failureCode}\n\n原始输出：\n${raw}`
+    : `请把下面内容修复为一个合法的 dimensions JSON 数组（或 {"dimensions":[...]}），必须包含完整的七项（${dimensionList}）。无法判断的 score 使用 0，reason 写“信息不足”。失败原因：${failureCode}\n\n原始输出：\n${raw}`;
+  return { system, user };
+}
+
 export function buildStructuredFailure(
   code: StructuredOutputFailureCode,
   message: string,

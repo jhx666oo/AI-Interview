@@ -133,6 +133,25 @@ export function mergeDimensionScores(
   return required.map((name) => byName.get(name)).filter((score): score is DimensionScore => Boolean(score));
 }
 
+/**
+ * Assemble the final evaluation from the primary screening result and any
+ * supplemental dimension scores. Primary values win; the supplement only fills
+ * in dimensions the primary is missing. The result is ordered by requiredNames
+ * and never introduces dimensions outside that set.
+ */
+export function assembleScreeningEvaluation(
+  primary: Record<string, unknown>,
+  supplemental: unknown,
+  requiredNames: readonly string[] = WEIGHTED_SCREENING_DIMENSION_NAMES,
+): Record<string, unknown> {
+  const merged = mergeDimensionScores(
+    normalizeDimensionScores(primary),
+    normalizeDimensionScores(supplemental),
+    requiredNames,
+  );
+  return { ...primary, dimensions: merged };
+}
+
 export function missingDimensionNames(configuredNames: string[], evaluation: unknown): string[] {
   const scored = new Set(normalizeDimensionScores(evaluation).map(item => item.name));
   return configuredNames.filter(name => !scored.has(name));

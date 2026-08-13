@@ -6,7 +6,8 @@ import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
-import { mergeConfiguredDimensionScores, missingDimensionNames, normalizeDimensionScores, normalizeScreeningEvaluation, requireCompleteScreeningEvaluation } from './resume-processing/dimension-scores';
+import { assembleScreeningEvaluation, missingDimensionNames, normalizeDimensionScores, requireCompleteScreeningEvaluation, type DimensionScore } from './resume-processing/dimension-scores';
+import { buildScreeningRepairPrompt, parseStructuredOutput, type StructuredOutputFailureCode } from './resume-processing/structured-output';
 import { callAI, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
 import { WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
@@ -163,6 +164,47 @@ async function updateResume(db: D1Database, resumeId: string, update: Record<str
     .bind(...keys.map((key) => update[key]), new Date().toISOString(), resumeId).run();
 }
 
+// —— 结构化输出修复编排（D1 / R2 两条消费者路径复用）——
+async function repairStructuredOutput(
+  env: ConsumerEnv,
+  kind: 'screening' | 'dimensions',
+  raw: string,
+  failureCode: StructuredOutputFailureCode,
+): Promise<string> {
+  const prompt = buildScreeningRepairPrompt(kind, raw, failureCode);
+  return callAI(env as any, prompt.system, prompt.user, 'deepseek-v4-flash');
+}
+
+async function parseScreeningResponse(
+  env: ConsumerEnv,
+  response: string,
+): Promise<Record<string, any>> {
+  const parsed = await parseStructuredOutput(
+    response,
+    'screening',
+    extractJSON,
+    (input) => repairStructuredOutput(env, input.kind, input.raw, input.failureCode),
+  );
+  return parsed.value as Record<string, any>;
+}
+
+async function tryParseDimensionScores(
+  env: ConsumerEnv,
+  response: string,
+): Promise<{ scores: DimensionScore[]; ok: boolean }> {
+  try {
+    const parsed = await parseStructuredOutput(
+      response,
+      'dimensions',
+      extractJSON,
+      (input) => repairStructuredOutput(env, input.kind, input.raw, input.failureCode),
+    );
+    return { scores: normalizeDimensionScores(parsed.value), ok: true };
+  } catch {
+    return { scores: [], ok: false };
+  }
+}
+
 
 // 简历 PDF 读取：KV 优先（新数据），D1 content 兜底（旧数据）
 async function getResumeFileContent(env: ConsumerEnv, resumeId: string): Promise<{ content: string } | null> {
@@ -244,12 +286,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{fields}', JSON.stringify(fields))
         .replace('{capability_dimensions}', context.capabilityDimensions || '');
       const screeningResponse = await callAI(env as any, screenPrompt.system, screenUserText, 'deepseek-v4-flash');
-      const parsed = extractJSON(screeningResponse);
-      let evaluation: Record<string, any> = normalizeScreeningEvaluation(
-        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-          ? parsed
-          : { summary: String(parsed || '') },
-      );
+      let evaluation: Record<string, any> = await parseScreeningResponse(env, screeningResponse);
 
       // 第二步：加载岗位完整信息（含能力维度描述、岗位职责、个性化需求）
       const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
@@ -341,11 +378,14 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             supUserText,
             'deepseek-v4-flash',
           );
-          const rawDimParsed = extractJSON(dimResponse);
-          const dimParsed = Array.isArray(rawDimParsed) ? rawDimParsed : normalizeScreeningEvaluation(rawDimParsed);
-          const dimScores = normalizeDimensionScores(dimParsed);
-          if (dimScores.length > 0) {
-            evaluation.dimensions = dimScores;
+          // 专项维度只补主评估缺失项，绝不覆盖完整主评估
+          const { scores: dimScores, ok: dimOk } = await tryParseDimensionScores(env, dimResponse);
+          if (dimOk && dimScores.length > 0) {
+            evaluation = assembleScreeningEvaluation(evaluation, dimScores);
+          } else {
+            logResumeProcessingError('ai.screening.supplement_invalid', new Error('supplement dimensions invalid after one repair'), {
+              resumeId: message.resumeId,
+            });
           }
         } catch (error) {
           console.error('[ResumeConsumer] dimension scoring failed:', error);
@@ -369,16 +409,14 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             supUserText,
             'deepseek-v4-flash',
           );
-          const rawSupplemental = extractJSON(supplemental);
-          const supplementalParsed = Array.isArray(rawSupplemental) ? rawSupplemental : normalizeScreeningEvaluation(rawSupplemental);
-          const scores = normalizeDimensionScores(supplementalParsed);
-          if (scores.length > 0) {
-            const existing = normalizeDimensionScores(evaluation);
-            evaluation.dimensions = mergeConfiguredDimensionScores(
-              existing,
-              scores,
-              configuredDimensions.map((item: any) => item.name),
-            );
+          // 服务端最低要求是完整七项维度，不按 configuredDimensions 过滤
+          const { scores, ok } = await tryParseDimensionScores(env, supplemental);
+          if (ok && scores.length > 0) {
+            evaluation = assembleScreeningEvaluation(evaluation, scores);
+          } else {
+            logResumeProcessingError('ai.screening.supplement_invalid', new Error('missing dimension supplement invalid'), {
+              resumeId: message.resumeId,
+            });
           }
         } catch (error) {
           console.error('[ResumeConsumer] supplemental dimension scoring failed:', error);
@@ -503,12 +541,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{fields}', JSON.stringify(fields))
         .replace('{resume_text}', text);
       const response = await callAI(env as any, r2ScreenPrompt.system, r2ScreenUser);
-      const parsed = extractJSON(response);
-      let evaluation: Record<string, any> = normalizeScreeningEvaluation(
-        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-          ? parsed
-          : { summary: String(parsed || '') },
-      );
+      let evaluation: Record<string, any> = await parseScreeningResponse(env, response);
       const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
       const positionRow = await env.DB.prepare(
         'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
@@ -530,13 +563,14 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             r2SupUser,
             'deepseek-v4-flash',
           );
-          const rawSupplemental = extractJSON(supplemental);
-          const supplementalParsed = Array.isArray(rawSupplemental) ? rawSupplemental : normalizeScreeningEvaluation(rawSupplemental);
-          const scores = normalizeDimensionScores(supplementalParsed);
-          if (scores.length > 0) {
-            const existing = normalizeDimensionScores(evaluation);
-            const existingNames = new Set(existing.map((item: any) => item.name));
-            evaluation.dimensions = [...existing, ...scores.filter((item: any) => !existingNames.has(item.name))];
+          // 专项只补主评估缺失项，primary 优先，不覆盖
+          const { scores, ok } = await tryParseDimensionScores(env, supplemental);
+          if (ok && scores.length > 0) {
+            evaluation = assembleScreeningEvaluation(evaluation, scores);
+          } else {
+            logResumeProcessingError('ai.screening.supplement_invalid', new Error('missing dimension supplement invalid'), {
+              resumeId: message.resumeId,
+            });
           }
         } catch (error) {
           console.error('[ResumeConsumer] supplemental dimension scoring failed:', error);
