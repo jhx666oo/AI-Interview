@@ -32,7 +32,7 @@ function resolvePositionTitle(resume: Pick<BusinessScreeningResume, 'mapped_posi
 
 export function isEligibleForPush(
   resume: Pick<BusinessScreeningResume, 'screening_result' | 'status' | 'hr_disposition' | 'mapped_position' | 'position_applied' | 'business_screening_status'>,
-  interviewer: { name: string; openId?: string },
+  interviewer: { name: string; openId?: string | null },
 ): { ok: true } | { ok: false; reason: string } {
   if (text(resume.screening_result) !== '通过') {
     return { ok: false, reason: 'AI初筛未通过' };
@@ -127,10 +127,11 @@ export function decideBusinessScreening(
   }
 
   if (current !== 'pending') {
+    // current 只能是 not_ready：尚未发起业务筛选，不是终态
     return {
       nextStatus: current,
       changed: false,
-      terminal: current === 'passed' || current === 'rejected',
+      terminal: false,
       reason: 'business screening is not pending',
     };
   }

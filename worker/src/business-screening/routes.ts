@@ -210,7 +210,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
     const db = c.env.DB as D1Database;
     const nowIso = deps.now();
-    const user = (c.get('user') || {}) as HrUser;
+    const user = ((c as any).get('user') || {}) as HrUser;
     const resumes = await deps.store.listResumesByIds(db, ids);
     const resumesById = new Map(resumes.map((resume) => [resume.id, resume]));
     const positionTitles = uniqueStrings(resumes.map((resume) => text(resume.mapped_position) || text(resume.position_applied)));
@@ -446,7 +446,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
   app.post('/api/resumes/business-screening/batches/:batchId/resend', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     const batchId = c.req.param('batchId');
     const db = c.env.DB as D1Database;
-    const user = (c.get('user') || {}) as HrUser;
+    const user = ((c as any).get('user') || {}) as HrUser;
     const batch = await deps.store.loadBatchById(db, batchId);
     if (!batch) return c.json({ detail: 'Batch not found' }, 404);
 
