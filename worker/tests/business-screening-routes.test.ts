@@ -25,7 +25,8 @@ type BatchRow = {
 
 function buildHarness(options?: {
   resumes?: BusinessScreeningResumeRecord[];
-  positions?: Array<{ id: string; title: string; primary_interviewer?: string; secondary_interviewer?: string }>;
+  positions?: Array<{ id: string; title: string; primary_interviewer?: string; secondary_interviewer?: string; responsible_person?: string }>;
+  positionMappings?: Array<{ raw_name: string; mapped_name: string }>;
   interviewerDirectory?: Array<{ name: string; openId?: string | null; userId?: string | null }>;
   sendFailuresByOpenId?: Record<string, string>;
   initialBatches?: BatchRow[];
@@ -53,8 +54,9 @@ function buildHarness(options?: {
     ]).map((resume) => [resume.id, { ...resume }]),
   );
   const positions = (options?.positions || [
-    { id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四' },
+    { id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
   ]).map((position) => ({ ...position }));
+  const positionMappings = (options?.positionMappings || []).map((mapping) => ({ ...mapping }));
   const interviewerDirectory = new Map(
     (options?.interviewerDirectory || [
       { name: '张三', openId: 'ou_zhang', userId: 'user-zhang' },
@@ -74,6 +76,10 @@ function buildHarness(options?: {
     async listPositionsByTitles(_db, titles) {
       const allowed = new Set(titles);
       return positions.filter((position) => allowed.has(position.title));
+    },
+    async listPositionMappings(_db, rawNames) {
+      const allowed = new Set(rawNames);
+      return positionMappings.filter((mapping) => allowed.has(mapping.raw_name));
     },
     async listInterviewerDirectory(_db, names) {
       return names
@@ -495,7 +501,7 @@ describe('business screening routes', () => {
     });
   });
 
-  it('groups eligible resumes by interviewer and returns public URLs', async () => {
+  it('groups eligible resumes by responsible person and returns public URLs', async () => {
     const { request, resumes, sentMessages } = buildHarness({
       resumes: [
         {
@@ -540,14 +546,15 @@ describe('business screening routes', () => {
       skipped: [{ id: 'resume-2', reason: 'AI初筛未通过' }],
       failed: [],
     });
-    expect(body.batches).toHaveLength(2);
+    expect(body.batches).toHaveLength(1);
+    expect(body.batches[0].interviewer).toBe('张三');
     expect(body.batches[0].url).toMatch(/^https:\/\/ai-interview-88r\.pages\.dev\/business-screening\//);
     expect(body.batches[0].url).not.toContain('/api/public/business-screening/');
     expect(resumes.get('resume-1')).toMatchObject({
       hr_disposition: 'pushed',
       business_screening_status: 'pending',
     });
-    expect(sentMessages).toHaveLength(2);
+    expect(sentMessages).toHaveLength(1);
   });
 
   it('skips duplicate fresh pushes for resumes already in business screening and leaves resend to the batch route', async () => {
@@ -593,8 +600,34 @@ describe('business screening routes', () => {
     });
   });
 
-  it('keeps successful interviewer groups when another delivery fails', async () => {
+  it('keeps successful responsible-person groups when another delivery fails', async () => {
     const { request, batches, sentMessages } = buildHarness({
+      positions: [
+        { id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
+        { id: 'position-2', title: '销售', primary_interviewer: '李四', secondary_interviewer: '', responsible_person: '李四' },
+      ],
+      resumes: [
+        {
+          id: 'resume-1',
+          candidate_name: '候选人甲',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-2',
+          candidate_name: '候选人乙',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pending',
+          mapped_position: '销售',
+          position_applied: '销售',
+          business_screening_status: 'not_ready',
+        },
+      ],
       sendFailuresByOpenId: {
         ou_li: '发送用户消息失败: mock fail',
       },
@@ -606,14 +639,16 @@ describe('business screening routes', () => {
         Authorization: 'Bearer hr-token',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ ids: ['resume-1'] }),
+      body: JSON.stringify({ ids: ['resume-1', 'resume-2'] }),
     });
 
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.ok).toBe(false);
+    expect(body.pushed).toEqual(['resume-1', 'resume-2']);
     expect(body.failed).toEqual([{ interviewer: '李四', reason: expect.stringContaining('mock fail') }]);
     expect(body.batches).toHaveLength(2);
+    expect(body.batches.map((batch: { interviewer: string }) => batch.interviewer).sort()).toEqual(['张三', '李四']);
     expect(sentMessages).toHaveLength(1);
     expect([...batches.values()].every((batch) => batch.status === 'active')).toBe(true);
   });
@@ -762,8 +797,35 @@ describe('business screening routes', () => {
     });
   });
 
-  it('keeps the same pushed resume actionable from every interviewer link in the same push and prevents sibling overwrite', async () => {
-    const { request, createdTokens, resumes, batchItems } = buildHarness();
+  it('shares one dispatch group across responsible-person batches in the same push and isolates decisions', async () => {
+    const { request, createdTokens, resumes, batchItems, batches } = buildHarness({
+      positions: [
+        { id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
+        { id: 'position-2', title: '销售', primary_interviewer: '李四', secondary_interviewer: '', responsible_person: '李四' },
+      ],
+      resumes: [
+        {
+          id: 'resume-1',
+          candidate_name: '候选人甲',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-2',
+          candidate_name: '候选人乙',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pending',
+          mapped_position: '销售',
+          position_applied: '销售',
+          business_screening_status: 'not_ready',
+        },
+      ],
+    });
 
     const pushResponse = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
       method: 'POST',
@@ -771,10 +833,12 @@ describe('business screening routes', () => {
         Authorization: 'Bearer hr-token',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ ids: ['resume-1'] }),
+      body: JSON.stringify({ ids: ['resume-1', 'resume-2'] }),
     });
     expect(pushResponse.status).toBe(200);
     expect(createdTokens).toHaveLength(2);
+    const dispatchGroups = new Set([...batches.values()].map((batch) => batch.dispatch_group_id));
+    expect(dispatchGroups.size).toBe(1);
 
     const firstDecision = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}/resumes/resume-1/approve`, {
       method: 'POST',
@@ -793,21 +857,21 @@ describe('business screening routes', () => {
       status: 'approved',
       stage: 'talent_pool',
     });
-    expect(batchItems.filter((item) => item.resume_id === 'resume-1')).toEqual([
-      expect.objectContaining({ status: 'passed' }),
-      expect.objectContaining({ status: 'passed' }),
-    ]);
+
+    const wrongBatchDecision = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}/resumes/resume-2/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remark: '不属于本批次' }),
+    });
+    expect(wrongBatchDecision.status).toBe(404);
 
     const siblingDecision = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[1].token}/resumes/resume-1/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ remark: '李四试图改判' }),
+      body: JSON.stringify({ remark: '李四试图改判他人简历' }),
     });
 
-    expect(siblingDecision.status).toBe(409);
-    await expect(siblingDecision.json()).resolves.toMatchObject({
-      detail: expect.stringContaining('already'),
-    });
+    expect(siblingDecision.status).toBe(404);
     expect(resumes.get('resume-1')).toMatchObject({
       business_screening_status: 'passed',
       status: 'approved',
@@ -816,8 +880,82 @@ describe('business screening routes', () => {
     });
     expect(batchItems.filter((item) => item.resume_id === 'resume-1')).toEqual([
       expect.objectContaining({ status: 'passed' }),
-      expect.objectContaining({ status: 'passed' }),
     ]);
+  });
+
+  it('maps raw resume positions to standard positions via position_mappings before pushing', async () => {
+    const { request, sentMessages, resumes } = buildHarness({
+      positionMappings: [
+        { raw_name: 'IoT产品经理（双休｜入职五险一金）', mapped_name: '标准运营' },
+      ],
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        hr_disposition: 'pending',
+        mapped_position: 'IoT产品经理（双休｜入职五险一金）',
+        position_applied: 'IoT产品经理（双休｜入职五险一金）',
+        business_screening_status: 'not_ready',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: ['resume-1'],
+      skipped: [],
+      failed: [],
+      batches: [{ interviewer: '张三' }],
+    });
+    expect(sentMessages).toHaveLength(1);
+    expect(resumes.get('resume-1')).toMatchObject({
+      hr_disposition: 'pushed',
+      business_screening_status: 'pending',
+    });
+  });
+
+  it('skips resumes whose raw position has no mapping and no matching position title', async () => {
+    const { request, sentMessages } = buildHarness({
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        hr_disposition: 'pending',
+        mapped_position: '未知岗位XYZ',
+        position_applied: '未知岗位XYZ',
+        business_screening_status: 'not_ready',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: [],
+      skipped: [{ id: 'resume-1', reason: '缺少标准岗位' }],
+      failed: [],
+      batches: [],
+    });
+    expect(sentMessages).toHaveLength(0);
   });
 
   it('rejects the opposite public callback after a completion has already been recorded', async () => {

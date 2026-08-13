@@ -100,5 +100,5 @@ export function summarizePushResult(result: {
   const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
   const failed = Array.isArray(result.failed) ? result.failed.length : 0;
   const batches = Array.isArray(result.batches) ? result.batches.length : 0;
-  return `推送完成：成功 ${pushed} 份，跳过 ${skipped} 份，发送失败 ${failed} 个面试官批次，生成 ${batches} 个推送批次`;
+  return `推送完成：成功 ${pushed} 份，跳过 ${skipped} 份，发送失败 ${failed} 个责任人批次，生成 ${batches} 个推送批次`;
 }

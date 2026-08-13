@@ -946,7 +946,7 @@ const ResumesList: React.FC = () => {
     const selectedIds = selectedRowKeys.map(String);
     Modal.confirm({
       title: '确认批量推送',
-      content: `确定将选中的 ${selectedIds.length} 份简历推送给岗位配置的业务面试官吗？`,
+      content: `确定将选中的 ${selectedIds.length} 份简历推送给岗位配置的责任人吗？`,
       okText: '确认推送',
       cancelText: '取消',
       onOk: async () => {

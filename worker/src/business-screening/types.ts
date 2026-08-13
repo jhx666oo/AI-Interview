@@ -31,6 +31,7 @@ export interface PositionInterviewerConfig {
   title: string;
   primary_interviewer?: string | null;
   secondary_interviewer?: string | null;
+  responsible_person?: string | null;
 }
 
 export interface PushGroup {

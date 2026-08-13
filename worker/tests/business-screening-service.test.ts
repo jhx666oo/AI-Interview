@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   decideBusinessScreening,
-  groupEligibleResumesByInterviewer,
+  groupEligibleResumesForPush,
   isEligibleForPush,
 } from '../src/business-screening/service';
 import type { InterviewerDirectoryEntry } from '../src/business-screening/types';
@@ -51,19 +51,19 @@ describe('business screening service', () => {
     expect(isEligibleForPush(
       { id: 'r-no-interviewer', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营' },
       { name: '', openId: '' },
-    )).toEqual({ ok: false, reason: '岗位未配置有效面试官' });
+    )).toEqual({ ok: false, reason: '岗位未配置有效责任人' });
   });
 
-  it('groups only eligible resumes into one batch per interviewer', () => {
+  it('groups only eligible resumes into one batch per responsible person', () => {
     const interviewerDirectory: InterviewerDirectoryEntry[] = [
       { name: '张三', openId: 'ou_zhang' },
       { name: '李四', openId: 'ou_li' },
     ];
     const positions = [
-      { id: 'p1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四' },
-      { id: 'p2', title: '销售', primary_interviewer: '李四', secondary_interviewer: '' },
+      { id: 'p1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
+      { id: 'p2', title: '销售', primary_interviewer: '李四', secondary_interviewer: '', responsible_person: '李四' },
     ];
-    const groups = groupEligibleResumesByInterviewer(
+    const groups = groupEligibleResumesForPush(
       [
         { id: 'r1', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营', position_applied: '运营专员' },
         { id: 'r2', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '销售', position_applied: '销售' },
@@ -81,10 +81,34 @@ describe('business screening service', () => {
     });
     expect(groups.get('李四')).toMatchObject({
       interviewer: { name: '李四', openId: 'ou_li' },
-      positionTitles: ['标准运营', '销售'],
+      positionTitles: ['销售'],
     });
     expect(groups.get('张三')?.resumes.map((resume) => resume.id)).toEqual(['r1']);
-    expect(groups.get('李四')?.resumes.map((resume) => resume.id)).toEqual(['r1', 'r2']);
+    expect(groups.get('李四')?.resumes.map((resume) => resume.id)).toEqual(['r2']);
+  });
+
+  it('resolves raw resume positions to standard titles before grouping', () => {
+    const interviewerDirectory: InterviewerDirectoryEntry[] = [
+      { name: '张三', openId: 'ou_zhang' },
+    ];
+    const positions = [
+      { id: 'p1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '', responsible_person: '张三' },
+    ];
+    const resolveStandardTitle = (raw: string): string => (
+      raw === 'IoT产品经理（双休｜入职五险一金）' ? '标准运营' : raw
+    );
+    const groups = groupEligibleResumesForPush(
+      [
+        { id: 'r1', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: 'IoT产品经理（双休｜入职五险一金）', position_applied: 'IoT产品经理（双休｜入职五险一金）' },
+      ],
+      positions,
+      interviewerDirectory,
+      resolveStandardTitle,
+    );
+
+    expect([...groups.keys()]).toEqual(['张三']);
+    expect(groups.get('张三')?.resumes.map((resume) => resume.id)).toEqual(['r1']);
+    expect(groups.get('张三')?.positionTitles).toEqual(['标准运营']);
   });
 
   it('keeps completed interviewer decisions idempotent', () => {

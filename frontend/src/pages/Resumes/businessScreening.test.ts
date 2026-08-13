@@ -79,9 +79,9 @@ describe('resume business screening helpers', () => {
   it('summarizes batch push results with pushed, skipped, failed, and interviewer batches', () => {
     expect(summarizePushResult({
       pushed: ['1', '2'],
-      skipped: [{ id: '3', reason: '岗位未配置有效面试官' }],
+      skipped: [{ id: '3', reason: '岗位未配置有效责任人' }],
       failed: [{ interviewer: '张三', reason: '当前账号未授权飞书身份，无法发送业务筛选链接' }],
       batches: [{ batchId: 'batch-1', interviewer: '李四', url: 'https://example.com', itemCount: 2 }],
-    })).toBe('推送完成：成功 2 份，跳过 1 份，发送失败 1 个面试官批次，生成 1 个推送批次');
+    })).toBe('推送完成：成功 2 份，跳过 1 份，发送失败 1 个责任人批次，生成 1 个推送批次');
   });
 });

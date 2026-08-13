@@ -8,7 +8,7 @@ import {
   recordBusinessScreeningDecision,
   revokeActiveBusinessScreeningBatchesForResume,
 } from './repository';
-import { groupEligibleResumesByInterviewer, isEligibleForPush } from './service';
+import { groupEligibleResumesForPush, isEligibleForPush } from './service';
 import { createPublicToken, hashPublicToken } from './token';
 import type {
   BusinessScreeningResume,
@@ -57,7 +57,8 @@ export interface BusinessScreeningBatchItemView {
 
 export interface BusinessScreeningRouteStore {
   listResumesByIds(db: D1Database, ids: string[]): Promise<BusinessScreeningResumeRecord[]>;
-  listPositionsByTitles(db: D1Database, titles: string[]): Promise<Array<{ id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null }>>;
+  listPositionsByTitles(db: D1Database, titles: string[]): Promise<Array<{ id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null; responsible_person?: string | null }>>;
+  listPositionMappings(db: D1Database, rawNames: string[]): Promise<Array<{ raw_name: string; mapped_name: string }>>;
   listInterviewerDirectory(db: D1Database, names: string[]): Promise<Array<{ name: string; openId?: string | null; userId?: string | null }>>;
   createBatch(
     db: D1Database,
@@ -185,18 +186,18 @@ function buildFeishuCard(input: {
 
 function summarizeSkipReason(
   resume: BusinessScreeningResumeRecord,
-  position: { id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null } | undefined,
+  position: { id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null; responsible_person?: string | null } | undefined,
   interviewerDirectory: Map<string, { name: string; openId?: string | null; userId?: string | null }>,
 ): string {
   if (!position) return '缺少标准岗位';
-  const interviewerNames = uniqueStrings([position.primary_interviewer, position.secondary_interviewer]);
-  if (interviewerNames.length === 0) return '岗位未配置有效面试官';
+  const interviewerNames = uniqueStrings([position.responsible_person]);
+  if (interviewerNames.length === 0) return '岗位未配置有效责任人';
   for (const interviewerName of interviewerNames) {
     const interviewer = interviewerDirectory.get(interviewerName) || { name: interviewerName };
     const eligibility = isEligibleForPush(resume, interviewer);
     if (!eligibility.ok) return eligibility.reason;
   }
-  return '岗位未配置有效面试官';
+  return '岗位未配置有效责任人';
 }
 
 export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) {
@@ -226,11 +227,15 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const user = ((c as any).get('user') || {}) as HrUser;
     const resumes = await deps.store.listResumesByIds(db, ids);
     const resumesById = new Map(resumes.map((resume) => [resume.id, resume]));
-    const positionTitles = uniqueStrings(resumes.map((resume) => text(resume.mapped_position) || text(resume.position_applied)));
+    const rawPositionTitles = uniqueStrings(resumes.map((resume) => text(resume.mapped_position) || text(resume.position_applied)));
+    const mappings = await deps.store.listPositionMappings(db, rawPositionTitles);
+    const standardByRaw = new Map(mappings.map((mapping) => [mapping.raw_name, mapping.mapped_name]));
+    const resolveStandardTitle = (rawTitle: string): string => standardByRaw.get(rawTitle) || rawTitle;
+    const positionTitles = uniqueStrings(rawPositionTitles.map(resolveStandardTitle));
     const positions = await deps.store.listPositionsByTitles(db, positionTitles);
     const positionsByTitle = new Map(positions.map((position) => [position.title, position]));
-    const interviewerNames = uniqueStrings(positions.flatMap((position) => [position.primary_interviewer, position.secondary_interviewer]));
-    const interviewerDirectoryRows = await deps.store.listInterviewerDirectory(db, interviewerNames);
+    const responsibleNames = uniqueStrings(positions.flatMap((position) => [position.responsible_person]));
+    const interviewerDirectoryRows = await deps.store.listInterviewerDirectory(db, responsibleNames);
     const interviewerDirectory = new Map(interviewerDirectoryRows.map((entry) => [entry.name, entry]));
 
     const skipped: Array<{ id: string; reason: string }> = [];
@@ -241,11 +246,12 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         skipped.push({ id, reason: '简历不存在' });
         continue;
       }
-      const positionTitle = text(resume.mapped_position) || text(resume.position_applied);
+      const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
+      const positionTitle = resolveStandardTitle(rawTitle);
       const position = positionsByTitle.get(positionTitle);
       const reason = summarizeSkipReason(resume, position, interviewerDirectory);
-      if (reason !== '岗位未配置有效面试官' || groupEligibleResumesByInterviewer([resume], positions, interviewerDirectoryRows).size === 0) {
-        const groups = groupEligibleResumesByInterviewer([resume], positions, interviewerDirectoryRows);
+      if (reason !== '岗位未配置有效责任人' || groupEligibleResumesForPush([resume], positions, interviewerDirectoryRows, resolveStandardTitle).size === 0) {
+        const groups = groupEligibleResumesForPush([resume], positions, interviewerDirectoryRows, resolveStandardTitle);
         if (groups.size === 0) {
           skipped.push({ id, reason });
           continue;
@@ -254,7 +260,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       eligibleResumes.push(resume);
     }
 
-    const grouped = groupEligibleResumesByInterviewer(eligibleResumes, positions, interviewerDirectoryRows);
+    const grouped = groupEligibleResumesForPush(eligibleResumes, positions, interviewerDirectoryRows, resolveStandardTitle);
     const currentUserToken = user.email ? await deps.getCurrentUserToken(c.env, user.email) : null;
     const pushedResumeIds = uniqueStrings([...grouped.values()].flatMap((group) => group.resumes.map((resume) => resume.id)));
     const failed: Array<{ interviewer: string; reason: string }> = [];
@@ -567,11 +573,21 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     async listPositionsByTitles(db, titles) {
       if (titles.length === 0) return [];
       return queryAll(db,
-        `SELECT id, title, primary_interviewer, secondary_interviewer
+        `SELECT id, title, primary_interviewer, secondary_interviewer, responsible_person
            FROM positions
           WHERE title IN (${placeholders(titles.length)})`,
         titles,
-      ) as Promise<Array<{ id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null }>>;
+      ) as Promise<Array<{ id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null; responsible_person?: string | null }>>;
+    },
+    async listPositionMappings(db, rawNames) {
+      if (rawNames.length === 0) return [];
+      return queryAll(
+        db,
+        `SELECT raw_name, mapped_name
+           FROM position_mappings
+          WHERE raw_name IN (${placeholders(rawNames.length)})`,
+        rawNames,
+      ) as Promise<Array<{ raw_name: string; mapped_name: string }>>;
     },
     async listInterviewerDirectory(db, names) {
       const result: Array<{ name: string; openId?: string | null; userId?: string | null }> = [];

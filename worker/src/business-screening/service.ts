@@ -12,13 +12,6 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function splitInterviewerNames(value: string): string[] {
-  return value
-    .split(/[,，、/;；]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function normalizeInterviewer(entry: InterviewerDirectoryEntry | { name?: string | null; openId?: string | null } | null | undefined): { name: string; openId?: string } {
   return {
     name: text(entry?.name),
@@ -50,15 +43,16 @@ export function isEligibleForPush(
     return { ok: false, reason: '缺少标准岗位' };
   }
   if (!text(interviewer.name) || !text(interviewer.openId)) {
-    return { ok: false, reason: '岗位未配置有效面试官' };
+    return { ok: false, reason: '岗位未配置有效责任人' };
   }
   return { ok: true };
 }
 
-export function groupEligibleResumesByInterviewer(
+export function groupEligibleResumesForPush(
   resumes: BusinessScreeningResume[],
   positions: PositionInterviewerConfig[],
   interviewerDirectory: InterviewerDirectoryEntry[],
+  resolveStandardTitle?: (rawTitle: string) => string,
 ): Map<string, PushGroup> {
   const positionsByTitle = new Map<string, PositionInterviewerConfig>();
   for (const position of positions) {
@@ -72,19 +66,18 @@ export function groupEligibleResumesByInterviewer(
     if (name && !interviewerByName.has(name)) interviewerByName.set(name, interviewer);
   }
 
+  const resolve = resolveStandardTitle || ((rawTitle: string) => rawTitle);
   const groups = new Map<string, PushGroup>();
   for (const resume of resumes) {
-    const positionTitle = resolvePositionTitle(resume);
-    if (!positionTitle) continue;
+    const rawTitle = resolvePositionTitle(resume);
+    if (!rawTitle) continue;
+    const positionTitle = resolve(rawTitle);
     const position = positionsByTitle.get(positionTitle);
     if (!position) continue;
 
-    const interviewerNames = [
-      ...splitInterviewerNames(text(position.primary_interviewer)),
-      ...splitInterviewerNames(text(position.secondary_interviewer)),
-    ];
+    const interviewerNames = uniqueNames(text(position.responsible_person));
 
-    for (const interviewerName of [...new Set(interviewerNames)]) {
+    for (const interviewerName of interviewerNames) {
       const directoryEntry = interviewerByName.get(interviewerName);
       const interviewer = normalizeInterviewer(directoryEntry || { name: interviewerName });
       if (!isEligibleForPush(resume, interviewer).ok) continue;
@@ -109,6 +102,13 @@ export function groupEligibleResumesByInterviewer(
   }
 
   return groups;
+}
+
+function uniqueNames(value: string): string[] {
+  return value
+    .split(/[,，、/;；]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export function decideBusinessScreening(
