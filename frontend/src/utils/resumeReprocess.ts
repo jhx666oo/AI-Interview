@@ -79,8 +79,22 @@ export function getEvaluationCardState(record: any): {
     if (errorCode === 'OCR_PAGE_LIMIT_EXCEEDED') {
       return { status: 'failed', label: 'PDF 超过 MinerU 20 页限制', error: 'PDF 页数超过 MinerU 限制，请拆分 PDF 或提供文本版简历后重新评估' };
     }
+    if (errorCode === 'AI_SCREENING_INVALID_SUMMARY' || errorCode === 'AI_SCREENING_INVALID_DIMENSIONS' || errorCode === 'AI_SCREENING_INVALID_JSON') {
+      const detail = record.evaluation_job_error?.split(':').slice(1).join(':').trim() || '';
+      return { status: 'failed', label: '评估失败', error: detail ? `AI 返回格式异常（${detail}）` : 'AI 返回格式异常，已自动修复仍失败' };
+    }
     const error = record.evaluation_job_error?.split(':').slice(1).join(':').trim() || record.parse_error || '评估失败';
     return { status: 'failed', label: '评估失败', error };
   }
   return { status: 'idle', label: '' };
+}
+
+/**
+ * True when a completed screening is a hard-gate rejection (关键词匹配/避坑雷区
+ * 未达到 5 分使加权分为空)，而不是一次 AI 请求失败。这类记录不应显示为系统错误。
+ */
+export function isHardGateRejection(record: any): boolean {
+  const active = record.evaluation_job_status === 'queued' || record.evaluation_job_status === 'running' || record.evaluation_job_status === 'failed' || record.evaluation_job_status === 'cancelled';
+  if (active) return false;
+  return record.screening_result === '不通过' && record.match_score === null;
 }

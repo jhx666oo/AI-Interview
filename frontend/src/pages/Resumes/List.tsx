@@ -14,7 +14,7 @@ import { createRefreshVersion } from '../../utils/resumeRefresh';
 import { buildResumeExportRows } from '../../utils/resumeExport';
 import { PageHeader, ResponsiveModal, ResponsiveToolbar, TableViewport } from '../../components/Responsive';
 import ResumeReprocessProgress from '../../components/ResumeReprocessProgress';
-import { getEvaluationCardState } from '../../utils/resumeReprocess';
+import { getEvaluationCardState, isHardGateRejection } from '../../utils/resumeReprocess';
 import { type ReprocessBatchView } from '../../utils/resumeReprocess';
 import { getBusinessScreeningActions, inferBusinessScreeningStatus, summarizePushResult } from './businessScreening';
 
@@ -399,19 +399,17 @@ const ResumesList: React.FC = () => {
     }
   };
 
-  const startReprocessPolling = () => {
+  const startReprocessPolling = (batchId: string) => {
     stopReprocessPolling();
     const poll = async () => {
       const version = ++reprocessVersionRef.current;
-      if (reprocessBatch?.batch_id) {
-        try {
-          const res = await request.get(`/resumes/reprocess-batches/${reprocessBatch.batch_id}`);
-          if (version === reprocessVersionRef.current) {
-            setReprocessBatch(res);
-            fetchResumes(true, cardPageRef.current, cardPageSizeRef.current);
-          }
-        } catch {}
-      }
+      try {
+        const res = await request.get(`/resumes/reprocess-batches/${batchId}`);
+        if (version === reprocessVersionRef.current) {
+          setReprocessBatch(res);
+          fetchResumes(true, cardPageRef.current, cardPageSizeRef.current);
+        }
+      } catch {}
     };
     poll();
     reprocessPollingRef.current = setInterval(poll, 4000);
@@ -562,7 +560,7 @@ const ResumesList: React.FC = () => {
   // Batch reprocess polling
   useEffect(() => {
     if (reprocessBatch && (reprocessBatch.status === 'queued' || reprocessBatch.status === 'running')) {
-      startReprocessPolling();
+      startReprocessPolling(reprocessBatch.batch_id);
     } else {
       stopReprocessPolling();
     }
@@ -1683,7 +1681,11 @@ const handleUploadClick = () => {
                   )}
                   {evalCardState.status === 'idle' && scoreDetails.length === 0 && normalizedEvaluation.overallScore == null && (
                     <div className="resume-card__evaluation">
-                      <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无 AI 评估</span>
+                      {isHardGateRejection(record) ? (
+                        <span style={{ color: '#cf1322', fontSize: 12 }}>硬门槛未通过（关键词匹配或避坑雷区未达标）</span>
+                      ) : (
+                        <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无 AI 评估</span>
+                      )}
                     </div>
                   )}
                 </Card>
