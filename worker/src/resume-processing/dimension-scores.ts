@@ -110,6 +110,29 @@ export function mergeConfiguredDimensionScores(
   return filterDimensionScoresToConfigured([...existing, ...supplemental], configuredNames);
 }
 
+/**
+ * Primary-first merge: primary values win for any dimension they already cover;
+ * supplemental only fills in names the primary is missing. Result order follows
+ * the required names, and only required names are returned.
+ */
+export function mergeDimensionScores(
+  primary: DimensionScore[],
+  supplemental: DimensionScore[],
+  requiredNames: readonly string[],
+): DimensionScore[] {
+  const required = requiredNames.map((name) => String(name || '').trim()).filter(Boolean);
+  const byName = new Map<string, DimensionScore>();
+  for (const item of primary) {
+    const name = String(item?.name || '').trim();
+    if (name && !byName.has(name)) byName.set(name, { ...item, name });
+  }
+  for (const item of supplemental) {
+    const name = String(item?.name || '').trim();
+    if (name && !byName.has(name)) byName.set(name, { ...item, name });
+  }
+  return required.map((name) => byName.get(name)).filter((score): score is DimensionScore => Boolean(score));
+}
+
 export function missingDimensionNames(configuredNames: string[], evaluation: unknown): string[] {
   const scored = new Set(normalizeDimensionScores(evaluation).map(item => item.name));
   return configuredNames.filter(name => !scored.has(name));
