@@ -27,6 +27,18 @@ export async function ensureResumeProcessingJobsSchema(db: Pick<D1Database, 'pre
     CREATE INDEX IF NOT EXISTS idx_resume_jobs_status_updated
       ON resume_processing_jobs(status, updated_at DESC)
   `).bind().run();
+  // AI 诊断列（0029）——对旧数据库幂等补列
+  for (const column of [
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_provider TEXT",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_model TEXT",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_attempt INTEGER",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_response_chars INTEGER",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_error_stage TEXT",
+  ]) {
+    try {
+      await db.prepare(column).run();
+    } catch { /* column may already exist */ }
+  }
 }
 
 export function isMissingResumeProcessingJobsError(error: unknown): boolean {
@@ -91,4 +103,54 @@ export async function claimJob(
     .prepare('SELECT * FROM resume_processing_jobs WHERE id=?')
     .bind(jobId)
     .first()) as ResumeProcessingJob | null;
+}
+
+export interface JobAIDiagnostics {
+  provider?: string | null;
+  model?: string | null;
+  attempt?: number | null;
+  responseChars?: number | null;
+  errorStage?: string | null;
+}
+
+/** Thrown when a job was cancelled (batch stopped) before an in-flight AI write. */
+export class ResumeProcessingCancelledError extends Error {
+  readonly code = 'BATCH_CANCELLED';
+  constructor(message = '任务已被用户停止，不再写入评估结果') {
+    super(message);
+  }
+}
+
+/**
+ * Guard called before every resume write. If the job is no longer running
+ * (cancelled by a batch stop, or already completed/failed by a duplicate
+ * consumer), throw so the in-flight result is never persisted.
+ */
+export async function assertJobRunning(
+  db: Pick<D1Database, 'prepare'>,
+  jobId: string,
+): Promise<void> {
+  const row = await db.prepare('SELECT status FROM resume_processing_jobs WHERE id=?')
+    .bind(jobId)
+    .first() as { status: string } | null;
+  if (!row || row.status !== 'running') {
+    throw new ResumeProcessingCancelledError('任务已停止，不再写入评估结果');
+  }
+}
+
+/** Persist AI provider/model/attempt/length/error-stage diagnostics for a job. */
+export async function updateJobAIDiagnostics(
+  db: Pick<D1Database, 'prepare'>,
+  jobId: string,
+  diag: JobAIDiagnostics,
+): Promise<void> {
+  const parts: string[] = ['updated_at=?'];
+  const values: unknown[] = [new Date().toISOString()];
+  if (diag.provider !== undefined) { parts.push('ai_provider=?'); values.push(diag.provider); }
+  if (diag.model !== undefined) { parts.push('ai_model=?'); values.push(diag.model); }
+  if (diag.attempt !== undefined) { parts.push('ai_attempt=?'); values.push(diag.attempt); }
+  if (diag.responseChars !== undefined) { parts.push('ai_response_chars=?'); values.push(diag.responseChars); }
+  if (diag.errorStage !== undefined) { parts.push('ai_error_stage=?'); values.push(diag.errorStage); }
+  await db.prepare(`UPDATE resume_processing_jobs SET ${parts.join(', ')} WHERE id=?`)
+    .bind(...values, jobId).run();
 }

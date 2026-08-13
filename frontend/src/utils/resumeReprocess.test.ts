@@ -4,6 +4,7 @@ import {
   isReprocessBatchActive,
   getEvaluationStepLabel,
   getEvaluationCardState,
+  isHardGateRejection,
 } from './resumeReprocess';
 import type { ReprocessBatchView } from './resumeReprocess';
 
@@ -121,5 +122,39 @@ describe('getEvaluationCardState', () => {
     };
     const state = getEvaluationCardState(record);
     expect(state.status).toBe('running');
+  });
+});
+
+describe('getEvaluationCardState format failures', () => {
+  it('labels invalid-format AI failures clearly', () => {
+    const state = getEvaluationCardState({
+      evaluation_job_status: 'failed',
+      evaluation_job_error: 'AI_SCREENING_INVALID_SUMMARY: AI 返回提示词内容',
+    });
+    expect(state.status).toBe('failed');
+    expect(state.label).toBe('评估失败');
+    expect(state.error).toContain('格式');
+  });
+
+  it('labels invalid-dimension failures clearly', () => {
+    const state = getEvaluationCardState({
+      evaluation_job_status: 'failed',
+      evaluation_job_error: 'AI_SCREENING_INVALID_DIMENSIONS: 缺少完整七项维度',
+    });
+    expect(state.error).toContain('维度');
+  });
+});
+
+describe('isHardGateRejection', () => {
+  it('detects a rejected screening with no weighted score as a hard gate, not a system error', () => {
+    expect(isHardGateRejection({ screening_result: '不通过', match_score: null, evaluation_job_status: null })).toBe(true);
+  });
+
+  it('does not flag a passed screening with a score', () => {
+    expect(isHardGateRejection({ screening_result: '通过', match_score: 3, evaluation_job_status: null })).toBe(false);
+  });
+
+  it('does not flag a record with an active job', () => {
+    expect(isHardGateRejection({ screening_result: '不通过', match_score: null, evaluation_job_status: 'failed' })).toBe(false);
   });
 });

@@ -342,9 +342,14 @@ export async function getReprocessBatchView(
   const percent = total === 0 ? 100 : Math.round((finished / total) * 100);
   const cancelled = batch.status === 'failed' && String(batch.error_message || '').startsWith('BATCH_CANCELLED:');
   const viewStatus: ReprocessBatchStatus = cancelled ? 'cancelled' : batch.status;
-  const status: ReprocessBatchStatus = !cancelled && viewStatus !== 'failed' && finished >= total && total >= 0
-    ? 'completed'
+  // A coordinator may internally use queued while waiting for the next page, but
+  // if any item is already running the page must show evaluating.
+  const displayStatus: ReprocessBatchStatus = !cancelled && viewStatus === 'queued' && processing > 0
+    ? 'running'
     : viewStatus;
+  const status: ReprocessBatchStatus = !cancelled && displayStatus !== 'failed' && finished >= total && total >= 0
+    ? 'completed'
+    : displayStatus;
 
   return {
     batch_id: batch.id,
@@ -397,29 +402,29 @@ export async function cancelReprocessBatch(
   await db.prepare(
     `UPDATE resume_processing_jobs
         SET status='cancelled', error_code='BATCH_CANCELLED', error_message=?, completed_at=?, updated_at=?
-      WHERE status='queued'
+      WHERE status IN ('queued', 'running')
         AND id IN (
           SELECT job_id FROM resume_reprocess_batch_items
-           WHERE batch_id=? AND status IN ('pending', 'queued') AND job_id IS NOT NULL
+           WHERE batch_id=? AND status IN ('pending', 'queued', 'running') AND job_id IS NOT NULL
         )`,
   ).bind(message, timestamp, timestamp, batchId).run();
 
   // Reprocess reset these resumes to queued before sending the job. Mark jobs
-  // that never started as failed/stopped as well, otherwise the regular resume
-  // list polling would keep treating them as active parse work forever.
+  // that never started or were running as failed/stopped as well, otherwise the
+  // regular resume list polling would keep treating them as active parse work.
   await db.prepare(
     `UPDATE resumes
         SET parse_status='failed', parse_error=?, updated_at=?
       WHERE id IN (
         SELECT resume_id FROM resume_reprocess_batch_items
-         WHERE batch_id=? AND status IN ('pending', 'queued') AND job_id IS NOT NULL
+         WHERE batch_id=? AND status IN ('pending', 'queued', 'running') AND job_id IS NOT NULL
       )`,
   ).bind(message, timestamp, batchId).run();
 
   await db.prepare(
     `UPDATE resume_reprocess_batch_items
         SET status='skipped', skip_reason='cancelled', error_code='BATCH_CANCELLED', error_message=?, updated_at=?
-      WHERE batch_id=? AND status IN ('pending', 'queued')`,
+      WHERE batch_id=? AND status IN ('pending', 'queued', 'running')`,
   ).bind(message, timestamp, batchId).run();
   return true;
 }

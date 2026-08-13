@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assembleScreeningEvaluation,
   filterDimensionScoresToConfigured,
   mergeConfiguredDimensionScores,
+  mergeDimensionScores,
   missingDimensionNames,
   normalizeScreeningEvaluation,
   requireCompleteScreeningEvaluation,
@@ -91,5 +93,54 @@ describe('dimension score helpers', () => {
       summary: '# 人才能力评估AI打分提示词\n```json\n{ "dimensions": [] }',
       dimensions: WEIGHTED_SCREENING_DIMENSION_NAMES.map((name) => ({ name, score: 0 })),
     })).toThrow('AI_SCREENING_INVALID_SUMMARY');
+  });
+});
+
+describe('mergeDimensionScores primary-first merge', () => {
+  function seven() {
+    return WEIGHTED_SCREENING_DIMENSION_NAMES.map((name) => ({ name, score: 5, reason: 'primary' }));
+  }
+
+  it('does not replace complete primary dimensions with a partial supplement', () => {
+    const merged = mergeDimensionScores(seven(), [
+      { name: '核心画像', score: 2, reason: 'supplement' },
+    ], WEIGHTED_SCREENING_DIMENSION_NAMES);
+    expect(merged).toHaveLength(7);
+    expect(merged.find((item) => item.name === '核心画像')?.reason).toBe('primary');
+  });
+
+  it('fills only missing primary dimensions from supplement', () => {
+    const primary = seven().slice(0, 5);
+    const supplement = WEIGHTED_SCREENING_DIMENSION_NAMES.slice(5).map((name) => ({ name, score: 5, reason: 'supplement' }));
+    const merged = mergeDimensionScores(primary, supplement, WEIGHTED_SCREENING_DIMENSION_NAMES);
+    expect(merged.map((item) => item.name)).toEqual([...WEIGHTED_SCREENING_DIMENSION_NAMES]);
+    expect(merged.filter((item) => item.reason === 'primary')).toHaveLength(5);
+    expect(merged.filter((item) => item.reason === 'supplement')).toHaveLength(2);
+  });
+});
+
+describe('assembleScreeningEvaluation', () => {
+  function seven(reason: string) {
+    return WEIGHTED_SCREENING_DIMENSION_NAMES.map((name) => ({ name, score: 5, reason }));
+  }
+
+  it('keeps complete primary evaluation when supplement is partial', () => {
+    const primary = { summary: '正常', dimensions: seven('primary') };
+    const assembled = assembleScreeningEvaluation(primary, [{ name: '核心画像', score: 2, reason: 'partial supplement' }]);
+    expect(normalizeDimensionScores(assembled)).toHaveLength(7);
+    expect(assembled.summary).toBe('正常');
+  });
+
+  it('fills missing primary dimensions from a complete supplement', () => {
+    const primary = { summary: '正常', dimensions: seven('primary').slice(0, 5) };
+    const assembled = assembleScreeningEvaluation(primary, seven('supplement').slice(5));
+    expect(normalizeDimensionScores(assembled).map((item) => item.name)).toEqual([...WEIGHTED_SCREENING_DIMENSION_NAMES]);
+  });
+
+  it('requires the full weighted dimension set as the floor even without configured names', () => {
+    const primary = { summary: '正常', dimensions: seven('primary').slice(0, 3) };
+    const assembled = assembleScreeningEvaluation(primary, seven('supplement').slice(3, 6));
+    // 仍缺一项：assemble 只合并输入，不伪造缺失项
+    expect(normalizeDimensionScores(assembled)).toHaveLength(6);
   });
 });

@@ -38,7 +38,7 @@ describe('ResumeReprocessProgress', () => {
   it('shows batch title and progress', () => {
     render(<ResumeReprocessProgress batch={makeBatch()} />);
     expect(screen.getByText('全部重评')).toBeTruthy();
-    expect(screen.getByText('处理中')).toBeTruthy();
+    expect(screen.getByText('评估中')).toBeTruthy();
   });
 
   it('shows stop button only while the batch is active', () => {

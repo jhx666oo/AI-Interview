@@ -42,6 +42,11 @@ export interface ResumeProcessingJob {
   started_at: string | null;
   completed_at: string | null;
   updated_at: string;
+  ai_provider: string | null;
+  ai_model: string | null;
+  ai_attempt: number | null;
+  ai_response_chars: number | null;
+  ai_error_stage: string | null;
 }
 
 export function isTerminalJobStatus(status: ResumeJobStatus): boolean {

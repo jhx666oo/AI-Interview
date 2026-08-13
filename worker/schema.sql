@@ -128,6 +128,11 @@ CREATE TABLE IF NOT EXISTS resume_processing_jobs (
   started_at TEXT,
   completed_at TEXT,
   updated_at TEXT NOT NULL,
+  ai_provider TEXT,
+  ai_model TEXT,
+  ai_attempt INTEGER,
+  ai_response_chars INTEGER,
+  ai_error_stage TEXT,
   FOREIGN KEY (resume_id) REFERENCES resumes(id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_jobs_one_active

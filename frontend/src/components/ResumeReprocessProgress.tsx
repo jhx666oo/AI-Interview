@@ -20,7 +20,7 @@ const ResumeReprocessProgress: React.FC<ResumeReprocessProgressProps> = ({ batch
   const scopeLabel = batch.scope === 'all' ? '全部重评' : '重评未评估/失败简历';
   const isActive = batch.status === 'queued' || batch.status === 'running';
   const statusColor = batch.status === 'completed' ? 'success' : batch.status === 'failed' ? 'error' : batch.status === 'cancelled' ? 'default' : 'processing';
-  const statusLabel = batch.status === 'completed' ? '已完成' : batch.status === 'failed' ? '已失败' : batch.status === 'cancelled' ? '已停止' : '处理中';
+  const statusLabel = batch.status === 'completed' ? '已完成' : batch.status === 'failed' ? '已失败' : batch.status === 'cancelled' ? '已停止' : '评估中';
 
   const handleCancel = () => {
     Modal.confirm({
