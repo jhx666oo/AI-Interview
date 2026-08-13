@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveInterviewAssignments } from '../src/index';
+import { resolveInterviewAssignments, resolveStoredInterviewAssignments } from '../src/index';
 
 describe('interview assignments', () => {
   it('keeps both manually entered interviewers', () => {
@@ -32,6 +32,76 @@ describe('interview assignments', () => {
       interviewer: '岗位一面',
       primaryInterviewer: '岗位一面',
       secondaryInterviewer: '岗位二面',
+    });
+  });
+  it('fills a historical raw-position interview from the standard position defaults', () => {
+    expect(resolveStoredInterviewAssignments({
+      position_id: 'IoT产品经理（双休｜入职五险一金）',
+      position_applied: '',
+      interviewer: '',
+      primary_interviewer: '',
+      secondary_interviewer: '',
+    }, {
+      title: '软件产品经理（智能硬件方向）',
+      primary_interviewer: '杜雁玲',
+      secondary_interviewer: '何雨菱',
+    })).toEqual({
+      interviewer: '杜雁玲',
+      primaryInterviewer: '杜雁玲',
+      secondaryInterviewer: '何雨菱',
+    });
+  });
+
+  it('keeps explicitly stored interviewers instead of replacing them with defaults', () => {
+    expect(resolveStoredInterviewAssignments({
+      interviewer: '已确认的一面',
+      primary_interviewer: '已确认的一面',
+      secondary_interviewer: '已确认的二面',
+    }, {
+      primary_interviewer: '岗位一面',
+      secondary_interviewer: '岗位二面',
+    })).toEqual({
+      interviewer: '已确认的一面',
+      primaryInterviewer: '已确认的一面',
+      secondaryInterviewer: '已确认的二面',
+    });
+  });
+
+  it('repairs legacy auto-assignment values stored against a raw position name', () => {
+    expect(resolveStoredInterviewAssignments({
+      position_id: 'IoT产品经理（双休｜入职五险一金）',
+      position_applied: '',
+      interviewer: '旧的一面',
+      primary_interviewer: '旧的一面',
+      secondary_interviewer: '旧的二面',
+    }, {
+      id: 'position-1',
+      title: '软件产品经理（智能硬件方向）',
+      primary_interviewer: '杜雁玲',
+      secondary_interviewer: '何雨菱',
+    })).toEqual({
+      interviewer: '杜雁玲',
+      primaryInterviewer: '杜雁玲',
+      secondaryInterviewer: '何雨菱',
+    });
+  });
+
+  it('keeps explicit values when the legacy position reference is already the standard title', () => {
+    expect(resolveStoredInterviewAssignments({
+      position_id: '软件产品经理（智能硬件方向）',
+      position_applied: '',
+      interviewer: '人工指定一面',
+      primary_interviewer: '人工指定一面',
+      secondary_interviewer: '人工指定二面',
+    }, {
+      id: 'position-1',
+      title: '软件产品经理（智能硬件方向）',
+      primary_interviewer: '岗位一面',
+      secondary_interviewer: '岗位二面',
+    })).toEqual({
+      interviewer: '人工指定一面',
+      primaryInterviewer: '人工指定一面',
+      secondaryInterviewer: '人工指定二面',
     });
   });
 });

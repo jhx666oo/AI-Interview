@@ -152,7 +152,7 @@ const PositionsList: React.FC = () => {
       });
       await Modal.confirm({
         title: `确认去重`,
-        content: `将清除岗位中的冗余字段（责任人/面试官/城市等已移至需求管理），并删除 ${toDelete.length} 条重复岗位记录。`,
+        content: `将保留岗位负责人和默认面试官配置，并删除 ${toDelete.length} 条重复岗位记录。`,
         okText: '确认去重',
         cancelText: '取消',
         okType: 'danger',
@@ -296,8 +296,6 @@ const PositionsList: React.FC = () => {
       urgency: 'medium',
       position_type: 'full_time',
       headcount: 1,
-      primary_interviewer: '杜雁玲',
-      secondary_interviewer: '何雨菱',
       capability_dimensions: defaultCapabilityDimensions(),
     });
     setIsModalVisible(true);
@@ -647,11 +645,11 @@ const PositionsList: React.FC = () => {
   };
 
   const primaryInterviewerOptions = useMemo(
-    () => buildInterviewerOptions(interviewers, [primaryInterviewer, secondaryInterviewer], '杜雁玲'),
+    () => buildInterviewerOptions(interviewers, [primaryInterviewer, secondaryInterviewer]),
     [interviewers, primaryInterviewer, secondaryInterviewer],
   );
   const secondaryInterviewerOptions = useMemo(
-    () => buildInterviewerOptions(interviewers, [primaryInterviewer, secondaryInterviewer], '何雨菱'),
+    () => buildInterviewerOptions(interviewers, [primaryInterviewer, secondaryInterviewer]),
     [interviewers, primaryInterviewer, secondaryInterviewer],
   );
 

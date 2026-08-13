@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Card, Table, Button, Space, Modal, Form, Input, Tag, message,
-  Typography, Select, Popconfirm, Tooltip, Divider
+  Typography, Select, Popconfirm, Tooltip
 } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import {
@@ -19,7 +19,8 @@ interface PositionGroup {
   _ids: string[];
   responsible_person: string;
   responsible_person_open_id: string;
-  interviewers: Array<{ name: string; open_id: string }>;
+  primary_interviewer: string;
+  secondary_interviewer: string;
 }
 
 const PositionMappings: React.FC = () => {
@@ -42,22 +43,26 @@ const PositionMappings: React.FC = () => {
     try {
       const params: any = {};
       if (search) params.raw_name = search;
-      const res: any[] = await request.get('/position-mappings', { params });
+      const [res, positions] = await Promise.all([
+        request.get('/position-mappings', { params }) as Promise<any[]>,
+        request.get('/positions') as Promise<any[]>,
+      ]);
+      const positionByTitle = new Map((positions || []).map((position: any) => [position.title, position]));
       // 按标准岗位名分组
       const groups: Record<string, PositionGroup> = {};
       (res || []).forEach((r: any) => {
         const key = r.mapped_name;
         if (!groups[key]) {
-          let ivs: Array<{ name: string; open_id: string }> = [];
-          try { ivs = JSON.parse(r.interviewers || '[]'); } catch { ivs = []; }
+          const position = positionByTitle.get(key);
           groups[key] = {
             key,
             mapped_name: key,
             raw_names: [],
             _ids: [],
-            responsible_person: r.responsible_person || '',
+            responsible_person: position?.responsible_person || r.responsible_person || '',
             responsible_person_open_id: r.responsible_person_open_id || '',
-            interviewers: ivs,
+            primary_interviewer: position?.primary_interviewer || '',
+            secondary_interviewer: position?.secondary_interviewer || '',
           };
         }
         if (!groups[key].raw_names.includes(r.raw_name)) {
@@ -81,8 +86,6 @@ const PositionMappings: React.FC = () => {
     form.setFieldsValue({
       mapped_name: '',
       raw_names: [],
-      responsible_person: '',
-      interviewers: [],
     });
     setModalVisible(true);
   };
@@ -93,8 +96,6 @@ const PositionMappings: React.FC = () => {
     form.setFieldsValue({
       mapped_name: record.mapped_name,
       raw_names: record.raw_names,
-      responsible_person: record.responsible_person,
-      interviewers: record.interviewers.map(iv => iv.name).join(', '),
     });
     setModalVisible(true);
   };
@@ -103,17 +104,12 @@ const PositionMappings: React.FC = () => {
     setSubmitting(true);
     try {
       const values = await form.validateFields();
-      const { mapped_name, raw_names, responsible_person, interviewers } = values;
+      const { mapped_name, raw_names } = values;
       if (!raw_names || raw_names.length === 0) {
         message.warning('请至少输入一个 BOSS 岗位名称');
         setSubmitting(false);
         return;
       }
-      // 解析面试官字符串为数组
-      const interviewerArr = interviewers
-        ? interviewers.split(/[,，、]/).map((n: string) => n.trim()).filter(Boolean).map((name: string) => ({ name, open_id: '' }))
-        : [];
-      
       const newRawNames: string[] = Array.isArray(raw_names) ? raw_names : [raw_names];
 
       // 编辑时：删除用户在界面中移除的旧 BOSS岗位名
@@ -134,9 +130,6 @@ const PositionMappings: React.FC = () => {
       await request.post('/position-mappings/batch-save', {
         mapped_name,
         raw_names: newRawNames,
-        responsible_person: responsible_person || '',
-        responsible_person_open_id: '',
-        interviewers: interviewerArr,
       });
       message.success(editing ? '更新成功' : '创建成功');
       setModalVisible(false);
@@ -190,7 +183,7 @@ const PositionMappings: React.FC = () => {
   const handleSync = async () => {
     Modal.confirm({
       title: '从飞书同步',
-      content: '将从飞书年度招聘任务表的「责任人」「业务一面」「HR二面」「终面」字段同步到岗位映射表，更新已存在的映射。',
+      content: '只同步飞书岗位名称并维护原始岗位名到标准岗位名的映射。负责人和一面/二面默认面试官请在岗位管理维护。',
       okText: '同步',
       cancelText: '取消',
       onOk: async () => {
@@ -239,18 +232,16 @@ const PositionMappings: React.FC = () => {
       ),
     },
     {
-      title: '面试官',
-      key: 'interviewers',
-      width: 240,
-      render: (_: any, record: PositionGroup) => (
-        record.interviewers.length > 0
-          ? <Space wrap size={[4, 4]}>
-              {record.interviewers.map((iv, i) => (
-                <Tag key={i} color="geekblue">{iv.name}</Tag>
-              ))}
-            </Space>
-          : <Text type="secondary">-</Text>
-      ),
+      title: '默认一面',
+      key: 'primary_interviewer',
+      width: 120,
+      render: (_: any, record: PositionGroup) => record.primary_interviewer || <Text type="secondary">请到岗位管理配置</Text>,
+    },
+    {
+      title: '默认二面',
+      key: 'secondary_interviewer',
+      width: 120,
+      render: (_: any, record: PositionGroup) => record.secondary_interviewer || <Text type="secondary">请到岗位管理配置</Text>,
     },
     {
       title: '操作',
@@ -273,7 +264,8 @@ const PositionMappings: React.FC = () => {
     subtitle: (record: PositionGroup) => record.raw_names.length ? record.raw_names.map((name) => <Tag key={name} color="blue">{name}</Tag>) : '—',
     fields: [
       { key: 'responsible', label: '负责人', level: 'secondary' as const, render: (record: PositionGroup) => record.responsible_person ? <Tag icon={<UserOutlined />} color="orange">{record.responsible_person}</Tag> : '—' },
-      { key: 'interviewers', label: '面试官', level: 'secondary' as const, render: (record: PositionGroup) => record.interviewers.length ? record.interviewers.map((interviewer) => <Tag key={interviewer.open_id || interviewer.name} color="geekblue">{interviewer.name}</Tag>) : '—' },
+      { key: 'primaryInterviewer', label: '默认一面', level: 'secondary' as const, render: (record: PositionGroup) => record.primary_interviewer || '请到岗位管理配置' },
+      { key: 'secondaryInterviewer', label: '默认二面', level: 'secondary' as const, render: (record: PositionGroup) => record.secondary_interviewer || '请到岗位管理配置' },
       { key: 'openId', label: '负责人 Open ID', level: 'detail' as const, render: (record: PositionGroup) => record.responsible_person_open_id || '—' },
       { key: 'rawNames', label: '全部 BOSS 岗位名称', level: 'detail' as const, render: (record: PositionGroup) => record.raw_names.join('、') || '—' },
     ],
@@ -349,13 +341,9 @@ const PositionMappings: React.FC = () => {
           <Form.Item name="raw_names" label="BOSS岗位名称（可多个）" rules={[{ required: true, message: '请至少输入一个' }]}>
             <Select mode="tags" placeholder="输入后回车添加" tokenSeparators={[',', '，', '\n']} />
           </Form.Item>
-          <Divider />
-          <Form.Item name="responsible_person" label="负责人">
-            <Input placeholder="输入负责人姓名（从飞书同步后自动填充）" />
-          </Form.Item>
-          <Form.Item name="interviewers" label="面试官（多个用逗号分隔）">
-            <Input placeholder="如：张三, 李四, 王五" />
-          </Form.Item>
+          <Typography.Text type="secondary">
+            负责人及默认一面/二面面试官统一在“岗位管理”维护，本页面只维护岗位名称映射。
+          </Typography.Text>
         </Form>
       </ResponsiveModal>
     </Card>

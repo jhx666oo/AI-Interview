@@ -24,6 +24,12 @@ import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-scr
 import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
 import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
 import { buildPositionMappingFromRows, resolveMappedPosition } from './position-mapping';
+import {
+  buildPositionDefaultsIndex,
+  resolvePositionDefaults,
+  resolveInterviewAssignments as resolveInterviewAssignmentsFromDefaults,
+  resolveStoredInterviewAssignments,
+} from './interviewer-assignment';
 import { buildInterviewReminderView, deliverInterviewReminder } from './feishu-notifications/interview-reminder';
 import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveReminderInterviewer } from './feishu-notifications/reminder-source';
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
@@ -3076,7 +3082,7 @@ function parseRequisitionRecord(record: any): any {
     biz_interviewer: getUserName(f['业务一面']),
     final_interviewer: getUserName(f['终面']),
     primary_interviewer: getUserName(f['业务一面']) || '',
-    secondary_interviewer: getUserName(f['HR二面']) || '何雨菱',
+    secondary_interviewer: getUserName(f['HR二面']) || '',
     start_date: f['开始招聘'] || null,
     end_date: f['结束招聘'] || null,
     employment_type: 'full_time',
@@ -3409,6 +3415,28 @@ app.get('/api/interviews', authMiddleware, async (c) => {
   const page = parseInt(c.req.query('page') || '0', 10);
   const pageSize = parseInt(c.req.query('pageSize') || '0', 10);
 
+  const [positionRows, mappingRows] = await Promise.all([
+    c.env.DB.prepare('SELECT id, title, primary_interviewer, secondary_interviewer FROM positions').all(),
+    c.env.DB.prepare('SELECT raw_name, raw_names, mapped_name FROM position_mappings').all(),
+  ]);
+  const positionDefaultsIndex = buildPositionDefaultsIndex(
+    (positionRows.results || []) as any[],
+    (mappingRows.results || []) as any[],
+  );
+  const formatInterviewRow = (row: any) => {
+    const resolvedPosition = resolvePositionDefaults(positionDefaultsIndex, row);
+    const assignment = resolveStoredInterviewAssignments(row, resolvedPosition);
+    return {
+      ...transformRow(row),
+      primary_interviewer: assignment.primaryInterviewer,
+      secondary_interviewer: assignment.secondaryInterviewer,
+      interviewer: assignment.interviewer,
+      standard_position: resolvedPosition?.title || row._position_title || row.position_applied || row.position_id || '',
+      resume: { candidate_name: row._candidate_name || row.candidate_name || '未知' },
+      position: { title: resolvedPosition?.title || row._position_title || row.position_applied || row.position_id || '未知岗位' },
+    };
+  };
+
   if (page > 0 && pageSize > 0) {
     // 先查总数
     const countSql = `SELECT COUNT(*) as total FROM (${sql})`;
@@ -3419,22 +3447,13 @@ app.get('/api/interviews', authMiddleware, async (c) => {
     const pagedSql = `${sql} LIMIT ? OFFSET ?`;
     const { results } = await c.env.DB.prepare(pagedSql).bind(...binds, pageSize, offset).all();
     return c.json({
-      items: results.map((row: any) => ({
-        ...transformRow(row),
-        resume: { candidate_name: row._candidate_name || row.candidate_name || '未知' },
-        position: { title: row._position_title || row.position_id || '未知岗位' }
-      })),
+      items: results.map(formatInterviewRow),
       total, page, pageSize,
     });
   }
 
   const { results } = await c.env.DB.prepare(sql).bind(...binds).all();
-  // 把 _candidate_name 和 _position_title 嵌入到嵌套对象，保持前端现有列定义兼容
-  return c.json(results.map((row: any) => ({
-    ...transformRow(row),
-    resume: { candidate_name: row._candidate_name || row.candidate_name || '未知' },
-    position: { title: row._position_title || row.position_id || '未知岗位' }
-  })));
+  return c.json(results.map(formatInterviewRow));
 });
 
 // ==================== CRUD Registration ====================
@@ -3449,21 +3468,36 @@ app.post('/api/positions/sync-from-feishu', authMiddleware, async (c) => {
   try {
     const tableId = getBitableTableId(c.env, 'requisition');
     const records = await bitableListRecords(c.env, tableId);
+    const positionMappings = await buildPositionMapping(c.env.DB);
     
-    // 解析飞书数据，按招聘岗位去重
-    const synced = new Set<string>();
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
-    
+    // 按标准岗位聚合，避免同一岗位存在多个原始名称时只取到一条空配置。
+    const parsedByTitle = new Map<string, any>();
     for (const rec of records) {
       const parsed = parseRequisitionRecord(rec);
-      const title = parsed.title;
-      if (!title || title === '(未命名岗位)' || synced.has(title)) {
-        skipped++;
+      const title = resolveMappedPosition(positionMappings, parsed.title);
+      if (!title || title === '(未命名岗位)') continue;
+      const existing = parsedByTitle.get(title);
+      if (!existing) {
+        parsedByTitle.set(title, { ...parsed, title });
         continue;
       }
-      synced.add(title);
+      for (const field of [
+        'department', 'city', 'description', 'requirements', 'responsible_person',
+        'salary_range', 'primary_interviewer', 'secondary_interviewer',
+      ]) {
+        if (!existing[field] && parsed[field]) existing[field] = parsed[field];
+      }
+      if ((!existing.headcount || existing.headcount === 1) && parsed.headcount > 1) {
+        existing.headcount = parsed.headcount;
+      }
+    }
+
+    let created = 0;
+    let updated = 0;
+    const skipped = Math.max(0, records.length - parsedByTitle.size);
+
+    for (const parsed of parsedByTitle.values()) {
+      const title = parsed.title;
       
       // 检查是否已存在
       const existing = await c.env.DB.prepare(
@@ -4247,20 +4281,8 @@ app.post('/api/interviews/:id/evaluate', authMiddleware, async (c) => {
   }
 });
 
-export function resolveInterviewAssignments(body: any, position: any): {
-  interviewer: string;
-  primaryInterviewer: string;
-  secondaryInterviewer: string;
-} {
-  const clean = (value: any) => value === undefined || value === null ? '' : String(value).trim();
-  const primaryInterviewer = clean(body?.interviewer_name || body?.primary_interviewer || body?.interviewer || position?.primary_interviewer);
-  const secondaryInterviewer = clean(body?.secondary_interviewer || position?.secondary_interviewer);
-  return {
-    interviewer: primaryInterviewer || '待分配',
-    primaryInterviewer,
-    secondaryInterviewer,
-  };
-}
+export const resolveInterviewAssignments = resolveInterviewAssignmentsFromDefaults;
+export { resolveStoredInterviewAssignments } from './interviewer-assignment';
 
 async function findPositionByName(db: any, positionName: unknown): Promise<any | null> {
   const rawName = typeof positionName === 'string' ? positionName.trim() : '';
@@ -4299,6 +4321,7 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
     let interviewerNames: string[] = [];
     let matchedReqRecordId: string | null = null;
     let matchedReqTitle: string = '';
+    let pendingCandidates: string[] = [];
 
     if (interviewer_name) {
       interviewerNames.push(interviewer_name);
@@ -4333,28 +4356,9 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
       const mf = matchedReq.fields || {};
       matchedReqRecordId = matchedReq.record_id;
       matchedReqTitle = getFirstValue(mf['招聘岗位']) || '';
-      // 业务一面是用户类型字段，尝试提取 open_id 和 name
-      const rawBiz = mf['业务一面'];
-      const bizUsers = extractFeishuUsers(rawBiz);
-      for (const u of bizUsers) {
-        if (u.open_id && !interviewerOpenIds.includes(u.open_id)) {
-          interviewerOpenIds.push(u.open_id);
-          interviewerNames.push(u.name || '面试官');
-        }
-      }
-      // 如果 extractFeishuUsers 没提取到（可能是纯文本格式），用 getUserName 兜底
-      if (bizUsers.length === 0) {
-        const bizName = getUserName(rawBiz);
-        if (bizName) interviewerNames.push(bizName);
-        const openId = await getInterviewerOpenId(c.env, bizName);
-        if (openId && !interviewerOpenIds.includes(openId)) {
-          interviewerOpenIds.push(openId);
-        }
-      }
     }
 
     // 查找该任务下"业务复核=通过 + 一面建议为空"的候选人
-    let pendingCandidates: string[] = [];
     if (matchedReqRecordId) {
       try {
         // 从人才库找当前候选人所在的同一任务的所有候选人
@@ -4403,7 +4407,12 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
       positionInterviewers = await findPositionByName(c.env.DB, position_applied);
     } catch {}
     const assignment = resolveInterviewAssignments({ interviewer_name, secondary_interviewer }, positionInterviewers);
-    const interviewerStr = assignment.primaryInterviewer || interviewerNames.join(', ') || assignment.interviewer;
+    const interviewerStr = assignment.primaryInterviewer || assignment.interviewer;
+    if (assignment.primaryInterviewer && interviewerNames.length === 0) {
+      interviewerNames.push(assignment.primaryInterviewer);
+      const openId = await getInterviewerOpenId(c.env, assignment.primaryInterviewer);
+      if (openId) interviewerOpenIds.push(openId);
+    }
 
     await c.env.DB.prepare(
       `INSERT INTO interviews (id, resume_id, candidate_name, interviewer, position_id, position_applied, status, created_at, comments, primary_interviewer, secondary_interviewer)
@@ -4482,7 +4491,7 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
     return c.json({
       ...row,
       resume: { candidate_name: candidate_name },
-      position: { title: position_applied || '未知岗位' },
+      position: { title: positionInterviewers?.title || position_applied || '未知岗位' },
       interviewer_list: interviewerNames,
       _notification: notificationResults,
     });
@@ -8233,16 +8242,8 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
 // ==================== Position Dedup (v2.0) ====================
 app.post('/api/positions/dedup', authMiddleware, async (c) => {
   try {
-    // 按 title + department 分组，清除重复字段
-    const cleared = await c.env.DB.prepare(`
-      UPDATE positions SET
-        salary_range = '', location = '',
-        primary_interviewer = '', secondary_interviewer = '',
-        responsible_person = '', personalized_requirements = '',
-        updated_at = ?
-      WHERE 1=1
-    `).bind(now()).run();
-    return c.json({ deduped: cleared.meta?.changes ?? 0, message: '已清除岗位中的重复字段（保留 title/JD/department/capability_dimensions）' });
+    // 岗位默认负责人和一面/二面面试官是标准岗位的唯一配置源，去重不能清空。
+    return c.json({ deduped: 0, message: '已保留岗位默认负责人和面试官，重复岗位记录由页面继续删除' });
   } catch (e: any) {
     return c.json({ detail: e.message }, 500);
   }
@@ -8340,51 +8341,33 @@ app.post('/api/position-mappings/sync-from-feishu', authMiddleware, async (c) =>
   try {
     const tableId = getBitableTableId(c.env, 'requisition');
     const records = await bitableListRecords(c.env, tableId);
+    const positionMappings = await buildPositionMapping(c.env.DB);
+    const positionRows = await c.env.DB.prepare(
+      'SELECT title, responsible_person FROM positions'
+    ).all();
+    const responsibleByTitle = new Map(
+      (positionRows.results || []).map((row: any) => [row.title, row.responsible_person || '']),
+    );
 
-    // 按招聘岗位聚合：责任人 + 面试官
-    const agg: Record<string, { responsible_person: string; interviewers: { name: string; role: string }[] }> = {};
+    // 岗位映射只维护「原始岗位名 → 标准岗位名」，不保存负责人和面试官配置。
+    const aliases = new Map<string, string>();
     for (const rec of records) {
       const f = rec.fields || {};
-      const title = getFirstValue(f['招聘岗位']) || '';
-      if (!title) continue;
-      if (!agg[title]) {
-        agg[title] = { responsible_person: '', interviewers: [] };
-      }
-      const person = getUserName(f['责任人']) || '';
-      if (person && !agg[title].responsible_person) {
-        agg[title].responsible_person = person;
-      }
-      // 收集面试官（飞书字段可能是单人或多人的数组）
-      for (const key of ['业务一面', 'HR二面', '终面']) {
-        const raw = f[key];
-        if (!raw) continue;
-        const names: string[] = [];
-        if (Array.isArray(raw)) {
-          for (const item of raw) {
-            const n = getUserName(item);
-            if (n) names.push(n);
-          }
-        } else {
-          const n = getUserName(raw);
-          if (n) names.push(n);
-        }
-        for (const name of names) {
-          if (name && !agg[title].interviewers.some(i => i.name === name)) {
-            agg[title].interviewers.push({ name, role: key });
-          }
-        }
-      }
+      const rawTitle = getFirstValue(f['招聘岗位']) || '';
+      if (!rawTitle) continue;
+      aliases.set(rawTitle, resolveMappedPosition(positionMappings, rawTitle));
     }
 
     let created = 0;
     let updated = 0;
-    for (const [title, info] of Object.entries(agg)) {
+    for (const [title, mappedTitle] of aliases.entries()) {
+      const responsiblePerson = responsibleByTitle.get(mappedTitle) || '';
       const existing = await c.env.DB.prepare(
-        'SELECT id, raw_names FROM position_mappings WHERE mapped_name = ? LIMIT 1'
+        'SELECT id, raw_names FROM position_mappings WHERE raw_name = ? LIMIT 1'
       ).bind(title).first() as any;
 
       if (existing) {
-        // 更新 — 同时补全 raw_name（如果为空则以 mapped_name 填充）
+        // 更新别名归属；不触碰 legacy 人员字段，避免映射表继续成为面试官来源。
         let newRawNames: string[] = [];
         try {
           newRawNames = JSON.parse(existing.raw_names || '[]');
@@ -8393,12 +8376,11 @@ app.post('/api/position-mappings/sync-from-feishu', authMiddleware, async (c) =>
           newRawNames.push(title);
         }
         await c.env.DB.prepare(
-          'UPDATE position_mappings SET responsible_person = ?, raw_names = ?, interviewers = ?, raw_name = COALESCE(raw_name, ?), updated_at = ? WHERE id = ?'
+          'UPDATE position_mappings SET mapped_name = ?, raw_names = ?, responsible_person = COALESCE(?, responsible_person), updated_at = ? WHERE id = ?'
         ).bind(
-          info.responsible_person,
+          mappedTitle,
           JSON.stringify(newRawNames),
-          JSON.stringify(info.interviewers),
-          title,
+          responsiblePerson || null,
           now(),
           existing.id
         ).run();
@@ -8409,10 +8391,10 @@ app.post('/api/position-mappings/sync-from-feishu', authMiddleware, async (c) =>
         await c.env.DB.prepare(
           'INSERT INTO position_mappings (id, raw_name, mapped_name, raw_names, responsible_person, interviewers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         ).bind(
-          id, title, title,
+          id, title, mappedTitle,
           JSON.stringify([title]),
-          info.responsible_person,
-          JSON.stringify(info.interviewers),
+          responsiblePerson,
+          '[]',
           now(), now()
         ).run();
         created++;
@@ -8434,11 +8416,10 @@ app.post('/api/position-mappings/sync-from-feishu', authMiddleware, async (c) =>
 app.post('/api/position-mappings/batch-save', authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
-    const { mapped_name, raw_names, responsible_person, responsible_person_open_id, interviewers } = body;
+    const { mapped_name, raw_names } = body;
     if (!mapped_name || !Array.isArray(raw_names) || raw_names.length === 0) {
       return c.json({ detail: '缺少必要字段: mapped_name 和 raw_names' }, 400);
     }
-    const interviewerJson = JSON.stringify(interviewers || []);
     let created = 0, updated = 0;
     for (const raw of raw_names) {
       if (!raw) continue;
@@ -8448,13 +8429,13 @@ app.post('/api/position-mappings/batch-save', authMiddleware, async (c) => {
       ).bind(raw).first();
       if (existing) {
         await c.env.DB.prepare(
-          'UPDATE position_mappings SET mapped_name = ?, responsible_person = ?, interviewers = ?, updated_at = ? WHERE raw_name = ?'
-        ).bind(mapped_name, responsible_person || '', interviewerJson, now(), raw).run();
+          'UPDATE position_mappings SET mapped_name = ?, updated_at = ? WHERE raw_name = ?'
+        ).bind(mapped_name, now(), raw).run();
         updated++;
       } else {
         await c.env.DB.prepare(
           'INSERT INTO position_mappings (id, raw_name, raw_names, mapped_name, responsible_person, interviewers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(uuid(), raw, JSON.stringify(raw_names), mapped_name, responsible_person || '', interviewerJson, now(), now()).run();
+        ).bind(uuid(), raw, JSON.stringify(raw_names), mapped_name, '', '[]', now(), now()).run();
         created++;
       }
     }
@@ -10732,12 +10713,13 @@ app.post('/api/auth/sync-responsible-persons', authMiddleware, requireRole(['adm
   try {
     const tableId = getBitableTableId(c.env, 'requisition');
     const records = await bitableListRecords(c.env, tableId);
+    const positionMappings = await buildPositionMapping(c.env.DB);
 
     // 按岗位名聚合责任人（取第一个有值的）
     const personMap: Record<string, string> = {};
     for (const rec of records) {
       const f = rec.fields || {};
-      const title = getFirstValue(f['招聘岗位']) || '';
+      const title = resolveMappedPosition(positionMappings, getFirstValue(f['招聘岗位']) || '');
       if (!title) continue;
       const person = getUserName(f['责任人']) || '';
       if (person && !personMap[title]) {
@@ -10753,19 +10735,10 @@ app.post('/api/auth/sync-responsible-persons', authMiddleware, requireRole(['adm
       updated++;
     }
 
-    // 同时更新 position_mappings 表
-    let mapUpdated = 0;
-    for (const [mappedName, person] of Object.entries(personMap)) {
-      const result = await c.env.DB.prepare(
-        'UPDATE position_mappings SET responsible_person = ? WHERE mapped_name = ? AND (responsible_person IS NULL OR responsible_person = ? OR responsible_person = ?)'
-      ).bind(person, mappedName, '', '[object Object]').run();
-      if (result.meta?.changes > 0) mapUpdated += result.meta.changes;
-    }
-
     return c.json({
       ok: true,
       positions_updated: updated,
-      mappings_updated: mapUpdated,
+      mappings_updated: 0,
       persons: Object.entries(personMap).map(([t, p]) => `${t} → ${p}`),
     });
   } catch (e: any) {
@@ -10779,31 +10752,26 @@ app.post('/api/auth/sync-responsible-persons', authMiddleware, requireRole(['adm
  */
 app.post('/api/auth/fix-responsible-persons', authMiddleware, requireRole(['admin']), async (c) => {
   try {
-    // 直接从飞书拿数据修复
-    const tableId = getBitableTableId(c.env, 'requisition');
-    const records = await bitableListRecords(c.env, tableId);
-    const personMap: Record<string, string> = {};
-    for (const rec of records) {
-      const f = rec.fields || {};
-      const title = getFirstValue(f['招聘岗位']) || '';
-      if (!title) continue;
-      const person = getUserName(f['责任人']) || '';
-      if (person && !personMap[title]) personMap[title] = person;
-    }
-
-    // 每个岗位名只取一条 position_mappings 记录
+    // 兼容旧页面：将映射表里的负责人字段修复为岗位管理的投影值，面试官字段不参与。
+    const positions = await c.env.DB.prepare(
+      'SELECT title, responsible_person FROM positions'
+    ).all();
+    const responsibleByTitle = new Map(
+      (positions.results || []).map((row: any) => [row.title, row.responsible_person || '']),
+    );
+    const mappings = await c.env.DB.prepare(
+      'SELECT id, mapped_name, responsible_person FROM position_mappings'
+    ).all();
     let fixed = 0;
-    for (const [mappedName, person] of Object.entries(personMap)) {
-      const rows = await c.env.DB.prepare(
-        'SELECT id FROM position_mappings WHERE mapped_name = ? LIMIT 1'
-      ).bind(mappedName).all();
-      for (const row of (rows.results || [])) {
+    for (const row of (mappings.results || []) as any[]) {
+      const person = responsibleByTitle.get(row.mapped_name) || '';
+      if (person && row.responsible_person !== person) {
         await c.env.DB.prepare('UPDATE position_mappings SET responsible_person = ? WHERE id = ?')
-          .bind(person, (row as any).id).run();
+          .bind(person, row.id).run();
         fixed++;
       }
     }
-    return c.json({ ok: true, fixed, persons: Object.entries(personMap).map(([t, p]) => `${t} → ${p}`) });
+    return c.json({ ok: true, fixed, persons: Array.from(responsibleByTitle.entries()).filter(([, person]) => person).map(([title, person]) => `${title} → ${person}`) });
   } catch (e: any) {
     return c.json({ detail: '修复失败: ' + e.message }, 500);
   }
