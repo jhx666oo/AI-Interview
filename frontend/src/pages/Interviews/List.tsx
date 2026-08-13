@@ -759,7 +759,7 @@ const InterviewsList: React.FC = () => {
           }}
           card={{
             title: record => record.candidate_name || '-',
-            subtitle: record => [record.position_applied || record.position, record.education, record.city, record.interview_time].filter(Boolean).join(' · '),
+            subtitle: record => [record.standard_position || record.position_applied || record.position, record.education, record.city, record.interview_time].filter(Boolean).join(' · '),
             status: record => (columns[5] as any).render(null, record),
             fields: [
               { key: 'primary_interviewer', label: '一面面试官', level: 'detail', render: record => (columns[7] as any).render(record.primary_interviewer) },
