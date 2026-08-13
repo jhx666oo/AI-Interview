@@ -1,6 +1,6 @@
 import type { ResumeProcessingQueueMessage, ResumeQueueMessage } from './resume-processing/types';
 import { failHistoricalResumeReprocessBatch, processHistoricalResumeReprocessPage } from './resume-processing/reprocess';
-import { claimJob } from './resume-processing/job-repository';
+import { claimJob, updateJobAIDiagnostics } from './resume-processing/job-repository';
 import { syncReprocessBatchItemByJob } from './resume-processing/batch-repository';
 import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
@@ -8,7 +8,7 @@ import { normalizeResumeFields } from './resume-processing/fields';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { assembleScreeningEvaluation, missingDimensionNames, normalizeDimensionScores, requireCompleteScreeningEvaluation, type DimensionScore } from './resume-processing/dimension-scores';
 import { buildScreeningRepairPrompt, parseStructuredOutput, type StructuredOutputFailureCode } from './resume-processing/structured-output';
-import { callAI, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
+import { callAI, callAIWithMetadata, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
 import { WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
 import { EventRepository } from './recruitment-events/repository';
@@ -285,8 +285,31 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{resume_text}', text)
         .replace('{fields}', JSON.stringify(fields))
         .replace('{capability_dimensions}', context.capabilityDimensions || '');
-      const screeningResponse = await callAI(env as any, screenPrompt.system, screenUserText, 'deepseek-v4-flash');
-      let evaluation: Record<string, any> = await parseScreeningResponse(env, screeningResponse);
+      const screeningResult = await callAIWithMetadata(env as any, screenPrompt.system, screenUserText, 'deepseek-v4-flash');
+      await updateJobAIDiagnostics(env.DB, message.jobId, {
+        provider: screeningResult.metadata.provider,
+        model: screeningResult.metadata.model,
+        attempt: screeningResult.metadata.attempt,
+        responseChars: screeningResult.metadata.responseChars,
+      });
+      let evaluation: Record<string, any>;
+      try {
+        evaluation = await parseScreeningResponse(env, screeningResult.text);
+      } catch (error) {
+        await updateJobAIDiagnostics(env.DB, message.jobId, {
+          errorStage: 'structured_validation',
+          responseChars: screeningResult.metadata.responseChars,
+        });
+        logResumeProcessingError('ai.screening.validation_failed', error, {
+          resumeId: message.resumeId,
+          provider: screeningResult.metadata.provider,
+          model: screeningResult.metadata.model,
+          attempt: screeningResult.metadata.attempt,
+          responseChars: screeningResult.metadata.responseChars,
+          failureCode: (error as any)?.code,
+        });
+        throw error;
+      }
 
       // 第二步：加载岗位完整信息（含能力维度描述、岗位职责、个性化需求）
       const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
@@ -540,8 +563,31 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{capability_dimensions}', context.capabilityDimensions)
         .replace('{fields}', JSON.stringify(fields))
         .replace('{resume_text}', text);
-      const response = await callAI(env as any, r2ScreenPrompt.system, r2ScreenUser);
-      let evaluation: Record<string, any> = await parseScreeningResponse(env, response);
+      const screeningResult = await callAIWithMetadata(env as any, r2ScreenPrompt.system, r2ScreenUser);
+      await updateJobAIDiagnostics(env.DB, message.jobId, {
+        provider: screeningResult.metadata.provider,
+        model: screeningResult.metadata.model,
+        attempt: screeningResult.metadata.attempt,
+        responseChars: screeningResult.metadata.responseChars,
+      });
+      let evaluation: Record<string, any>;
+      try {
+        evaluation = await parseScreeningResponse(env, screeningResult.text);
+      } catch (error) {
+        await updateJobAIDiagnostics(env.DB, message.jobId, {
+          errorStage: 'structured_validation',
+          responseChars: screeningResult.metadata.responseChars,
+        });
+        logResumeProcessingError('ai.screening.validation_failed', error, {
+          resumeId: message.resumeId,
+          provider: screeningResult.metadata.provider,
+          model: screeningResult.metadata.model,
+          attempt: screeningResult.metadata.attempt,
+          responseChars: screeningResult.metadata.responseChars,
+          failureCode: (error as any)?.code,
+        });
+        throw error;
+      }
       const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
       const positionRow = await env.DB.prepare(
         'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'

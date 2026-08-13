@@ -3,7 +3,7 @@ import {
   ACTIVE_JOB_STATUSES,
   isTerminalJobStatus,
 } from '../src/resume-processing/types';
-import { claimJob, createOrGetActiveJob } from '../src/resume-processing/job-repository';
+import { claimJob, createOrGetActiveJob, updateJobAIDiagnostics } from '../src/resume-processing/job-repository';
 
 describe('resume processing job status contract', () => {
   it('only treats completed, failed, and cancelled as terminal', () => {
@@ -91,3 +91,66 @@ function createActiveJobDb() {
     },
   };
 }
+
+describe('job AI diagnostics', () => {
+  it('persists provider, model, attempt and response chars', async () => {
+    const captured: Array<{ sql: string; values: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            captured.push({ sql, values });
+            return { run: async () => ({ meta: { changes: 1 } }) };
+          },
+        };
+      },
+    };
+    await updateJobAIDiagnostics(db as never, 'job-1', {
+      provider: 'configured_api',
+      model: 'deepseek-chat',
+      attempt: 3,
+      responseChars: 8421,
+    });
+    const update = captured.find((c) => c.sql.includes('UPDATE resume_processing_jobs'))!;
+    expect(update.sql).toContain('ai_provider=?');
+    expect(update.sql).toContain('ai_model=?');
+    expect(update.sql).toContain('ai_attempt=?');
+    expect(update.sql).toContain('ai_response_chars=?');
+    expect(update.values).toEqual(expect.arrayContaining(['configured_api', 'deepseek-chat', 3, 8421]));
+    expect(update.values.at(-1)).toBe('job-1');
+  });
+
+  it('records a structured validation error stage', async () => {
+    const captured: Array<{ sql: string; values: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            captured.push({ sql, values });
+            return { run: async () => ({ meta: { changes: 1 } }) };
+          },
+        };
+      },
+    };
+    await updateJobAIDiagnostics(db as never, 'job-1', {
+      responseChars: 500,
+      errorStage: 'structured_validation',
+    });
+    const update = captured.find((c) => c.sql.includes('UPDATE resume_processing_jobs'))!;
+    expect(update.sql).toContain('ai_error_stage=?');
+    expect(update.values).toContain('structured_validation');
+    expect(update.sql).not.toContain('ai_provider=?');
+  });
+});
+
+describe('structured log hygiene', () => {
+  it('consumer log calls never include resume text, full prompts, or API keys', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../src/resume-consumer.ts', import.meta.url), 'utf8');
+    // 结构化日志事件对象不允许出现完整简历文本 / prompt / apiKey 作为字段值
+    expect(source).not.toMatch(/logResumeProcessing(?:Error)?\([^)]*text:\s*(text|screenUserText)/);
+    expect(source).not.toMatch(/logResumeProcessing(?:Error)?\([^)]*apiKey/);
+    // 日志对象字段白名单只允许 ID、provider、model、attempt、长度、错误码、阶段
+    expect(source).toMatch(/'ai.screening.validation_failed'/);
+  });
+});
