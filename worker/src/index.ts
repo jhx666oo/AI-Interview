@@ -13,7 +13,7 @@ import {
   isBusinessScreeningStatusFilter,
   matchesBusinessScreeningStatusFilter,
 } from './resume-list/business-screening-status';
-import { filterDimensionScoresToConfigured, normalizeDimensionScores } from './resume-processing/dimension-scores';
+import { filterDimensionScoresToConfigured, normalizeDimensionScores, normalizeScreeningEvaluation, requireCompleteScreeningEvaluation } from './resume-processing/dimension-scores';
 import { evaluateWeightedScreening, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, recoverStalledHistoricalResumeReprocess, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess, selectResumeIdsForBatchScope } from './resume-processing/reprocess';
 import { cancelReprocessBatch, getReprocessBatchView, getActiveReprocessBatchView, appendEvaluationJobProjection } from './resume-processing/batch-repository';
@@ -663,6 +663,7 @@ export function enrichScreeningEvaluation(
   hardRequirements: HardRequirement[] = [],
   candidateFields: Record<string, any> = {},
 ): any {
+  evaluation = normalizeScreeningEvaluation(evaluation);
   const configured_dimensions = normalizeCapabilityDimensions(configuredDimensionInput);
   const configuredByName = new Map(configured_dimensions.map(item => [item.name, item]));
   const dimensions = filterDimensionScoresToConfigured(
@@ -763,13 +764,7 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
   const result = await callAI(env, systemPrompt, userPrompt);
   if (!result) return null;
   let parsed: any;
-  try { parsed = extractJSON(result); } catch {
-    return enrichScreeningEvaluation(
-      { raw_response: result, dimensions: [] },
-      positionReq?.capability_dimensions || [],
-      positionReq?.hard_requirements || [],
-    );
-  }
+  try { parsed = extractJSON(result); } catch { parsed = { raw_response: result, summary: result }; }
   // Flatten nested structure
   const flattened: any = {};
   for (const [k, v] of Object.entries(parsed)) {
@@ -779,8 +774,9 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
       flattened[k] = v;
     }
   }
+  const completeEvaluation = requireCompleteScreeningEvaluation({ ...parsed, ...flattened });
   return enrichScreeningEvaluation(
-    { ...parsed, ...flattened },
+    completeEvaluation,
     positionReq?.capability_dimensions || [],
     positionReq?.hard_requirements || [],
   );

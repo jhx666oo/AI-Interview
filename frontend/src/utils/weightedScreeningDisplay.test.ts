@@ -73,4 +73,16 @@ describe('weighted screening display', () => {
     expect(evaluation.overallScore).toBeNull();
     expect(formatWeightedScore(evaluation.overallScore)).toBe('—');
   });
+
+  it('does not treat a legacy 0-100 match_score as a weighted score when dimensions are present', () => {
+    const evaluation = normalizeResumeEvaluation({
+      ai_evaluation: {
+        match_score: 58,
+        summary: '候选人综合评价',
+        dimensions: [{ name: '核心画像', score: 3 }],
+      },
+    });
+
+    expect(evaluation.overallScore).toBeNull();
+  });
 });

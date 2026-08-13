@@ -20,8 +20,14 @@ describe('hasValidAiEvaluation', () => {
     expect(hasValidAiEvaluation({ foo: 'bar' })).toBe(false);
   });
 
-  it('accepts objects with non-empty dimensions array', () => {
-    expect(hasValidAiEvaluation({ dimensions: [{ name: 'A', score: 4 }] })).toBe(true);
+  it('accepts a complete seven-dimension evaluation', () => {
+    expect(hasValidAiEvaluation({ dimensions: [
+      '核心画像', '核心职责', '任职要求', '企业背景', '加分项', '关键词匹配', '避坑雷区',
+    ].map((name) => ({ name, score: 4 })) })).toBe(true);
+  });
+
+  it('rejects incomplete dimension results even when the dimensions array is non-empty', () => {
+    expect(hasValidAiEvaluation({ dimensions: [{ name: '核心画像', score: 4 }] })).toBe(false);
   });
 
   it('accepts objects with non-empty summary', () => {

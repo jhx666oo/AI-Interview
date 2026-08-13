@@ -6,7 +6,7 @@ import { processResume } from './resume-processing/processor';
 import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
-import { mergeConfiguredDimensionScores, missingDimensionNames, normalizeDimensionScores } from './resume-processing/dimension-scores';
+import { mergeConfiguredDimensionScores, missingDimensionNames, normalizeDimensionScores, normalizeScreeningEvaluation, requireCompleteScreeningEvaluation } from './resume-processing/dimension-scores';
 import { callAI, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
 import { WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
@@ -245,9 +245,11 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{capability_dimensions}', context.capabilityDimensions || '');
       const screeningResponse = await callAI(env as any, screenPrompt.system, screenUserText, 'deepseek-v4-flash');
       const parsed = extractJSON(screeningResponse);
-      const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : { summary: String(parsed || '') };
+      let evaluation: Record<string, any> = normalizeScreeningEvaluation(
+        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? parsed
+          : { summary: String(parsed || '') },
+      );
 
       // 第二步：加载岗位完整信息（含能力维度描述、岗位职责、个性化需求）
       const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
@@ -339,8 +341,9 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             supUserText,
             'deepseek-v4-flash',
           );
-          const dimParsed = extractJSON(dimResponse);
-          const dimScores = normalizeDimensionScores(dimParsed?.dimensions || dimParsed || []);
+          const rawDimParsed = extractJSON(dimResponse);
+          const dimParsed = Array.isArray(rawDimParsed) ? rawDimParsed : normalizeScreeningEvaluation(rawDimParsed);
+          const dimScores = normalizeDimensionScores(dimParsed);
           if (dimScores.length > 0) {
             evaluation.dimensions = dimScores;
           }
@@ -366,7 +369,9 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             supUserText,
             'deepseek-v4-flash',
           );
-          const scores = normalizeDimensionScores(extractJSON(supplemental));
+          const rawSupplemental = extractJSON(supplemental);
+          const supplementalParsed = Array.isArray(rawSupplemental) ? rawSupplemental : normalizeScreeningEvaluation(rawSupplemental);
+          const scores = normalizeDimensionScores(supplementalParsed);
           if (scores.length > 0) {
             const existing = normalizeDimensionScores(evaluation);
             evaluation.dimensions = mergeConfiguredDimensionScores(
@@ -390,8 +395,9 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         const parsedRequirements = typeof value === 'string' ? JSON.parse(value) : value;
         hardRequirements = Array.isArray(parsedRequirements) ? parsedRequirements : [];
       } catch {}
+      const completeEvaluation = requireCompleteScreeningEvaluation(evaluation);
       const enrichedEvaluation = enrichScreeningEvaluation(
-        evaluation,
+        completeEvaluation,
         configuredDimensions,
         hardRequirements,
         fields,
@@ -498,9 +504,11 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{resume_text}', text);
       const response = await callAI(env as any, r2ScreenPrompt.system, r2ScreenUser);
       const parsed = extractJSON(response);
-      const evaluation = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : { summary: String(parsed || '') };
+      let evaluation: Record<string, any> = normalizeScreeningEvaluation(
+        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? parsed
+          : { summary: String(parsed || '') },
+      );
       const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
       const positionRow = await env.DB.prepare(
         'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
@@ -522,7 +530,9 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             r2SupUser,
             'deepseek-v4-flash',
           );
-          const scores = normalizeDimensionScores(extractJSON(supplemental));
+          const rawSupplemental = extractJSON(supplemental);
+          const supplementalParsed = Array.isArray(rawSupplemental) ? rawSupplemental : normalizeScreeningEvaluation(rawSupplemental);
+          const scores = normalizeDimensionScores(supplementalParsed);
           if (scores.length > 0) {
             const existing = normalizeDimensionScores(evaluation);
             const existingNames = new Set(existing.map((item: any) => item.name));
@@ -541,8 +551,9 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         const parsedRequirements = typeof value === 'string' ? JSON.parse(value) : value;
         hardRequirements = Array.isArray(parsedRequirements) ? parsedRequirements : [];
       } catch {}
+      const completeEvaluation = requireCompleteScreeningEvaluation(evaluation);
       const enrichedEvaluation = enrichScreeningEvaluation(
-        evaluation,
+        completeEvaluation,
         configuredDimensions,
         hardRequirements,
         fields,

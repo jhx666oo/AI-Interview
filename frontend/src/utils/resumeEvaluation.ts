@@ -61,6 +61,72 @@ function toDisplayScore(value: unknown): number | null {
   return Math.round(Math.max(0, Math.min(5, score)) * 10) / 10;
 }
 
+function directDimensionsFrom(value: Record<string, any> | null): ResumeDimensionScore[] {
+  if (!value) return [];
+  const rawDimensions = value.dimensions;
+  if (Array.isArray(rawDimensions)) {
+    return rawDimensions
+      .map((item: any) => {
+        const name = String(item?.name || item?.label || item?.dimension || item?.key || '').trim();
+        const score = toDisplayScore(item?.score ?? item?.value);
+        return name && score !== null ? { name, score, reason: String(item?.reason || item?.evidence || item?.comment || '') } : null;
+      })
+      .filter((item): item is ResumeDimensionScore => item !== null);
+  }
+  if (rawDimensions && typeof rawDimensions === 'object') {
+    return Object.entries(rawDimensions)
+      .map(([name, item]: [string, any]) => {
+        const score = toDisplayScore(typeof item === 'object' ? item?.score ?? item?.value : item);
+        return score !== null ? { name, score, reason: String(typeof item === 'object' ? item?.reason || item?.evidence || '' : '') } : null;
+      })
+      .filter((item): item is ResumeDimensionScore => item !== null);
+  }
+  return [];
+}
+
+function hasLegacyDimensionScale(value: Record<string, any> | null): boolean {
+  if (!value) return false;
+  const rawDimensions = value.dimensions;
+  const items = Array.isArray(rawDimensions)
+    ? rawDimensions
+    : rawDimensions && typeof rawDimensions === 'object'
+      ? Object.values(rawDimensions)
+      : [];
+  return items.some((item: any) => Number(item?.score ?? item?.value ?? item) > 5);
+}
+
+function normalizedSource(value: unknown): Record<string, any> | null {
+  const source = asObject(value);
+  if (!source) return null;
+  const embedded = asObject(source.summary);
+  if (!embedded) return source;
+  const direct = directDimensionsFrom(source);
+  const nested = directDimensionsFrom(embedded);
+  const outerIsPlaceholder = direct.length === 0 || direct.every((item) => item.score === 0);
+  return nested.length > direct.length || (nested.length > 0 && outerIsPlaceholder)
+    ? { ...source, ...embedded }
+    : source;
+}
+
+function isMalformedSummary(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const summary = value.trim();
+  return summary.startsWith('{')
+    || summary.startsWith('[')
+    || summary.includes('# 人才能力评估AI打分提示词')
+    || summary.includes('```')
+    || (summary.length > 1000 && summary.includes('dimensions'));
+}
+
+function sanitizeMalformedSource(source: Record<string, any> | null): Record<string, any> | null {
+  if (!source || !isMalformedSummary(source.summary)) return source;
+  const dimensions = directDimensionsFrom(source);
+  if (dimensions.length === 0 || dimensions.every((item) => item.score === 0)) {
+    return { ...source, dimensions: [], summary: '评估结果格式异常，请重新评估' };
+  }
+  return source;
+}
+
 function gateResultsFrom(value: unknown): Record<string, { score: number | null; passed: boolean }> {
   const gates = asObject(value);
   if (!gates) return {};
@@ -91,30 +157,15 @@ export function getScreeningGateRows(evaluation: Pick<NormalizedResumeEvaluation
 
 function dimensionsFrom(value: Record<string, any> | null): ResumeDimensionScore[] {
   if (!value) return [];
-  const rawDimensions = value.dimensions;
-  if (Array.isArray(rawDimensions)) {
-    return rawDimensions
-      .map((item: any) => {
-        const name = String(item?.name || item?.label || item?.dimension || item?.key || '').trim();
-        const score = toDisplayScore(item?.score ?? item?.value);
-        return name && score !== null ? { name, score, reason: String(item?.reason || item?.evidence || item?.comment || '') } : null;
-      })
-      .filter((item): item is ResumeDimensionScore => item !== null);
-  }
-  if (rawDimensions && typeof rawDimensions === 'object') {
-    return Object.entries(rawDimensions)
-      .map(([name, item]: [string, any]) => {
-        const score = toDisplayScore(typeof item === 'object' ? item?.score ?? item?.value : item);
-        return score !== null ? { name, score, reason: String(typeof item === 'object' ? item?.reason || item?.evidence || '' : '') } : null;
-      })
-      .filter((item): item is ResumeDimensionScore => item !== null);
-  }
+  const direct = directDimensionsFrom(value);
+  if (direct.length > 0 && !direct.every((item) => item.score === 0)) return direct;
   // 兼容旧版把 JSON 放进 summary 字符串的写法。
   if (typeof value.summary === 'string') {
     const embedded = asObject(value.summary);
-    if (embedded) return dimensionsFrom(embedded);
+    const nested = embedded ? dimensionsFrom(embedded) : [];
+    if (nested.length > 0) return nested;
   }
-  return [];
+  return direct;
 }
 
 function dimensionsFromLegacyText(value: unknown): ResumeDimensionScore[] {
@@ -142,14 +193,19 @@ export function normalizeResumeEvaluation(resume: {
   screening_reason?: unknown;
 } | null | undefined): NormalizedResumeEvaluation {
   const topLevel = asObject(resume);
-  const evaluation = asObject(resume?.ai_evaluation);
-  const review = asObject(resume?.ai_review);
+  const evaluation = sanitizeMalformedSource(normalizedSource(resume?.ai_evaluation));
+  const review = sanitizeMalformedSource(normalizedSource(resume?.ai_review));
   const evaluationDimensions = dimensionsFrom(evaluation).concat(dimensionsFromLegacyText(resume?.ai_evaluation));
   const reviewDimensions = dimensionsFrom(review).concat(dimensionsFromLegacyText(resume?.ai_review));
   const source = evaluationDimensions.length > 0 ? evaluation : reviewDimensions.length > 0 ? review : evaluation || review;
   const dimensions = evaluationDimensions.length > 0 ? evaluationDimensions : reviewDimensions;
+  const hasDimensionBreakdown = dimensions.length > 0;
+  const hasLegacyScale = hasLegacyDimensionScale(source);
   const overallRaw = topLevel?.weighted_score ?? evaluation?.weighted_score ?? review?.weighted_score
-    ?? source?.weighted_score ?? topLevel?.match_score ?? source?.match_score ?? evaluation?.match_score ?? review?.match_score;
+    ?? source?.weighted_score
+    ?? (hasDimensionBreakdown && !hasLegacyScale
+      ? undefined
+      : topLevel?.match_score ?? source?.match_score ?? evaluation?.match_score ?? review?.match_score);
   const gateResults = gateResultsFrom(topLevel?.gate_results ?? source?.gate_results ?? evaluation?.gate_results ?? review?.gate_results);
   const screeningReason = String(topLevel?.screening_reason ?? source?.screening_reason ?? evaluation?.screening_reason ?? review?.screening_reason ?? '');
   const hasFailedGate = Object.values(gateResults).some((gate) => !gate.passed);

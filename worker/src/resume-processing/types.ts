@@ -1,3 +1,5 @@
+import { hasAllDimensionScores, isPromptLikeSummary, normalizeScreeningEvaluation } from './dimension-scores';
+
 export const ACTIVE_JOB_STATUSES = ['queued', 'running'] as const;
 
 export type ResumeJobStatus =
@@ -112,10 +114,12 @@ export function hasValidAiEvaluation(value: unknown): boolean {
   if (value == null) return false;
   if (Array.isArray(value)) return false;
   if (typeof value === 'object') {
-    const obj = value as Record<string, unknown>;
-    const dimensions = obj.dimensions;
-    if (Array.isArray(dimensions) && dimensions.length > 0) return true;
+    const obj = normalizeScreeningEvaluation(value) as Record<string, unknown>;
+    if (isPromptLikeSummary(obj.summary)) return false;
+    if (hasAllDimensionScores(obj)) return true;
     const summary = obj.summary;
+    const dimensions = obj.dimensions;
+    if (Array.isArray(dimensions)) return false;
     if (typeof summary === 'string' && summary.trim().length > 0) return true;
     const screeningReason = obj.screening_reason;
     if (typeof screeningReason === 'string' && screeningReason.trim().length > 0) return true;
