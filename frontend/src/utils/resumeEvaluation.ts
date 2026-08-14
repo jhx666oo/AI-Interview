@@ -145,7 +145,7 @@ export function formatWeightedScore(score: number | null | undefined): string {
 /** Produces both hard-gate rows in a stable order for list and detail views. */
 export function getScreeningGateRows(evaluation: Pick<NormalizedResumeEvaluation, 'gateResults' | 'screeningReason'>): ScreeningGateRow[] {
   const gateDefinitions: Array<Pick<ScreeningGateRow, 'key' | 'label' | 'reason'>> = [
-    { key: 'keyword_match', label: '关键词匹配', reason: '关键词匹配未达 5 分' },
+    { key: 'keyword_match', label: '关键词匹配', reason: '关键词匹配未达 2 分' },
     { key: 'red_flag', label: '避坑雷区', reason: '命中避坑雷区' },
   ];
   return gateDefinitions.flatMap((gate) => {

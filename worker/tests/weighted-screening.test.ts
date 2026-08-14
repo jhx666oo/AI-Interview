@@ -10,11 +10,32 @@ const config = [
 ];
 
 describe('evaluateWeightedScreening', () => {
-  it('rejects when keyword gate is below five without calculating a score', () => {
-    const result = evaluateWeightedScreening({ dimensions: config.map(d => ({ name: d.name, score: d.name === '关键词匹配' ? 4 : 5 })) }, config);
-    expect(result.screening_result).toBe('不通过');
-    expect(result.weighted_score).toBeNull();
-    expect(result.screening_reason).toContain('关键词');
+  it('rejects keyword scores below two without calculating a score', () => {
+    for (const keywordScore of [0, 1]) {
+      const result = evaluateWeightedScreening({
+        dimensions: config.map(d => ({
+          name: d.name,
+          score: d.name === '关键词匹配' ? keywordScore : 5,
+        })),
+      }, config);
+
+      expect(result.screening_result).toBe('不通过');
+      expect(result.weighted_score).toBeNull();
+      expect(result.gate_results.keyword_match).toEqual({ score: keywordScore, passed: false });
+      expect(result.screening_reason).toBe('关键词匹配未达 2 分');
+    }
+  });
+
+  it.each([2, 3])('allows keyword score %s to enter weighted evaluation', (keywordScore) => {
+    const result = evaluateWeightedScreening({
+      dimensions: config.map(d => ({
+        name: d.name,
+        score: d.name === '关键词匹配' ? keywordScore : 5,
+      })),
+    }, config);
+
+    expect(result.gate_results.keyword_match).toEqual({ score: keywordScore, passed: true });
+    expect(result.weighted_score).not.toBeNull();
   });
 
   it('rejects when the red-flag gate is below five', () => {

@@ -15,7 +15,7 @@ describe('resume screening queue evaluation', () => {
     const result = buildScreeningQueuePersistence({
       ai_result: '通过',
       match_score: 5,
-      dimensions: configured.map(({ name }) => ({ name, score: name === '关键词匹配' ? 4 : 5, reason: '评分依据' })),
+      dimensions: configured.map(({ name }) => ({ name, score: name === '关键词匹配' ? 1 : 5, reason: '评分依据' })),
     }, configured);
 
     expect(result.ai_result).toBe('不通过');
@@ -23,7 +23,7 @@ describe('resume screening queue evaluation', () => {
     expect(result.weighted_score).toBeNull();
     expect(result.match_score).toBeNull();
     expect(result.screening_reason).toContain('关键词');
-    expect(JSON.parse(result.gate_results).keyword_match).toEqual({ score: 4, passed: false });
+    expect(JSON.parse(result.gate_results).keyword_match).toEqual({ score: 1, passed: false });
     expect(JSON.parse(result.ai_analysis).dimensions).toHaveLength(7);
   });
 

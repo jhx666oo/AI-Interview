@@ -30,20 +30,20 @@ describe('weighted screening display', () => {
         keyword_match: { score: 4, passed: false },
         red_flag: { score: 3, passed: false },
       },
-      screening_reason: '关键词匹配未达 5 分；命中避坑雷区',
+      screening_reason: '关键词匹配未达 2 分；命中避坑雷区',
       ai_evaluation: {
         weighted_score: null,
         gate_results: {
           keyword_match: { score: 4, passed: false },
           red_flag: { score: 3, passed: false },
         },
-        screening_reason: '关键词匹配未达 5 分；命中避坑雷区',
+        screening_reason: '关键词匹配未达 2 分；命中避坑雷区',
       },
     });
 
     expect(formatWeightedScore(evaluation.overallScore)).toBe('—');
     expect(getScreeningGateRows(evaluation)).toEqual([
-      { key: 'keyword_match', label: '关键词匹配', passed: false, reason: '关键词匹配未达 5 分' },
+      { key: 'keyword_match', label: '关键词匹配', passed: false, reason: '关键词匹配未达 2 分' },
       { key: 'red_flag', label: '避坑雷区', passed: false, reason: '命中避坑雷区' },
     ]);
   });

@@ -1,6 +1,8 @@
 const SCORING_DIMENSIONS = ['核心画像', '核心职责', '任职要求', '企业背景', '加分项'] as const;
 const GATE_DIMENSIONS = ['关键词匹配', '避坑雷区'] as const;
 export const WEIGHTED_SCREENING_DIMENSION_NAMES = [...SCORING_DIMENSIONS, ...GATE_DIMENSIONS] as const;
+export const KEYWORD_MATCH_MIN_SCORE = 2;
+export const RED_FLAG_MIN_SCORE = 5;
 
 const DEFAULT_WEIGHTS: Record<(typeof SCORING_DIMENSIONS)[number], number> = {
   核心画像: 25,
@@ -63,7 +65,7 @@ function scoringWeights(configuredDimensions: readonly ConfiguredDimension[] | n
     : DEFAULT_WEIGHTS[name]);
 }
 
-/** Applies the seven-dimension screening gates and five-dimension weighted score. */
+/** Applies the keyword/red-flag gates and five-dimension weighted score. */
 export function evaluateWeightedScreening(
   evaluation: { dimensions?: unknown; match_score?: unknown } | null | undefined,
   configuredDimensions: readonly ConfiguredDimension[] | null | undefined,
@@ -73,8 +75,8 @@ export function evaluateWeightedScreening(
   const keywordScore = scores.get('关键词匹配') || 0;
   const redFlagScore = scores.get('避坑雷区') || 0;
   const gate_results = {
-    keyword_match: { score: keywordScore, passed: keywordScore >= 5 },
-    red_flag: { score: redFlagScore, passed: redFlagScore >= 5 },
+    keyword_match: { score: keywordScore, passed: keywordScore >= KEYWORD_MATCH_MIN_SCORE },
+    red_flag: { score: redFlagScore, passed: redFlagScore >= RED_FLAG_MIN_SCORE },
   };
 
   if (!gate_results.keyword_match.passed) {
@@ -82,7 +84,7 @@ export function evaluateWeightedScreening(
       dimensions,
       weighted_score: null,
       screening_result: '不通过' as const,
-      screening_reason: '关键词匹配未达 5 分',
+      screening_reason: `关键词匹配未达 ${KEYWORD_MATCH_MIN_SCORE} 分`,
       gate_results,
     };
   }
@@ -92,7 +94,7 @@ export function evaluateWeightedScreening(
       dimensions,
       weighted_score: null,
       screening_result: '不通过' as const,
-      screening_reason: '避坑雷区未达 5 分',
+      screening_reason: `避坑雷区未达 ${RED_FLAG_MIN_SCORE} 分`,
       gate_results,
     };
   }
@@ -113,4 +115,26 @@ export function evaluateWeightedScreening(
 }
 
 // 初筛提示词模板，基于七个能力维度构建
-export const WEIGHTED_SCREENING_PROMPT = `初筛必须且只能返回以下七个能力维度，每项 score 为 0-5 整数并提供中文依据：${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}。其中「关键词匹配」与「避坑雷区」是硬门槛，只有各自为 5 分才通过；其余五项用于计算加权分。match_score 不具权威性，仅可作为非决策参考；最终结果由服务端按七维评分计算。`;
+export const SCREENING_PROMPT_VERSION = '[简历初筛规则版本：keyword-gate-v2]';
+export const LEGACY_KEYWORD_GATE_TEXT = '其中「关键词匹配」与「避坑雷区」是硬门槛，只有各自为 5 分才通过；其余五项用于计算加权分。';
+
+export const WEIGHTED_SCREENING_PROMPT = `${SCREENING_PROMPT_VERSION}
+初筛必须且只能返回以下七个能力维度，每项 score 为 0-5 整数并提供中文事实依据：${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}。
+「关键词匹配」只按以下三个证据点评估：
+1. 相关经验：必须同时具备 5 年及以上智能硬件、IoT 或嵌入式相关产品经验，并命中“嵌入式固件、IoT 云平台、MQTT 协议、设备端需求、OTA 升级、软硬件联调”中的任一关键词或等价表述；
+2. 外部开发协同：明确描述 ODM、外包或外部研发团队对接，以及需求拆解、进度/质量管理、验收或交付等需求管控职责；
+3. 知名企业相关经历：在京东、小米、海尔等同类知名企业工作，且该段经历实际涉及智能硬件、IoT 或嵌入式产品。知名企业名称本身不能单独算命中。
+三个证据点中完整命中至少一个，关键词匹配可评 2 分；命中两个可评 3 分；三项均命中时可评 4-5 分。关键词匹配 2 分或以上通过该门槛，0-1 分不通过；避坑雷区仍需 5 分。其余五项用于计算加权分，最终是否通过由服务端计算；match_score 和 recommendation 仅作非权威参考。`;
+
+export function normalizeScreeningPrompt(
+  key: string,
+  prompt: { system: string; user: string },
+) {
+  if (key !== 'resume_screening' && key !== 'resume_screening_supplement') return prompt;
+  if (prompt.system.includes(SCREENING_PROMPT_VERSION)) return prompt;
+  const withoutLegacyRule = prompt.system.replace(LEGACY_KEYWORD_GATE_TEXT, '').trim();
+  return {
+    ...prompt,
+    system: `${withoutLegacyRule}\n\n${WEIGHTED_SCREENING_PROMPT}`,
+  };
+}
