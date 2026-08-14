@@ -5,7 +5,7 @@ import { RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
 import { PageHeader } from '../../components/Responsive/PageHeader';
-import { buildInterviewerOptions } from './interviewerOptions';
+import { buildInterviewerOptions, INTERVIEWER_DIRECTORY_CACHE_KEY } from './interviewerOptions';
 
 const { Title, Text } = Typography;
 
@@ -53,19 +53,25 @@ const PositionForm: React.FC = () => {
   };
 
   const fetchInterviewers = async () => {
-    const cached = sessionStorage.getItem('_cached_interviewers');
+    const cached = sessionStorage.getItem(INTERVIEWER_DIRECTORY_CACHE_KEY);
     if (cached) {
       try {
-        setInterviewers(JSON.parse(cached));
-        return;
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setInterviewers(parsed);
+          return;
+        }
       } catch {
         // ignore malformed cache
       }
     }
     try {
       const res = await request.get('/auth/interviewers');
-      sessionStorage.setItem('_cached_interviewers', JSON.stringify(res));
-      setInterviewers(Array.isArray(res) ? res : []);
+      const directory = Array.isArray(res) ? res : [];
+      if (directory.length > 0) {
+        sessionStorage.setItem(INTERVIEWER_DIRECTORY_CACHE_KEY, JSON.stringify(directory));
+      }
+      setInterviewers(directory);
     } catch (error) {
       console.error('Failed to fetch interviewers');
     }

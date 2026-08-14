@@ -9,7 +9,7 @@ import JDGeneratorModal from '../../components/JDGeneratorModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildPositionCapabilitySave } from './capabilitySave';
-import { buildInterviewerOptions } from './interviewerOptions';
+import { buildInterviewerOptions, INTERVIEWER_DIRECTORY_CACHE_KEY } from './interviewerOptions';
 import { WEIGHTED_GATE_DIMENSIONS, WEIGHTED_SCORING_DIMENSIONS, WEIGHTED_SCREENING_DEFAULT_WEIGHTS } from '../../utils/resumeEvaluation';
 import { PageHeader } from '../../components/Responsive/PageHeader';
 import { ResponsiveToolbar } from '../../components/Responsive/ResponsiveToolbar';
@@ -227,19 +227,25 @@ const PositionsList: React.FC = () => {
   };
 
   const fetchInterviewers = async () => {
-    const cached = sessionStorage.getItem('_cached_interviewers');
+    const cached = sessionStorage.getItem(INTERVIEWER_DIRECTORY_CACHE_KEY);
     if (cached) {
       try {
-        setInterviewers(JSON.parse(cached));
-        return;
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setInterviewers(parsed);
+          return;
+        }
       } catch {
         // ignore malformed cache
       }
     }
     try {
       const res = await request.get('/auth/interviewers');
-      sessionStorage.setItem('_cached_interviewers', JSON.stringify(res));
-      setInterviewers(Array.isArray(res) ? res : []);
+      const directory = Array.isArray(res) ? res : [];
+      if (directory.length > 0) {
+        sessionStorage.setItem(INTERVIEWER_DIRECTORY_CACHE_KEY, JSON.stringify(directory));
+      }
+      setInterviewers(directory);
     } catch (error) {
       console.error('Failed to fetch interviewers');
     }

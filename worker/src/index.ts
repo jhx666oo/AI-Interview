@@ -24,6 +24,7 @@ import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-scr
 import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
 import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
 import { buildPositionMappingFromRows, resolveMappedPosition } from './position-mapping';
+import { mergeInterviewerDirectoryEntries } from './interviewer-directory';
 import {
   buildPositionDefaultsIndex,
   resolvePositionDefaults,
@@ -1734,8 +1735,19 @@ app.delete('/api/auth/users/:id', authMiddleware, requireRole(['admin']), async 
 });
 
 app.get('/api/auth/interviewers', authMiddleware, async (c) => {
-  const result = await c.env.DB.prepare("SELECT * FROM users WHERE lower(role) = 'interviewer' AND is_active = 1").all();
-  return c.json(result.results.map(serializeUser));
+  const users = await c.env.DB.prepare(
+    "SELECT id, full_name, email FROM users WHERE lower(role) != 'admin' AND is_active = 1"
+  ).all();
+  let mappings: { results?: unknown[] } = { results: [] };
+  try {
+    mappings = await c.env.DB.prepare('SELECT id, name FROM interviewer_mappings ORDER BY name').all();
+  } catch {
+    // Older databases may not have the optional mappings table yet.
+  }
+  return c.json(mergeInterviewerDirectoryEntries(
+    (users.results || []) as any[],
+    (mappings.results || []) as any[],
+  ));
 });
 
 // GET /api/question-banks — 题库列表

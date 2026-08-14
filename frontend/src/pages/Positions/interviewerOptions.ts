@@ -11,6 +11,11 @@ export type InterviewerOption = {
   historical: boolean;
 };
 
+// Bump the cache key after switching the directory source to users + Feishu mappings.
+// This prevents browsers that previously cached an empty interviewer list from
+// keeping the broken dropdown after the fix is released.
+export const INTERVIEWER_DIRECTORY_CACHE_KEY = '_cached_interviewers_v2';
+
 const clean = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
 export function buildInterviewerOptions(
