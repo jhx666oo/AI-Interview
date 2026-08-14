@@ -1,5 +1,5 @@
 import { ensureResumeProcessingJobsSchema, isMissingResumeProcessingJobsError } from './job-repository';
-import { ensureResumeReprocessBatchSchema, insertReprocessBatchItems } from './batch-repository';
+import { ensureResumeReprocessBatchSchema, insertReprocessBatchItems, reconcileReprocessBatchItems } from './batch-repository';
 import type { HistoricalReprocessQueueMessage, ResumeProcessingQueueMessage, ResumeQueueMessage, ReprocessScope } from './types';
 import { hasValidAiEvaluation } from './types';
 import { logResumeProcessing, logResumeProcessingError } from './logging';
@@ -51,14 +51,24 @@ export async function startHistoricalResumeReprocess(
     `SELECT * FROM resume_reprocess_batches WHERE ${ownerPredicate} AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1`,
   ).bind(...(owner ? [owner] : [])).first() as any;
   if (active) {
+    // The previous coordinator may have materialized all items but been
+    // interrupted before updating the batch row. Reconcile before reusing the
+    // active batch, otherwise a retry can inherit its old batch_id and progress.
+    await reconcileReprocessBatchItems(db, active.id).catch(() => undefined);
+    const refreshedActive = await db.prepare(
+      `SELECT * FROM resume_reprocess_batches WHERE ${ownerPredicate} AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1`,
+    ).bind(...(owner ? [owner] : [])).first() as any;
+    if (!refreshedActive) {
+      return startHistoricalResumeReprocess(db, queue, owner, scope);
+    }
     return {
-      batch_id: active.id,
-      scope: active.scope || scope,
-      requested: batchCount(active.requested_count, active.total_count, active.matched_count),
-      matched: batchCount(active.matched_count, active.total_count),
-      queued: batchCount(active.queued_count, active.matched_count, active.total_count),
-      already_processing: batchCount(active.already_processing_count),
-      failed: batchCount(active.failed_count),
+      batch_id: refreshedActive.id,
+      scope: refreshedActive.scope || scope,
+      requested: batchCount(refreshedActive.requested_count, refreshedActive.total_count, refreshedActive.matched_count),
+      matched: batchCount(refreshedActive.matched_count, refreshedActive.total_count),
+      queued: batchCount(refreshedActive.queued_count, refreshedActive.matched_count, refreshedActive.total_count),
+      already_processing: batchCount(refreshedActive.already_processing_count),
+      failed: batchCount(refreshedActive.failed_count),
       coordinator_queued: false,
     };
   }

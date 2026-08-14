@@ -397,15 +397,6 @@ function createFinishedActiveScopedRequestDb() {
     parse_error: 'previous failure',
     latest_job_status: 'failed',
   }];
-  const itemRows = [{
-    id: 'stale-item',
-    job_id: 'stale-job',
-    status: 'completed',
-    job_status: 'completed',
-    step: 'screening',
-    error_code: null,
-    error_message: null,
-  }];
   const viewRows = [{
     resume_id: 'retry-1',
     status: 'completed',
@@ -425,7 +416,7 @@ function createFinishedActiveScopedRequestDb() {
           return {
             async all() {
               if (sql.includes('SELECT j.id, j.resume_id')) return { results: [] };
-              if (sql.includes('SELECT i.id, i.job_id')) return { results: itemRows };
+              if (sql.includes('SELECT i.id, i.job_id')) return { results: [] };
               if (sql.includes('SELECT i.resume_id')) return { results: viewRows };
               if (sql.includes('SELECT r.id, r.candidate_name')) return { results: candidateRows };
               return { results: [] };

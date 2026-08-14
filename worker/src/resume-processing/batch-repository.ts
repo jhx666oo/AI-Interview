@@ -246,7 +246,12 @@ export async function reconcileReprocessBatchItems(db: Db, batchId: string): Pro
   ).bind(batchId).all() as unknown as { results?: any[] };
 
   const itemRows = rows.results || [];
-  if (itemRows.length === 0) return;
+  if (itemRows.length === 0) {
+    // All materialized items may already be terminal. Still refresh the batch
+    // row so a coordinator interrupted after its last item cannot remain active.
+    await refreshReprocessBatchStatus(db, batchId);
+    return;
+  }
 
   const timestamp = new Date().toISOString();
   for (const item of itemRows) {
