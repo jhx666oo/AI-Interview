@@ -1,6 +1,6 @@
 ---
 name: check-position-progress
-description: 查看某个招聘岗位的进度（简历数、AI 初筛、各轮面试、offer、入职）以及该岗位的简历列表（全部或分页）；也可以按人（负责人/面试官）查看其相关简历，并以飞书多维表格或卡片的形式交付给他（支持入库/不入库操作）。当用户想了解"某个岗位招到哪一步了""这个岗位有多少简历""看看某岗位候选人的进展""拿取某人的相关简历并交付"时使用。
+description: 查看某个招聘岗位的进度（简历数、AI 初筛、各轮面试、offer、入职）以及该岗位的简历列表（全部或分页）；按人（负责人/面试官）查看其相关简历，并以飞书多维表格或卡片的形式交付（支持入库/不入库）；按条件（相关人/岗位/AI初筛结果/学历/年龄）批量入库或淘汰简历。当用户想了解"某个岗位招到哪一步了""这个岗位有多少简历""看看某岗位候选人的进展""拿取某人的相关简历并交付""批量入库/淘汰符合条件的简历""我需要面试/筛选的有哪几个"时使用。
 ---
 
 # 查看岗位进度与简历
@@ -191,8 +191,83 @@ curl -X POST "http://127.0.0.1:8788/api/public/person/%E9%BB%84%E7%BB%B4/export"
 
 **注意**：决策页的链接带 HMAC 签名 token，7 天内有效，仅对单个简历生效，不要复制给他人。
 
+## 4. 条件批量入库 / 淘汰
+
+当用户说"批量入库……的简历""批量淘汰……的简历"时，用下面的接口按条件在服务端过滤并**直接变更简历状态**（入库=approve→`approved`，淘汰=reject→`rejected`）。
+
+```
+POST /api/public/resumes/action
+Content-Type: application/json
+x-api-key: <RESUME_UPLOAD_API_KEY>          # 或 Authorization: Bearer <jwt>
+
+{ "action": "approve" | "reject", "conditions": { ... }, "limit": 200 }
+```
+
+### 支持的过滤条件（`conditions` 可组合）
+
+| 条件 | 含义 |
+| --- | --- |
+| `related_person` | 相关人（负责人/面试官），内部解析为该人的全部相关岗位/映射/面试记录 |
+| `position_id` | 岗位 id |
+| `status` | 简历状态（如 `pending_screening`、`pending_interview`） |
+| `screening_result` | AI 初筛结果（`通过` / `不通过` / `待定`） |
+| `education_min` / `education_max` | 学历最低/最高等级（低于/高于则不匹配） |
+| `education` | 学历精确等级 |
+| `age_min` / `age_max` | 年龄下限/上限 |
+
+学历等级顺序：`小学 < 初中 < 高中 < 中专 < 大专 < 本科 < 硕士 < 博士`。
+
+### 场景示例
+
+- **批量入库：本科及以上 + AI 初筛通过**
+  ```
+  {"action":"approve","conditions":{"screening_result":"通过","education_min":"本科"}}
+  ```
+- **批量淘汰：大专学历 + 年龄 ≤ 30**
+  ```
+  {"action":"reject","conditions":{"education":"大专","age_max":30}}
+  ```
+- **黄维相关简历全部入库**
+  ```
+  {"action":"approve","conditions":{"related_person":"黄维"}}
+  ```
+- **AI 初筛通过的简历全部入库**
+  ```
+  {"action":"approve","conditions":{"screening_result":"通过"}}
+  ```
+
+### 响应
+
+```json
+{ "ok": true, "action": "approve", "matched": 3, "affected": 3, "skipped": 0, "failed": 0, "resume_ids": ["res-1","res-2","res-3"] }
+```
+
+- `matched`：符合条件份数；`affected`：实际变更份数；`skipped`：已处理过/找不到的份数；`failed`：失败份数；`resume_ids`：本次处理的简历 id 列表。
+- `matched: 0`（`detail:"没有符合条件的结果"`）表示没有简历符合条件，不会做任何变更。
+- `limit` 默认 200，最大 500；命中数超过上限时响应带 `detail` 提示，仅处理前 `limit` 份。
+
+### ⚠️ 重要提醒
+
+- 该接口**没有 dry-run**：只要 `matched > 0` 就会立即批量变更简历状态。调用前先想清楚条件，或用公开列表接口（第 2、3 节）先确认候选人符合预期再执行。
+- 学历/年龄只在服务端匹配，不会返回或暴露给调用方。
+- 未带有效 key/JWT 返回 `401 {"detail":"Missing API key or token"}`。
+
+## 5. 看"我需要面试/筛选的有哪几个"
+
+用公开列表接口按 `status` 筛选即可（第 2、3 节），常见状态：
+
+- **待筛选**：`status=pending_screening`
+- **待面试**：`status=pending_interview`
+
+示例：看黄维相关简历中需要面试的：
+```
+curl "http://127.0.0.1:8788/api/public/person/%E9%BB%84%E7%BB%B4/resumes?status=pending_interview"
+```
+
 ## 使用建议
 
 - 想快速了解"岗位招到哪一步了"→ 调进度接口，看 `progress` 的漏斗数字和 `resume_status_breakdown`。
 - 想看"这个岗位有哪些候选人、各自什么状态"→ 调简历列表接口；简历多时分页查看，或按 `status` 筛选。
+- 想"批量入库/淘汰符合条件的简历"→ 用第 4 节的 action 接口；该接口会真实改状态，先确认条件再执行。
+- 想"我需要面试/筛选的有哪几个"→ 用第 5 节按 `status`（`pending_interview` / `pending_screening`）筛选。
 - 汇报时建议先给岗位基本信息 + 漏斗汇总，再按需展开候选人明细。

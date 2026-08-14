@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Button, Card, Form, Input, Space, Typography, message, Tag, Tabs, Tooltip } from 'antd';
-import { SaveOutlined, ReloadOutlined } from '@ant-design/icons';
+import { SaveOutlined, ReloadOutlined, ApiOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { PageHeader, ResponsiveToolbar } from '../../components/Responsive';
@@ -9,10 +9,31 @@ const { Text } = Typography;
 
 type SystemSettings = {
   llm_base_url?: string | null;
-  llm_model: string;
-  llm_api_key_set: boolean;
+  llm_model?: string | null;
+  llm_api_key_set?: boolean;
   llm_api_key_last4?: string | null;
+  llm2_base_url?: string | null;
+  llm2_model?: string | null;
+  llm2_api_key_set?: boolean;
+  llm2_api_key_last4?: string | null;
+  llm3_base_url?: string | null;
+  llm3_model?: string | null;
+  llm3_api_key_set?: boolean;
+  llm3_api_key_last4?: string | null;
+  llm4_base_url?: string | null;
+  llm4_model?: string | null;
+  llm4_api_key_set?: boolean;
+  llm4_api_key_last4?: string | null;
 };
+
+type LLMBlock = { prefix: string; title: string };
+
+const LLM_BLOCKS: LLMBlock[] = [
+  { prefix: 'llm', title: '配置 1' },
+  { prefix: 'llm2', title: '配置 2' },
+  { prefix: 'llm3', title: '配置 3' },
+  { prefix: 'llm4', title: '配置 4' },
+];
 
 type PromptConfigItem = {
   system: string;
@@ -49,7 +70,8 @@ const SystemSettingsPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [meta, setMeta] = useState<SystemSettings | null>(null);
-  const [editingKey, setEditingKey] = useState(false);
+  const [editing, setEditing] = useState<Record<string, boolean>>({});
+  const [testing, setTesting] = useState<number | null>(null);
   const role = (user as any)?.role?.value ?? (user as any)?.role;
 
   // 提示词配置
@@ -66,12 +88,14 @@ const SystemSettingsPage: React.FC = () => {
     try {
       const res = (await request.get('/settings/system')) as SystemSettings;
       setMeta(res);
-      form.setFieldsValue({
-        llm_base_url: res.llm_base_url || undefined,
-        llm_model: res.llm_model || 'qwen3.5-plus',
-        llm_api_key: '',
-      });
-      setEditingKey(false);
+      const values: any = {};
+      for (const block of LLM_BLOCKS) {
+        values[`${block.prefix}_base_url`] = res[`${block.prefix}_base_url`] || undefined;
+        values[`${block.prefix}_model`] = res[`${block.prefix}_model`] || (block.prefix === 'llm' ? 'qwen3.5-plus' : undefined);
+        values[`${block.prefix}_api_key`] = '';
+      }
+      form.setFieldsValue(values);
+      setEditing({});
     } catch (e) {
       const status = (e as any)?.response?.status;
       if (status === 403) message.error('无权限访问系统设置');
@@ -126,16 +150,22 @@ const SystemSettingsPage: React.FC = () => {
   const handleSave = async () => {
     try {
       const values = await form.validateFields();
-      const payload: any = {
-        llm_base_url: values.llm_base_url || null,
-        llm_model: values.llm_model,
-      };
-      if (values.llm_api_key && values.llm_api_key.trim()) {
-        payload.llm_api_key = values.llm_api_key.trim();
+      const payload: any = {};
+      for (const block of LLM_BLOCKS) {
+        const p = block.prefix;
+        const baseUrl = ((values[`${p}_base_url`] as string) || '').trim();
+        const model = ((values[`${p}_model`] as string) || '').trim();
+        const apiKey = ((values[`${p}_api_key`] as string) || '').trim();
+        payload[`${p}_base_url`] = baseUrl || null;
+        payload[`${p}_model`] = model || null;
+        if (apiKey) payload[`${p}_api_key`] = apiKey;
       }
       setSaving(true);
       await request.put('/settings/system', payload);
-      form.setFieldsValue({ llm_api_key: '' });
+      const reset: any = {};
+      for (const block of LLM_BLOCKS) reset[`${block.prefix}_api_key`] = '';
+      form.setFieldsValue(reset);
+      setEditing({});
       await fetchSettings();
       message.success('模型配置已保存');
     } catch (e) {
@@ -145,6 +175,32 @@ const SystemSettingsPage: React.FC = () => {
       else message.error('保存失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTest = async (idx: number) => {
+    const block = LLM_BLOCKS[idx];
+    const p = block.prefix;
+    const baseUrl = form.getFieldValue(`${p}_base_url`);
+    const model = form.getFieldValue(`${p}_model`);
+    const typedKey = ((form.getFieldValue(`${p}_api_key`) as string) || '').trim();
+    const savedKeySet = !!meta?.[`${p}_api_key_set`];
+    if (!typedKey && !savedKeySet) {
+      message.warning(`请先填写「${block.title}」的 API Key`);
+      return;
+    }
+    setTesting(idx);
+    try {
+      const payload: any = typedKey
+        ? { base_url: baseUrl, model, api_key: typedKey }
+        : { index: idx };
+      const res = (await request.post('/settings/system/test', payload)) as { ok?: boolean; message?: string };
+      if (res.ok) message.success(res.message || '连接成功');
+      else message.error(res.message || '连接失败');
+    } catch (e: any) {
+      message.error(e?.response?.data?.message || e?.response?.data?.detail || '测试失败，请检查配置');
+    } finally {
+      setTesting(null);
     }
   };
 
@@ -240,54 +296,85 @@ const SystemSettingsPage: React.FC = () => {
         >
           <span />
         </ResponsiveToolbar>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+          最多可配置 4 组模型，调用时按优先级从上到下依次尝试，上一组失败（超时 / 格式错误 / 空响应）后自动降级到下一组。
+        </Text>
         <Form form={form} layout="vertical" autoComplete="off">
           <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} />
           <input type="password" name="password" autoComplete="current-password" style={{ display: 'none' }} />
 
-          <Form.Item name="llm_base_url" label="Base URL">
-            <Input placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" autoComplete="off" />
-          </Form.Item>
-
-          <Form.Item
-            name="llm_model"
-            label="模型名称"
-            rules={[{ required: true, message: '请输入模型名称' }]}
-          >
-            <Input placeholder="qwen-plus / qwen3.5-plus" autoComplete="off" />
-          </Form.Item>
-
-          <Form.Item
-            name="llm_api_key"
-            label="API Key"
-            extra={
-              <Space orientation="vertical" size={4}>
-                <Text type="secondary">
-                  {meta?.llm_api_key_set
-                    ? `已设置${meta?.llm_api_key_last4 ? `（末 4 位：${meta.llm_api_key_last4}）` : ''}`
-                    : '未设置，将降级使用 Cloudflare Workers AI（免费，Llama 模型）'}
+          {LLM_BLOCKS.map((block, idx) => {
+            const p = block.prefix;
+            const keySet = !!meta?.[`${p}_api_key_set`];
+            const keyLast4 = meta?.[`${p}_api_key_last4`];
+            const isEditing = !!editing[p];
+            return (
+              <div key={block.prefix} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 16, marginBottom: 16, background: '#fafafa' }}>
+                <Text strong>
+                  {block.title}
+                  {idx === 0 ? '（首选）' : '（备用）'}
                 </Text>
-                {meta?.llm_api_key_set && !editingKey && (
-                  <Button type="link" onClick={() => setEditingKey(true)} style={{ padding: 0, height: 'auto' }}>
-                    更换 API Key
+                <Text type="secondary" style={{ marginLeft: 8 }}>
+                  {idx === 0 ? '调用 AI 时优先使用' : `配置 ${idx + 1} 失败后自动降级到本配置`}
+                </Text>
+
+                <Form.Item name={`${p}_base_url`} label="Base URL" style={{ marginTop: 12 }}>
+                  <Input placeholder="https://api.deepseek.com/v1" autoComplete="off" />
+                </Form.Item>
+
+                <Form.Item
+                  name={`${p}_model`}
+                  label="模型名称"
+                  rules={idx === 0 ? [{ required: true, message: '请输入模型名称' }] : []}
+                >
+                  <Input placeholder="deepseek-chat / qwen-plus" autoComplete="off" />
+                </Form.Item>
+
+                <Form.Item
+                  name={`${p}_api_key`}
+                  label="API Key"
+                  extra={
+                    <Space orientation="vertical" size={4}>
+                      <Text type="secondary">
+                        {keySet
+                          ? `已设置${keyLast4 ? `（末 4 位：${keyLast4}）` : ''}`
+                          : (idx === 0 ? '未设置，将降级使用 Cloudflare Workers AI（免费，Llama 模型）' : '未设置，该配置不会被使用')}
+                      </Text>
+                    </Space>
+                  }
+                  rules={[
+                    {
+                      validator: async (_, value) => {
+                        const trimmed = ((value as string) || '').trim();
+                        if (isEditing && !trimmed) throw new Error('请输入新的 API Key');
+                      },
+                    },
+                  ]}
+                >
+                  <Input.Password
+                    placeholder={keySet && !isEditing ? '已设置（不会回显）' : '输入后会覆盖当前 Key'}
+                    autoComplete="new-password"
+                    disabled={!!(keySet && !isEditing)}
+                  />
+                </Form.Item>
+
+                <Space>
+                  <Button onClick={() => handleTest(idx)} loading={testing === idx} icon={<ApiOutlined />}>
+                    测试连通性
                   </Button>
-                )}
-              </Space>
-            }
-            rules={[
-              {
-                validator: async (_, value) => {
-                  const trimmed = (value || '').trim();
-                  if (editingKey && !trimmed) throw new Error('请输入新的 API Key');
-                },
-              },
-            ]}
-          >
-            <Input.Password
-              placeholder={meta?.llm_api_key_set && !editingKey ? '已设置（不会回显）' : '输入后会覆盖当前 Key'}
-              autoComplete="new-password"
-              disabled={!!(meta?.llm_api_key_set && !editingKey)}
-            />
-          </Form.Item>
+                  {keySet && !isEditing && (
+                    <Button
+                      type="link"
+                      onClick={() => setEditing(prev => ({ ...prev, [p]: true }))}
+                      style={{ padding: 0, height: 'auto' }}
+                    >
+                      更换 API Key
+                    </Button>
+                  )}
+                </Space>
+              </div>
+            );
+          })}
         </Form>
       </Card>
 
