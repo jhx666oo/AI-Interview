@@ -47,6 +47,12 @@ export interface ResumeProcessingJob {
   ai_attempt: number | null;
   ai_response_chars: number | null;
   ai_error_stage: string | null;
+  ai_finish_reason: string | null;
+  ai_content_chars: number | null;
+  ai_reasoning_chars: number | null;
+  ai_response_shape: string | null;
+  ai_format_attempt: number | null;
+  ai_repair_status: string | null;
 }
 
 export function isTerminalJobStatus(status: ResumeJobStatus): boolean {

@@ -93,7 +93,7 @@ function createActiveJobDb() {
 }
 
 describe('job AI diagnostics', () => {
-  it('persists provider, model, attempt and response chars', async () => {
+  it('persists provider, model, attempt, response metadata and response chars', async () => {
     const captured: Array<{ sql: string; values: unknown[] }> = [];
     const db = {
       prepare(sql: string) {
@@ -110,13 +110,28 @@ describe('job AI diagnostics', () => {
       model: 'deepseek-chat',
       attempt: 3,
       responseChars: 8421,
+      finishReason: 'length',
+      contentChars: 8421,
+      reasoningChars: 1200,
+      responseShape: 'truncated_json',
+      formatAttempt: 1,
+      repairStatus: 'not_attempted',
     });
     const update = captured.find((c) => c.sql.includes('UPDATE resume_processing_jobs'))!;
     expect(update.sql).toContain('ai_provider=?');
     expect(update.sql).toContain('ai_model=?');
     expect(update.sql).toContain('ai_attempt=?');
     expect(update.sql).toContain('ai_response_chars=?');
-    expect(update.values).toEqual(expect.arrayContaining(['configured_api', 'deepseek-chat', 3, 8421]));
+    expect(update.sql).toContain('ai_finish_reason=?');
+    expect(update.sql).toContain('ai_content_chars=?');
+    expect(update.sql).toContain('ai_reasoning_chars=?');
+    expect(update.sql).toContain('ai_response_shape=?');
+    expect(update.sql).toContain('ai_format_attempt=?');
+    expect(update.sql).toContain('ai_repair_status=?');
+    expect(update.values).toEqual(expect.arrayContaining([
+      'configured_api', 'deepseek-chat', 3, 8421,
+      'length', 8421, 1200, 'truncated_json', 1, 'not_attempted',
+    ]));
     expect(update.values.at(-1)).toBe('job-1');
   });
 

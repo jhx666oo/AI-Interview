@@ -36,6 +36,12 @@ export async function ensureResumeProcessingJobsSchema(db: Pick<D1Database, 'pre
     "ALTER TABLE resume_processing_jobs ADD COLUMN ai_attempt INTEGER",
     "ALTER TABLE resume_processing_jobs ADD COLUMN ai_response_chars INTEGER",
     "ALTER TABLE resume_processing_jobs ADD COLUMN ai_error_stage TEXT",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_finish_reason TEXT",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_content_chars INTEGER",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_reasoning_chars INTEGER",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_response_shape TEXT",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_format_attempt INTEGER",
+    "ALTER TABLE resume_processing_jobs ADD COLUMN ai_repair_status TEXT",
   ]) {
     try {
       await db.prepare(column).run();
@@ -113,6 +119,12 @@ export interface JobAIDiagnostics {
   attempt?: number | null;
   responseChars?: number | null;
   errorStage?: string | null;
+  finishReason?: string | null;
+  contentChars?: number | null;
+  reasoningChars?: number | null;
+  responseShape?: string | null;
+  formatAttempt?: number | null;
+  repairStatus?: string | null;
 }
 
 /** Thrown when a job was cancelled (batch stopped) before an in-flight AI write. */
@@ -153,6 +165,12 @@ export async function updateJobAIDiagnostics(
   if (diag.attempt !== undefined) { parts.push('ai_attempt=?'); values.push(diag.attempt); }
   if (diag.responseChars !== undefined) { parts.push('ai_response_chars=?'); values.push(diag.responseChars); }
   if (diag.errorStage !== undefined) { parts.push('ai_error_stage=?'); values.push(diag.errorStage); }
+  if (diag.finishReason !== undefined) { parts.push('ai_finish_reason=?'); values.push(diag.finishReason); }
+  if (diag.contentChars !== undefined) { parts.push('ai_content_chars=?'); values.push(diag.contentChars); }
+  if (diag.reasoningChars !== undefined) { parts.push('ai_reasoning_chars=?'); values.push(diag.reasoningChars); }
+  if (diag.responseShape !== undefined) { parts.push('ai_response_shape=?'); values.push(diag.responseShape); }
+  if (diag.formatAttempt !== undefined) { parts.push('ai_format_attempt=?'); values.push(diag.formatAttempt); }
+  if (diag.repairStatus !== undefined) { parts.push('ai_repair_status=?'); values.push(diag.repairStatus); }
   await db.prepare(`UPDATE resume_processing_jobs SET ${parts.join(', ')} WHERE id=?`)
     .bind(...values, jobId).run();
 }

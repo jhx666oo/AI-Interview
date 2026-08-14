@@ -117,12 +117,16 @@ export async function parseStructuredOutput(
       },
     };
   }
-  if (first.error === 'AI_SCREENING_INVALID_JSON') {
-    throw buildStructuredFailure('AI_SCREENING_INVALID_JSON', 'AI 返回内容无法解析为 JSON');
-  }
-
   const truncated = raw.slice(0, REPAIR_INPUT_MAX_CHARS);
-  const repairedRaw = await repair({ raw: truncated, kind, failureCode: first.error });
+  let repairedRaw: string;
+  try {
+    repairedRaw = await repair({ raw: truncated, kind, failureCode: first.error! });
+  } catch (error) {
+    throw buildStructuredFailure(
+      first.error!,
+      `AI 返回内容无法解析为 JSON，修复请求失败：${String((error as Error)?.message || error).slice(0, 180)}`,
+    );
+  }
 
   const second = attemptParse(repairedRaw);
   if (second.error) {

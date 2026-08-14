@@ -416,11 +416,20 @@ export type AICallMetadata = {
   model: string;
   attempt: number;
   responseChars: number;
+  finishReason?: string | null;
+  contentChars?: number;
+  reasoningChars?: number;
 };
 
 export type AICallResult = {
   text: string;
   metadata: AICallMetadata;
+};
+
+export type AICallOptions = {
+  structured?: boolean;
+  maxTokens?: number;
+  temperature?: number;
 };
 
 const AI_RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
@@ -434,6 +443,12 @@ function sleepAI(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function buildAICallError(code: string, message: string): Error & { code: string } {
+  const error = new Error(`${code}: ${message}`) as Error & { code: string };
+  error.code = code;
+  return error;
+}
+
 /**
  * Main AI entry used by the resume consumer. Records which provider/model was
  * actually used, how many attempts were made, and the response length, so batch
@@ -445,11 +460,12 @@ export async function callAIWithMetadata(
   systemPrompt: string,
   userPrompt: string,
   model?: string,
+  options: AICallOptions = {},
 ): Promise<AICallResult> {
   const llm = await getLLMConfig(env);
   if (llm.apiKey) {
     try {
-      return await callConfiguredAIWithMetadata(env, llm, systemPrompt, userPrompt, model);
+      return await callConfiguredAIWithMetadata(env, llm, systemPrompt, userPrompt, model, options);
     } catch (error) {
       const fallbackEnabled = (env.AI_FALLBACK_ENABLED || '').toLowerCase() === 'true';
       if (!fallbackEnabled) throw error;
@@ -471,17 +487,28 @@ export async function callAIWithMetadata(
     }
     throw new Error('AI 未配置：请在系统设置中填写 API Key，或在 wrangler.toml 中启用 [ai] 绑定以使用 Cloudflare Workers AI（免费）');
   }
-  const text = await runWorkersAI(env, systemPrompt, userPrompt);
+  const text = await runWorkersAI(env, systemPrompt, userPrompt, options);
   return { text, metadata: { provider: 'workers_ai', model: 'workers_ai', attempt: 1, responseChars: text.length } };
 }
 
 /** Compatibility wrapper: existing callers keep receiving a plain string. */
-export async function callAI(env: Env, systemPrompt: string, userPrompt: string, model?: string): Promise<string> {
-  const result = await callAIWithMetadata(env, systemPrompt, userPrompt, model);
+export async function callAI(
+  env: Env,
+  systemPrompt: string,
+  userPrompt: string,
+  model?: string,
+  options: AICallOptions = {},
+): Promise<string> {
+  const result = await callAIWithMetadata(env, systemPrompt, userPrompt, model, options);
   return result.text;
 }
 
-async function runWorkersAI(env: Env, systemPrompt: string, userPrompt: string): Promise<string> {
+async function runWorkersAI(
+  env: Env,
+  systemPrompt: string,
+  userPrompt: string,
+  options: AICallOptions = {},
+): Promise<string> {
   const aiModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
   async function runModel(name: string): Promise<string> {
     const result: any = await Promise.race([
@@ -490,7 +517,9 @@ async function runWorkersAI(env: Env, systemPrompt: string, userPrompt: string):
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        max_tokens: 4096,
+        max_tokens: options.maxTokens ?? 4096,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(options.structured ? { response_format: { type: 'json_object' } } : {}),
       }),
       new Promise<string>((_, reject) =>
         setTimeout(() => reject(new Error('Workers AI 调用超时（30s）')), 30000)
@@ -522,7 +551,7 @@ async function runWorkersAI(env: Env, systemPrompt: string, userPrompt: string):
 // 格式错误（400/401/403/404）不重试，直接抛出由调用方决定是否显式 fallback。
 async function callConfiguredAIWithMetadata(
   env: Env, llm: { apiKey: string; baseUrl: string; model: string },
-  systemPrompt: string, userPrompt: string, model?: string
+  systemPrompt: string, userPrompt: string, model?: string, options: AICallOptions = {},
 ): Promise<AICallResult> {
   // —— 每日 token 限额检查（防止调试耗光额度）——
   await ensureAiUsageTable(env);
@@ -563,7 +592,9 @@ async function callConfiguredAIWithMetadata(
               { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt },
             ],
-            max_tokens: 4096,
+            max_tokens: options.maxTokens ?? 4096,
+            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(options.structured ? { response_format: { type: 'json_object' } } : {}),
           }),
           signal: controller.signal,
         }),
@@ -573,6 +604,9 @@ async function callConfiguredAIWithMetadata(
       if (!resp.ok) {
         const errText = await Promise.race([resp.text(), timeoutPromise]);
         const status = resp.status;
+        if (status === 400 && options.structured && /response_format|json_object/i.test(errText)) {
+          throw buildAICallError('AI_JSON_MODE_UNSUPPORTED', errText.slice(0, 200));
+        }
         if (isRetryableHttpStatus(status) && attempt < 3) {
           await sleepAI(attempt * 1000);
           continue;
@@ -585,15 +619,28 @@ async function callConfiguredAIWithMetadata(
       const data: any = await Promise.race([resp.json(), timeoutPromise]);
       const totalTokens = data?.usage?.total_tokens || 0;
       if (totalTokens > 0) await addTokenUsage(env, totalTokens);
-      let text = '';
-      if (data?.choices?.[0]?.message?.content) {
-        text = data.choices[0].message.content;
-      } else if (data?.choices?.[0]?.message?.reasoning_content) {
-        text = data.choices[0].message.reasoning_content;
-      } else {
-        throw new Error(`AI API response format unexpected: ${JSON.stringify(data)}`);
+      const choice = data?.choices?.[0];
+      const message = choice?.message;
+      const text = typeof message?.content === 'string' ? message.content : '';
+      const reasoningChars = typeof message?.reasoning_content === 'string'
+        ? message.reasoning_content.length
+        : 0;
+      if (!text.trim()) {
+        const detail = reasoningChars > 0 ? '仅返回 reasoning_content' : '未返回 message.content';
+        throw buildAICallError('AI_RESPONSE_EMPTY', detail);
       }
-      return { text, metadata: { provider: 'configured_api', model: aiModel, attempt, responseChars: text.length } };
+      return {
+        text,
+        metadata: {
+          provider: 'configured_api',
+          model: aiModel,
+          attempt,
+          responseChars: text.length,
+          finishReason: choice?.finish_reason ?? null,
+          contentChars: text.length,
+          reasoningChars,
+        },
+      };
     } catch (e: any) {
       if (e === timeoutError || e?.name === 'AbortError') {
         throw timeoutError;

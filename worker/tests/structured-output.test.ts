@@ -52,15 +52,20 @@ describe('parseStructuredOutput screening mode', () => {
     expect(calls).toBe(1);
   });
 
-  it('rejects non-object screening responses with INVALID_JSON', async () => {
+  it('repairs non-object screening responses once', async () => {
     let calls = 0;
-    await expect(parseStructuredOutput(
+    const result = await parseStructuredOutput(
       '"plain text no json"',
       'screening',
       JSON.parse,
-      async () => { calls++; throw new Error('no repair for non-json'); },
-    )).rejects.toMatchObject({ code: 'AI_SCREENING_INVALID_JSON' });
-    expect(calls).toBe(0);
+      async () => {
+        calls++;
+        return JSON.stringify({ summary: '修复后的摘要', dimensions: sevenDimensions() });
+      },
+    );
+    expect(result.diagnostics.repairAttempted).toBe(true);
+    expect(result.value).toMatchObject({ summary: '修复后的摘要' });
+    expect(calls).toBe(1);
   });
 
   it('exposes dimension names and response chars in diagnostics', async () => {

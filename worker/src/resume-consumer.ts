@@ -7,7 +7,7 @@ import { resolveResumeText } from './resume-processing/ocr';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { assembleScreeningEvaluation, missingDimensionNames, normalizeDimensionScores, requireCompleteScreeningEvaluation, type DimensionScore } from './resume-processing/dimension-scores';
-import { buildScreeningRepairPrompt, parseStructuredOutput, type StructuredOutputFailureCode } from './resume-processing/structured-output';
+import { buildScreeningRepairPrompt, parseStructuredOutput, type StructuredOutputFailureCode, type StructuredOutputResult } from './resume-processing/structured-output';
 import { callAI, callAIWithMetadata, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
 import { WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
@@ -181,20 +181,33 @@ async function repairStructuredOutput(
   failureCode: StructuredOutputFailureCode,
 ): Promise<string> {
   const prompt = buildScreeningRepairPrompt(kind, raw, failureCode);
-  return callAI(env as any, prompt.system, prompt.user, 'deepseek-v4-flash');
+  return callAI(env as any, prompt.system, prompt.user, 'deepseek-v4-flash', {
+    structured: true,
+    temperature: 0,
+    maxTokens: 4096,
+  });
+}
+
+function classifyAIResponseShape(text: string, finishReason?: string | null): string {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return 'empty_content';
+  if (finishReason === 'length') return 'truncated_candidate';
+  if (trimmed.startsWith('```')) return 'markdown_json_candidate';
+  if (trimmed.startsWith('{')) return 'json_object_candidate';
+  if (trimmed.startsWith('[')) return 'json_array_candidate';
+  return 'text_prefix';
 }
 
 async function parseScreeningResponse(
   env: ConsumerEnv,
   response: string,
-): Promise<Record<string, any>> {
-  const parsed = await parseStructuredOutput(
+): Promise<StructuredOutputResult> {
+  return parseStructuredOutput(
     response,
     'screening',
     extractJSON,
     (input) => repairStructuredOutput(env, input.kind, input.raw, input.failureCode),
   );
-  return parsed.value as Record<string, any>;
 }
 
 async function tryParseDimensionScores(
@@ -279,7 +292,11 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         user: '从以下简历提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。找不到填 null；skills、certifications、work_experience、education 使用数组。\n\n{resume_text}'
       });
       const userText = extractPrompt.user.replace('{resume_text}', text);
-      const response = await callAI(env as any, extractPrompt.system, userText);
+      const response = await callAI(env as any, extractPrompt.system, userText, undefined, {
+        structured: true,
+        temperature: 0,
+        maxTokens: 4096,
+      });
       return normalizeResumeFields(extractJSON(response));
     },
     screen: async (text, fields, resume) => {
@@ -295,20 +312,39 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{resume_text}', text)
         .replace('{fields}', JSON.stringify(fields))
         .replace('{capability_dimensions}', context.capabilityDimensions || '');
-      const screeningResult = await callAIWithMetadata(env as any, screenPrompt.system, screenUserText, 'deepseek-v4-flash');
+      const screeningResult = await callAIWithMetadata(
+        env as any,
+        screenPrompt.system,
+        screenUserText,
+        'deepseek-v4-flash',
+        { structured: true, temperature: 0, maxTokens: 8192 },
+      );
       await updateJobAIDiagnostics(env.DB, message.jobId, {
         provider: screeningResult.metadata.provider,
         model: screeningResult.metadata.model,
         attempt: screeningResult.metadata.attempt,
         responseChars: screeningResult.metadata.responseChars,
+        finishReason: screeningResult.metadata.finishReason,
+        contentChars: screeningResult.metadata.contentChars,
+        reasoningChars: screeningResult.metadata.reasoningChars,
+        responseShape: classifyAIResponseShape(screeningResult.text, screeningResult.metadata.finishReason),
+        formatAttempt: 1,
+        repairStatus: 'not_started',
       });
       let evaluation: Record<string, any>;
       try {
-        evaluation = await parseScreeningResponse(env, screeningResult.text);
+        const parsed = await parseScreeningResponse(env, screeningResult.text);
+        evaluation = parsed.value as Record<string, any>;
+        await updateJobAIDiagnostics(env.DB, message.jobId, {
+          formatAttempt: parsed.diagnostics.repairAttempted ? 2 : 1,
+          repairStatus: parsed.diagnostics.repairAttempted ? 'succeeded' : 'not_needed',
+        });
       } catch (error) {
         await updateJobAIDiagnostics(env.DB, message.jobId, {
           errorStage: 'structured_validation',
           responseChars: screeningResult.metadata.responseChars,
+          formatAttempt: 2,
+          repairStatus: 'failed',
         });
         logResumeProcessingError('ai.screening.validation_failed', error, {
           resumeId: message.resumeId,
@@ -410,6 +446,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             supplementPrompt.system,
             supUserText,
             'deepseek-v4-flash',
+            { structured: true, temperature: 0, maxTokens: 4096 },
           );
           // 专项维度只补主评估缺失项，绝不覆盖完整主评估
           const { scores: dimScores, ok: dimOk } = await tryParseDimensionScores(env, dimResponse);
@@ -441,6 +478,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             supplementPrompt.system,
             supUserText,
             'deepseek-v4-flash',
+            { structured: true, temperature: 0, maxTokens: 4096 },
           );
           // 服务端最低要求是完整七项维度，不按 configuredDimensions 过滤
           const { scores, ok } = await tryParseDimensionScores(env, supplemental);
@@ -561,7 +599,11 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         user: '从以下简历文本中提取字段：姓名、最高学历、学校、专业、工作年限、性别、年龄、技能列表、期望职位、期望薪资、工作经历摘要、证书。只返回 JSON 对象，不要包含其他文字。\n\n{resume_text}'
       });
       const r2ExtractUser = r2ExtractPrompt.user.replace('{resume_text}', text);
-      const response = await callAI(env as any, r2ExtractPrompt.system, r2ExtractUser);
+      const response = await callAI(env as any, r2ExtractPrompt.system, r2ExtractUser, undefined, {
+        structured: true,
+        temperature: 0,
+        maxTokens: 4096,
+      });
       return normalizeResumeFields(extractJSON(response));
     },
     screen: async (text, fields, resume) => {
@@ -576,20 +618,39 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         .replace('{capability_dimensions}', context.capabilityDimensions)
         .replace('{fields}', JSON.stringify(fields))
         .replace('{resume_text}', text);
-      const screeningResult = await callAIWithMetadata(env as any, r2ScreenPrompt.system, r2ScreenUser);
+      const screeningResult = await callAIWithMetadata(
+        env as any,
+        r2ScreenPrompt.system,
+        r2ScreenUser,
+        undefined,
+        { structured: true, temperature: 0, maxTokens: 8192 },
+      );
       await updateJobAIDiagnostics(env.DB, message.jobId, {
         provider: screeningResult.metadata.provider,
         model: screeningResult.metadata.model,
         attempt: screeningResult.metadata.attempt,
         responseChars: screeningResult.metadata.responseChars,
+        finishReason: screeningResult.metadata.finishReason,
+        contentChars: screeningResult.metadata.contentChars,
+        reasoningChars: screeningResult.metadata.reasoningChars,
+        responseShape: classifyAIResponseShape(screeningResult.text, screeningResult.metadata.finishReason),
+        formatAttempt: 1,
+        repairStatus: 'not_started',
       });
       let evaluation: Record<string, any>;
       try {
-        evaluation = await parseScreeningResponse(env, screeningResult.text);
+        const parsed = await parseScreeningResponse(env, screeningResult.text);
+        evaluation = parsed.value as Record<string, any>;
+        await updateJobAIDiagnostics(env.DB, message.jobId, {
+          formatAttempt: parsed.diagnostics.repairAttempted ? 2 : 1,
+          repairStatus: parsed.diagnostics.repairAttempted ? 'succeeded' : 'not_needed',
+        });
       } catch (error) {
         await updateJobAIDiagnostics(env.DB, message.jobId, {
           errorStage: 'structured_validation',
           responseChars: screeningResult.metadata.responseChars,
+          formatAttempt: 2,
+          repairStatus: 'failed',
         });
         logResumeProcessingError('ai.screening.validation_failed', error, {
           resumeId: message.resumeId,
@@ -621,6 +682,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             r2SupplementPrompt.system,
             r2SupUser,
             'deepseek-v4-flash',
+            { structured: true, temperature: 0, maxTokens: 4096 },
           );
           // 专项只补主评估缺失项，primary 优先，不覆盖
           const { scores, ok } = await tryParseDimensionScores(env, supplemental);
