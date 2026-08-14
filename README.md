@@ -216,15 +216,21 @@ ai-interview/
 
 ## AI 模型配置
 
-AI 调用统一走 `worker/src/index.ts` 的 `getLLMConfig()` + `callAI()`：
+AI 调用统一走 `worker/src/index.ts` 的 `getLLMConfigs()` + `callAI()`：
+
+系统设置「AI 模型配置」页支持最多 **4 组模型配置**（`llm_*` / `llm2_*` / `llm3_*` / `llm4_*`），
+调用时按优先级从上到下依次尝试，上一组失败（超时 / 格式错误 / 空响应）自动降级到下一组，
+全部失败后才视 `AI_FALLBACK_ENABLED` 是否启用降级到 Workers AI。每组均可独立「测试连通性」。
 
 | 优先级 | 配置来源 | 说明 |
 |--------|----------|------|
-| 1 | **系统设置页配置**（D1 `system_configs` 表） | 用户在「系统设置 → AI 模型配置」填写 API Key / Base URL / Model |
-| 2 | **环境变量**（`env.AI_API_KEY`） | Pages Secret 或 .dev.vars，本地开发适用 |
-| 3 | **Workers AI 降级**（`env.AI` binding） | 未配置任何 Key 时，自动使用 Cloudflare Workers AI（免费） |
+| 1 | **系统设置配置 1**（D1 `system_configs` 表 `llm_*`） | 首选；缺失时回退环境变量 `AI_API_KEY` |
+| 2 | **系统设置配置 2**（`llm2_*`） | 配置 1 失败时自动降级 |
+| 3 | **系统设置配置 3**（`llm3_*`） | 配置 2 失败时自动降级 |
+| 4 | **系统设置配置 4**（`llm4_*`） | 配置 3 失败时自动降级 |
+| 5 | **Workers AI 降级**（`env.AI` binding） | 仅当 `AI_FALLBACK_ENABLED=true` 且前 4 组全部失败时启用 |
 
-**降级链路**：`DeepSeek/自定义 API` → `Workers AI Llama 3.3 70B` → `Workers AI Llama 3.1 8B`
+**降级链路**：`配置1` → `配置2` → `配置3` → `配置4` → `Workers AI Llama 3.3 70B` → `Workers AI Llama 3.1 8B`
 
 **推理模型兼容**：`deepseek-v4-flash` 可能只返回 `reasoning_content` 不含 `content`，callAI 自动 fallback。
 
