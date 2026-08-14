@@ -200,6 +200,16 @@ describe('stale job recovery', () => {
     expect(db.calls.some((sql) => sql.includes("SET status='failed'") && sql.includes('PROCESSING_STALLED'))).toBe(true);
     expect(db.calls.some((sql) => sql.includes("UPDATE resumes") && sql.includes("parse_status='failed'"))).toBe(true);
   });
+
+  it('runs stale-job recovery before rendering batch progress', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../src/resume-processing/batch-repository.ts', import.meta.url), 'utf8');
+    const viewStart = source.indexOf('export async function getReprocessBatchView');
+    const viewSource = source.slice(viewStart);
+
+    expect(viewStart).toBeGreaterThan(-1);
+    expect(viewSource).toContain('recoverStaleResumeProcessingJobs');
+  });
 });
 
 function createStaleJobDb() {

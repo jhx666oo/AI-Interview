@@ -7,6 +7,7 @@ import type {
   ReprocessScope,
   ResumeJobStatus,
 } from './types';
+import { recoverStaleResumeProcessingJobs } from './job-repository';
 
 type Db = Pick<D1Database, 'prepare'>;
 
@@ -284,6 +285,10 @@ export async function getReprocessBatchView(
   batchId: string,
   owner: string | null,
 ): Promise<ReprocessBatchView | null> {
+  // Batch progress is polled by the UI every few seconds. Use that request as
+  // a recovery opportunity for queue messages whose Worker invocation was
+  // interrupted before it could mark the job failed or queued again.
+  await recoverStaleResumeProcessingJobs(db).catch(() => undefined);
   // Reconcile any stale items before aggregating
   await reconcileReprocessBatchItems(db, batchId).catch(() => undefined);
 
