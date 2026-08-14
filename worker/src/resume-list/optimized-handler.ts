@@ -5,7 +5,7 @@
  */
 
 import { normalizeAiScreeningResult } from '../ai-screening-result';
-import { ensureResumeListSchema, exposeStructuredEvaluation } from '../resume-schema';
+import { exposeStructuredEvaluation } from '../resume-schema';
 import { appendEvaluationJobProjection } from '../resume-processing/batch-repository';
 import { buildPositionMappingFromRows, resolveMappedPosition } from '../position-mapping';
 import {
@@ -28,9 +28,6 @@ const LIST_COLUMNS = `
 `;
 
 export async function handleOptimizedResumeList(c: any): Promise<Response> {
-  // Ensure additive resume columns exist (idempotent) before any SELECT references them.
-  await ensureResumeListSchema(c.env.DB);
-
   const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1);
   const pageSize = Math.min(200, Math.max(1, parseInt(c.req.query('page_size') || '20', 10) || 20));
   const nameFilter = c.req.query('candidate_name');

@@ -5323,17 +5323,11 @@ function applyParsedResumeFields(item: Record<string, any>): void {
 
 app.get('/api/resumes', authMiddleware, async (c) => {
   try {
-    // 页面轮询/刷新时顺便回收被上游 AI 请求卡住的旧任务，避免旧的
-    // running job 永久占用队列并阻止用户重新评估。
-    await recoverStaleResumeProcessingJobs(c.env.DB).catch((error) => {
-      console.error('[resumes] stale job recovery failed', error);
-    });
     // Feature Flag: 开启 SQL 分页查询时走优化路径，不 select 长文本列
     const sqlListEnabled = (c.env.RESUME_SQL_LIST || '').toLowerCase() === 'true';
     if (sqlListEnabled) {
       return await handleOptimizedResumeList(c);
     }
-    await ensureResumeListSchema(c.env.DB);
     // 纯 D1 驱动：直接从 resumes 表读取，不依赖飞书
     const d1Rows = await c.env.DB.prepare(
       'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, hr_disposition, business_screening_status, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY created_at DESC, updated_at DESC'

@@ -122,6 +122,7 @@ const ResumesList: React.FC = () => {
   const [questionBanks, setQuestionBanks] = useState([]);
   const [pollingEnabled, setPollingEnabled] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const resumeListRequestInFlightRef = useRef(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [batchPushing, setBatchPushing] = useState(false);
   const canBatchPush = user?.role === 'admin' || user?.role === 'hr';
@@ -136,6 +137,8 @@ const ResumesList: React.FC = () => {
   const [reprocessBatch, setReprocessBatch] = useState<ReprocessBatchView | null>(null);
   const reprocessPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reprocessVersionRef = useRef(0);
+  const reprocessPollInFlightRef = useRef(false);
+  const reprocessBatchActive = reprocessBatch?.status === 'queued' || reprocessBatch?.status === 'running';
   
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [interviewModalVisible, setInterviewModalVisible] = useState(false);
@@ -356,7 +359,6 @@ const ResumesList: React.FC = () => {
           if (res.batch_id) {
             setReprocessBatch(null);
             await fetchReprocessBatch(res.batch_id);
-            fetchResumes(false, 1, cardPageSizeRef.current);
             message.success(`已提交 ${scopeLabel}，共 ${res.total || 0} 份简历`);
           } else if (res.message) {
             message.info(res.message);
@@ -402,14 +404,22 @@ const ResumesList: React.FC = () => {
   const startReprocessPolling = (batchId: string) => {
     stopReprocessPolling();
     const poll = async () => {
+      if (reprocessPollInFlightRef.current) return;
+      reprocessPollInFlightRef.current = true;
       const version = ++reprocessVersionRef.current;
       try {
         const res = await request.get(`/resumes/reprocess-batches/${batchId}`);
         if (version === reprocessVersionRef.current) {
           setReprocessBatch(res);
-          fetchResumes(true, cardPageRef.current, cardPageSizeRef.current);
+          const stillActive = res.status === 'queued' || res.status === 'running';
+          if (!stillActive) {
+            await fetchResumes(true, cardPageRef.current, cardPageSizeRef.current);
+          }
         }
       } catch {}
+      finally {
+        reprocessPollInFlightRef.current = false;
+      }
     };
     poll();
     reprocessPollingRef.current = setInterval(poll, 4000);
@@ -479,50 +489,55 @@ const ResumesList: React.FC = () => {
     requestedPage = cardPageRef.current,
     requestedPageSize = cardPageSizeRef.current,
   ) => {
+    if (resumeListRequestInFlightRef.current) return;
+    resumeListRequestInFlightRef.current = true;
     // 新查询会使之前的初始加载/轮询请求失效，避免旧响应覆盖当前筛选结果。
-    const requestVersion = resumeRefreshVersion.current.invalidate();
     if (!silent) setLoading(true);
     try {
-      const params = buildListParams(requestedPage, requestedPageSize);
-      const res = await request.get('/resumes', { params });
-      if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return res;
-      const items = Array.isArray(res) ? res : (res.items || []);
-      // 岗位/专业/年龄/性别筛选已由服务端 SQL 完成（支持跨页 + 分页统计）
-      const sorted = sortResumesNewestFirst(applyBusinessScreeningOverlay(items));
-      setData(sorted);
-      const nextStats = getResumeListStats(res, items);
-      const lastPage = Math.max(1, Math.ceil(nextStats.total / requestedPageSize));
-      if (requestedPage > lastPage) {
-        cardPageRef.current = lastPage;
-        setCardPage(lastPage);
-        return fetchResumes(silent, lastPage, requestedPageSize);
+      let page = requestedPage;
+      while (true) {
+        // 新查询会使之前的初始加载/轮询请求失效，避免旧响应覆盖当前筛选结果。
+        const requestVersion = resumeRefreshVersion.current.invalidate();
+        const params = buildListParams(page, requestedPageSize);
+        const res = await request.get('/resumes', { params });
+        if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return res;
+        const items = Array.isArray(res) ? res : (res.items || []);
+        // 岗位/专业/年龄/性别筛选已由服务端 SQL 完成（支持跨页 + 分页统计）
+        const sorted = sortResumesNewestFirst(applyBusinessScreeningOverlay(items));
+        setData(sorted);
+        const nextStats = getResumeListStats(res, items);
+        const lastPage = Math.max(1, Math.ceil(nextStats.total / requestedPageSize));
+        if (page > lastPage) {
+          page = lastPage;
+          cardPageRef.current = lastPage;
+          setCardPage(lastPage);
+          continue;
+        }
+        setListStats(nextStats);
+        dataCache.current = sortResumesNewestFirst(applyBusinessScreeningOverlay(items));
+        loadedRef.current = true;
+
+        // 页面只观察 D1 中的任务状态，绝不因加载/刷新/路由切换而创建 AI 任务。
+        const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
+        setPollingEnabled(items.some((r: any) => activeStatuses.has(r.parse_status)));
+
+        return res;
       }
-      setListStats(nextStats);
-      dataCache.current = sortResumesNewestFirst(applyBusinessScreeningOverlay(items));
-      loadedRef.current = true;
-
-      // 页面只观察 D1 中的任务状态，绝不因加载/刷新/路由切换而创建 AI 任务。
-      const activeStatuses = new Set(['queued', 'extracting_text', 'extracting_fields', 'screening']);
-      setPollingEnabled(items.some((r: any) => activeStatuses.has(r.parse_status)));
-
-      return res;
     } catch (error) {
       if (!silent) message.error('获取简历列表失败');
     } finally {
       if (!silent) setLoading(false);
+      resumeListRequestInFlightRef.current = false;
     }
   };
 
   // 轮询检查解析状态 - 每 5 秒刷新数据，让用户能看到评估进度
   useEffect(() => {
-    if (pollingEnabled) {
+    if (pollingEnabled && !reprocessBatchActive) {
       pollingRef.current = setInterval(async () => {
-        const requestVersion = resumeRefreshVersion.current.capture();
         try {
-          const res = await request.get('/resumes', {
-            params: buildListParams(cardPageRef.current, cardPageSizeRef.current),
-          });
-          if (!resumeRefreshVersion.current.isCurrent(requestVersion)) return;
+          const res = await fetchResumes(true, cardPageRef.current, cardPageSizeRef.current);
+          if (!res) return;
           const pollItems = Array.isArray(res) ? res : (res.items || []);
           if (pollItems.length > 0 || Array.isArray(res)) {
             // 更新数据展示（让用户看到实时进度）
@@ -555,7 +570,7 @@ const ResumesList: React.FC = () => {
         pollingRef.current = null;
       }
     };
-  }, [pollingEnabled, searchCandidateName, searchStatus, searchPosition, searchMajor, searchEducation, minimumAge, maximumAge, genderFilters]);
+  }, [pollingEnabled, reprocessBatchActive, searchCandidateName, searchStatus, searchPosition, searchMajor, searchEducation, minimumAge, maximumAge, genderFilters]);
 
   // Batch reprocess polling
   useEffect(() => {
