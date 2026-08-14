@@ -1275,7 +1275,7 @@ async function logOperation(
 
 export type BulkApprovalResult = {
   approved: string[];
-  skipped: Array<{ id: string; reason: 'not_found' | 'already_approved' }>;
+  skipped: Array<{ id: string; reason: 'not_found' | 'already_approved' | 'already_rejected' }>;
   failed: Array<{ id: string; reason: string }>;
 };
 
@@ -1340,6 +1340,54 @@ export async function approveSingleResume(db: D1Database, resumeId: string, acto
 
   const row = await db.prepare('SELECT * FROM resumes WHERE id = ?').bind(resumeId).first<Record<string, any>>();
   return row ? transformRow(row) : null;
+}
+
+/**
+ * Marks resumes as rejected (不入库) in D1, one at a time so a malformed or
+ * deleted row never aborts the rest of a batch. Mirrors approveBatch; used by
+ * the person-resume delivery flows (Feishu cards + decision page).
+ */
+export async function rejectBatch(db: D1Database, resumeIds: string[], actor = 'system'): Promise<BulkApprovalResult> {
+  const result: BulkApprovalResult = { approved: [], skipped: [], failed: [] };
+  const uniqueIds = [...new Set(resumeIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+
+  for (const id of uniqueIds) {
+    try {
+      const resume = await db.prepare('SELECT id, status, stage FROM resumes WHERE id = ?').bind(id).first<any>();
+      if (!resume) {
+        result.skipped.push({ id, reason: 'not_found' });
+        continue;
+      }
+      if (resume.status === 'rejected') {
+        result.skipped.push({ id, reason: 'already_rejected' });
+        continue;
+      }
+
+      const decisionAt = now();
+      const update = await db.prepare("UPDATE resumes SET status = 'rejected', stage = 'rejected', updated_at = ? WHERE id = ?")
+        .bind(decisionAt, id)
+        .run();
+      if (!update.meta.changes) {
+        result.skipped.push({ id, reason: 'not_found' });
+        continue;
+      }
+      await recordResumeDecisionTimestamp(db, id, 'rejected', decisionAt);
+
+      result.approved.push(id);
+      try {
+        await db.prepare(
+          'INSERT INTO operation_logs (action, entity_type, entity_id, actor, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind('resume.reject_from_talent_review', 'resume', id, actor, 'success', '批量不入库', now()).run();
+      } catch (error: any) {
+        console.error(`[rejectBatch] 操作日志写入失败(${id}): ${error?.message || error}`);
+      }
+    } catch (error: any) {
+      console.error(`[rejectBatch] 不入库失败(${id}): ${error?.message || error}`);
+      result.failed.push({ id, reason: error?.message || 'database_error' });
+    }
+  }
+
+  return result;
 }
 
 // ==================== Auth Middleware ====================
@@ -1727,6 +1775,101 @@ function buildOwnerPosFilter(c: any): { wherePos: string; whereResume: string; p
     whereResume: 'AND (position_id IN (SELECT id FROM positions WHERE responsible_person = ?) OR position_applied IN (SELECT raw_name FROM position_mappings WHERE responsible_person = ?) OR mapped_position IN (SELECT mapped_name FROM position_mappings WHERE responsible_person = ?))',
     params: [owner, owner, owner],
   };
+}
+
+// 解析 interviewers 字段（可能是 JSON 数组字符串、数组、或逗号分隔字符串）
+function extractPersonNames(value: any): string[] {
+  if (value == null || value === '') return [];
+  const arr = Array.isArray(value) ? value : safeJsonParse(value);
+  if (Array.isArray(arr)) {
+    return arr.map(String).map((s) => s.trim()).filter((s) => s.length > 0);
+  }
+  return String(value).split(/[,，;；]/).map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/**
+ * 按人构建简历过滤条件（"某人的相关简历"）：
+ * 某人是岗位负责人/面试官（positions）、岗位映射责任人/面试官（position_mappings）、
+ * 招聘任务责任人/面试官（recruitment_tasks）、或面试记录里的面试官（interviews）时，
+ * 该岗位/该简历都算"相关"。返回 1 个简历 WHERE（各分支 OR 组合）。
+ */
+export async function buildPersonResumeFilter(db: D1Database, name: string): Promise<{ where: string; params: any[] }> {
+  const clauses: string[] = [];
+  const params: any[] = [];
+
+  // 1. positions：负责人 / 一二面面试官
+  const posIds: string[] = [];
+  const posTitles: string[] = [];
+  try {
+    const posRows = await db.prepare(
+      'SELECT id, title FROM positions WHERE responsible_person = ? OR primary_interviewer = ? OR secondary_interviewer = ?'
+    ).bind(name, name, name).all();
+    for (const r of (posRows.results || []) as any[]) {
+      if (r.id) posIds.push(r.id);
+      if (r.title) posTitles.push(r.title);
+    }
+  } catch { /* positions 表缺失时忽略 */ }
+
+  // 2. position_mappings：责任人 / 面试官
+  const rawNames: string[] = [];
+  const mappedNames: string[] = [];
+  try {
+    const mapRows = await db.prepare('SELECT raw_name, mapped_name, responsible_person, interviewers FROM position_mappings').all();
+    for (const r of (mapRows.results || []) as any[]) {
+      if (r.responsible_person === name || extractPersonNames(r.interviewers).includes(name)) {
+        if (r.raw_name) rawNames.push(r.raw_name);
+        if (r.mapped_name) mappedNames.push(r.mapped_name);
+      }
+    }
+  } catch { /* position_mappings 表可能不存在 */ }
+
+  // 3. recruitment_tasks：责任人 / 面试官
+  const taskPositionNames: string[] = [];
+  try {
+    const taskRows = await db.prepare('SELECT position_name, responsible_person, interviewers FROM recruitment_tasks').all();
+    for (const r of (taskRows.results || []) as any[]) {
+      if (r.responsible_person === name || extractPersonNames(r.interviewers).includes(name)) {
+        if (r.position_name) taskPositionNames.push(r.position_name);
+      }
+    }
+  } catch { /* recruitment_tasks 表可能不存在 */ }
+
+  // 4. interviews：面试官姓名匹配（interviewer_id 存的是 user id 不是姓名，不做姓名匹配）
+  const interviewResumeIds: string[] = [];
+  try {
+    const ivRows = await db.prepare(
+      'SELECT resume_id FROM interviews WHERE interviewer = ? OR primary_interviewer = ? OR secondary_interviewer = ?'
+    ).bind(name, name, name).all();
+    for (const r of (ivRows.results || []) as any[]) {
+      if (r.resume_id) interviewResumeIds.push(r.resume_id);
+    }
+  } catch { /* interviews 表可能不存在 */ }
+
+  // 5. 组合简历 WHERE（各分支有数据才加入）
+  if (posIds.length > 0) {
+    clauses.push(`position_id IN (${posIds.map(() => '?').join(',')})`);
+    params.push(...posIds);
+  }
+
+  const mappedNamesSet = [...new Set([...posTitles, ...mappedNames, ...taskPositionNames].map((s) => s.toLowerCase()))];
+  if (mappedNamesSet.length > 0) {
+    clauses.push(`LOWER(mapped_position) IN (${mappedNamesSet.map(() => '?').join(',')})`);
+    params.push(...mappedNamesSet);
+  }
+
+  const appliedNamesSet = [...new Set([...posTitles, ...rawNames, ...taskPositionNames].map((s) => s.toLowerCase()))];
+  if (appliedNamesSet.length > 0) {
+    clauses.push(`LOWER(position_applied) IN (${appliedNamesSet.map(() => '?').join(',')})`);
+    params.push(...appliedNamesSet);
+  }
+
+  if (interviewResumeIds.length > 0) {
+    clauses.push(`id IN (${interviewResumeIds.map(() => '?').join(',')})`);
+    params.push(...interviewResumeIds);
+  }
+
+  if (clauses.length === 0) return { where: '0', params: [] };
+  return { where: `(${clauses.join(' OR ')})`, params };
 }
 
 app.get('/api/dashboard/stats', authMiddleware, async (c) => {
@@ -5465,6 +5608,13 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       const eduFilter = c.req.query('education');
       filtered = filtered.filter(i => (i.education || '').includes(eduFilter));
     }
+    const educationMinFilter = c.req.query('education_min');
+    if (educationMinFilter) {
+      const minLevel = educationLevel(educationMinFilter);
+      if (minLevel >= 0) {
+        filtered = filtered.filter((i: any) => educationLevel(i.education) >= minLevel);
+      }
+    }
     if (minAge !== null || maxAge !== null) {
       filtered = filtered.filter((i: any) => {
         const age = typeof i.age === 'number' && Number.isFinite(i.age)
@@ -8291,6 +8441,610 @@ app.get('/api/public/positions/:id', async (c) => {
   return c.json(transformRow(row));
 });
 
+// 公开岗位进度（2026-08-13）：
+// 与 /api/public/positions/:id 相同的公开口径：仅对 status IN ('open','published','recruiting') 的岗位开放，
+// 返回岗位基本信息 + 招聘漏斗进度（简历数、AI 初筛、各轮面试、offer、入职）以及简历状态分布。
+// 简历匹配口径与招聘看板一致：优先 position_id，兼容 mapped_position/position_applied 按岗位名匹配。
+app.get('/api/public/positions/:id/progress', async (c) => {
+  try {
+    const position = await c.env.DB.prepare('SELECT * FROM positions WHERE id = ?').bind(c.req.param('id')).first() as any;
+    if (!position || !PUBLIC_POSITION_STATUSES.includes(position.status)) {
+      return c.json({ detail: 'Not found' }, 404);
+    }
+    const title = position.title || '';
+    const resumeRows = await c.env.DB.prepare(
+      'SELECT status, parse_status FROM resumes WHERE (position_id = ? OR LOWER(mapped_position) = LOWER(?) OR LOWER(position_applied) = LOWER(?))'
+    ).bind(position.id, title, title).all();
+    const resumes = (resumeRows.results || []) as any[];
+    const totalResumes = resumes.length;
+    const aiScreened = resumes.filter((r: any) => r.parse_status === 'ai_screened').length;
+    const statusBreakdown: Record<string, number> = {};
+    for (const r of resumes) {
+      const key = r.status || 'unknown';
+      statusBreakdown[key] = (statusBreakdown[key] || 0) + 1;
+    }
+
+    const [iv1Sched, iv1Pass, iv2Pass, iv3Pass, offerCnt, hiredCnt] = await Promise.all([
+      c.env.DB.prepare('SELECT COUNT(*) as cnt FROM interviews WHERE round = 1 AND position_id = ?').bind(position.id).first(),
+      c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(1)} AND position_id = ?`).bind(position.id).first(),
+      c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(2)} AND position_id = ?`).bind(position.id).first(),
+      c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM interviews WHERE ${getBoardInterviewPassCondition(3)} AND position_id = ?`).bind(position.id).first(),
+      c.env.DB.prepare("SELECT COUNT(*) as cnt FROM offers WHERE status NOT IN ('draft','cancelled') AND position_id = ?").bind(position.id).first(),
+      c.env.DB.prepare("SELECT COUNT(*) as cnt FROM onboarding_records WHERE status = 'onboarded' AND position_id = ?").bind(position.id).first(),
+    ]);
+    const num = (r: any) => r?.cnt ?? 0;
+
+    const base = transformRow(position);
+    return c.json({
+      position: {
+        id: base.id,
+        title: base.title,
+        department: base.department,
+        location: base.location,
+        salary_range: base.salary_range,
+        status: base.status,
+        urgency: base.urgency,
+        position_type: base.position_type,
+        headcount: base.headcount,
+        responsible_person: base.responsible_person,
+        description: base.description,
+        requirements: base.requirements,
+      },
+      progress: {
+        total_resumes: totalResumes,
+        ai_screened: aiScreened,
+        first_interview: num(iv1Sched),
+        first_pass: num(iv1Pass),
+        second_pass: num(iv2Pass),
+        third_pass: num(iv3Pass),
+        offers: num(offerCnt),
+        hired: num(hiredCnt),
+        resume_status_breakdown: statusBreakdown,
+      },
+      updated_at: base.updated_at,
+    });
+  } catch (e: any) {
+    return c.json({ detail: 'Internal error: ' + e.message }, 500);
+  }
+});
+
+// 公开岗位简历列表（2026-08-13）：
+// 按岗位查看候选人简历及进度，支持 limit/offset 分页与 status 筛选（"一部分简历"）。
+// 出于隐私考虑，公开列表不返回联系方式与简历原文，仅返回进度相关字段。
+app.get('/api/public/positions/:id/resumes', async (c) => {
+  try {
+    const position = await c.env.DB.prepare('SELECT * FROM positions WHERE id = ?').bind(c.req.param('id')).first() as any;
+    if (!position || !PUBLIC_POSITION_STATUSES.includes(position.status)) {
+      return c.json({ detail: 'Not found' }, 404);
+    }
+    const limitRaw = parseInt(c.req.query('limit') || '50', 10);
+    const offsetRaw = parseInt(c.req.query('offset') || '0', 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+    const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
+    const statusFilter = c.req.query('status');
+    const title = position.title || '';
+
+    let where = '(position_id = ? OR LOWER(mapped_position) = LOWER(?) OR LOWER(position_applied) = LOWER(?))';
+    const params: any[] = [position.id, title, title];
+    if (statusFilter) {
+      where += ' AND status = ?';
+      params.push(statusFilter);
+    }
+    const countRow = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM resumes WHERE ${where}`).bind(...params).first();
+    const rows = await c.env.DB.prepare(
+      `SELECT id, candidate_name, mapped_position, position_applied, status, stage, match_score, screening_result, parse_status, created_at, updated_at
+       FROM resumes WHERE ${where} ORDER BY created_at DESC, updated_at DESC LIMIT ? OFFSET ?`
+    ).bind(...params, limit, offset).all();
+
+    const items = (rows.results || []).map((r: any) => ({
+      id: r.id,
+      candidate_name: r.candidate_name,
+      position_applied: r.mapped_position || r.position_applied || '',
+      status: r.status,
+      stage: r.stage,
+      match_score: r.match_score,
+      screening_result: r.screening_result,
+      parse_status: r.parse_status,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    }));
+
+    return c.json({
+      position: { id: position.id, title: position.title, status: position.status },
+      total: countRow?.cnt ?? 0,
+      limit,
+      offset,
+      items,
+    });
+  } catch (e: any) {
+    return c.json({ detail: 'Internal error: ' + e.message }, 500);
+  }
+});
+
+// 公开"按人查看简历"（2026-08-14）：
+// 查某人的相关简历（该人是岗位负责人/面试官、岗位映射、招聘任务或面试记录里的面试官）。
+// 分页/status 过滤与 /api/public/positions/:id/resumes 一致；出于隐私只返回进度字段。
+app.get('/api/public/person/:name/resumes', async (c) => {
+  try {
+    const name = (c.req.param('name') || '').trim();
+    if (!name) return c.json({ detail: 'Not found' }, 404);
+
+    const limitRaw = parseInt(c.req.query('limit') || '50', 10);
+    const offsetRaw = parseInt(c.req.query('offset') || '0', 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+    const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
+    const statusFilter = c.req.query('status');
+
+    const filter = await buildPersonResumeFilter(c.env.DB, name);
+    let where = filter.where;
+    const params: any[] = [...filter.params];
+    if (statusFilter) {
+      where += ' AND status = ?';
+      params.push(statusFilter);
+    }
+    const countRow = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM resumes WHERE ${where}`).bind(...params).first();
+    const rows = await c.env.DB.prepare(
+      `SELECT id, candidate_name, mapped_position, position_applied, status, stage, match_score, screening_result, parse_status, created_at, updated_at
+       FROM resumes WHERE ${where} ORDER BY created_at DESC, updated_at DESC LIMIT ? OFFSET ?`
+    ).bind(...params, limit, offset).all();
+
+    const items = (rows.results || []).map((r: any) => ({
+      id: r.id,
+      candidate_name: r.candidate_name,
+      position_applied: r.mapped_position || r.position_applied || '',
+      status: r.status,
+      stage: r.stage,
+      match_score: r.match_score,
+      screening_result: r.screening_result,
+      parse_status: r.parse_status,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    }));
+
+    return c.json({
+      person: name,
+      total: countRow?.cnt ?? 0,
+      limit,
+      offset,
+      items,
+    });
+  } catch (e: any) {
+    return c.json({ detail: 'Internal error: ' + e.message }, 500);
+  }
+});
+
+// ---- 简历决策 token（无状态 HMAC，7 天有效期，绑定单个 resumeId）----
+
+export async function createResumeDecisionToken(env: Env, resumeId: string): Promise<string> {
+  const key = env.SECRET_KEY || 'resume-decision';
+  const expiry = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+  const sig = await hmacSha256(key, `${resumeId}:${expiry}`);
+  return `${expiry}.${b64urlBuf(sig)}`;
+}
+
+export async function verifyResumeDecisionToken(env: Env, resumeId: string, token: string): Promise<boolean> {
+  if (!token || typeof token !== 'string') return false;
+  const parts = token.split('.');
+  if (parts.length !== 2) return false;
+  const [expiryStr, sig] = parts;
+  const expiry = parseInt(expiryStr, 10);
+  if (!Number.isFinite(expiry) || expiry < Math.floor(Date.now() / 1000)) return false;
+  const key = env.SECRET_KEY || 'resume-decision';
+  const expectedSig = b64urlBuf(await hmacSha256(key, `${resumeId}:${expiryStr}`));
+  // 常量时间比较，防止时序侧信道
+  const a = new TextEncoder().encode(expectedSig);
+  const b = new TextEncoder().encode(sig);
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+function escapeHtml(s: string): string {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderResumeDecisionPage(opts: { resumeId: string; token: string; name: string; posName: string; status: string }): string {
+  const statusLabel = opts.status === 'approved' ? '✅ 已入库' : opts.status === 'rejected' ? '❌ 已不入库' : `状态：${escapeHtml(opts.status)}`;
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>简历处理</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background:#f5f6f7; margin:0; padding:24px; display:flex; justify-content:center; }
+  .card { background:#fff; border-radius:12px; padding:32px; max-width:420px; width:100%; box-shadow:0 2px 12px rgba(0,0,0,.08); text-align:center; }
+  h1 { font-size:20px; margin:0 0 8px; }
+  .meta { color:#666; font-size:14px; margin-bottom:24px; line-height:1.6; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:10px; font-size:12px; background:#eef2ff; color:#4f46e5; margin-top:4px; }
+  .buttons { display:flex; gap:12px; justify-content:center; }
+  button { border:none; border-radius:8px; padding:12px 24px; font-size:15px; cursor:pointer; color:#fff; }
+  .approve { background:#16a34a; }
+  .reject { background:#dc2626; }
+  .note { color:#999; font-size:12px; margin-top:20px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>候选人：${escapeHtml(opts.name)}</h1>
+  <div class="meta">岗位：${escapeHtml(opts.posName) || '未知'}<br><span class="badge">${statusLabel}</span></div>
+  <form method="post" action="/api/public/resume/${escapeHtml(opts.resumeId)}/decision" class="buttons">
+    <input type="hidden" name="token" value="${escapeHtml(opts.token)}">
+    <input type="hidden" name="action" value="approve">
+    <button type="submit" class="approve">✅ 入库</button>
+  </form>
+  <form method="post" action="/api/public/resume/${escapeHtml(opts.resumeId)}/decision" class="buttons" style="margin-top:12px">
+    <input type="hidden" name="token" value="${escapeHtml(opts.token)}">
+    <input type="hidden" name="action" value="reject">
+    <button type="submit" class="reject">❌ 不入库</button>
+  </form>
+  <div class="note">链接 7 天内有效，每个候选人单独生成。</div>
+</div>
+</body>
+</html>`;
+}
+
+function renderResumeDecisionResult(opts: { name: string; result: string }): string {
+  const emoji = opts.result.startsWith('approved') ? '✅' : opts.result.startsWith('rejected') ? '❌' : 'ℹ️';
+  const label = opts.result.startsWith('approved') ? '已入库' : opts.result.startsWith('rejected') ? '已不入库' : opts.result;
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>处理完成</title>
+<style>
+  body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:#f5f6f7; margin:0; padding:24px; display:flex; justify-content:center; }
+  .card { background:#fff; border-radius:12px; padding:32px; max-width:420px; width:100%; box-shadow:0 2px 12px rgba(0,0,0,.08); text-align:center; }
+  h1 { font-size:20px; }
+  .emoji { font-size:48px; }
+  .meta { color:#666; font-size:14px; margin:12px 0 24px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="emoji">${emoji}</div>
+  <h1>${escapeHtml(opts.name)}：${label}</h1>
+  <div class="meta">你可以关闭此页面。</div>
+</div>
+</body>
+</html>`;
+}
+
+// 简历决策页：GET 展示两个按钮（入库 / 不入库），POST 执行并把结果写回 D1
+app.get('/api/public/resume/:id/decision', async (c) => {
+  try {
+    const resumeId = c.req.param('id');
+    const token = c.req.query('t') || '';
+    const valid = await verifyResumeDecisionToken(c.env, resumeId, token);
+    if (!valid) return c.html('<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>链接无效或已过期</h1><p>请让发送人重新生成链接。</p></body></html>', 403);
+    const resume = await c.env.DB.prepare('SELECT id, candidate_name, mapped_position, position_applied, status FROM resumes WHERE id = ?').bind(resumeId).first() as any;
+    if (!resume) return c.html('<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>简历不存在</h1></body></html>', 404);
+    const posName = resume.mapped_position || resume.position_applied || '';
+    return c.html(renderResumeDecisionPage({
+      resumeId,
+      token,
+      name: resume.candidate_name || '未知',
+      posName,
+      status: resume.status,
+    }));
+  } catch (e: any) {
+    return c.html(`<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>服务器错误</h1><p>${escapeHtml(e.message)}</p></body></html>`, 500);
+  }
+});
+
+app.post('/api/public/resume/:id/decision', async (c) => {
+  try {
+    const resumeId = c.req.param('id');
+    const form = await c.req.formData();
+    const token = (form.get('token') as string) || '';
+    const action = (form.get('action') as string) || '';
+    const valid = await verifyResumeDecisionToken(c.env, resumeId, token);
+    if (!valid) return c.html('<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>链接无效或已过期</h1><p>请让发送人重新生成链接。</p></body></html>', 403);
+    const resume = await c.env.DB.prepare('SELECT id, candidate_name FROM resumes WHERE id = ?').bind(resumeId).first() as any;
+    if (!resume) return c.html('<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>简历不存在</h1></body></html>', 404);
+    const name = resume.candidate_name || '未知';
+
+    if (action === 'approve') {
+      const result = await approveBatch(c.env.DB, [resumeId], 'resume-decision-page');
+      const done = result.approved.includes(resumeId) || result.skipped.some((s) => s.id === resumeId && s.reason === 'already_approved');
+      return c.html(renderResumeDecisionResult({ name, result: done ? 'approved' : '处理失败' }));
+    }
+    if (action === 'reject') {
+      const result = await rejectBatch(c.env.DB, [resumeId], 'resume-decision-page');
+      const done = result.approved.includes(resumeId) || result.skipped.some((s) => s.id === resumeId && s.reason === 'already_rejected');
+      return c.html(renderResumeDecisionResult({ name, result: done ? 'rejected' : '处理失败' }));
+    }
+    return c.html(renderResumeDecisionResult({ name, result: '无效操作' }), 400);
+  } catch (e: any) {
+    return c.html(`<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;text-align:center"><h1>服务器错误</h1><p>${escapeHtml(e.message)}</p></body></html>`, 500);
+  }
+});
+
+// 按人交付简历（2026-08-14）：
+// 认证：x-api-key（RESUME_UPLOAD_API_KEY）或 Bearer JWT，防止任意人发消息/建文档。
+// 两种形式都支持 入库/不入库：
+//   form='table' → 飞书机器人新建多维表格（每行一个简历，末列"操作"为决策链接），
+//                  授权给目标人查看，并发送表格链接卡片。
+//   form='cards' → 给目标人逐张发候选人卡片，卡片带 入库/不入库 按钮（回调走 /api/feishu/card-action）。
+app.post('/api/public/person/:name/export', async (c) => {
+  // —— 认证（复用对外简历上传接口的鉴权）——
+  let actor = 'external-api';
+  const apiKey = c.req.header('x-api-key') || '';
+  const auth = c.req.header('Authorization') || '';
+  const authMatch = auth.match(/^Bearer\s+(.+)$/i);
+  if (apiKey && c.env.RESUME_UPLOAD_API_KEY && apiKey === c.env.RESUME_UPLOAD_API_KEY) {
+    // 有效 API Key
+  } else if (authMatch) {
+    const payload = await verifyJwt(c.env.SECRET_KEY, authMatch[1]);
+    if (!payload) return c.json({ detail: 'Invalid token' }, 401);
+    const user = await getUser(c.env.DB, payload.sub);
+    if (!user || !user.is_active) return c.json({ detail: 'Not authorized' }, 401);
+    actor = user.email;
+  } else {
+    return c.json({ detail: 'Missing API key or token' }, 401);
+  }
+
+  try {
+    const name = (c.req.param('name') || '').trim();
+    if (!name) return c.json({ detail: '需要指定人名' }, 400);
+
+    const body: any = await c.req.json().catch(() => ({}));
+    const form = body.form === 'cards' ? 'cards' : 'table';
+    const limitRaw = parseInt(body.limit ?? '100', 10);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(Math.max(limitRaw, 1), form === 'cards' ? 50 : 200)
+      : (form === 'cards' ? 50 : 100);
+
+    // 解析目标人 open_id（重名抛 AMBIGUOUS_INTERVIEWER_BINDING，未绑定返回空）
+    let openId = '';
+    try {
+      openId = (await resolveExactInterviewerOpenId(c.env.DB, name)) || '';
+    } catch (e: any) {
+      if (e.code === 'AMBIGUOUS_INTERVIEWER_BINDING') {
+        return c.json({ detail: e.message, hint: '请在面试官管理中清理重复映射后重试' }, 400);
+      }
+      return c.json({ detail: '解析面试官绑定失败: ' + (e.message || e) }, 500);
+    }
+    if (!openId) {
+      return c.json({
+        detail: `未找到 ${name} 的飞书绑定`,
+        hint: '请先调用 POST /api/settings/interviewers/batch-sync-from-feishu 同步面试官后重试',
+      }, 400);
+    }
+
+    const filter = await buildPersonResumeFilter(c.env.DB, name);
+    const rows = await c.env.DB.prepare(
+      `SELECT id, candidate_name, mapped_position, position_applied, status, stage, match_score
+       FROM resumes WHERE ${filter.where} ORDER BY created_at DESC, updated_at DESC LIMIT ?`
+    ).bind(...filter.params, limit).all();
+    const resumes = (rows.results || []) as any[];
+    if (resumes.length === 0) {
+      return c.json({ ok: true, person: name, form, total: 0, delivered: 0, detail: '未找到相关简历' });
+    }
+
+    const origin = new URL(c.req.url).origin;
+    const decisionUrl = (id: string, token: string) => `${origin}/api/public/resume/${id}/decision?t=${token}`;
+
+    if (form === 'table') {
+      // —— Form A：多维表格 ——
+      const app = await createFeishuBitableApp(c.env, `${name}相关简历（${resumes.length}份）`);
+      if (!app) return c.json({ detail: '创建多维表格失败，请检查飞书应用权限（bitable:app）' }, 502);
+      const table = await createFeishuBitableTable(c.env, app.appToken, '简历列表');
+      if (!table) return c.json({ detail: '创建多维表格数据表失败' }, 502);
+
+      const records: Array<{ fields: any }> = [];
+      for (const r of resumes) {
+        const token = await createResumeDecisionToken(c.env, r.id);
+        records.push({
+          fields: {
+            '候选人': r.candidate_name || '未知',
+            '岗位': r.mapped_position || r.position_applied || '',
+            '状态': RESUME_STATUS_LABELS[r.status] || r.status || '',
+            '阶段': RESUME_STAGE_LABELS[r.stage] || r.stage || '',
+            '匹配分': r.match_score ?? null,
+            '操作': decisionUrl(r.id, token),
+          },
+        });
+      }
+      const created = await batchCreateFeishuBitableRecords(c.env, app.appToken, table.tableId, records);
+      const granted = await grantFeishuBitableViewer(c.env, app.appToken, openId);
+
+      // 发送表格链接卡片
+      const linkCard = {
+        config: { wide_screen_mode: true },
+        header: { title: { tag: 'plain_text', content: `📊 ${name}相关简历（${resumes.length}份）` }, template: 'blue' },
+        elements: [
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `已为你生成 ${resumes.length} 份相关简历的多维表格，共写入 ${created} 行。\n点击下方按钮打开表格，每行「操作」列可 入库 / 不入库。`,
+            },
+          },
+          { tag: 'hr' },
+          {
+            tag: 'action',
+            actions: [
+              { tag: 'button', text: { tag: 'plain_text', content: '打开多维表格' }, type: 'primary', url: table.tableUrl },
+            ],
+          },
+        ],
+      };
+      await sendFeishuMessageWithFallback(c.env, actor === 'external-api' ? undefined : actor, openId, linkCard);
+
+      return c.json({
+        ok: true, person: name, form: 'table', total: resumes.length, delivered: 1,
+        table_url: table.tableUrl, created_records: created, granted,
+      });
+    }
+
+    // —— Form B：逐张发卡片（上限 50）——
+    const target = resumes.slice(0, 50);
+    let sent = 0;
+    const failedIds: string[] = [];
+    for (const r of target) {
+      try {
+        await sendFeishuMessageWithFallback(c.env, actor === 'external-api' ? undefined : actor, openId, buildPersonResumeCard(r));
+        sent += 1;
+      } catch (e: any) {
+        failedIds.push(r.id);
+      }
+    }
+    return c.json({
+      ok: true, person: name, form: 'cards', total: resumes.length, delivered: sent,
+      failed: failedIds,
+      detail: resumes.length > 50 ? `共 ${resumes.length} 份，本次发送前 50 份` : undefined,
+    });
+  } catch (e: any) {
+    return c.json({ detail: 'Internal error: ' + e.message }, 500);
+  }
+});
+
+// 学历等级（用于"本科以上"/"大专"等比较；从低到高）
+const DEGREE_LEVELS = ['小学', '初中', '高中', '中专', '大专', '本科', '硕士', '博士'];
+
+function educationLevel(edu: unknown): number {
+  const e = String(edu ?? '').trim();
+  if (!e) return -1;
+  for (let i = DEGREE_LEVELS.length - 1; i >= 0; i--) {
+    if (e.includes(DEGREE_LEVELS[i])) return i;
+  }
+  return -1;
+}
+
+// 返回学历过滤函数；未提供学历条件时返回 null
+function buildEducationFilter(cond: any): ((edu: unknown) => boolean) | null {
+  const min = cond.education_min != null && String(cond.education_min).trim() ? educationLevel(cond.education_min) : -1;
+  const max = cond.education_max != null && String(cond.education_max).trim() ? educationLevel(cond.education_max) : -1;
+  const exact = cond.education != null && String(cond.education).trim() ? educationLevel(cond.education) : -1;
+  if (min < 0 && max < 0 && exact < 0) return null;
+  return (edu: unknown) => {
+    const lv = educationLevel(edu);
+    if (lv < 0) return false;
+    if (min >= 0 && lv < min) return false;
+    if (max >= 0 && lv > max) return false;
+    if (exact >= 0 && lv !== exact) return false;
+    return true;
+  };
+}
+
+// 返回年龄过滤函数；未提供年龄条件时返回 null
+function buildAgeFilter(cond: any): ((age: number) => boolean) | null {
+  const min = cond.age_min != null && !Number.isNaN(Number(cond.age_min)) ? Number(cond.age_min) : null;
+  const max = cond.age_max != null && !Number.isNaN(Number(cond.age_max)) ? Number(cond.age_max) : null;
+  if (min == null && max == null) return null;
+  return (age: number) => {
+    if (min != null && age < min) return false;
+    if (max != null && age > max) return false;
+    return true;
+  };
+}
+
+// 条件批量入库/淘汰（2026-08-14）：
+// 按条件（相关人/岗位/状态/AI 初筛结果/学历/年龄）在服务端过滤简历，批量入库(approve)或淘汰(reject)。
+// 认证与 export 一致（x-api-key 或 Bearer JWT）。学历/年龄只在服务端匹配，不暴露到公开列表。
+// 场景示例：
+//   {"action":"approve","conditions":{"related_person":"黄维","education_min":"本科","screening_result":"通过"}}
+//   {"action":"reject","conditions":{"education":"大专","age_max":30}}
+app.post('/api/public/resumes/action', async (c) => {
+  // —— 认证（复用 export 的鉴权）——
+  let actor = 'external-api';
+  const apiKey = c.req.header('x-api-key') || '';
+  const auth = c.req.header('Authorization') || '';
+  const authMatch = auth.match(/^Bearer\s+(.+)$/i);
+  if (apiKey && c.env.RESUME_UPLOAD_API_KEY && apiKey === c.env.RESUME_UPLOAD_API_KEY) {
+    // 有效 API Key
+  } else if (authMatch) {
+    const payload = await verifyJwt(c.env.SECRET_KEY, authMatch[1]);
+    if (!payload) return c.json({ detail: 'Invalid token' }, 401);
+    const user = await getUser(c.env.DB, payload.sub);
+    if (!user || !user.is_active) return c.json({ detail: 'Not authorized' }, 401);
+    actor = user.email;
+  } else {
+    return c.json({ detail: 'Missing API key or token' }, 401);
+  }
+
+  try {
+    const body: any = await c.req.json().catch(() => ({}));
+    const action = body.action === 'reject' ? 'reject' : 'approve';
+    const cond: any = body.conditions && typeof body.conditions === 'object' ? body.conditions : {};
+
+    if (Object.keys(cond).length === 0) {
+      return c.json({ detail: '至少需要一个过滤条件' }, 400);
+    }
+
+    const clauses: string[] = [];
+    const params: any[] = [];
+    if (cond.related_person) {
+      const filter = await buildPersonResumeFilter(c.env.DB, String(cond.related_person).trim());
+      clauses.push(`(${filter.where})`);
+      params.push(...filter.params);
+    }
+    if (cond.position_id) {
+      clauses.push('position_id = ?');
+      params.push(String(cond.position_id));
+    }
+    if (cond.status) {
+      clauses.push('status = ?');
+      params.push(String(cond.status));
+    }
+    if (cond.screening_result) {
+      clauses.push('screening_result = ?');
+      params.push(String(cond.screening_result));
+    }
+    const where = clauses.length ? clauses.join(' AND ') : '1';
+
+    const limitRaw = parseInt(body.limit ?? '200', 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 200;
+
+    const rows = await c.env.DB.prepare(
+      `SELECT id, candidate_name, education, parsed_data FROM resumes WHERE ${where} ORDER BY created_at DESC, updated_at DESC LIMIT ?`
+    ).bind(...params, limit).all();
+    const candidates = (rows.results || []) as any[];
+
+    // 学历/年龄 JS 过滤（学历/年龄不在公开列表暴露，仅在服务端匹配）
+    const educationFilter = buildEducationFilter(cond);
+    const ageFilter = buildAgeFilter(cond);
+    const matched = candidates.filter((r: any) => {
+      if (educationFilter && !educationFilter(r.education)) return false;
+      if (ageFilter) {
+        let age: number | null = null;
+        try {
+          const pd = JSON.parse(r.parsed_data || '{}');
+          age = typeof pd.age === 'number' ? pd.age : (pd.age != null ? Number(pd.age) : null);
+        } catch { /* parsed_data 非 JSON，视为无年龄 */ }
+        if (age === null || Number.isNaN(age)) return false;
+        if (!ageFilter(age)) return false;
+      }
+      return true;
+    });
+
+    const ids = matched.map((r: any) => String(r.id));
+    if (ids.length === 0) {
+      return c.json({ ok: true, action, matched: 0, affected: 0, skipped: 0, detail: '没有符合条件的结果' });
+    }
+
+    const result = action === 'reject'
+      ? await rejectBatch(c.env.DB, ids, actor === 'external-api' ? 'public-batch-reject' : actor)
+      : await approveBatch(c.env.DB, ids, actor === 'external-api' ? 'public-batch-approve' : actor);
+
+    return c.json({
+      ok: true,
+      action,
+      matched: ids.length,
+      affected: result.approved.length,
+      skipped: result.skipped.length,
+      failed: result.failed.length,
+      resume_ids: ids,
+      detail: ids.length >= limit ? `命中数量可能超过单次上限 ${limit}，本次处理前 ${limit} 份` : undefined,
+    });
+  } catch (e: any) {
+    return c.json({ detail: 'Internal error: ' + e.message }, 500);
+  }
+});
+
 // ==================== Initialization ====================
 
 app.post('/api/init/reset', authMiddleware, requireRole(['admin']), async (c) => {
@@ -9669,6 +10423,158 @@ async function createFeishuBitableRecord(token: string, appToken: string, tableI
   }
 }
 
+// ==================== 按人交付：飞书多维表格（Bitable）与候选人卡片 ====================
+
+/** 创建多维表格应用，返回 { appToken, url } */
+async function createFeishuBitableApp(env: Env, name: string): Promise<{ appToken: string; url: string } | null> {
+  try {
+    const token = await getFeishuToken(env);
+    const resp = await fetch('https://open.feishu.cn/open-apis/bitable/v1/apps', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data: any = await resp.json();
+    if (data.code !== 0) throw new Error(JSON.stringify(data));
+    const app = data.data?.app || data.data || {};
+    const appToken = app.app_token || data.data?.app_token || '';
+    if (!appToken) throw new Error(`No app_token in response: ${JSON.stringify(data)}`);
+    return { appToken, url: app.url || `https://feishu.cn/base/${appToken}` };
+  } catch (e: any) {
+    console.error(`[Bitable] 创建应用失败: ${e.message}`);
+    return null;
+  }
+}
+
+/** 在应用中创建一张表（字段：姓名文本 / 岗位文本 / 状态文本 / 阶段文本 / 匹配分数字 / 操作 URL） */
+async function createFeishuBitableTable(env: Env, appToken: string, name: string): Promise<{ tableId: string; tableUrl: string } | null> {
+  try {
+    const token = await getFeishuToken(env);
+    const resp = await fetch(`https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        table: {
+          name,
+          default_view_name: '视图',
+          fields: [
+            { field_name: '候选人', type: 1 },
+            { field_name: '岗位', type: 1 },
+            { field_name: '状态', type: 1 },
+            { field_name: '阶段', type: 1 },
+            { field_name: '匹配分', type: 2 },
+            { field_name: '操作', type: 15 },
+          ],
+        },
+      }),
+    });
+    const data: any = await resp.json();
+    if (data.code !== 0) throw new Error(JSON.stringify(data));
+    const tableId = data.data?.table_id || data.data?.table?.table_id || '';
+    if (!tableId) throw new Error(`No table_id in response: ${JSON.stringify(data)}`);
+    return { tableId, tableUrl: `https://feishu.cn/base/${appToken}?table=${tableId}` };
+  } catch (e: any) {
+    console.error(`[Bitable] 创建表失败: ${e.message}`);
+    return null;
+  }
+}
+
+/** 批量写入记录（每批 ≤500 条） */
+async function batchCreateFeishuBitableRecords(env: Env, appToken: string, tableId: string, records: Array<{ fields: any }>): Promise<number> {
+  const token = await getFeishuToken(env);
+  let created = 0;
+  for (let i = 0; i < records.length; i += 500) {
+    const chunk = records.slice(i, i + 500);
+    const resp = await fetch(`https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_create`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ records: chunk }),
+    });
+    const data: any = await resp.json();
+    if (data.code !== 0) {
+      console.error(`[Bitable] batch_create 失败: ${JSON.stringify(data)}`);
+      throw new Error(JSON.stringify(data));
+    }
+    created += (data.data?.records || []).length;
+  }
+  return created;
+}
+
+/** 给 open_id 用户授予多维表格查看权限 */
+async function grantFeishuBitableViewer(env: Env, appToken: string, openId: string): Promise<boolean> {
+  try {
+    const token = await getFeishuToken(env);
+    const resp = await fetch(`https://open.feishu.cn/open-apis/drive/v1/permissions/${appToken}/members?type=bitable`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ member_type: 'openid', member_id: openId, perm: 'view' }),
+    });
+    const data: any = await resp.json();
+    if (data.code !== 0) {
+      // code 10203 = 已存在该成员权限，视为成功
+      if (data.code !== 10203) {
+        console.error(`[Bitable] 授权失败: ${JSON.stringify(data)}`);
+        return false;
+      }
+    }
+    return true;
+  } catch (e: any) {
+    console.error(`[Bitable] 授权异常: ${e.message}`);
+    return false;
+  }
+}
+
+const RESUME_STATUS_LABELS: Record<string, string> = {
+  pending_screening: '待初筛', pending_review: '待评审', pending_dept_review: '待部门评审',
+  pending_hr_decision: '待HR决策', pending_interview: '待面试', interview_passed: '面试通过',
+  offered: '已发Offer', hired: '已入职', rejected: '已淘汰', approved: '已入库',
+};
+const RESUME_STAGE_LABELS: Record<string, string> = {
+  new: '新简历', talent_pool: '人才库', screening: '初筛中', interview: '面试中',
+  offered: 'Offer', hired: '已入职', rejected: '已淘汰',
+};
+
+/** 候选人相关简历卡片（带 入库/不入库 按钮） */
+function buildPersonResumeCard(resume: any): any {
+  const name = resume.candidate_name || '未知';
+  const posName = resume.mapped_position || resume.position_applied || '未知岗位';
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: `候选人 ${name}` },
+      template: 'indigo',
+    },
+    elements: [
+      { tag: 'div', text: { tag: 'lark_md', content: `**岗位：** ${posName}` } },
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `**状态：** ${RESUME_STATUS_LABELS[resume.status] || resume.status || '-'} ｜ **阶段：** ${RESUME_STAGE_LABELS[resume.stage] || resume.stage || '-'} ｜ **匹配分：** ${resume.match_score ?? '-'}`,
+        },
+      },
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '✅ 入库' },
+            type: 'primary',
+            value: { action: 'store_resume', record_id: resume.id, name },
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '❌ 不入库' },
+            type: 'danger',
+            value: { action: 'discard_resume', record_id: resume.id, name },
+          },
+        ],
+      },
+    ],
+  };
+}
+
 /** 推送候选人到招聘群 */
 async function pushCandidateToGroup(env: Env, record: any): Promise<void> {
   const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
@@ -9730,14 +10636,35 @@ app.post('/api/feishu/card-action', async (c) => {
     }
 
     const v = action.value;
-    const actionType = v.action; // 'store' | 'discard'
+    const actionType = v.action; // 'store' | 'discard' | 'store_resume' | 'discard_resume'
     const recordId = v.record_id;
     const candidateName = v.name || '未知';
-    if ((actionType !== 'store' && actionType !== 'discard') || typeof recordId !== 'string' || !recordId) {
+    if ((actionType !== 'store' && actionType !== 'discard' && actionType !== 'store_resume' && actionType !== 'discard_resume') || typeof recordId !== 'string' || !recordId) {
       return c.json({ code: 0, msg: 'success', data: { toast: { type: 'error', content: '无效操作' } } });
     }
 
     console.log(`[CardCallback] ${actionType} - record ${recordId}`);
+
+    // 按人交付卡片的 入库/不入库：直接对 resumes 表操作，不走 resume_screening_queue
+    if (actionType === 'store_resume' || actionType === 'discard_resume') {
+      try {
+        const result = actionType === 'store_resume'
+          ? await approveBatch(c.env.DB, [recordId], 'feishu-person-card')
+          : await rejectBatch(c.env.DB, [recordId], 'feishu-person-card');
+        const done = result.approved.includes(recordId)
+          || result.skipped.some((s) => s.id === recordId && (s.reason === 'already_approved' || s.reason === 'already_rejected'));
+        if (!done) {
+          return c.json({ code: 0, msg: 'success', data: { toast: { type: 'error', content: '处理失败' } } });
+        }
+        return c.json({
+          code: 0, msg: 'success',
+          data: { toast: { type: 'success', content: actionType === 'store_resume' ? `${candidateName} 已入库` : `${candidateName} 已不入库` } }
+        });
+      } catch (err: any) {
+        console.error(`[CardCallback] 简历决策失败: ${err.message}`);
+        return c.json({ code: 0, msg: 'success', data: { toast: { type: 'error', content: '服务器错误' } } });
+      }
+    }
 
     const record = await c.env.DB.prepare('SELECT * FROM resume_screening_queue WHERE id = ?').bind(recordId).first() as any;
     if (!record) {
