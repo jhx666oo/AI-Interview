@@ -62,6 +62,13 @@ jobs:
       - name: Run pre-deploy checks
         run: node scripts/pre-deploy-check.mjs
 
+      - name: Set RESUME_UPLOAD_API_KEY Pages secret
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: echo "${{ secrets.RESUME_UPLOAD_API_KEY }}" | npx --yes wrangler@4.123.0 pages secret put RESUME_UPLOAD_API_KEY --project-name ai-interview
+
       - name: Deploy to ai-interview
         uses: cloudflare/wrangler-action@v3
         with:
