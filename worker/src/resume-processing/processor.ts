@@ -49,6 +49,22 @@ function hasAnyLegacyField(fields: Record<string, unknown> | null): boolean {
   });
 }
 
+function hasReusableFields(fields: Record<string, unknown> | null): boolean {
+  if (!fields) return false;
+  if (hasExtractedFields(fields)) return true;
+
+  // 邮件同步和部分导入链路会先写入一批字段，但不会写 _fields_extracted。
+  // 两个及以上有效字段已经足够支持重新初筛，避免重评估再次调用字段提取 AI。
+  const populatedCount = LEGACY_FIELD_KEYS.reduce((count, key) => {
+    const value = fields[key];
+    const populated = Array.isArray(value)
+      ? value.length > 0
+      : value !== null && value !== undefined && String(value).trim() !== '';
+    return count + (populated ? 1 : 0);
+  }, 0);
+  return populatedCount >= 2;
+}
+
 export async function processResume(
   message: ResumeQueueMessage,
   deps: ResumeProcessorDeps,
@@ -66,10 +82,11 @@ export async function processResume(
 
   let fields = jsonObject(resume.parsed_data);
   // 新上传记录只有姓名/岗位元数据，不能把它们当作字段提取完成。
-  // 已有 AI 结果的历史记录保持兼容，只有显式 reprocess 才强制重提字段。
-  const shouldExtractFields = Boolean(message.reprocess)
-    || (!hasExtractedFields(fields)
-      && (!jsonObject(resume.ai_evaluation) || !hasAnyLegacyField(fields)));
+  // 已有 AI 结果的历史记录保持兼容；显式 reprocess 只在没有可复用字段时重提字段。
+  const reusableFields = hasReusableFields(fields);
+  const shouldExtractFields = !reusableFields
+    && (Boolean(message.reprocess)
+      || (!jsonObject(resume.ai_evaluation) || !hasAnyLegacyField(fields)));
   if (shouldExtractFields) {
     await deps.setJobStep(message.jobId, 'extracting_fields');
     const extractedFields = await deps.extractFields(text, resume);

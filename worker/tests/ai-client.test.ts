@@ -58,13 +58,35 @@ describe('callAIWithMetadata', () => {
   });
 
   it('does not use reasoning content as the final answer', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(okResponse('', {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(okResponse('', {
       message: { content: '', reasoning_content: '这是思考过程，不是 JSON' },
-    }));
+    })));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(callAIWithMetadata(makeEnv(), 'return JSON', 'return JSON'))
-      .rejects.toMatchObject({ code: 'AI_RESPONSE_EMPTY' });
+    const resultPromise = callAIWithMetadata(makeEnv(), 'return JSON', 'return JSON');
+    const rejection = expect(resultPromise).rejects.toMatchObject({ code: 'AI_RESPONSE_EMPTY' });
+    await vi.advanceTimersByTimeAsync(5000);
+    await rejection;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries a reasoning-only response before accepting a later content response', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(okResponse('', {
+        message: { content: '', reasoning_content: '暂时只有思考过程' },
+      }))
+      .mockResolvedValueOnce(okResponse('{"ok":true}'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultPromise = callAIWithMetadata(makeEnv(), 'return JSON', 'return JSON');
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.text).toBe('{"ok":true}');
+    expect(result.metadata.attempt).toBe(2);
   });
 
   it('records the provider finish reason', async () => {

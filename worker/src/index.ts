@@ -646,6 +646,12 @@ async function callConfiguredAIWithMetadata(
         throw timeoutError;
       }
       lastError = e;
+      // 部分推理模型偶发只返回 reasoning_content，下一次请求通常能返回
+      // 正常的 message.content。有限重试，避免把一次上游空响应直接记为失败。
+      if (e?.code === 'AI_RESPONSE_EMPTY' && attempt < 3) {
+        await sleepAI(attempt * 1000);
+        continue;
+      }
       if (attempt < 3 && isRetryableHttpStatus(Number(e?.status))) {
         await sleepAI(attempt * 1000);
         continue;

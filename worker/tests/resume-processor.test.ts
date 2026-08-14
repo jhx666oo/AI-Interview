@@ -32,17 +32,24 @@ describe('resume processor', () => {
     expect(aiCalls).toBe(0);
   });
 
-  it('re-evaluates an existing AI evaluation for an explicit reprocess job', async () => {
+  it('re-evaluates an existing AI evaluation without re-extracting reusable fields', async () => {
+    let fieldCalls = 0;
     let screenCalls = 0;
     await processResume({ jobId: 'job-1', resumeId: 'resume-1', reprocess: true }, {
-      getResume: async () => ({ id: 'resume-1', raw_text: 'candidate resume text', parsed_data: '{"school":"A大学"}', ai_evaluation: '{"match_score":82}' }),
+      getResume: async () => ({
+        id: 'resume-1',
+        raw_text: 'candidate resume text',
+        parsed_data: '{"source":"email_sync","school":"A大学","email":"candidate@example.com"}',
+        ai_evaluation: '{"match_score":82}',
+      }),
       getText: async () => 'candidate resume text',
-      extractFields: async () => ({}),
+      extractFields: async () => { fieldCalls += 1; return {}; },
       screen: async () => { screenCalls += 1; return { weighted_score: 5, screening_result: '通过' }; },
       updateResume: async () => undefined,
       setJobStep: async () => undefined,
       assertJobRunning: async () => undefined,
     });
+    expect(fieldCalls).toBe(0);
     expect(screenCalls).toBe(1);
   });
 
@@ -118,7 +125,7 @@ describe('resume processor', () => {
     })).toBe(true);
   });
 
-  it('forces field extraction for an explicit reprocess job', async () => {
+  it('reuses fields marked as extracted for an explicit reprocess job', async () => {
     let fieldCalls = 0;
     await processResume({ jobId: 'job-1', resumeId: 'resume-1', reprocess: true }, {
       getResume: async () => ({
@@ -138,7 +145,7 @@ describe('resume processor', () => {
       assertJobRunning: async () => undefined,
     });
 
-    expect(fieldCalls).toBe(1);
+    expect(fieldCalls).toBe(0);
   });
 
   it('persists the queue screening hard-condition result without changing AI evidence', async () => {
