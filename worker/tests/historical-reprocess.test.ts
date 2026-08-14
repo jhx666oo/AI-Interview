@@ -10,8 +10,8 @@ import {
   recoverStalledHistoricalResumeReprocess,
   startHistoricalResumeReprocess,
 } from '../src/resume-processing/reprocess';
-import { insertReprocessBatchItems, refreshReprocessBatchStatus } from '../src/resume-processing/batch-repository';
-import { handleBatchResumeReprocess } from '../src/index';
+import { getActiveReprocessBatchView, insertReprocessBatchItems, refreshReprocessBatchStatus } from '../src/resume-processing/batch-repository';
+import { handleBatchResumeReprocess, handleScopedBatchResumeReprocess } from '../src/index';
 
 describe('historical resume reprocess', () => {
   it('returns 202 counts and enqueues one bounded coordinator for an all-history request', async () => {
@@ -205,6 +205,30 @@ describe('historical resume reprocess', () => {
     expect(finalValues?.[1]).toBeNull();
   });
 
+  it('reconciles a finished active batch before accepting a new scoped retry', async () => {
+    const db = createFinishedActiveScopedRequestDb();
+    const queue = createQueue();
+    const response = await handleScopedBatchResumeReprocess({
+      env: { DB: db, RESUME_PROCESSING_QUEUE: queue },
+      get: () => ({ role: 'admin' }),
+      req: { json: async () => ({ scope: 'incomplete_or_failed' }) },
+      json: (body: unknown, status: number) => ({ body, status }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({ scope: 'incomplete_or_failed', total: 1 });
+    expect(db.batch.status).toBe('completed');
+    expect(queue.messages).toEqual([{ kind: 'historical_reprocess', batchId: expect.any(String) }]);
+  });
+
+  it('exposes a reconciled completed view for a stale active batch row', async () => {
+    const db = createFinishedActiveScopedRequestDb();
+    const view = await getActiveReprocessBatchView(db as never, null);
+
+    expect(view?.status).toBe('completed');
+    expect(db.batch.status).toBe('completed');
+  });
+
   it('keeps batch item inserts within D1 bound parameter limits', async () => {
     const db = createHistoricalDb([]);
     await insertReprocessBatchItems(db as never, Array.from({ length: 8 }, (_, index) => ({
@@ -351,6 +375,93 @@ function createHistoricalDb(resumeIds: string[]) {
 function createHistoricalDbWithItems(resumeIds: string[]) {
   const db = createHistoricalDb(resumeIds);
   return db;
+}
+
+function createFinishedActiveScopedRequestDb() {
+  const batch = {
+    id: 'stale-batch',
+    owner: null,
+    status: 'running',
+    scope: 'incomplete_or_failed',
+    total_count: 1,
+    error_message: null,
+    created_at: '2026-08-14T04:00:00.000Z',
+    updated_at: '2026-08-14T04:10:00.000Z',
+    completed_at: null,
+  };
+  const candidateRows = [{
+    id: 'retry-1',
+    candidate_name: 'Retry Candidate',
+    parse_status: 'failed',
+    ai_evaluation: null,
+    parse_error: 'previous failure',
+    latest_job_status: 'failed',
+  }];
+  const itemRows = [{
+    id: 'stale-item',
+    job_id: 'stale-job',
+    status: 'completed',
+    job_status: 'completed',
+    step: 'screening',
+    error_code: null,
+    error_message: null,
+  }];
+  const viewRows = [{
+    resume_id: 'retry-1',
+    status: 'completed',
+    step: 'screening',
+    candidate_name: 'Retry Candidate',
+    resume_candidate_name: 'Retry Candidate',
+    error_code: null,
+    error_message: null,
+    updated_at: '2026-08-14T04:10:00.000Z',
+  }];
+
+  return {
+    batch,
+    prepare(sql: string) {
+      return {
+        bind(..._values: unknown[]) {
+          return {
+            async all() {
+              if (sql.includes('SELECT j.id, j.resume_id')) return { results: [] };
+              if (sql.includes('SELECT i.id, i.job_id')) return { results: itemRows };
+              if (sql.includes('SELECT i.resume_id')) return { results: viewRows };
+              if (sql.includes('SELECT r.id, r.candidate_name')) return { results: candidateRows };
+              return { results: [] };
+            },
+            async first() {
+              if (sql.includes('SELECT * FROM resume_reprocess_batches')) {
+                return batch.status === 'queued' || batch.status === 'running' ? batch : null;
+              }
+              if (sql.includes('SELECT id, scope FROM resume_reprocess_batches')) {
+                return batch.status === 'queued' || batch.status === 'running' ? { id: batch.id, scope: batch.scope } : null;
+              }
+              if (sql.includes('SELECT status, total_count')) {
+                return { status: batch.status, total_count: batch.total_count };
+              }
+              if (sql.includes('SELECT COUNT(*) AS item_total')) {
+                return { item_total: 1, terminal_total: 1, running_total: 0 };
+              }
+              if (sql.includes('SELECT id, owner, status, scope, total_count')) return batch;
+              return null;
+            },
+            async run() {
+              if (sql.includes('UPDATE resume_reprocess_batches') && sql.includes('SET status=?')) {
+                batch.status = 'completed';
+                batch.completed_at = '2026-08-14T04:10:01.000Z';
+              }
+              if (sql.includes('UPDATE resume_reprocess_batches') && sql.includes("SET status='completed'")) {
+                batch.status = 'completed';
+                batch.completed_at = '2026-08-14T04:10:01.000Z';
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
 }
 
 function createStalledBatchDb(activeTotal = 0) {

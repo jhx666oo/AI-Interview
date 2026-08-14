@@ -6351,13 +6351,13 @@ export async function handleScopedBatchResumeReprocess(c: any) {
       return c.json({ ok: true, batch_id: null, scope, total: 0, queued: 0, already_processing: 0, skipped: 0, failed: 0, message: '当前没有需要重新评估的简历' });
     }
 
-    // Check for active batch
-    const ownerPredicate = owner ? 'owner=?' : 'owner IS NULL';
-    const active = await c.env.DB.prepare(
-      `SELECT id, scope FROM resume_reprocess_batches WHERE ${ownerPredicate} AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1`,
-    ).bind(...(owner ? [owner] : [])).first() as any;
-    if (active) {
-      return c.json({ detail: '当前已有活动批次在处理中，请稍后再试', batch_id: active.id }, 409);
+    // Reconcile a previously materialized batch before checking for conflicts.
+    // A batch can be logically finished while its row still says `running` if
+    // the final worker update was interrupted; treating that stale row as active
+    // would block retries of failed/incomplete resumes forever.
+    const activeView = await getActiveReprocessBatchView(c.env.DB, owner);
+    if (activeView && (activeView.status === 'queued' || activeView.status === 'running')) {
+      return c.json({ detail: '当前已有活动批次在处理中，请稍后再试', batch_id: activeView.batch_id }, 409);
     }
 
     const result = await startHistoricalResumeReprocess(
