@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Space, Typography, message, Tag, Tabs, Tooltip } from 'antd';
+import { Button, Card, Form, Input, InputNumber, Space, Typography, message, Tag, Tabs, Tooltip } from 'antd';
 import { SaveOutlined, ReloadOutlined, ApiOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { PageHeader, ResponsiveToolbar } from '../../components/Responsive';
+import { DEFAULT_SCREENING_RULES, normalizeScreeningRules, type ScreeningRules } from '../../types/screeningRules';
 
 const { Text } = Typography;
 
@@ -72,6 +73,9 @@ const SystemSettingsPage: React.FC = () => {
   const [meta, setMeta] = useState<SystemSettings | null>(null);
   const [editing, setEditing] = useState<Record<string, boolean>>({});
   const [testing, setTesting] = useState<number | null>(null);
+  const [screeningRules, setScreeningRules] = useState<ScreeningRules>({ ...DEFAULT_SCREENING_RULES });
+  const [screeningRulesLoading, setScreeningRulesLoading] = useState(false);
+  const [screeningRulesSaving, setScreeningRulesSaving] = useState(false);
   const role = (user as any)?.role?.value ?? (user as any)?.role;
 
   // 提示词配置
@@ -131,9 +135,24 @@ const SystemSettingsPage: React.FC = () => {
     } catch { /* ignore */ }
   };
 
+  const fetchScreeningRules = async () => {
+    setScreeningRulesLoading(true);
+    try {
+      const res = await request.get('/settings/screening-rules') as { rules?: unknown };
+      setScreeningRules(normalizeScreeningRules(res.rules));
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 403) message.error('无权限访问初筛条件');
+      else message.error('获取初筛条件失败');
+    } finally {
+      setScreeningRulesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (role !== 'admin') return;
     fetchSettings();
+    fetchScreeningRules();
     fetchPromptConfigs();
     fetchPromptVariables();
   }, [role]);
@@ -219,6 +238,21 @@ const SystemSettingsPage: React.FC = () => {
       message.error('保存提示词失败');
     } finally {
       setPromptSaving(false);
+    }
+  };
+
+  const handleSaveScreeningRules = async () => {
+    setScreeningRulesSaving(true);
+    try {
+      await request.put('/settings/screening-rules', screeningRules);
+      message.success('AI 初筛通过条件已保存');
+      await fetchScreeningRules();
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 403) message.error('无权限保存初筛条件');
+      else message.error(e?.response?.data?.detail || '保存初筛条件失败');
+    } finally {
+      setScreeningRulesSaving(false);
     }
   };
 
@@ -376,6 +410,53 @@ const SystemSettingsPage: React.FC = () => {
             );
           })}
         </Form>
+      </Card>
+
+      {/* AI 初筛阈值 */}
+      <Card
+        title="AI 初筛通过条件"
+        style={{ marginBottom: 24 }}
+        loading={screeningRulesLoading}
+        extra={<Button type="primary" icon={<SaveOutlined />} onClick={handleSaveScreeningRules} loading={screeningRulesSaving}>保存条件</Button>}
+      >
+        <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+          三项条件必须同时满足才判定为“通过”。这里设置的是系统默认值；岗位编辑页可以为单个岗位单独覆盖。
+        </Text>
+        <Space wrap size={[24, 16]}>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>关键词匹配最低分</Text>
+            <InputNumber
+              min={0}
+              max={5}
+              step={1}
+              precision={0}
+              value={screeningRules.keyword_match_min_score}
+              onChange={(value) => value !== null && setScreeningRules((current) => ({ ...current, keyword_match_min_score: value }))}
+            />
+          </div>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>避坑雷区最低分</Text>
+            <InputNumber
+              min={0}
+              max={5}
+              step={1}
+              precision={0}
+              value={screeningRules.red_flag_min_score}
+              onChange={(value) => value !== null && setScreeningRules((current) => ({ ...current, red_flag_min_score: value }))}
+            />
+          </div>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>五项能力加权最低分</Text>
+            <InputNumber
+              min={0}
+              max={5}
+              step={0.1}
+              precision={1}
+              value={screeningRules.weighted_score_min}
+              onChange={(value) => value !== null && setScreeningRules((current) => ({ ...current, weighted_score_min: value }))}
+            />
+          </div>
+        </Space>
       </Card>
 
       {/* 提示词配置 */}

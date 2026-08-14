@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
   buildPositionSpecificScreeningRule,
+  buildScreeningRulesPrompt,
   LEGACY_KEYWORD_GATE_TEXT,
   SCREENING_PROMPT_VERSION,
   WEIGHTED_SCREENING_PROMPT,
@@ -16,8 +17,11 @@ describe('screening prompt rules', () => {
     expect(WEIGHTED_SCREENING_PROMPT).not.toContain('嵌入式固件');
     expect(WEIGHTED_SCREENING_PROMPT).not.toContain('ODM');
     expect(WEIGHTED_SCREENING_PROMPT).not.toContain('知名企业');
-    expect(WEIGHTED_SCREENING_PROMPT).toContain('关键词匹配 2 分或以上');
-    expect(WEIGHTED_SCREENING_PROMPT).toContain('避坑雷区仍需 5 分');
+    expect(WEIGHTED_SCREENING_PROMPT).toContain('具体通过阈值由本次请求附带');
+    expect(buildScreeningRulesPrompt({ keyword_match_min_score: 2, red_flag_min_score: 5, weighted_score_min: 3.5 }))
+      .toContain('五项能力加权分 >= 3.5 分');
+    expect(buildScreeningRulesPrompt({ keyword_match_min_score: 2, red_flag_min_score: 5, weighted_score_min: 3.5 }))
+      .toContain('三项必须同时满足');
   });
 
   it('removes the previously saved global keyword-gate-v2 block', () => {
@@ -58,7 +62,7 @@ describe('screening prompt rules', () => {
     });
 
     expect(smartHardwareRule).toContain('5 年及以上智能硬件');
-    expect(smartHardwareRule).toContain('关键词匹配 2 分或以上');
+    expect(smartHardwareRule).toContain('最终门槛以本次请求附带');
     expect(genericRule).toBe('');
   });
 

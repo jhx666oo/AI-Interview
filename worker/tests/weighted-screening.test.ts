@@ -96,12 +96,33 @@ describe('evaluateWeightedScreening', () => {
     expect(result.weighted_score).toBe(3.9);
   });
 
-  it('uses four as the pass boundary and treats missing gate dimensions as zero', () => {
+  it('uses the default 3.5 pass boundary and treats missing gate dimensions as zero', () => {
     const scores = { '核心画像': 4, '核心职责': 4, '任职要求': 4, '企业背景': 4, '加分项': 4, '关键词匹配': 5, '避坑雷区': 5 };
     const result = evaluateWeightedScreening({ dimensions: Object.entries(scores).map(([name, score]) => ({ name, score })) }, config);
     expect(result.weighted_score).toBe(4);
     expect(result.screening_result).toBe('通过');
     expect(evaluateWeightedScreening({ dimensions: [] }, config).screening_reason).toContain('关键词');
+  });
+
+  it('passes when all gates pass and the weighted score reaches 3.5', () => {
+    const scores = { '核心画像': 3.5, '核心职责': 3.5, '任职要求': 3.5, '企业背景': 3.5, '加分项': 3.5, '关键词匹配': 5, '避坑雷区': 5 };
+    const result = evaluateWeightedScreening({ dimensions: Object.entries(scores).map(([name, score]) => ({ name, score })) }, config);
+    expect(result.weighted_score).toBe(3.5);
+    expect(result.screening_result).toBe('通过');
+    expect(result.screening_reason).toBe('五项能力加权分达到 3.5 分');
+  });
+
+  it('uses position-specific thresholds when an override is provided', () => {
+    const scores = { '核心画像': 3.5, '核心职责': 3.5, '任职要求': 3.5, '企业背景': 3.5, '加分项': 3.5, '关键词匹配': 2, '避坑雷区': 5 };
+    const result = evaluateWeightedScreening(
+      { dimensions: Object.entries(scores).map(([name, score]) => ({ name, score })) },
+      config,
+      { keyword_match_min_score: 3, red_flag_min_score: 5, weighted_score_min: 3.5 },
+    );
+
+    expect(result.screening_result).toBe('不通过');
+    expect(result.weighted_score).toBeNull();
+    expect(result.screening_reason).toBe('关键词匹配未达 3 分');
   });
 
   it('makes the compatibility evaluator persist the five-point weighted result instead of AI match_score', () => {
@@ -114,7 +135,7 @@ describe('evaluateWeightedScreening', () => {
     expect(result.weighted_score).toBe(5);
     expect(result.match_score).toBe(5);
     expect(result.screening_result).toBe('通过');
-    expect(result.screening_reason).toBe('五项能力加权分达到 4 分');
+    expect(result.screening_reason).toBe('五项能力加权分达到 3.5 分');
     expect(result.gate_results).toEqual({
       keyword_match: { score: 5, passed: true },
       red_flag: { score: 5, passed: true },

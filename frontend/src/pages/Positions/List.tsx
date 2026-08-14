@@ -15,6 +15,8 @@ import { PageHeader } from '../../components/Responsive/PageHeader';
 import { ResponsiveToolbar } from '../../components/Responsive/ResponsiveToolbar';
 import { ResponsiveDataView } from '../../components/Responsive';
 import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
+import ScreeningRulesFields from '../../components/ScreeningRulesFields';
+import { DEFAULT_SCREENING_RULES, parseScreeningRules, serializeScreeningRules } from '../../types/screeningRules';
 
 const { Title, Text } = Typography;
 
@@ -52,6 +54,7 @@ interface Position {
   responsible_person: string | null;
   personalized_requirements: string | null;
   capability_dimensions: string | null;
+  screening_rules?: string | null;
   primary_interviewer: string | null;
   secondary_interviewer: string | null;
   created_at: string;
@@ -303,6 +306,7 @@ const PositionsList: React.FC = () => {
       position_type: 'full_time',
       headcount: 1,
       capability_dimensions: defaultCapabilityDimensions(),
+      screening_rules_config: { enabled: false, values: { ...DEFAULT_SCREENING_RULES } },
     });
     setIsModalVisible(true);
   };
@@ -339,6 +343,11 @@ const PositionsList: React.FC = () => {
           }
         } catch {}
       }
+      const screeningRules = parseScreeningRules(res.screening_rules);
+      formVals.screening_rules_config = {
+        enabled: !!screeningRules,
+        values: screeningRules || { ...DEFAULT_SCREENING_RULES },
+      };
       // 任职要求 JSON 字符串 → 多选数组
       if (res.requirements) {
         try {
@@ -596,6 +605,11 @@ const PositionsList: React.FC = () => {
       const values = await form.validateFields();
       setSubmitting(true);
       const payloadInput = { ...values };
+      const screeningRulesConfig = payloadInput.screening_rules_config as any;
+      payloadInput.screening_rules = screeningRulesConfig?.enabled
+        ? serializeScreeningRules(screeningRulesConfig.values)
+        : '';
+      delete payloadInput.screening_rules_config;
       if (payloadInput.requirements) {
         // 多选/标签输入 → JSON 字符串数组
         if (Array.isArray(payloadInput.requirements)) {
@@ -1047,6 +1061,10 @@ const PositionsList: React.FC = () => {
               allDimNames={allDimNames} 
               setAllDimNames={setAllDimNames}
             />
+          </Form.Item>
+
+          <Form.Item label="AI 初筛条件" extra="默认沿用系统设置；如需单独调整当前岗位，请开启岗位覆盖。">
+            <ScreeningRulesFields />
           </Form.Item>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>

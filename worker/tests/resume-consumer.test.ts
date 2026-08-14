@@ -61,7 +61,7 @@ describe('resume queue consumer', () => {
       weighted_score: 5,
       match_score: 5,
       screening_result: '通过',
-      screening_reason: '五项能力加权分达到 4 分',
+      screening_reason: '五项能力加权分达到 3.5 分',
     });
     expect(aiEvaluation.dimensions).toHaveLength(7);
   });

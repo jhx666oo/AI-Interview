@@ -6,6 +6,8 @@ import request from '../../utils/request';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
 import { PageHeader } from '../../components/Responsive/PageHeader';
 import { buildInterviewerOptions, INTERVIEWER_DIRECTORY_CACHE_KEY } from './interviewerOptions';
+import ScreeningRulesFields from '../../components/ScreeningRulesFields';
+import { DEFAULT_SCREENING_RULES, parseScreeningRules, serializeScreeningRules } from '../../types/screeningRules';
 
 const { Title, Text } = Typography;
 
@@ -37,6 +39,11 @@ const PositionForm: React.FC = () => {
       if (typeof res.capability_dimensions === 'string') {
         try { res.capability_dimensions = JSON.parse(res.capability_dimensions); } catch { res.capability_dimensions = []; }
       }
+      const screeningRules = parseScreeningRules(res.screening_rules);
+      res.screening_rules_config = {
+        enabled: !!screeningRules,
+        values: screeningRules || { ...DEFAULT_SCREENING_RULES },
+      };
       form.setFieldsValue(res);
     } catch (error) {
       message.error('获取岗位详情失败');
@@ -113,6 +120,11 @@ const PositionForm: React.FC = () => {
       if (Array.isArray(values.capability_dimensions)) {
         values.capability_dimensions = JSON.stringify(values.capability_dimensions);
       }
+      const screeningRulesConfig = values.screening_rules_config;
+      values.screening_rules = screeningRulesConfig?.enabled
+        ? serializeScreeningRules(screeningRulesConfig.values)
+        : '';
+      delete values.screening_rules_config;
       if (id) {
         await request.put(`/positions/${id}`, values);
         message.success('更新成功');
@@ -151,6 +163,7 @@ const PositionForm: React.FC = () => {
             urgency: 'medium',
             position_type: 'full_time',
             headcount: 1,
+            screening_rules_config: { enabled: false, values: { ...DEFAULT_SCREENING_RULES } },
             primary_interviewer: '杜雁玲',
             secondary_interviewer: '何雨菱',
           }}
@@ -301,6 +314,10 @@ const PositionForm: React.FC = () => {
               tokenSeparators={[',']}
               options={allDimensionNames.map(n => ({ label: n, value: n }))}
             />
+          </Form.Item>
+
+          <Form.Item label="AI 初筛条件" extra="默认沿用系统设置；如需单独调整当前岗位，请开启岗位覆盖。">
+            <ScreeningRulesFields />
           </Form.Item>
 
           <Form.Item style={{ marginTop: 32 }}>

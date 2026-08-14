@@ -9,7 +9,7 @@ import { logResumeProcessing, logResumeProcessingError } from './resume-processi
 import { assembleScreeningEvaluation, missingDimensionNames, normalizeDimensionScores, requireCompleteScreeningEvaluation, type DimensionScore } from './resume-processing/dimension-scores';
 import { buildScreeningRepairPrompt, parseStructuredOutput, type StructuredOutputFailureCode, type StructuredOutputResult } from './resume-processing/structured-output';
 import { callAI, callAIWithMetadata, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
-import { buildPositionScreeningContextText, buildPositionSpecificScreeningRule, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
+import { buildPositionScreeningContextText, buildPositionSpecificScreeningRule, buildScreeningRulesPrompt, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
 import { EventRepository } from './recruitment-events/repository';
 import { ResumeSearchDocumentGenerator } from './resume-search/document-generator';
@@ -328,7 +328,8 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         personalizedRequirements: context.personalizedRequirements,
         capabilityDimensions: context.capabilityDimensions,
       });
-      const finalScreenUserText = [screenUserText, positionContextText, positionSpecificRule]
+      const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
+      const finalScreenUserText = [screenUserText, positionContextText, positionSpecificRule, screeningRulesPrompt]
         .filter(Boolean)
         .join('\n\n');
       const screeningResult = await callAIWithMetadata(
@@ -467,7 +468,9 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             personalizedRequirements: personalizedReqs,
             capabilityDimensions: dimsText,
           });
+          const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
           if (positionSpecificRule) supUserText += `\n\n${positionSpecificRule}`;
+          supUserText += `\n\n${screeningRulesPrompt}`;
           const dimResponse = await callAI(
             env as any,
             supplementPrompt.system,
@@ -507,7 +510,8 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             personalizedRequirements: personalizedReqs,
             capabilityDimensions: configuredDimensions.map((item: any) => `${item.name || ''}：${item.description || ''}`).join('\n'),
           });
-          const finalSupUserText = positionSpecificRule ? `${supUserText}\n\n${positionSpecificRule}` : supUserText;
+          const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
+          const finalSupUserText = [supUserText, positionSpecificRule, screeningRulesPrompt].filter(Boolean).join('\n\n');
           const supplemental = await callAI(
             env as any,
             supplementPrompt.system,
@@ -545,6 +549,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         configuredDimensions,
         hardRequirements,
         fields,
+        context.screeningRules,
       );
       const score = enrichedEvaluation.weighted_score ?? null;
       // in-flight 保护：批次停止后不允许把本次评估写回简历
@@ -669,7 +674,8 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         personalizedRequirements: context.personalizedRequirements,
         capabilityDimensions: context.capabilityDimensions,
       });
-      const finalR2ScreenUser = [r2ScreenUser, r2PositionContextText, r2PositionSpecificRule]
+      const r2ScreeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
+      const finalR2ScreenUser = [r2ScreenUser, r2PositionContextText, r2PositionSpecificRule, r2ScreeningRulesPrompt]
         .filter(Boolean)
         .join('\n\n');
       const screeningResult = await callAIWithMetadata(
@@ -738,7 +744,8 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             personalizedRequirements: context.personalizedRequirements,
             capabilityDimensions: context.capabilityDimensions,
           });
-          const finalR2SupUser = r2PositionSpecificRule ? `${r2SupUser}\n\n${r2PositionSpecificRule}` : r2SupUser;
+          const r2ScreeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
+          const finalR2SupUser = [r2SupUser, r2PositionSpecificRule, r2ScreeningRulesPrompt].filter(Boolean).join('\n\n');
           const supplemental = await callAI(
             env as any,
             r2SupplementPrompt.system,
@@ -774,6 +781,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         configuredDimensions,
         hardRequirements,
         fields,
+        context.screeningRules,
       );
       const score = enrichedEvaluation.weighted_score ?? null;
       // in-flight 保护：批次停止后不允许把本次评估写回简历

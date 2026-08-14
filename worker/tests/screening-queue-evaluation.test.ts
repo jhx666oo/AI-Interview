@@ -37,7 +37,7 @@ describe('resume screening queue evaluation', () => {
     expect(result.ai_result).toBe('通过');
     expect(result.weighted_score).toBe(5);
     expect(result.match_score).toBe(5);
-    expect(result.screening_reason).toContain('4 分');
+    expect(result.screening_reason).toContain('3.5 分');
   });
 
   it('routes both screening endpoints through the structured evaluator contract', async () => {

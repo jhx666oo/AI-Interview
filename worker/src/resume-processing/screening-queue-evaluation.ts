@@ -1,11 +1,13 @@
 import { evaluateWeightedScreening, type ConfiguredDimension } from './weighted-screening';
+import { DEFAULT_SCREENING_RULES, type ScreeningRuleValues } from './screening-rules';
 
 /** Converts model evidence into the only persistence contract accepted by screening-queue routes. */
 export function buildScreeningQueuePersistence(
   evaluation: Record<string, unknown>,
   configuredDimensions: readonly ConfiguredDimension[] | null | undefined,
+  screeningRules: ScreeningRuleValues = DEFAULT_SCREENING_RULES,
 ) {
-  const canonical = evaluateWeightedScreening(evaluation, configuredDimensions);
+  const canonical = evaluateWeightedScreening(evaluation, configuredDimensions, screeningRules);
   const structured = {
     ...evaluation,
     ...canonical,

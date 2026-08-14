@@ -14,7 +14,8 @@ import {
   matchesBusinessScreeningStatusFilter,
 } from './resume-list/business-screening-status';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores, normalizeScreeningEvaluation, requireCompleteScreeningEvaluation } from './resume-processing/dimension-scores';
-import { evaluateWeightedScreening, normalizeScreeningPrompt, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
+import { buildScreeningRulesPrompt, evaluateWeightedScreening, normalizeScreeningPrompt, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
+import { DEFAULT_SCREENING_RULES, normalizeScreeningRuleValues, resolveScreeningRules, type ResolvedScreeningRules, type ScreeningRuleValues } from './resume-processing/screening-rules';
 import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, recoverStalledHistoricalResumeReprocess, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess, selectResumeIdsForBatchScope } from './resume-processing/reprocess';
 import { cancelReprocessBatch, getReprocessBatchView, getActiveReprocessBatchView, appendEvaluationJobProjection } from './resume-processing/batch-repository';
 import type { ReprocessScope, ResumeProcessingQueueMessage } from './resume-processing/types';
@@ -714,7 +715,7 @@ async function getPositionRequirements(env: Env, positionName: string): Promise<
 
   try {
     const posRow = await env.DB.prepare(
-      'SELECT title, description, requirements, personalized_requirements, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
+      'SELECT title, description, requirements, personalized_requirements, capability_dimensions, screening_rules FROM positions WHERE title = ? LIMIT 1'
     ).bind(mappedName).first() as any;
     const positionTitle = posRow?.title || mappedName;
     let dimensions = normalizeCapabilityDimensions(posRow?.capability_dimensions || []);
@@ -752,6 +753,7 @@ async function getPositionRequirements(env: Env, positionName: string): Promise<
       personalized_requirements: personalizedRequirements,
       capability_dimensions: dimensions,
       hard_requirements: hardRequirements,
+      screeningRules: resolveScreeningRules(await getSystemScreeningRules(env.DB), posRow?.screening_rules),
     };
   } catch { return null; }
 }
@@ -837,6 +839,7 @@ export function enrichScreeningEvaluation(
   configuredDimensionInput: unknown,
   hardRequirements: HardRequirement[] = [],
   candidateFields: Record<string, any> = {},
+  screeningRules: ScreeningRuleValues = DEFAULT_SCREENING_RULES,
 ): any {
   evaluation = normalizeScreeningEvaluation(evaluation);
   const configured_dimensions = normalizeCapabilityDimensions(configuredDimensionInput);
@@ -848,7 +851,7 @@ export function enrichScreeningEvaluation(
     ...item,
     weight: configuredByName.get(item.name)?.weight,
   }));
-  const weightedScreening = evaluateWeightedScreening({ ...evaluation, dimensions }, configured_dimensions);
+  const weightedScreening = evaluateWeightedScreening({ ...evaluation, dimensions }, configured_dimensions, screeningRules);
   return {
     ...evaluation,
     ...weightedScreening,
@@ -927,6 +930,7 @@ ${WEIGHTED_SCREENING_PROMPT}
   const userPrompt = [
     `简历文本（请提取完整信息）：\n${resumeText}`,
     positionSections,
+    positionReq?.screeningRules ? buildScreeningRulesPrompt(positionReq.screeningRules) : '',
     extraInfo,
   ].filter(Boolean).join('\n');
 
@@ -950,10 +954,13 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
     }
   }
   const completeEvaluation = requireCompleteScreeningEvaluation({ ...parsed, ...flattened });
+  const screeningRules = positionReq?.screeningRules || resolveScreeningRules(await getSystemScreeningRules(env.DB));
   return enrichScreeningEvaluation(
     completeEvaluation,
     positionReq?.capability_dimensions || [],
     positionReq?.hard_requirements || [],
+    {},
+    screeningRules,
   );
 }
 
@@ -3211,6 +3218,17 @@ export async function resolvePositionTitle(db: any, positionName: string): Promi
 }
 
 // getPositionContext: 根据岗位名查询上下文（标准岗位名、能力维度、个性化需求、薪资范围）
+export async function getSystemScreeningRules(db: any): Promise<unknown> {
+  try {
+    const row = await db.prepare(
+      'SELECT screening_rules FROM system_configs ORDER BY updated_at DESC LIMIT 1'
+    ).first();
+    return row?.screening_rules || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getPositionContext(db: any, positionName: string): Promise<{
   standardPosition: string;
   description: string;
@@ -3218,7 +3236,9 @@ export async function getPositionContext(db: any, positionName: string): Promise
   capabilityDimensions: string;
   personalizedRequirements: string;
   salaryRange: string;
+  screeningRules: ResolvedScreeningRules;
 }> {
+  const systemScreeningRules = await getSystemScreeningRules(db);
   const result = {
     standardPosition: positionName,
     description: '',
@@ -3226,6 +3246,7 @@ export async function getPositionContext(db: any, positionName: string): Promise
     capabilityDimensions: '',
     personalizedRequirements: '',
     salaryRange: '',
+    screeningRules: resolveScreeningRules(systemScreeningRules),
   };
   if (!positionName) return result;
 
@@ -3250,9 +3271,10 @@ export async function getPositionContext(db: any, positionName: string): Promise
   // 2. 能力维度：从 positions 表读取
   try {
     const pos = await db.prepare(
-      'SELECT description, requirements, personalized_requirements, capability_dimensions, salary_range FROM positions WHERE title = ? LIMIT 1'
+      'SELECT description, requirements, personalized_requirements, capability_dimensions, salary_range, screening_rules FROM positions WHERE title = ? LIMIT 1'
     ).bind(lookupName).first();
     if (pos) {
+      result.screeningRules = resolveScreeningRules(systemScreeningRules, pos.screening_rules);
       result.description = String(pos.description || '');
       result.requirements = String(pos.requirements || '');
       if (pos.personalized_requirements) {
@@ -7977,6 +7999,47 @@ app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
   return c.json(transformRow(row));
 });
 
+app.get('/api/settings/screening-rules', authMiddleware, requireRole(['admin']), async (c) => {
+  const row = await c.env.DB.prepare(
+    'SELECT screening_rules FROM system_configs ORDER BY updated_at DESC LIMIT 1'
+  ).first() as any;
+  const resolved = resolveScreeningRules(row?.screening_rules);
+  return c.json({
+    rules: {
+      keyword_match_min_score: resolved.keyword_match_min_score,
+      red_flag_min_score: resolved.red_flag_min_score,
+      weighted_score_min: resolved.weighted_score_min,
+    },
+    source: resolved.source,
+    defaults: DEFAULT_SCREENING_RULES,
+  });
+});
+
+app.put('/api/settings/screening-rules', authMiddleware, requireRole(['admin']), async (c) => {
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  const allowedKeys = ['keyword_match_min_score', 'red_flag_min_score', 'weighted_score_min'];
+  if (!body || Object.keys(body).length !== allowedKeys.length || allowedKeys.some((key) => !Object.prototype.hasOwnProperty.call(body, key))) {
+    return c.json({ detail: '必须完整提供三个初筛阈值字段' }, 400);
+  }
+
+  const rules = normalizeScreeningRuleValues(body);
+  if (!rules) return c.json({ detail: '初筛阈值必须是 0-5 范围内的合法数值' }, 400);
+
+  const existing = await c.env.DB.prepare(
+    'SELECT id FROM system_configs ORDER BY updated_at DESC LIMIT 1'
+  ).first() as any;
+  const serialized = JSON.stringify(rules);
+  if (existing?.id) {
+    await c.env.DB.prepare('UPDATE system_configs SET screening_rules = ?, updated_at = ? WHERE id = ?')
+      .bind(serialized, now(), existing.id).run();
+  } else {
+    await c.env.DB.prepare('INSERT INTO system_configs (id, screening_rules, updated_at) VALUES (?, ?, ?)')
+      .bind(uuid(), serialized, now()).run();
+  }
+
+  return c.json({ rules, source: 'system', defaults: DEFAULT_SCREENING_RULES });
+});
+
 // 连通性测试：对指定模型配置发一条最小的 Chat Completions 请求，验证可达且可用。
 // 支持两种入参：显式传 { base_url, model, api_key } 测试未保存的临时值；
 // 或传 { index } 测试已保存的第 index（0~3）组配置（用于表单中 Key 未回显的场景）。
@@ -9888,17 +9951,19 @@ async function analyzeResumeScreeningRecord(env: Env, record: any) {
 
   const positionRequirements = await getPositionRequirements(env, mappedPosition);
   const configuredDimensions = positionRequirements?.capability_dimensions || [];
+  const screeningRules = positionRequirements?.screeningRules
+    || resolveScreeningRules(await getSystemScreeningRules(env.DB));
   const result = await callAI(
     env,
     `你是专业的简历初筛专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
-    `岗位：${mappedPosition}\n岗位职责：${positionRequirements?.description || '-'}\n岗位要求：${positionRequirements?.requirements || '-'}\n能力维度：${JSON.stringify(configuredDimensions)}\n候选人：${record.candidate_name || '未知'}\n简历：${resumeText}\n请返回 {"summary":"摘要","strengths":[],"risks":[],"suggested_questions":[],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}。`,
+    `岗位：${mappedPosition}\n岗位职责：${positionRequirements?.description || '-'}\n岗位要求：${positionRequirements?.requirements || '-'}\n能力维度：${JSON.stringify(configuredDimensions)}\n候选人：${record.candidate_name || '未知'}\n简历：${resumeText}\n${buildScreeningRulesPrompt(screeningRules)}\n请返回 {"summary":"摘要","strengths":[],"risks":[],"suggested_questions":[],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}。`,
     'deepseek-v4-flash',
   );
   const parsed = extractJSON(result);
   const evidence = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
     ? parsed as Record<string, unknown>
     : { summary: String(parsed || '') };
-  const persistence = buildScreeningQueuePersistence(evidence, configuredDimensions);
+  const persistence = buildScreeningQueuePersistence(evidence, configuredDimensions, screeningRules);
   await env.DB.prepare(`UPDATE resume_screening_queue SET
     ai_analysis=?, ai_result=?, screening_result=?, match_score=?, weighted_score=?, gate_results=?, screening_reason=?, mapped_position=?, updated_at=?
     WHERE id=?`)

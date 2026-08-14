@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS positions (
   secondary_interviewer TEXT DEFAULT '',
   personalized_requirements TEXT DEFAULT '',
   capability_dimensions TEXT DEFAULT '[]',
+  screening_rules TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -425,6 +426,7 @@ CREATE TABLE IF NOT EXISTS system_configs (
   mail_enabled INTEGER DEFAULT 0,
   frontend_url TEXT DEFAULT 'http://localhost:5173',
   prompt_configs TEXT,
+  screening_rules TEXT DEFAULT '',
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
