@@ -8847,7 +8847,8 @@ app.post('/api/public/person/:name/export', async (c) => {
             '状态': RESUME_STATUS_LABELS[r.status] || r.status || '',
             '阶段': RESUME_STAGE_LABELS[r.stage] || r.stage || '',
             '匹配分': r.match_score ?? null,
-            '操作': decisionUrl(r.id, token),
+            // Bitable URL 字段（type 15）值必须为对象 {link, text}，纯字符串会被拒绝
+            '操作': { link: decisionUrl(r.id, token), text: '入库/不入库' },
           },
         });
       }
