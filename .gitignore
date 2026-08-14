@@ -5,7 +5,8 @@
 *.log
 *.sqlite
 *.db
-.claude/
+.claude/*
+!.claude/skills/
 .env
 .env.*
 !.env.example
