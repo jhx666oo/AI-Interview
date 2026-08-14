@@ -5470,6 +5470,13 @@ app.get('/api/resumes', authMiddleware, async (c) => {
       const eduFilter = c.req.query('education');
       filtered = filtered.filter(i => (i.education || '').includes(eduFilter));
     }
+    const educationMinFilter = c.req.query('education_min');
+    if (educationMinFilter) {
+      const minLevel = educationLevel(educationMinFilter);
+      if (minLevel >= 0) {
+        filtered = filtered.filter((i: any) => educationLevel(i.education) >= minLevel);
+      }
+    }
     if (minAge !== null || maxAge !== null) {
       filtered = filtered.filter((i: any) => {
         const age = typeof i.age === 'number' && Number.isFinite(i.age)
@@ -8748,6 +8755,149 @@ app.post('/api/public/person/:name/export', async (c) => {
       ok: true, person: name, form: 'cards', total: resumes.length, delivered: sent,
       failed: failedIds,
       detail: resumes.length > 50 ? `共 ${resumes.length} 份，本次发送前 50 份` : undefined,
+    });
+  } catch (e: any) {
+    return c.json({ detail: 'Internal error: ' + e.message }, 500);
+  }
+});
+
+// 学历等级（用于"本科以上"/"大专"等比较；从低到高）
+const DEGREE_LEVELS = ['小学', '初中', '高中', '中专', '大专', '本科', '硕士', '博士'];
+
+function educationLevel(edu: unknown): number {
+  const e = String(edu ?? '').trim();
+  if (!e) return -1;
+  for (let i = DEGREE_LEVELS.length - 1; i >= 0; i--) {
+    if (e.includes(DEGREE_LEVELS[i])) return i;
+  }
+  return -1;
+}
+
+// 返回学历过滤函数；未提供学历条件时返回 null
+function buildEducationFilter(cond: any): ((edu: unknown) => boolean) | null {
+  const min = cond.education_min != null && String(cond.education_min).trim() ? educationLevel(cond.education_min) : -1;
+  const max = cond.education_max != null && String(cond.education_max).trim() ? educationLevel(cond.education_max) : -1;
+  const exact = cond.education != null && String(cond.education).trim() ? educationLevel(cond.education) : -1;
+  if (min < 0 && max < 0 && exact < 0) return null;
+  return (edu: unknown) => {
+    const lv = educationLevel(edu);
+    if (lv < 0) return false;
+    if (min >= 0 && lv < min) return false;
+    if (max >= 0 && lv > max) return false;
+    if (exact >= 0 && lv !== exact) return false;
+    return true;
+  };
+}
+
+// 返回年龄过滤函数；未提供年龄条件时返回 null
+function buildAgeFilter(cond: any): ((age: number) => boolean) | null {
+  const min = cond.age_min != null && !Number.isNaN(Number(cond.age_min)) ? Number(cond.age_min) : null;
+  const max = cond.age_max != null && !Number.isNaN(Number(cond.age_max)) ? Number(cond.age_max) : null;
+  if (min == null && max == null) return null;
+  return (age: number) => {
+    if (min != null && age < min) return false;
+    if (max != null && age > max) return false;
+    return true;
+  };
+}
+
+// 条件批量入库/淘汰（2026-08-14）：
+// 按条件（相关人/岗位/状态/AI 初筛结果/学历/年龄）在服务端过滤简历，批量入库(approve)或淘汰(reject)。
+// 认证与 export 一致（x-api-key 或 Bearer JWT）。学历/年龄只在服务端匹配，不暴露到公开列表。
+// 场景示例：
+//   {"action":"approve","conditions":{"related_person":"黄维","education_min":"本科","screening_result":"通过"}}
+//   {"action":"reject","conditions":{"education":"大专","age_max":30}}
+app.post('/api/public/resumes/action', async (c) => {
+  // —— 认证（复用 export 的鉴权）——
+  let actor = 'external-api';
+  const apiKey = c.req.header('x-api-key') || '';
+  const auth = c.req.header('Authorization') || '';
+  const authMatch = auth.match(/^Bearer\s+(.+)$/i);
+  if (apiKey && c.env.RESUME_UPLOAD_API_KEY && apiKey === c.env.RESUME_UPLOAD_API_KEY) {
+    // 有效 API Key
+  } else if (authMatch) {
+    const payload = await verifyJwt(c.env.SECRET_KEY, authMatch[1]);
+    if (!payload) return c.json({ detail: 'Invalid token' }, 401);
+    const user = await getUser(c.env.DB, payload.sub);
+    if (!user || !user.is_active) return c.json({ detail: 'Not authorized' }, 401);
+    actor = user.email;
+  } else {
+    return c.json({ detail: 'Missing API key or token' }, 401);
+  }
+
+  try {
+    const body: any = await c.req.json().catch(() => ({}));
+    const action = body.action === 'reject' ? 'reject' : 'approve';
+    const cond: any = body.conditions && typeof body.conditions === 'object' ? body.conditions : {};
+
+    if (Object.keys(cond).length === 0) {
+      return c.json({ detail: '至少需要一个过滤条件' }, 400);
+    }
+
+    const clauses: string[] = [];
+    const params: any[] = [];
+    if (cond.related_person) {
+      const filter = await buildPersonResumeFilter(c.env.DB, String(cond.related_person).trim());
+      clauses.push(`(${filter.where})`);
+      params.push(...filter.params);
+    }
+    if (cond.position_id) {
+      clauses.push('position_id = ?');
+      params.push(String(cond.position_id));
+    }
+    if (cond.status) {
+      clauses.push('status = ?');
+      params.push(String(cond.status));
+    }
+    if (cond.screening_result) {
+      clauses.push('screening_result = ?');
+      params.push(String(cond.screening_result));
+    }
+    const where = clauses.length ? clauses.join(' AND ') : '1';
+
+    const limitRaw = parseInt(body.limit ?? '200', 10);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 200;
+
+    const rows = await c.env.DB.prepare(
+      `SELECT id, candidate_name, education, parsed_data FROM resumes WHERE ${where} ORDER BY created_at DESC, updated_at DESC LIMIT ?`
+    ).bind(...params, limit).all();
+    const candidates = (rows.results || []) as any[];
+
+    // 学历/年龄 JS 过滤（学历/年龄不在公开列表暴露，仅在服务端匹配）
+    const educationFilter = buildEducationFilter(cond);
+    const ageFilter = buildAgeFilter(cond);
+    const matched = candidates.filter((r: any) => {
+      if (educationFilter && !educationFilter(r.education)) return false;
+      if (ageFilter) {
+        let age: number | null = null;
+        try {
+          const pd = JSON.parse(r.parsed_data || '{}');
+          age = typeof pd.age === 'number' ? pd.age : (pd.age != null ? Number(pd.age) : null);
+        } catch { /* parsed_data 非 JSON，视为无年龄 */ }
+        if (age === null || Number.isNaN(age)) return false;
+        if (!ageFilter(age)) return false;
+      }
+      return true;
+    });
+
+    const ids = matched.map((r: any) => String(r.id));
+    if (ids.length === 0) {
+      return c.json({ ok: true, action, matched: 0, affected: 0, skipped: 0, detail: '没有符合条件的结果' });
+    }
+
+    const result = action === 'reject'
+      ? await rejectBatch(c.env.DB, ids, actor === 'external-api' ? 'public-batch-reject' : actor)
+      : await approveBatch(c.env.DB, ids, actor === 'external-api' ? 'public-batch-approve' : actor);
+
+    return c.json({
+      ok: true,
+      action,
+      matched: ids.length,
+      affected: result.approved.length,
+      skipped: result.skipped.length,
+      failed: result.failed.length,
+      resume_ids: ids,
+      detail: ids.length >= limit ? `命中数量可能超过单次上限 ${limit}，本次处理前 ${limit} 份` : undefined,
     });
   } catch (e: any) {
     return c.json({ detail: 'Internal error: ' + e.message }, 500);

@@ -27,6 +27,27 @@ const LIST_COLUMNS = `
   r.created_at, r.updated_at
 `;
 
+// 学历等级（低→高），与 src/index.ts 的 DEGREE_LEVELS / educationLevel 保持一致
+const DEGREE_LEVELS = ['小学', '初中', '高中', '中专', '大专', '本科', '硕士', '博士'];
+
+function educationLevel(edu: unknown): number {
+  const e = String(edu ?? '').trim();
+  if (!e) return -1;
+  for (let i = DEGREE_LEVELS.length - 1; i >= 0; i--) {
+    if (e.includes(DEGREE_LEVELS[i])) return i;
+  }
+  return -1;
+}
+
+// 生成 SQL 学历等级表达式（0..7，无匹配 -1）。columnExpr 为内部常量拼接，无注入风险。
+function buildEducationLevelSql(columnExpr: string): string {
+  let sql = 'CASE';
+  for (let i = DEGREE_LEVELS.length - 1; i >= 0; i--) {
+    sql += ` WHEN ${columnExpr} LIKE '%${DEGREE_LEVELS[i]}%' THEN ${i}`;
+  }
+  return `${sql} ELSE -1 END`;
+}
+
 export async function handleOptimizedResumeList(c: any): Promise<Response> {
   // Ensure additive resume columns exist (idempotent) before any SELECT references them.
   await ensureResumeListSchema(c.env.DB);
@@ -43,6 +64,7 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   const positionFilter = c.req.query('position');
   const majorFilter = c.req.query('major');
   const educationFilter = c.req.query('education');
+  const educationMinFilter = c.req.query('education_min');
   const minAgeRaw = parseInt(c.req.query('min_age') || '', 10);
   const maxAgeRaw = parseInt(c.req.query('max_age') || '', 10);
   const minAge = Number.isFinite(minAgeRaw) ? minAgeRaw : null;
@@ -90,6 +112,14 @@ export async function handleOptimizedResumeList(c: any): Promise<Response> {
   if (educationFilter) {
     whereClause += " AND json_extract(r.parsed_data, '$.highest_degree') LIKE ?";
     params.push(`%${educationFilter}%`);
+  }
+  if (educationMinFilter) {
+    const minLevel = educationLevel(educationMinFilter);
+    if (minLevel >= 0) {
+      const eduExpr = `COALESCE(json_extract(r.parsed_data, '$.highest_degree'), r.education, '')`;
+      whereClause += ` AND ${buildEducationLevelSql(eduExpr)} >= ?`;
+      params.push(minLevel);
+    }
   }
   // 年龄优先取 parsed_data.age（与前端展示一致），缺失时按生日推算。
   // 生日字段格式多样（1998-12 / 2004.7 / 1996.05.20 / 2004-07-15），

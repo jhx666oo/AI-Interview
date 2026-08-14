@@ -469,7 +469,13 @@ const ResumesList: React.FC = () => {
     }
     if (searchPosition) params.position = searchPosition;
     if (searchMajor) params.major = searchMajor;
-    if (searchEducation) params.education = searchEducation;
+    if (searchEducation) {
+      if (EDUCATION_RANGE_OPTIONS.includes(searchEducation)) {
+        params.education_min = searchEducation.replace('及以上', '');
+      } else {
+        params.education = searchEducation;
+      }
+    }
     if (minimumAge !== null) params.min_age = minimumAge;
     if (maximumAge !== null) params.max_age = maximumAge;
     if (genderFilters.length > 0) params.genders = genderFilters.join(',');
@@ -1302,6 +1308,8 @@ const handleUploadClick = () => {
     if (Array.isArray(v)) return v.filter(Boolean).join('、');
     return (v || '').toString().trim();
   }).filter(Boolean)));
+  // 学历筛选：附加"及以上"档位选项（服务端按学历等级匹配，见后端 education_min）
+  const EDUCATION_RANGE_OPTIONS = ['本科及以上', '大专及以上'];
   // 学历筛选选项：从全部加载数据中提取去重（兼容数组和字符串）
   const educationOptions = Array.from(new Set((dataCache.current || []).map((r: any) => {
     const v = r.education;
@@ -1516,7 +1524,7 @@ const handleUploadClick = () => {
                 showSearch
                 optionFilterProp="children"
               >
-                {educationOptions.map((e: string) => (
+                {[...new Set([...EDUCATION_RANGE_OPTIONS, ...educationOptions])].map((e: string) => (
                   <Select.Option key={e} value={e}>{e}</Select.Option>
                 ))}
               </Select>
