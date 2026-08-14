@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import {
   LEGACY_KEYWORD_GATE_TEXT,
   SCREENING_PROMPT_VERSION,
@@ -33,5 +35,12 @@ describe('screening prompt rules', () => {
       user: '简历：{resume_text}',
     };
     expect(normalizeScreeningPrompt('resume_screening_supplement', prompt)).toEqual(prompt);
+  });
+
+  it('uses D1-compatible substring matching in the prompt migration', async () => {
+    const sql = await readFile(resolve(process.cwd(), 'migrations/0031_keyword_screening_rule_v2.sql'), 'utf8');
+    expect(sql).toContain('instr(prompt_configs');
+    expect(sql).not.toContain('LIKE');
+    expect(sql).not.toContain('GLOB');
   });
 });
