@@ -37,6 +37,8 @@ import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-not
 import { ensureBusinessScreeningSchema } from './business-screening/repository';
 import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from './business-screening/routes';
 import { createPublicToken } from './business-screening/token';
+import { createPublicQueryRoutes } from './public-api/routes';
+import { resolveInterviewerName } from './public-api/helpers';
 import {
   assertDailyReportDate,
   claimScreeningQueueRecord,
@@ -1486,6 +1488,13 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
 });
 app.route('/', businessScreeningRoutes);
+
+// 全面公开只读查询 API（2026-08-14）：两档鉴权（无 key 公开脱敏 / x-api-key 完整），
+// 姓名容错（编辑距离 ≤ 1）。person/:name/resumes 由既有路由处理，不在此重复注册。
+const publicQueryRoutes = createPublicQueryRoutes({
+  buildPersonResumeFilter,
+});
+app.route('/', publicQueryRoutes);
 
 // HR 权限隔离：非 admin 用户自动过滤为自己的数据
 function getOwnerName(c: any): string | null {
@@ -8563,7 +8572,23 @@ app.get('/api/positions/:id', async (c) => {
   return c.json(transformRow(row));
 });
 
+// 简历审核详情：返回完整简历（含联系方式/解析数据），必须带 key 或 JWT，
+// 否则与公开脱敏体系冲突（原本未鉴权即泄露全部 PII）。
 app.get('/api/public/review/:resumeId', async (c) => {
+  const apiKey = c.req.header('x-api-key') || '';
+  const auth = c.req.header('Authorization') || '';
+  const authMatch = auth.match(/^Bearer\s+(.+)$/i);
+  let authed = false;
+  if (apiKey && c.env.RESUME_UPLOAD_API_KEY && apiKey === c.env.RESUME_UPLOAD_API_KEY) {
+    authed = true;
+  } else if (authMatch) {
+    const payload = await verifyJwt(c.env.SECRET_KEY, authMatch[1]);
+    if (payload) {
+      const user = await getUser(c.env.DB, payload.sub);
+      if (user && user.is_active) authed = true;
+    }
+  }
+  if (!authed) return c.json({ detail: 'Missing API key or token' }, 401);
   const row = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(c.req.param('resumeId')).first();
   if (!row) return c.json({ detail: 'Not found' }, 404);
   return c.json(transformRow(row));
@@ -8716,7 +8741,15 @@ app.get('/api/public/person/:name/resumes', async (c) => {
     const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
     const statusFilter = c.req.query('status');
 
-    const filter = await buildPersonResumeFilter(c.env.DB, name);
+    // 姓名容错（编辑距离 ≤ 1）：精确命中用原名；差一字的唯一候选自动采用；
+    // 多个候选返回 candidates 供调用方选择（如 魏秋宁 → 魏秋柠）。
+    const resolved = await resolveInterviewerName(c.env.DB, name);
+    if (!resolved.matched && resolved.candidates.length > 0) {
+      return c.json({ person: name, matched: null, candidates: resolved.candidates, total: 0, limit, offset, items: [] });
+    }
+    const effectiveName = resolved.matched || name;
+
+    const filter = await buildPersonResumeFilter(c.env.DB, effectiveName);
     let where = filter.where;
     const params: any[] = [...filter.params];
     if (statusFilter) {
@@ -8743,7 +8776,8 @@ app.get('/api/public/person/:name/resumes', async (c) => {
     }));
 
     return c.json({
-      person: name,
+      person: effectiveName,
+      ...(effectiveName !== name ? { matched_from: name } : {}),
       total: countRow?.cnt ?? 0,
       limit,
       offset,
