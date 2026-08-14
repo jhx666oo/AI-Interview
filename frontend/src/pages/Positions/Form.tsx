@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Form, Input, Button, Card, message, Select, Typography } from 'antd';
+import { Form, Input, Button, Card, message, Select, AutoComplete, Typography } from 'antd';
 import { useNavigate, useParams } from 'react-router-dom';
 import { RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
@@ -224,22 +224,20 @@ const PositionForm: React.FC = () => {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
             <Form.Item name="primary_interviewer" label="一面面试官">
-              <Select
+              <AutoComplete
                 size="large"
-                showSearch
                 allowClear
-                placeholder="选择一面面试官"
-                optionFilterProp="label"
+                placeholder="选择或输入一面面试官"
+                filterOption={(inputValue, option) => String(option?.label || option?.value || '').toLowerCase().includes(inputValue.toLowerCase())}
                 options={primaryInterviewerOptions}
               />
             </Form.Item>
             <Form.Item name="secondary_interviewer" label="二面面试官">
-              <Select
+              <AutoComplete
                 size="large"
-                showSearch
                 allowClear
-                placeholder="选择二面面试官"
-                optionFilterProp="label"
+                placeholder="选择或输入二面面试官"
+                filterOption={(inputValue, option) => String(option?.label || option?.value || '').toLowerCase().includes(inputValue.toLowerCase())}
                 options={secondaryInterviewerOptions}
               />
             </Form.Item>

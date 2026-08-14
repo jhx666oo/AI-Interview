@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Table, Button, Space, message, Modal, Form, Input, InputNumber, Select, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert, Checkbox, Collapse } from 'antd';
+import { Table, Button, Space, message, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert, Checkbox, Collapse } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
@@ -1013,22 +1013,20 @@ const PositionsList: React.FC = () => {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
             <Form.Item name="primary_interviewer" label="一面面试官">
-              <Select
+              <AutoComplete
                 size="large"
-                showSearch
                 allowClear
-                placeholder="选择一面面试官"
-                optionFilterProp="label"
+                placeholder="选择或输入一面面试官"
+                filterOption={(inputValue, option) => String(option?.label || option?.value || '').toLowerCase().includes(inputValue.toLowerCase())}
                 options={primaryInterviewerOptions}
               />
             </Form.Item>
             <Form.Item name="secondary_interviewer" label="二面面试官">
-              <Select
+              <AutoComplete
                 size="large"
-                showSearch
                 allowClear
-                placeholder="选择二面面试官"
-                optionFilterProp="label"
+                placeholder="选择或输入二面面试官"
+                filterOption={(inputValue, option) => String(option?.label || option?.value || '').toLowerCase().includes(inputValue.toLowerCase())}
                 options={secondaryInterviewerOptions}
               />
             </Form.Item>

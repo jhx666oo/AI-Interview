@@ -9,12 +9,17 @@ describe('position interviewer selector wiring', () => {
     expect(formSource).toContain("from './interviewerOptions'");
     expect(formSource).toContain('buildInterviewerOptions(');
     expect(formSource).toContain("request.get('/auth/interviewers')");
-    expect(formSource).toContain('<Select');
+    expect(formSource).toContain('<AutoComplete');
 
     expect(listSource).toContain("from './interviewerOptions'");
     expect(listSource).toContain('buildInterviewerOptions(');
     expect(listSource).toContain("request.get('/auth/interviewers')");
-    expect(listSource).toContain('<Select');
+    expect(listSource).toContain('<AutoComplete');
+  });
+
+  it('allows a name outside the directory to be entered directly', () => {
+    expect(formSource).toContain('AutoComplete');
+    expect(listSource).toContain('AutoComplete');
   });
 
   it('no longer uses the old free-text interviewer placeholders', () => {
