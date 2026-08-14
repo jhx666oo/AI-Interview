@@ -12,7 +12,7 @@ describe('resume card layout contracts', () => {
 
   it('invalidates stale list responses when a new search starts', () => {
     expect(source).toContain('const requestVersion = resumeRefreshVersion.current.invalidate();');
-    expect(source).toContain('pollingEnabled, reprocessBatchActive, searchCandidateName, searchStatus');
+    expect(source).toContain('pollingEnabled, reprocessBatchActive, isCustomMode, searchCandidateName, searchStatus');
   });
 
   it('does not reload the full resume list on every active batch progress poll', () => {
