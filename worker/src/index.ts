@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createOrGetActiveJob } from './resume-processing/job-repository';
+import { createOrGetActiveJob, recoverStaleResumeProcessingJobs } from './resume-processing/job-repository';
 import { normalizeResumeFields } from './resume-processing/fields';
 import { ensureResumeListSchema, exposeStructuredEvaluation, RESUME_LIST_COMPATIBILITY_MIGRATIONS } from './resume-schema';
 import { assertShareDataMode, createShareExpiry, hashShareToken, isShareLinkActive, toPublicBoardRow, toShanghaiSnapshotDate } from './recruiting-operations/share-links';
@@ -424,6 +424,7 @@ export type AICallResult = {
 };
 
 const AI_RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+export const AI_REQUEST_TIMEOUT_MS = 90_000;
 
 function isRetryableHttpStatus(status: number): boolean {
   return AI_RETRYABLE_STATUS.has(status);
@@ -540,59 +541,72 @@ async function callConfiguredAIWithMetadata(
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
-    let resp: Response;
+    const timeoutError = new Error('AI API 调用超时（90s），请检查网络或服务状态');
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        controller.abort();
+        reject(timeoutError);
+      }, AI_REQUEST_TIMEOUT_MS);
+    });
     try {
-      resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${llm.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: aiModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          max_tokens: 4096,
+      const resp = await Promise.race([
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${llm.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: aiModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            max_tokens: 4096,
+          }),
+          signal: controller.signal,
         }),
-        signal: controller.signal,
-      });
+        timeoutPromise,
+      ]);
+
+      if (!resp.ok) {
+        const errText = await Promise.race([resp.text(), timeoutPromise]);
+        const status = resp.status;
+        if (isRetryableHttpStatus(status) && attempt < 3) {
+          await sleepAI(attempt * 1000);
+          continue;
+        }
+        throw new Error(`AI API error ${status}: ${errText.slice(0, 200)}`);
+      }
+
+      // The upstream can resolve fetch() while leaving the response body open.
+      // Keep the same lease for the complete request, including JSON parsing.
+      const data: any = await Promise.race([resp.json(), timeoutPromise]);
+      const totalTokens = data?.usage?.total_tokens || 0;
+      if (totalTokens > 0) await addTokenUsage(env, totalTokens);
+      let text = '';
+      if (data?.choices?.[0]?.message?.content) {
+        text = data.choices[0].message.content;
+      } else if (data?.choices?.[0]?.message?.reasoning_content) {
+        text = data.choices[0].message.reasoning_content;
+      } else {
+        throw new Error(`AI API response format unexpected: ${JSON.stringify(data)}`);
+      }
+      return { text, metadata: { provider: 'configured_api', model: aiModel, attempt, responseChars: text.length } };
     } catch (e: any) {
-      clearTimeout(timeoutId);
-      if (e.name === 'AbortError') throw new Error('AI API 调用超时（90s），请检查网络或服务状态');
+      if (e === timeoutError || e?.name === 'AbortError') {
+        throw timeoutError;
+      }
       lastError = e;
-      if (attempt < 3) {
+      if (attempt < 3 && isRetryableHttpStatus(Number(e?.status))) {
         await sleepAI(attempt * 1000);
         continue;
       }
       throw lastError;
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
-    clearTimeout(timeoutId);
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      const status = resp.status;
-      if (isRetryableHttpStatus(status) && attempt < 3) {
-        await sleepAI(attempt * 1000);
-        continue;
-      }
-      throw new Error(`AI API error ${status}: ${errText.slice(0, 200)}`);
-    }
-
-    const data: any = await resp.json();
-    const totalTokens = data?.usage?.total_tokens || 0;
-    if (totalTokens > 0) await addTokenUsage(env, totalTokens);
-    let text = '';
-    if (data?.choices?.[0]?.message?.content) {
-      text = data.choices[0].message.content;
-    } else if (data?.choices?.[0]?.message?.reasoning_content) {
-      text = data.choices[0].message.reasoning_content;
-    } else {
-      throw new Error(`AI API response format unexpected: ${JSON.stringify(data)}`);
-    }
-    return { text, metadata: { provider: 'configured_api', model: aiModel, attempt, responseChars: text.length } };
   }
 
   throw lastError || new Error('AI API 调用失败');
@@ -5309,6 +5323,11 @@ function applyParsedResumeFields(item: Record<string, any>): void {
 
 app.get('/api/resumes', authMiddleware, async (c) => {
   try {
+    // 页面轮询/刷新时顺便回收被上游 AI 请求卡住的旧任务，避免旧的
+    // running job 永久占用队列并阻止用户重新评估。
+    await recoverStaleResumeProcessingJobs(c.env.DB).catch((error) => {
+      console.error('[resumes] stale job recovery failed', error);
+    });
     // Feature Flag: 开启 SQL 分页查询时走优化路径，不 select 长文本列
     const sqlListEnabled = (c.env.RESUME_SQL_LIST || '').toLowerCase() === 'true';
     if (sqlListEnabled) {
@@ -6250,6 +6269,9 @@ app.post('/api/resumes/batch-reprocess', authMiddleware, handleBatchResumeReproc
 // 新建 scope 参数批量重评入口
 export async function handleScopedBatchResumeReprocess(c: any) {
   try {
+    await recoverStaleResumeProcessingJobs(c.env.DB).catch((error) => {
+      console.error('[scoped-batch-reprocess] stale job recovery failed', error);
+    });
     const body = await c.req.json().catch(() => ({}));
     const scope = body?.scope;
     const ids = body?.ids;
@@ -11223,6 +11245,19 @@ app.post('/api/admin/migrate/file-sha256', async (c) => {
 export default {
   fetch: app.fetch,
   async scheduled(event: any, env: any, ctx: any) {
+    // Reclaim consumer slots held by interrupted AI requests before other
+    // scheduled work. The recovery is idempotent and only touches old jobs.
+    ctx.waitUntil((async () => {
+      try {
+        const result = await recoverStaleResumeProcessingJobs(env.DB);
+        if (result.recovered > 0) {
+          console.warn(`[cron:resume-processing] recovered_stale_jobs=${result.recovered}`);
+        }
+      } catch (error) {
+        console.error('[cron:resume-processing] stale job recovery failed', error);
+      }
+    })());
+
     if (event.cron === '55 15 * * *') {
       ctx.waitUntil((async () => {
         const at = new Date(event.scheduledTime);

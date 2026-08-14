@@ -1,4 +1,6 @@
-import type { ResumeProcessingJob } from './types';
+import { hasValidAiEvaluation, type ResumeProcessingJob } from './types';
+
+export const STALE_RESUME_JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
 export async function ensureResumeProcessingJobsSchema(db: Pick<D1Database, 'prepare'>): Promise<void> {
   await db.prepare(`
@@ -153,4 +155,61 @@ export async function updateJobAIDiagnostics(
   if (diag.errorStage !== undefined) { parts.push('ai_error_stage=?'); values.push(diag.errorStage); }
   await db.prepare(`UPDATE resume_processing_jobs SET ${parts.join(', ')} WHERE id=?`)
     .bind(...values, jobId).run();
+}
+
+/**
+ * Convert jobs that stopped making progress into an explicit terminal state.
+ *
+ * Queue consumers can be interrupted while an upstream AI request is waiting
+ * for a response. D1 then keeps the job as `running`, which blocks the unique
+ * active-job index and consumes one of the queue consumer's concurrency slots.
+ * This recovery is deliberately conservative: a job is only stale when its
+ * heartbeat timestamp is older than the lease, and a valid result already
+ * written to the resume is finalized as completed instead of discarded.
+ */
+export async function recoverStaleResumeProcessingJobs(
+  db: Pick<D1Database, 'prepare'>,
+  staleAfterMs = STALE_RESUME_JOB_TIMEOUT_MS,
+  now = Date.now(),
+): Promise<{ recovered: number }> {
+  const cutoff = new Date(now - staleAfterMs).toISOString();
+  const rows = await db.prepare(
+    `SELECT j.id, j.resume_id, r.parse_status, r.ai_evaluation
+       FROM resume_processing_jobs j
+       LEFT JOIN resumes r ON r.id = j.resume_id
+      WHERE j.status='running' AND j.updated_at < ?`,
+  ).bind(cutoff).all() as { results?: Array<{ id: string; resume_id: string; parse_status?: string | null; ai_evaluation?: unknown }> };
+
+  let recovered = 0;
+  const timestamp = new Date(now).toISOString();
+  for (const row of rows.results || []) {
+    const hasCompletedResult = row.parse_status === 'ai_screened' && hasValidAiEvaluation(row.ai_evaluation);
+    if (hasCompletedResult) {
+      const completed = await db.prepare(
+        `UPDATE resume_processing_jobs
+            SET status='completed', error_code='PROCESSING_RECOVERED',
+                error_message='评估结果已写入，任务状态自动收敛', completed_at=?, updated_at=?
+          WHERE id=? AND status='running' AND updated_at < ?`,
+      ).bind(timestamp, timestamp, row.id, cutoff).run();
+      if (completed.meta?.changes) recovered += 1;
+      continue;
+    }
+
+    const failed = await db.prepare(
+      `UPDATE resume_processing_jobs
+          SET status='failed', error_code='PROCESSING_STALLED',
+              error_message='评估任务超过 10 分钟未更新，已自动停止，可重新评估', completed_at=?, updated_at=?
+        WHERE id=? AND status='running' AND updated_at < ?`,
+    ).bind(timestamp, timestamp, row.id, cutoff).run();
+    if (!failed.meta?.changes) continue;
+
+    await db.prepare(
+      `UPDATE resumes
+          SET parse_status='failed', parse_error='PROCESSING_STALLED: 评估任务超过 10 分钟未更新，已自动停止，可重新评估', updated_at=?
+        WHERE id=? AND parse_status IN ('queued', 'extracting_text', 'extracting_fields', 'screening')`,
+    ).bind(timestamp, row.resume_id).run();
+    recovered += 1;
+  }
+
+  return { recovered };
 }

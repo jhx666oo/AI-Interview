@@ -3,7 +3,7 @@ import {
   ACTIVE_JOB_STATUSES,
   isTerminalJobStatus,
 } from '../src/resume-processing/types';
-import { claimJob, createOrGetActiveJob, updateJobAIDiagnostics, assertJobRunning, ResumeProcessingCancelledError } from '../src/resume-processing/job-repository';
+import { claimJob, createOrGetActiveJob, updateJobAIDiagnostics, assertJobRunning, ResumeProcessingCancelledError, recoverStaleResumeProcessingJobs } from '../src/resume-processing/job-repository';
 
 describe('resume processing job status contract', () => {
   it('only treats completed, failed, and cancelled as terminal', () => {
@@ -171,3 +171,49 @@ describe('job cancellation protection', () => {
     await expect(assertJobRunning(db as never, 'job-1')).rejects.toBeInstanceOf(ResumeProcessingCancelledError);
   });
 });
+
+describe('stale job recovery', () => {
+  it('marks an old running job failed and makes its resume retryable', async () => {
+    const db = createStaleJobDb();
+    const recovered = await recoverStaleResumeProcessingJobs(
+      db as never,
+      10 * 60 * 1000,
+      Date.parse('2026-08-14T00:20:00.000Z'),
+    );
+
+    expect(recovered).toEqual({ recovered: 1 });
+    expect(db.calls.some((sql) => sql.includes("SET status='failed'") && sql.includes('PROCESSING_STALLED'))).toBe(true);
+    expect(db.calls.some((sql) => sql.includes("UPDATE resumes") && sql.includes("parse_status='failed'"))).toBe(true);
+  });
+});
+
+function createStaleJobDb() {
+  const calls: string[] = [];
+  return {
+    calls,
+    prepare(sql: string) {
+      return {
+        bind(..._values: unknown[]) {
+          return {
+            async all() {
+              if (sql.includes("status='running'") && sql.includes('updated_at <')) {
+                return {
+                  results: [{
+                    id: 'job-stale',
+                    resume_id: 'resume-stale',
+                    updated_at: '2026-08-13T23:59:00.000Z',
+                  }],
+                };
+              }
+              return { results: [] };
+            },
+            async run() {
+              calls.push(sql);
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  };
+}

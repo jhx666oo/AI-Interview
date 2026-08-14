@@ -24,7 +24,7 @@ queue = "resume-processing"
 
 # Cron triggers - 北京时间 9:00 提醒待审核候选人；18:00（UTC 10:00）生成并推送日报；23:55 生成招聘看板快照
 [triggers]
-crons = ["0 1 * * *", "0 10 * * *", "55 15 * * *"]
+crons = ["*/5 * * * *", "0 1 * * *", "0 10 * * *", "55 15 * * *"]
 
 # 简历 PDF 存储（KV，替代 D1 base64，避免 SQLITE_TOOBIG）
 [[kv_namespaces]]

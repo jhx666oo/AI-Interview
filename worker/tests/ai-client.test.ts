@@ -97,6 +97,22 @@ describe('callAIWithMetadata', () => {
     expect(result.metadata.model).toBe('deepseek-chat');
     expect(result.metadata.responseChars).toBe(4);
   });
+
+  it('times out while reading a response body instead of leaving the job running forever', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => new Promise(() => undefined),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const resultPromise = callAIWithMetadata(makeEnv(), 'sys', 'user');
+    const rejection = expect(resultPromise).rejects.toThrow(/超时/);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    await rejection;
+  });
 });
 
 describe('callAI compatibility wrapper', () => {
