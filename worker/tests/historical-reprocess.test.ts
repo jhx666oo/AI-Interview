@@ -149,6 +149,62 @@ describe('historical resume reprocess', () => {
     expect(finalValues?.[0]).toBe('queued');
   });
 
+  it('completes a batch when all materialized items are terminal even if pagination found extras', async () => {
+    let finalValues: unknown[] | null = null;
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            return {
+              async first() {
+                if (sql.includes('SELECT status, total_count')) return { status: 'running', total_count: 80 };
+                if (sql.includes('SELECT COUNT(*) AS item_total')) return { item_total: 81, terminal_total: 81, running_total: 0 };
+                return null;
+              },
+              async run() {
+                finalValues = values;
+                return { meta: { changes: 1 } };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await refreshReprocessBatchStatus(db as never, 'batch-1');
+
+    expect(finalValues?.[0]).toBe('completed');
+    expect(finalValues?.[1]).toEqual(expect.any(String));
+  });
+
+  it('does not complete a batch while materialized items are still below the target', async () => {
+    let finalValues: unknown[] | null = null;
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            return {
+              async first() {
+                if (sql.includes('SELECT status, total_count')) return { status: 'running', total_count: 80 };
+                if (sql.includes('SELECT COUNT(*) AS item_total')) return { item_total: 79, terminal_total: 79, running_total: 0 };
+                return null;
+              },
+              async run() {
+                finalValues = values;
+                return { meta: { changes: 1 } };
+              },
+            };
+          },
+        };
+      },
+    };
+
+    await refreshReprocessBatchStatus(db as never, 'batch-1');
+
+    expect(finalValues?.[0]).toBe('running');
+    expect(finalValues?.[1]).toBeNull();
+  });
+
   it('keeps batch item inserts within D1 bound parameter limits', async () => {
     const db = createHistoricalDb([]);
     await insertReprocessBatchItems(db as never, Array.from({ length: 8 }, (_, index) => ({

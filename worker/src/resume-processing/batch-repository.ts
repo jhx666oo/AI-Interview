@@ -210,7 +210,12 @@ export async function refreshReprocessBatchStatus(
   const itemTotal = Number(counts?.item_total || 0);
   const terminalTotal = Number(counts?.terminal_total || 0);
   const targetTotal = Number(batch.total_count || 0) || itemTotal;
-  const completed = targetTotal === itemTotal && terminalTotal === itemTotal;
+  // The coordinator discovers items page by page. A dynamic scope can therefore
+  // materialize one or more extra items after the initial target snapshot. The
+  // batch is complete once the target has been reached and every materialized
+  // item is terminal; requiring strict equality can leave an already-finished
+  // batch stuck in `running`.
+  const completed = itemTotal >= targetTotal && terminalTotal === itemTotal;
   if (batch.status === 'failed' || batch.status === 'cancelled') {
     return;
   }
