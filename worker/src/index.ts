@@ -9012,7 +9012,15 @@ app.post('/api/public/resumes/action', async (c) => {
     const educationFilter = buildEducationFilter(cond);
     const ageFilter = buildAgeFilter(cond);
     const matched = candidates.filter((r: any) => {
-      if (educationFilter && !educationFilter(r.education)) return false;
+      // 学历列可能为空，回退到 parsed_data.highest_degree（与简历列表口径一致）
+      let edu = r.education;
+      if (!edu) {
+        try {
+          const pd = JSON.parse(r.parsed_data || '{}');
+          if (pd && typeof pd === 'object') edu = pd.highest_degree || '';
+        } catch { /* parsed_data 非 JSON，视为无学历 */ }
+      }
+      if (educationFilter && !educationFilter(edu)) return false;
       if (ageFilter) {
         let age: number | null = null;
         try {

@@ -203,6 +203,26 @@ describe('POST /api/public/resumes/action', () => {
     expect(body.resume_ids).toEqual(['res-2']);
   });
 
+  it('falls back to parsed_data.highest_degree when the education column is empty', async () => {
+    const db = makeDb({
+      positions: [POSITION_ROW],
+      resumes: [
+        resumeRow({ id: 'res-1', education: '', screening_result: '通过', parsed_data: JSON.stringify({ highest_degree: '本科', age: 28 }) }),
+        resumeRow({ id: 'res-2', education: '大专', screening_result: '通过', parsed_data: JSON.stringify({ highest_degree: '本科', age: 28 }) }),
+      ],
+    });
+    const res = await post(makeEnv(db), {
+      action: 'approve',
+      conditions: { screening_result: '通过', education_min: '本科' },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    // res-1 学历列空但 parsed_data 是本科 → 命中；res-2 学历列是大专 → 排除
+    expect(body.matched).toBe(1);
+    expect(db.resumeState.get('res-1')).toMatchObject({ status: 'approved' });
+    expect(db.resumeState.get('res-2').status).toBe('pending_screening');
+  });
+
   it('returns WHERE 0 when related_person matches nothing', async () => {
     const db = makeDb({ positions: [], resumes: [resumeRow({ id: 'res-1' })] });
     const res = await post(makeEnv(db), { action: 'approve', conditions: { related_person: '不存在的人' } });
