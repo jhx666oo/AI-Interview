@@ -344,21 +344,35 @@ function normalizeBaseUrl(raw: string | undefined | null): string {
   return u.replace(/\/+$/, '');
 }
 
-// 获取 LLM 配置：优先读取 system_configs 表（网站「AI 模型配置」页所存），fallback 到 Worker 环境变量
-// 返回 { apiKey, baseUrl, model }，三项都尽量从系统配置取，缺失项才回退 env
-async function getLLMConfig(env: Env): Promise<{ apiKey: string; baseUrl: string; model: string }> {
+// 获取 LLM 配置列表（最多 4 组，按优先级从高到低排列）。
+// 优先读取 system_configs 表（网站「AI 模型配置」页所存：llm_* / llm2_* / llm3_* / llm4_*），
+// 第 1 组缺失时回退 Worker 环境变量。仅返回已填写 API Key 的配置。
+async function getLLMConfigs(env: Env): Promise<Array<{ apiKey: string; baseUrl: string; model: string }>> {
   let cfg: any = {};
   try {
-    const row = await env.DB.prepare('SELECT llm_api_key, llm_base_url, llm_model FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+    const row = await env.DB.prepare(
+      'SELECT llm_api_key, llm_base_url, llm_model, llm2_api_key, llm2_base_url, llm2_model, llm3_api_key, llm3_base_url, llm3_model, llm4_api_key, llm4_base_url, llm4_model FROM system_configs ORDER BY updated_at DESC LIMIT 1'
+    ).first() as any;
     if (row) cfg = row;
   } catch (e) {
-    console.error('[AI] getLLMConfig read failed:', e);
+    console.error('[AI] getLLMConfigs read failed:', e);
   }
-  // 优先用户前端配置，其次环境变量（本地 dev），不配则走 Workers AI
-  const apiKey = (cfg.llm_api_key && String(cfg.llm_api_key).trim()) || (env.AI_API_KEY && String(env.AI_API_KEY).trim()) || '';
-  const baseUrl = normalizeBaseUrl(cfg.llm_base_url) || env.AI_BASE_URL || 'https://api.deepseek.com';
-  const model = (cfg.llm_model && String(cfg.llm_model).trim()) || env.AI_MODEL || 'deepseek-v4-flash';
-  return { apiKey, baseUrl, model };
+  const groups = [
+    { apiKey: cfg.llm_api_key, baseUrl: cfg.llm_base_url, model: cfg.llm_model },
+    { apiKey: cfg.llm2_api_key, baseUrl: cfg.llm2_base_url, model: cfg.llm2_model },
+    { apiKey: cfg.llm3_api_key, baseUrl: cfg.llm3_base_url, model: cfg.llm3_model },
+    { apiKey: cfg.llm4_api_key, baseUrl: cfg.llm4_base_url, model: cfg.llm4_model },
+  ];
+  const configs: Array<{ apiKey: string; baseUrl: string; model: string }> = [];
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    // 第 1 组支持环境变量兜底（本地 dev），其余组必须显式配置
+    const apiKey = (g.apiKey && String(g.apiKey).trim()) || (i === 0 ? (env.AI_API_KEY && String(env.AI_API_KEY).trim()) || '' : '');
+    const baseUrl = normalizeBaseUrl(g.baseUrl) || (i === 0 ? (env.AI_BASE_URL || 'https://api.deepseek.com') : 'https://api.deepseek.com');
+    const model = (g.model && String(g.model).trim()) || (i === 0 ? (env.AI_MODEL || 'deepseek-v4-flash') : '');
+    if (apiKey) configs.push({ apiKey, baseUrl, model: model || 'deepseek-chat' });
+  }
+  return configs;
 }
 
 // ==================== AI 每日 Token 限额（防止调试耗光额度）====================
@@ -454,8 +468,10 @@ function buildAICallError(code: string, message: string): Error & { code: string
 /**
  * Main AI entry used by the resume consumer. Records which provider/model was
  * actually used, how many attempts were made, and the response length, so batch
- * failures are diagnosable. Fallback to Workers AI is explicit via
- * AI_FALLBACK_ENABLED — never silent.
+ * failures are diagnosable.
+ *
+ * 配置了多组模型时按优先级从高到低依次尝试，上一组失败（含超时/格式错误/空响应）
+ * 自动降级到下一组；全部失败后若 AI_FALLBACK_ENABLED 为 true 才显式降级到 Workers AI。
  */
 export async function callAIWithMetadata(
   env: Env,
@@ -464,27 +480,42 @@ export async function callAIWithMetadata(
   model?: string,
   options: AICallOptions = {},
 ): Promise<AICallResult> {
-  const llm = await getLLMConfig(env);
-  if (llm.apiKey) {
-    try {
-      return await callConfiguredAIWithMetadata(env, llm, systemPrompt, userPrompt, model, options);
-    } catch (error) {
-      const fallbackEnabled = (env.AI_FALLBACK_ENABLED || '').toLowerCase() === 'true';
-      if (!fallbackEnabled) throw error;
+  const llmConfigs = await getLLMConfigs(env);
+  if (llmConfigs.length > 0) {
+    let lastError: unknown = null;
+    for (let i = 0; i < llmConfigs.length; i++) {
       try {
-        console.log(JSON.stringify({
-          scope: 'resume-processing',
-          event: 'ai.request.fallback',
-          provider: 'configured_api',
-          reason: String((error as any)?.message || error).slice(0, 200),
-        }));
-      } catch { /* logging must never break the request */ }
-      // explicit fallback to Workers AI below
+        return await callConfiguredAIWithMetadata(env, llmConfigs[i], systemPrompt, userPrompt, model, options);
+      } catch (error) {
+        lastError = error;
+        if (i < llmConfigs.length - 1) {
+          try {
+            console.log(JSON.stringify({
+              scope: 'resume-processing',
+              event: 'ai.request.fallback',
+              provider: 'configured_api',
+              config_index: i + 1,
+              reason: String((error as any)?.message || error).slice(0, 200),
+            }));
+          } catch { /* logging must never break the request */ }
+        }
+      }
     }
+    const fallbackEnabled = (env.AI_FALLBACK_ENABLED || '').toLowerCase() === 'true';
+    if (!fallbackEnabled) throw lastError || new Error('AI API 调用失败：所有配置均未返回结果');
+    try {
+      console.log(JSON.stringify({
+        scope: 'resume-processing',
+        event: 'ai.request.fallback',
+        provider: 'configured_api',
+        reason: 'all configured providers failed',
+      }));
+    } catch { /* logging must never break the request */ }
+    // explicit fallback to Workers AI below
   }
 
   if (!env.AI) {
-    if (llm.apiKey) {
+    if (llmConfigs.length > 0) {
       throw new Error('AI API 调用失败且 Workers AI 不可用，请检查 API 配置或 Cloudflare 绑定');
     }
     throw new Error('AI 未配置：请在系统设置中填写 API Key，或在 wrangler.toml 中启用 [ai] 绑定以使用 Cloudflare Workers AI（免费）');
@@ -1199,6 +1230,16 @@ function prepareValue(v: any): any {
 
 function validCol(name: string): boolean {
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
+}
+
+// 系统设置 PUT 时仅持久化可写字段：跳过只读的掩码标记（_set/_last4），
+// 并跳过空 API Key（避免把已保存的 Key 误清空）
+function shouldPersistSystemConfigField(k: string, v: unknown): boolean {
+  if (!validCol(k)) return false;
+  if (['id', 'updated_at'].includes(k)) return false;
+  if (k.endsWith('_set') || k.endsWith('_last4')) return false;
+  if (/^llm\d*_api_key$/.test(k) && (!v || !String(v).trim())) return false;
+  return true;
 }
 
 async function syncCapabilityDimensionsForPosition(db: D1Database, positionName: string, value: unknown): Promise<void> {
@@ -7669,11 +7710,14 @@ app.get('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
   const row = await c.env.DB.prepare('SELECT * FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
   if (!row) return c.json({});
   const result = transformRow(row);
-  // 安全处理：不返回完整 API Key，仅返回是否已设置及末4位
-  const rawKey = String(row.llm_api_key || '').trim();
-  result.llm_api_key_set = rawKey.length > 0;
-  result.llm_api_key_last4 = rawKey.length >= 4 ? rawKey.slice(-4) : null;
-  delete result.llm_api_key;
+  // 安全处理：不返回完整 API Key，仅返回是否已设置及末4位（llm_* ~ llm4_* 共 4 组）
+  for (const suffix of ['', '2', '3', '4']) {
+    const key = `llm${suffix}_api_key`;
+    const rawKey = String(row[key] || '').trim();
+    result[`llm${suffix}_api_key_set`] = rawKey.length > 0;
+    result[`llm${suffix}_api_key_last4`] = rawKey.length >= 4 ? rawKey.slice(-4) : null;
+    delete result[key];
+  }
   return c.json(result);
 });
 
@@ -7684,7 +7728,7 @@ app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
     const cols: string[] = [];
     const vals: any[] = [];
     for (const [k, v] of Object.entries(body)) {
-      if (validCol(k) && !['id', 'updated_at'].includes(k)) {
+      if (shouldPersistSystemConfigField(k, v)) {
         cols.push(k);
         vals.push(prepareValue(v));
       }
@@ -7697,7 +7741,7 @@ app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
     const cols = ['id', 'updated_at'];
     const vals: any[] = [id, now()];
     for (const [k, v] of Object.entries(body)) {
-      if (validCol(k) && !['id', 'updated_at'].includes(k)) {
+      if (shouldPersistSystemConfigField(k, v)) {
         cols.push(k);
         vals.push(prepareValue(v));
       }
@@ -7707,6 +7751,62 @@ app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
   }
   const row = await c.env.DB.prepare('SELECT * FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
   return c.json(transformRow(row));
+});
+
+// 连通性测试：对指定模型配置发一条最小的 Chat Completions 请求，验证可达且可用。
+// 支持两种入参：显式传 { base_url, model, api_key } 测试未保存的临时值；
+// 或传 { index } 测试已保存的第 index（0~3）组配置（用于表单中 Key 未回显的场景）。
+app.post('/api/settings/system/test', authMiddleware, requireRole(['admin']), async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  let baseUrl = normalizeBaseUrl(body.base_url);
+  let model = String(body.model || '').trim();
+  let apiKey = String(body.api_key || '').trim();
+
+  if (!apiKey && body.index !== undefined) {
+    const prefix = ['llm', 'llm2', 'llm3', 'llm4'][Number(body.index)] || 'llm';
+    const row = await c.env.DB.prepare(
+      `SELECT ${prefix}_base_url, ${prefix}_model, ${prefix}_api_key FROM system_configs ORDER BY updated_at DESC LIMIT 1`
+    ).first() as any;
+    if (row?.[`${prefix}_api_key`]) {
+      apiKey = String(row[`${prefix}_api_key`]).trim();
+      baseUrl = normalizeBaseUrl(row[`${prefix}_base_url`]) || baseUrl;
+      model = String(row[`${prefix}_model`] || '').trim() || model;
+    }
+  }
+
+  if (!baseUrl || !model || !apiKey) {
+    return c.json({ ok: false, message: '请完整填写 Base URL / 模型名称 / API Key 后再测试' }, 400);
+  }
+  const url = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      const errText = (await resp.text()).slice(0, 200);
+      return c.json({ ok: false, message: `HTTP ${resp.status}：${errText}` });
+    }
+    const data: any = await resp.json().catch(() => null);
+    const content = data?.choices?.[0]?.message?.content;
+    if (content === undefined) {
+      return c.json({ ok: false, message: '响应格式异常：未返回 choices[0].message.content' });
+    }
+    return c.json({ ok: true, message: '连接成功，模型可用' });
+  } catch (e: any) {
+    const msg = e?.name === 'AbortError' ? '连接超时（20 秒）' : String(e?.message || e).slice(0, 200);
+    return c.json({ ok: false, message: msg });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 });
 
 app.get('/api/settings/mail', authMiddleware, async (c) => {

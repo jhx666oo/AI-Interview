@@ -34,6 +34,24 @@ function okResponse(content: string, extra: Record<string, unknown> = {}): Respo
   });
 }
 
+// 模拟 system_configs 表返回一行（含 llm_* ~ llm4_* 列），用于多配置降级测试
+function envWithSystemConfig(row: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) {
+  const db = {
+    prepare() {
+      return {
+        bind() { return this as any; },
+        all: async () => ({ results: [] }),
+        first: async () => row,
+        run: async () => ({ meta: { changes: 0 } }),
+      };
+    },
+  };
+  return {
+    ...makeEnv(overrides),
+    DB: db as any,
+  };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -183,6 +201,56 @@ describe('callAIWithMetadata', () => {
     await vi.advanceTimersByTimeAsync(90_000);
 
     await rejection;
+  });
+  it('uses the first config when it succeeds even if a backup is configured', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('from-config-1'));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = envWithSystemConfig({
+      llm_api_key: 'key-1', llm_base_url: 'https://config1.example.com', llm_model: 'model-1',
+      llm2_api_key: 'key-2', llm2_base_url: 'https://config2.example.com', llm2_model: 'model-2',
+    });
+
+    const result = await callAIWithMetadata(env, 'sys', 'user');
+    expect(result.text).toBe('from-config-1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('config1.example.com');
+  });
+
+  it('falls back from the first config to the second when the first fails', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 500 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 500 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 500 }))
+      .mockResolvedValueOnce(okResponse('from-config-2'));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = envWithSystemConfig({
+      llm_api_key: 'key-1', llm_base_url: 'https://config1.example.com', llm_model: 'model-1',
+      llm2_api_key: 'key-2', llm2_base_url: 'https://config2.example.com', llm2_model: 'model-2',
+    });
+
+    const resultPromise = callAIWithMetadata(env, 'sys', 'user');
+    const result = await vi.advanceTimersByTimeAsync(10_000).then(() => resultPromise);
+
+    expect(result.text).toBe('from-config-2');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const config2Url = String(fetchMock.mock.calls[3][0]);
+    expect(config2Url).toContain('config2.example.com');
+    const body2 = JSON.parse(String((fetchMock.mock.calls[3][1] as RequestInit).body));
+    expect(body2.model).toBe('model-2');
+  });
+
+  it('skips backup configs that have no api key', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('only-config-1'));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = envWithSystemConfig({
+      llm_api_key: 'key-1', llm_base_url: 'https://config1.example.com', llm_model: 'model-1',
+      llm2_api_key: '', llm3_api_key: undefined, llm4_api_key: null,
+    });
+
+    const result = await callAIWithMetadata(env, 'sys', 'user');
+    expect(result.text).toBe('only-config-1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
