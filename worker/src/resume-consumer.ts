@@ -9,7 +9,7 @@ import { logResumeProcessing, logResumeProcessingError } from './resume-processi
 import { assembleScreeningEvaluation, missingDimensionNames, normalizeDimensionScores, requireCompleteScreeningEvaluation, type DimensionScore } from './resume-processing/dimension-scores';
 import { buildScreeningRepairPrompt, parseStructuredOutput, type StructuredOutputFailureCode, type StructuredOutputResult } from './resume-processing/structured-output';
 import { callAI, callAIWithMetadata, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
-import { WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
+import { buildPositionScreeningContextText, buildPositionSpecificScreeningRule, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
 import { EventRepository } from './recruitment-events/repository';
 import { ResumeSearchDocumentGenerator } from './resume-search/document-generator';
@@ -305,17 +305,36 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       // 第一步：基础筛选（match_score + recommendation + summary + strengths + risks）
       const screenPrompt = await getAIPrompt(env as any, 'resume_screening', {
         system: `你是资深招聘评估AI，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
-        user: '岗位：{position}\n能力维度：{capability_dimensions}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}'
+        user: '岗位：{position}\n岗位职责与要求：{job_description}\n个性化要求：{personalized_requirements}\n能力维度：{capability_dimensions}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}'
       });
       const screenUserText = screenPrompt.user
         .replace('{position}', context.standardPosition || position)
+        .replace('{job_description}', `${context.description || ''}\n${context.requirements || ''}`.trim())
+        .replace('{personalized_requirements}', context.personalizedRequirements || '无')
         .replace('{resume_text}', text)
         .replace('{fields}', JSON.stringify(fields))
         .replace('{capability_dimensions}', context.capabilityDimensions || '');
+      const positionContextText = buildPositionScreeningContextText({
+        standardPosition: context.standardPosition || position,
+        description: context.description,
+        requirements: context.requirements,
+        personalizedRequirements: context.personalizedRequirements,
+        capabilityDimensions: context.capabilityDimensions,
+      });
+      const positionSpecificRule = buildPositionSpecificScreeningRule({
+        standardPosition: context.standardPosition || position,
+        description: context.description,
+        requirements: context.requirements,
+        personalizedRequirements: context.personalizedRequirements,
+        capabilityDimensions: context.capabilityDimensions,
+      });
+      const finalScreenUserText = [screenUserText, positionContextText, positionSpecificRule]
+        .filter(Boolean)
+        .join('\n\n');
       const screeningResult = await callAIWithMetadata(
         env as any,
         screenPrompt.system,
-        screenUserText,
+        finalScreenUserText,
         'deepseek-v4-flash',
         { structured: true, temperature: 0, maxTokens: 8192 },
       );
@@ -441,6 +460,14 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
           if (supUserText.includes('{capability_dimensions}')) supUserText = supUserText.replace('{capability_dimensions}', dimsText);
           if (supUserText.includes('{job_description}')) supUserText = supUserText.replace('{job_description}', dutyText);
           if (supUserText.includes('{personalized_requirements}')) supUserText = supUserText.replace('{personalized_requirements}', personalizedReqs || '无');
+          const positionSpecificRule = buildPositionSpecificScreeningRule({
+            standardPosition: resolvedTitle,
+            description: posDescription,
+            requirements: posRequirements,
+            personalizedRequirements: personalizedReqs,
+            capabilityDimensions: dimsText,
+          });
+          if (positionSpecificRule) supUserText += `\n\n${positionSpecificRule}`;
           const dimResponse = await callAI(
             env as any,
             supplementPrompt.system,
@@ -473,10 +500,18 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
           const supUserText = supplementPrompt.user
             .replace('{resume_text}', text)
             .replace('{missing_dimensions}', missingDimensions.join('、'));
+          const positionSpecificRule = buildPositionSpecificScreeningRule({
+            standardPosition: resolvedTitle,
+            description: posDescription,
+            requirements: posRequirements,
+            personalizedRequirements: personalizedReqs,
+            capabilityDimensions: configuredDimensions.map((item: any) => `${item.name || ''}：${item.description || ''}`).join('\n'),
+          });
+          const finalSupUserText = positionSpecificRule ? `${supUserText}\n\n${positionSpecificRule}` : supUserText;
           const supplemental = await callAI(
             env as any,
             supplementPrompt.system,
-            supUserText,
+            finalSupUserText,
             'deepseek-v4-flash',
             { structured: true, temperature: 0, maxTokens: 4096 },
           );
@@ -611,17 +646,36 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       const context = await getPositionContext(env.DB, position);
       const r2ScreenPrompt = await getAIPrompt(env as any, 'resume_screening', {
         system: `你是资深招聘评估 AI，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
-        user: '岗位：{position}\n能力维度：{capability_dimensions}\n字段：{fields}\n简历：{resume_text}'
+        user: '岗位：{position}\n岗位职责与要求：{job_description}\n个性化要求：{personalized_requirements}\n能力维度：{capability_dimensions}\n字段：{fields}\n简历：{resume_text}'
       });
       const r2ScreenUser = r2ScreenPrompt.user
         .replace('{position}', context.standardPosition || position)
+        .replace('{job_description}', `${context.description || ''}\n${context.requirements || ''}`.trim())
+        .replace('{personalized_requirements}', context.personalizedRequirements || '无')
         .replace('{capability_dimensions}', context.capabilityDimensions)
         .replace('{fields}', JSON.stringify(fields))
         .replace('{resume_text}', text);
+      const r2PositionContextText = buildPositionScreeningContextText({
+        standardPosition: context.standardPosition || position,
+        description: context.description,
+        requirements: context.requirements,
+        personalizedRequirements: context.personalizedRequirements,
+        capabilityDimensions: context.capabilityDimensions,
+      });
+      const r2PositionSpecificRule = buildPositionSpecificScreeningRule({
+        standardPosition: context.standardPosition || position,
+        description: context.description,
+        requirements: context.requirements,
+        personalizedRequirements: context.personalizedRequirements,
+        capabilityDimensions: context.capabilityDimensions,
+      });
+      const finalR2ScreenUser = [r2ScreenUser, r2PositionContextText, r2PositionSpecificRule]
+        .filter(Boolean)
+        .join('\n\n');
       const screeningResult = await callAIWithMetadata(
         env as any,
         r2ScreenPrompt.system,
-        r2ScreenUser,
+        finalR2ScreenUser,
         undefined,
         { structured: true, temperature: 0, maxTokens: 8192 },
       );
@@ -677,10 +731,18 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
           const r2SupUser = r2SupplementPrompt.user
             .replace('{resume_text}', text)
             .replace('{missing_dimensions}', missingDimensions.join('、'));
+          const r2PositionSpecificRule = buildPositionSpecificScreeningRule({
+            standardPosition: context.standardPosition || position,
+            description: context.description,
+            requirements: context.requirements,
+            personalizedRequirements: context.personalizedRequirements,
+            capabilityDimensions: context.capabilityDimensions,
+          });
+          const finalR2SupUser = r2PositionSpecificRule ? `${r2SupUser}\n\n${r2PositionSpecificRule}` : r2SupUser;
           const supplemental = await callAI(
             env as any,
             r2SupplementPrompt.system,
-            r2SupUser,
+            finalR2SupUser,
             'deepseek-v4-flash',
             { structured: true, temperature: 0, maxTokens: 4096 },
           );

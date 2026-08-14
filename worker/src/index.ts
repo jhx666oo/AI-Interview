@@ -3204,11 +3204,20 @@ export async function resolvePositionTitle(db: any, positionName: string): Promi
 // getPositionContext: 根据岗位名查询上下文（标准岗位名、能力维度、个性化需求、薪资范围）
 export async function getPositionContext(db: any, positionName: string): Promise<{
   standardPosition: string;
+  description: string;
+  requirements: string;
   capabilityDimensions: string;
   personalizedRequirements: string;
   salaryRange: string;
 }> {
-  const result = { standardPosition: positionName, capabilityDimensions: '', personalizedRequirements: '', salaryRange: '' };
+  const result = {
+    standardPosition: positionName,
+    description: '',
+    requirements: '',
+    capabilityDimensions: '',
+    personalizedRequirements: '',
+    salaryRange: '',
+  };
   if (!positionName) return result;
 
   // 1. 岗位映射：查找标准岗位名
@@ -3232,9 +3241,14 @@ export async function getPositionContext(db: any, positionName: string): Promise
   // 2. 能力维度：从 positions 表读取
   try {
     const pos = await db.prepare(
-      'SELECT capability_dimensions, salary_range FROM positions WHERE title = ? LIMIT 1'
+      'SELECT description, requirements, personalized_requirements, capability_dimensions, salary_range FROM positions WHERE title = ? LIMIT 1'
     ).bind(lookupName).first();
     if (pos) {
+      result.description = String(pos.description || '');
+      result.requirements = String(pos.requirements || '');
+      if (pos.personalized_requirements) {
+        result.personalizedRequirements = String(pos.personalized_requirements);
+      }
       if (pos.capability_dimensions) {
         let dims = pos.capability_dimensions;
         try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? ((d.name || d.title || '') + '：' + (d.description || d.definition || '')) : String(d)).join('\n\n'); } catch {}
@@ -7842,6 +7856,12 @@ app.get('/api/settings/prompts', authMiddleware, async (c) => {
     for (const key of deprecatedKeys) {
       delete result.prompts[key];
     }
+    for (const key of ['resume_screening', 'resume_screening_supplement']) {
+      const prompt = result.prompts[key];
+      if (prompt?.system && prompt?.user) {
+        result.prompts[key] = normalizeScreeningPrompt(key, prompt);
+      }
+    }
     return c.json(result);
   } catch { return c.json({ prompts: {} }); }
 });
@@ -7903,7 +7923,12 @@ app.get('/api/settings/prompts/:key', authMiddleware, async (c) => {
   if (!row?.prompt_configs) return c.json({ detail: 'Not found' }, 404);
   try {
     const configs = JSON.parse(row.prompt_configs);
-    return c.json(configs[c.req.param('key')] || { detail: 'Not found' }, 404);
+    const key = c.req.param('key');
+    const prompt = configs.prompts?.[key] || configs[key];
+    if (!prompt) return c.json({ detail: 'Not found' }, 404);
+    return c.json(
+      prompt?.system && prompt?.user ? normalizeScreeningPrompt(key, prompt) : prompt,
+    );
   } catch { return c.json({ detail: 'Not found' }, 404); }
 });
 
@@ -7915,6 +7940,7 @@ app.put('/api/settings/prompts/:key', authMiddleware, async (c) => {
     if (!system || !user) {
       return c.json({ detail: 'system 和 user 字段为必填' }, 400);
     }
+    const normalizedPrompt = normalizeScreeningPrompt(key, { system, user });
 
     const row = await c.env.DB.prepare('SELECT id, prompt_configs FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
     let configs: any = {};
@@ -7922,7 +7948,7 @@ app.put('/api/settings/prompts/:key', authMiddleware, async (c) => {
       try { configs = JSON.parse(row.prompt_configs); } catch { configs = {}; }
     }
     if (!configs.prompts) configs.prompts = {};
-    configs.prompts[key] = { system, user };
+    configs.prompts[key] = normalizedPrompt;
 
     if (row) {
       await c.env.DB.prepare('UPDATE system_configs SET prompt_configs = ?, updated_at = ? WHERE id = ?')
