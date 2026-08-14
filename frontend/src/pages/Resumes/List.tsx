@@ -192,6 +192,16 @@ const ResumesList: React.FC = () => {
   const setMaximumAge = (v: number | null) => setFilter('max_age', v !== null ? String(v) : undefined);
   const genderFilters = filterVal('genders') ? filterVal('genders')!.split(',') : [];
   const setGenderFilters = (v: string[]) => setFilter('genders', v.length > 0 ? v.join(',') : undefined);
+
+  // 自定义筛选（岗位文本全文匹配 + 符合程度），独立于普通筛选，不持久化
+  const [customPosition, setCustomPosition] = useState<string | undefined>(undefined);
+  const [customCondition, setCustomCondition] = useState('');
+  const [customThreshold, setCustomThreshold] = useState<number>(60);
+  const [customResults, setCustomResults] = useState<any[]>([]);
+  const [customTotal, setCustomTotal] = useState(0);
+  const [customActive, setCustomActive] = useState(false);
+  const [customLoading, setCustomLoading] = useState(false);
+  const isCustomMode = customActive;
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewRecord, setPreviewRecord] = useState<any>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string>('');
@@ -539,7 +549,7 @@ const ResumesList: React.FC = () => {
 
   // 轮询检查解析状态 - 每 5 秒刷新数据，让用户能看到评估进度
   useEffect(() => {
-    if (pollingEnabled && !reprocessBatchActive) {
+    if (pollingEnabled && !reprocessBatchActive && !isCustomMode) {
       pollingRef.current = setInterval(async () => {
         try {
           const res = await fetchResumes(true, cardPageRef.current, cardPageSizeRef.current);
@@ -576,7 +586,7 @@ const ResumesList: React.FC = () => {
         pollingRef.current = null;
       }
     };
-  }, [pollingEnabled, reprocessBatchActive, searchCandidateName, searchStatus, searchPosition, searchMajor, searchEducation, minimumAge, maximumAge, genderFilters]);
+  }, [pollingEnabled, reprocessBatchActive, isCustomMode, searchCandidateName, searchStatus, searchPosition, searchMajor, searchEducation, minimumAge, maximumAge, genderFilters]);
 
   // Batch reprocess polling
   useEffect(() => {
@@ -656,6 +666,38 @@ const ResumesList: React.FC = () => {
 
 
 
+  const runCustomScreen = async () => {
+    if (!customPosition) { message.warning('请选择岗位'); return; }
+    const cond = customCondition.trim();
+    if (!cond) { message.warning('请输入筛选条件'); return; }
+    setCustomLoading(true);
+    try {
+      const res: any = await request.post('/resumes/custom-screen', {
+        position: customPosition,
+        condition: cond,
+        threshold: customThreshold,
+        limit: 100,
+      });
+      setCustomResults(res?.items || []);
+      setCustomTotal(res?.total ?? (res?.items || []).length);
+      setCustomActive(true);
+      setPollingEnabled(false);
+      setSelectedRowKeys([]);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '自定义筛选失败');
+    } finally {
+      setCustomLoading(false);
+    }
+  };
+
+  const clearCustomScreen = () => {
+    setCustomActive(false);
+    setCustomResults([]);
+    setCustomTotal(0);
+    setCustomCondition('');
+    fetchResumes(false, 1, cardPageSizeRef.current);
+  };
+
   const handleSearch = () => {
     cardPageRef.current = 1;
     setCardPage(1);
@@ -671,6 +713,10 @@ const ResumesList: React.FC = () => {
     setMinimumAge(null);
     setMaximumAge(null);
     setGenderFilters([]);
+    setCustomActive(false);
+    setCustomResults([]);
+    setCustomTotal(0);
+    setCustomCondition('');
     setCardPage(1);
     dataCache.current = [];
     loadedRef.current = false;
@@ -1433,7 +1479,7 @@ const handleUploadClick = () => {
         <Card size="small" style={{ marginBottom: 16, borderRadius: 6 }} styles={{ body: { padding: '12px 16px', overflow: 'visible' } }}>
           <ResponsiveToolbar
             actions={<>
-              {selectedRowKeys.length > 0 && (
+              {!isCustomMode && selectedRowKeys.length > 0 && (
                 <>
                   <span style={{ color: '#64748B' }}>已选 {selectedRowKeys.length} 项</span>
                   {canBatchPush && (
@@ -1444,14 +1490,16 @@ const handleUploadClick = () => {
                   <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
                 </>
               )}
-              <Checkbox
-                checked={currentPageSelection.checked}
-                indeterminate={currentPageSelection.indeterminate}
-                disabled={currentPageIds.length === 0}
-                onChange={(event) => setSelectedRowKeys((previous) => toggleCurrentPageSelection(previous, currentPageIds, event.target.checked))}
-              >
-                全选本页
-              </Checkbox>
+              {!isCustomMode && (
+                <Checkbox
+                  checked={currentPageSelection.checked}
+                  indeterminate={currentPageSelection.indeterminate}
+                  disabled={currentPageIds.length === 0}
+                  onChange={(event) => setSelectedRowKeys((previous) => toggleCurrentPageSelection(previous, currentPageIds, event.target.checked))}
+                >
+                  全选本页
+                </Checkbox>
+              )}
               <div className="resume-toolbar__search-actions">
                 <span style={{ width: 1, height: 20, background: '#E2E8F0' }} />
                 <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>搜索</Button>
@@ -1557,21 +1605,60 @@ const handleUploadClick = () => {
                 onChange={(values) => setGenderFilters(values.map(String))}
               />
             </Space></div>
+            <div className="resume-toolbar__field" style={{ borderLeft: '1px solid #E2E8F0', paddingLeft: 12 }}>
+              <Space size={4}>
+                <Text style={{ fontSize: 13, color: '#333' }}>自定义筛选：</Text>
+                <Select
+                  placeholder="岗位"
+                  value={customPosition}
+                  onChange={setCustomPosition}
+                  style={{ width: 120 }}
+                  allowClear
+                  showSearch
+                  optionFilterProp="children"
+                >
+                  {positions.map((p: any) => (
+                    <Select.Option key={p.id || p.title} value={p.title}>{p.title}</Select.Option>
+                  ))}
+                </Select>
+                <Input
+                  allowClear
+                  value={customCondition}
+                  onChange={event => setCustomCondition(event.target.value)}
+                  onPressEnter={runCustomScreen}
+                  placeholder="如：持有护士证"
+                  style={{ width: 150 }}
+                />
+                <Text style={{ fontSize: 13, color: '#333' }}>阈值</Text>
+                <InputNumber min={0} max={100} value={customThreshold} onChange={value => setCustomThreshold(value == null ? 60 : Number(value))} style={{ width: 60 }} />
+                <Button type="primary" icon={<SearchOutlined />} loading={customLoading} onClick={runCustomScreen}>筛选</Button>
+                {customActive && (
+                  <Button onClick={clearCustomScreen}>清除</Button>
+                )}
+              </Space>
+            </div>
           </ResponsiveToolbar>
         </Card>
 
       {/* 候选人卡片列表 */}
-      {loading ? (
+      {loading && !isCustomMode ? (
         <div style={{ textAlign: 'center', padding: 60 }}>
           <SyncOutlined spin style={{ fontSize: 32, color: '#1677ff' }} />
           <p style={{ marginTop: 12, color: '#666' }}>加载中...</p>
         </div>
-      ) : data.length === 0 ? (
+      ) : customLoading ? (
+        <div style={{ textAlign: 'center', padding: 60 }}>
+          <SyncOutlined spin style={{ fontSize: 32, color: '#1677ff' }} />
+          <p style={{ marginTop: 12, color: '#666' }}>正在筛选「{customCondition}」的匹配简历...</p>
+        </div>
+      ) : isCustomMode && customResults.length === 0 ? (
+        <Empty description="没有符合条件的简历" style={{ padding: 60 }} />
+      ) : !isCustomMode && data.length === 0 ? (
         <Empty description="暂无简历数据" style={{ padding: 60 }} />
       ) : (
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {pagedData.map((record: any) => {
+            {(isCustomMode ? customResults : pagedData).map((record: any) => {
               const ageText = cleanAge(record.age);
               const genderText = cleanGender(record.gender);
               const normalizedEvaluation = normalizeResumeEvaluation(record);
@@ -1596,17 +1683,19 @@ const handleUploadClick = () => {
                   {/* 顶部：身份、状态和操作分区，窄屏时自然换行 */}
                   <div className="resume-card__header">
                     <div className="resume-card__identity">
-                      <Checkbox
-                        checked={selectedRowKeys.includes(record.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedRowKeys([...selectedRowKeys, record.id]);
-                          } else {
-                            setSelectedRowKeys(selectedRowKeys.filter(k => k !== record.id));
-                          }
-                        }}
-                        onClick={e => e.stopPropagation()}
-                      />
+                      {!isCustomMode && (
+                        <Checkbox
+                          checked={selectedRowKeys.includes(record.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedRowKeys([...selectedRowKeys, record.id]);
+                            } else {
+                              setSelectedRowKeys(selectedRowKeys.filter(k => k !== record.id));
+                            }
+                          }}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      )}
                       <span className="resume-card__name">{record.candidate_name || '未知'}</span>
                       <Tooltip title={[genderText, ageText, record.education, record.major].filter(Boolean).join(' · ') || '暂无信息'}>
                         <span className="resume-card__summary">
@@ -1651,6 +1740,26 @@ const handleUploadClick = () => {
                       {renderActionButtons(record)}
                     </div>
                   </div>
+
+                  {/* 自定义筛选符合程度 */}
+                  {record.custom_match && (
+                    <div className="resume-card__evaluation">
+                      <div className="resume-card__evaluation-summary">
+                        <Tooltip title={record.custom_match.reason || '暂无理由'}>
+                          <Tag
+                            color={record.custom_match.score >= customThreshold ? 'green' : 'orange'}
+                            style={{ margin: 0, fontSize: 12 }}
+                          >
+                            符合程度 {record.custom_match.score}%
+                          </Tag>
+                        </Tooltip>
+                        <span style={{ fontSize: 12, color: '#8c8c8c' }}>
+                          {record.custom_match.method === 'ai' ? 'AI 语义评分' : '关键词评分'}
+                          {record.custom_match.reason ? `：${record.custom_match.reason}` : ''}
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* 评估任务状态提示 */}
                   {evalCardState.status !== 'idle' && (
@@ -1715,16 +1824,22 @@ const handleUploadClick = () => {
               );
             })}
           </div>
-          <SimplePagination
-            current={cardPage}
-            pageSize={cardPageSize}
-            total={listStats.total}
-            onChange={handleCardPageChange}
-            pageSizeOptions={RESUME_PAGE_SIZE_OPTIONS}
-            onPageSizeChange={handleCardPageSizeChange}
-            showQuickJumper
-            showLastPage
-          />
+          {isCustomMode ? (
+            <div style={{ textAlign: 'center', padding: '8px 0', color: '#8c8c8c', fontSize: 12 }}>
+              共筛选出 {customTotal} 份符合条件的简历，按符合程度从高到低排序
+            </div>
+          ) : (
+            <SimplePagination
+              current={cardPage}
+              pageSize={cardPageSize}
+              total={listStats.total}
+              onChange={handleCardPageChange}
+              pageSizeOptions={RESUME_PAGE_SIZE_OPTIONS}
+              onPageSizeChange={handleCardPageSizeChange}
+              showQuickJumper
+              showLastPage
+            />
+          )}
         </>
       )}
 
