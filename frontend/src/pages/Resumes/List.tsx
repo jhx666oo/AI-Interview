@@ -706,7 +706,7 @@ const ResumesList: React.FC = () => {
         condition: cond,
         threshold: customThreshold,
         limit: 100,
-      }, { timeout: 15000 });
+      }, { timeout: 60000 });
       if (runId !== customRunRef.current) return; // 已被新的筛选/清除覆盖
       const scores: Array<{ id: string; score: number; reason: string }> =
         Array.isArray(res?.scores) ? res.scores : [];

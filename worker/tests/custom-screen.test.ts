@@ -186,7 +186,7 @@ describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）
     expect(hit!.params).toContain('%士证%');
     // 2 个岗位参数 + 16 个 LIKE 参数 + 末尾的 LIMIT 值
     expect(hit!.params).toHaveLength(19);
-    expect(hit!.params[hit!.params.length - 1]).toBe(200);
+    expect(hit!.params[hit!.params.length - 1]).toBe(1000);
   });
 
   it('excludes single-char tokens from the SQL LIKE prefilter', async () => {
@@ -213,7 +213,7 @@ describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）
 });
 
 describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后台补齐）', () => {
-  it('returns AI semantic scores for eligible (keyword < 80%) resumes', async () => {
+  it('returns AI semantic scores for keyword-matched resumes', async () => {
     globalThis.fetch = (async () => new Response(
       JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":92,"reason":"持有护士执业证书，符合条件"}]' } }] }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -228,22 +228,21 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(body.scores[0]).toMatchObject({ id: 'res-1', score: 92 });
   });
 
-  it('skips high-keyword-hit resumes (>=80%) from AI scoring', async () => {
+  it('AI-scores all keyword-matched resumes including obvious hits (>=80%)', async () => {
     let callCount = 0;
     globalThis.fetch = (async () => { callCount++; return new Response(
-      JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":80,"reason":"符合"}]' } }] }),
+      JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":80,"reason":"符合"},{"id":"res-4","score":95,"reason":"完全符合"}]' } }] }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     ); }) as any;
 
-    // res-1 (75%) 该走 AI；res-4 (100%) 直接关键词分，不进 AI 批次
+    // 全量解析：res-1 (75%) 与 res-4 (100% 命中) 都进 AI 批次打分，不再跳过明显命中
     const db = makeDb({ resumes: [RESUME_NURSE, RESUME_FULL_MATCH] });
     const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(callCount).toBe(1); // 只有 res-1 一批
-    const ids = body.scores.map((s: any) => s.id);
-    expect(ids).toEqual(['res-1']);
-    expect(ids).not.toContain('res-4');
+    expect(callCount).toBe(1); // 2 份同批
+    const ids = body.scores.map((s: any) => s.id).sort();
+    expect(ids).toEqual(['res-1', 'res-4']);
   });
 
   it('keeps keyword scores when the AI call fails (returns empty scores)', async () => {
