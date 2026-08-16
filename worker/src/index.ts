@@ -5829,10 +5829,132 @@ app.get('/api/resumes', authMiddleware, async (c) => {
   }
 });
 
+// 构建自定义筛选候选池：岗位别名 + HR 权限隔离 + 关键词预筛（两阶段路由共用，保证同一候选池）
+async function buildCustomScreenPool(
+  env: any,
+  position: string,
+  condition: string,
+  owner: string | null,
+  limit: number,
+): Promise<{ pool: Array<{ row: any; hits: number; matched: string[]; combined: string }>; tokens: string[]; positionMap: Map<string, string> }> {
+  // 岗位别名：标准岗位名 + 映射表里映射到该标准名的全部原始岗位名（与列表路由 position 过滤语义一致）
+  const aliasRaws = new Set<string>([position]);
+  try {
+    const mappings = await env.DB.prepare('SELECT raw_name, raw_names, mapped_name FROM position_mappings').all();
+    for (const row of mappings.results || []) {
+      if (String(row.mapped_name || '').trim() === position) {
+        if (row.raw_name && String(row.raw_name).trim()) aliasRaws.add(String(row.raw_name).trim());
+        if (row.raw_names) {
+          try {
+            const parsed = typeof row.raw_names === 'string' ? JSON.parse(row.raw_names) : row.raw_names;
+            if (Array.isArray(parsed)) for (const a of parsed) if (typeof a === 'string' && a.trim()) aliasRaws.add(a.trim());
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  const placeholders = [...aliasRaws].map(() => '?').join(', ');
+  const rows = await env.DB.prepare(
+    `SELECT id, candidate_name, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, hr_disposition, business_screening_status, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at
+     FROM resumes
+     WHERE (mapped_position IN (${placeholders}) OR position_applied IN (${placeholders}))
+       AND (ocr_markdown IS NOT NULL OR raw_text IS NOT NULL OR resume_markdown IS NOT NULL OR parsed_data IS NOT NULL)
+     ORDER BY created_at DESC, updated_at DESC`
+  ).bind(...aliasRaws, ...aliasRaws).all();
+  let candidates = (rows.results || []) as any[];
+
+  // HR 权限隔离：非 admin 只筛选自己负责的岗位（与列表路由逻辑一致）
+  if (owner) {
+    try {
+      const ownerRows = await env.DB.prepare('SELECT raw_name, mapped_name FROM position_mappings WHERE responsible_person = ?').bind(owner).all();
+      const ownerPositions = new Set<string>();
+      for (const m of ownerRows.results || []) {
+        if (m.raw_name) ownerPositions.add(String(m.raw_name));
+        if (m.mapped_name) ownerPositions.add(String(m.mapped_name));
+      }
+      if (ownerPositions.size > 0) {
+        candidates = candidates.filter((i: any) => {
+          const pos = i.mapped_position || i.position_applied || '';
+          return ownerPositions.has(pos);
+        });
+      }
+    } catch {}
+  }
+
+  const positionMap = await buildPositionMapping(env.DB).catch(() => new Map<string, string>());
+  const tokens = tokenizeCondition(condition);
+
+  // 关键词预筛：命中 ≥1 的进入候选池，按命中数降序截断，控制 AI 打分成本
+  const poolRows: Array<{ row: any; hits: number; matched: string[]; combined: string }> = [];
+  for (const row of candidates) {
+    const combined = buildResumeFullText(row);
+    const { hits, matched } = countTokenHits(combined, tokens);
+    if (hits > 0) poolRows.push({ row, hits, matched, combined });
+  }
+  poolRows.sort((a, b) => b.hits - a.hits);
+  const pool = poolRows.slice(0, Math.min(60, Math.max(limit, 20)));
+  return { pool, tokens, positionMap };
+}
+
+// AI 语义打分：只给关键词命中率 <80% 的简历打分（命中明显的直接用关键词分），
+// 并发分批 + 全局截止时间兜底；超时/失败自动回退关键词分（不返回该 id 即可）。
+async function aiScoreCustomScreenPool(
+  env: any,
+  pool: Array<{ row: any; hits: number; matched: string[]; combined: string }>,
+  position: string,
+  condition: string,
+  tokens: string[],
+): Promise<Array<{ id: string; score: number; reason: string }>> {
+  const eligible = pool.filter(({ hits }) => keywordMatchScore(hits, tokens.length) < 80);
+  if (eligible.length === 0) return [];
+
+  const BATCH = 8;
+  const AI_TIMEOUT_MS = Math.max(3000, Number(env.CUSTOM_SCREEN_AI_TIMEOUT_MS) || 6000);
+  const batches: Array<Array<{ row: any; hits: number; matched: string[]; combined: string }>> = [];
+  for (let i = 0; i < eligible.length; i += BATCH) batches.push(eligible.slice(i, i + BATCH));
+
+  async function scoreBatch(batch: Array<{ row: any; hits: number; matched: string[]; combined: string }>): Promise<Map<string, { id: string; score: number; reason: string }>> {
+    const prompt = await getAIPrompt(env, 'resume_custom_screen', DEFAULT_CUSTOM_SCREEN_PROMPT);
+    const resumeBlock = batch.map(({ row, combined }) => `#id:${row.id}\n${combined.slice(0, 400)}`).join('\n\n');
+    const userText = prompt.user
+      .replace('{position}', position)
+      .replace('{condition}', condition)
+      .replace('{resumes}', resumeBlock);
+    const resultText = await Promise.race([
+      callAI(env, prompt.system, userText, 'deepseek-v4-flash', {
+        structured: true,
+        temperature: 0,
+        maxTokens: 512,
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('CUSTOM_SCREEN_AI_TIMEOUT')), AI_TIMEOUT_MS)),
+    ]);
+    const parsed = extractJSON(resultText);
+    const list = Array.isArray(parsed) ? parsed : (parsed?.items || parsed?.results || []);
+    const out = new Map<string, { id: string; score: number; reason: string }>();
+    if (Array.isArray(list)) {
+      for (const entry of list) {
+        const id = String(entry?.id ?? '');
+        if (!id) continue;
+        const score = Math.max(0, Math.min(100, Math.round(Number(entry?.score) || 0)));
+        out.set(id, { id, score, reason: String(entry?.reason ?? '').slice(0, 120) });
+      }
+    }
+    return out;
+  }
+
+  const scored = await Promise.all(batches.map((b) => scoreBatch(b).catch((e) => {
+    console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${(e as Error)?.message}`);
+    return new Map<string, { id: string; score: number; reason: string }>();
+  })));
+  const scores = new Map<string, { id: string; score: number; reason: string }>();
+  for (const m of scored) for (const [id, v] of m) scores.set(id, v);
+  return [...scores.values()];
+}
+
 /**
  * POST /api/resumes/custom-screen
- * 自定义筛选：在某岗位全部简历的文本内容中按自定义条件检索，返回符合的简历卡片 + 符合程度（0-100）。
- * 关键词预筛控制 AI 成本，AI 语义打分（失败/缺省自动回退关键词打分）。遵循 HR 岗位权限隔离。
+ * 自定义筛选（第一层）：关键词打分立即返回（毫秒级卡片），AI 语义分由 /custom-screen/scores 后台补齐。
  */
 app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
   try {
@@ -5849,110 +5971,8 @@ app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
     const limit = Math.max(1, Math.min(200, Number(body.limit) || 100));
     const owner = getOwnerName(c);
 
-    // 岗位别名：标准岗位名 + 映射表里映射到该标准名的全部原始岗位名（与列表路由 position 过滤语义一致）
-    const aliasRaws = new Set<string>([position]);
-    try {
-      const mappings = await c.env.DB.prepare('SELECT raw_name, raw_names, mapped_name FROM position_mappings').all();
-      for (const row of mappings.results || []) {
-        if (String(row.mapped_name || '').trim() === position) {
-          if (row.raw_name && String(row.raw_name).trim()) aliasRaws.add(String(row.raw_name).trim());
-          if (row.raw_names) {
-            try {
-              const parsed = typeof row.raw_names === 'string' ? JSON.parse(row.raw_names) : row.raw_names;
-              if (Array.isArray(parsed)) for (const a of parsed) if (typeof a === 'string' && a.trim()) aliasRaws.add(a.trim());
-            } catch {}
-          }
-        }
-      }
-    } catch {}
-
-    const placeholders = [...aliasRaws].map(() => '?').join(', ');
-    const rows = await c.env.DB.prepare(
-      `SELECT id, candidate_name, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, hr_disposition, business_screening_status, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at
-       FROM resumes
-       WHERE (mapped_position IN (${placeholders}) OR position_applied IN (${placeholders}))
-         AND (ocr_markdown IS NOT NULL OR raw_text IS NOT NULL OR resume_markdown IS NOT NULL OR parsed_data IS NOT NULL)
-       ORDER BY created_at DESC, updated_at DESC`
-    ).bind(...aliasRaws, ...aliasRaws).all();
-    let candidates = (rows.results || []) as any[];
-
-    // HR 权限隔离：非 admin 只筛选自己负责的岗位（与列表路由逻辑一致）
-    if (owner) {
-      try {
-        const ownerRows = await c.env.DB.prepare(
-          'SELECT raw_name, mapped_name FROM position_mappings WHERE responsible_person = ?'
-        ).bind(owner).all();
-        const ownerPositions = new Set<string>();
-        for (const m of ownerRows.results || []) {
-          if (m.raw_name) ownerPositions.add(String(m.raw_name));
-          if (m.mapped_name) ownerPositions.add(String(m.mapped_name));
-        }
-        if (ownerPositions.size > 0) {
-          candidates = candidates.filter((i: any) => {
-            const pos = i.mapped_position || i.position_applied || '';
-            return ownerPositions.has(pos);
-          });
-        }
-      } catch {}
-    }
-
-    const positionMap = await buildPositionMapping(c.env.DB).catch(() => new Map<string, string>());
-    const tokens = tokenizeCondition(condition);
+    const { pool, tokens, positionMap } = await buildCustomScreenPool(c.env as any, position, condition, owner, limit);
     if (tokens.length === 0) return c.json({ detail: '筛选条件无法识别' }, 400);
-
-    // 关键词预筛：命中 ≥1 的进入候选池，按命中数降序截断，控制 AI 打分成本
-    const poolRows: Array<{ row: any; hits: number; matched: string[]; combined: string }> = [];
-    for (const row of candidates) {
-      const combined = buildResumeFullText(row);
-      const { hits, matched } = countTokenHits(combined, tokens);
-      if (hits > 0) poolRows.push({ row, hits, matched, combined });
-    }
-    poolRows.sort((a, b) => b.hits - a.hits);
-    const pool = poolRows.slice(0, Math.min(60, Math.max(limit, 20)));
-
-    // AI 语义打分（并发分批）：所有批次并行发起，每批由全局截止时间兜底。
-    // 截止时间内完成批次的简历用 AI 语义分，超时/失败批次回退关键词打分；
-    // 整体耗时 ≈ 最慢单批（~12s），而非各批之和，尽量多候选拿到语义分（前端请求超时 30s）。
-    const aiScores = new Map<string, { score: number; reason: string }>();
-    const BATCH = 8;
-    const AI_TIMEOUT_MS = Math.max(3000, Number((c.env as any).CUSTOM_SCREEN_AI_TIMEOUT_MS) || 12000);
-    const batches: Array<Array<{ row: any; hits: number; matched: string[]; combined: string }>> = [];
-    for (let i = 0; i < pool.length; i += BATCH) batches.push(pool.slice(i, i + BATCH));
-
-    async function scoreBatch(batch: Array<{ row: any; hits: number; matched: string[]; combined: string }>): Promise<Map<string, { score: number; reason: string }>> {
-      const prompt = await getAIPrompt(c.env as any, 'resume_custom_screen', DEFAULT_CUSTOM_SCREEN_PROMPT);
-      const resumeBlock = batch.map(({ row, combined }) => `#id:${row.id}\n${combined.slice(0, 700)}`).join('\n\n');
-      const userText = prompt.user
-        .replace('{position}', position)
-        .replace('{condition}', condition)
-        .replace('{resumes}', resumeBlock);
-      const resultText = await Promise.race([
-        callAI(c.env as any, prompt.system, userText, 'deepseek-v4-flash', {
-          structured: true,
-          temperature: 0,
-          maxTokens: 1024,
-        }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('CUSTOM_SCREEN_AI_TIMEOUT')), AI_TIMEOUT_MS)),
-      ]);
-      const parsed = extractJSON(resultText);
-      const list = Array.isArray(parsed) ? parsed : (parsed?.items || parsed?.results || []);
-      const scores = new Map<string, { score: number; reason: string }>();
-      if (Array.isArray(list)) {
-        for (const entry of list) {
-          const id = String(entry?.id ?? '');
-          if (!id) continue;
-          const score = Math.max(0, Math.min(100, Math.round(Number(entry?.score) || 0)));
-          scores.set(id, { score, reason: String(entry?.reason ?? '').slice(0, 120) });
-        }
-      }
-      return scores;
-    }
-
-    const scored = await Promise.all(batches.map((b) => scoreBatch(b).catch((e) => {
-      console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${(e as Error)?.message}`);
-      return new Map<string, { score: number; reason: string }>();
-    })));
-    for (const m of scored) for (const [id, v] of m) aiScores.set(id, v);
 
     // 组装卡片字段 + custom_match（符合程度 + 理由 + 打分方式）
     const items = pool.map(({ row, hits, matched }) => {
@@ -5965,19 +5985,44 @@ app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
       }
       const raw = row.mapped_position || row.position_applied || '';
       item.standard_position = resolveMappedPosition(positionMap, raw);
-      const ai = aiScores.get(String(row.id));
-      item.custom_match = ai
-        ? { score: ai.score, reason: ai.reason || '符合筛选条件', method: 'ai' as const }
-        : { score: keywordMatchScore(hits, tokens.length), reason: `关键词命中 ${matched.length}/${tokens.length}：${matched.join('、') || '无'}`, method: 'keyword' as const };
+      item.custom_match = {
+        score: keywordMatchScore(hits, tokens.length),
+        reason: `关键词命中 ${matched.length}/${tokens.length}：${matched.join('、') || '无'}`,
+        method: 'keyword' as const,
+      };
       return item;
     });
     items.sort((a: any, b: any) => b.custom_match.score - a.custom_match.score);
     const resultItems = items.slice(0, limit);
 
-    return c.json({ items: resultItems, total: resultItems.length, position, condition, threshold });
+    return c.json({ items: resultItems, total: resultItems.length, position, condition, threshold, ai_pending: true });
   } catch (e: any) {
     console.error(`[custom-screen] 自定义筛选失败: ${e.message}`);
     return c.json({ detail: '自定义筛选失败: ' + e.message }, 500);
+  }
+});
+
+/**
+ * POST /api/resumes/custom-screen/scores
+ * 自定义筛选（第二层）：对候选池中关键词命中率 <80% 的简历做 AI 语义打分，返回 {id, score, reason}。
+ * 命中明显的简历不用 AI（直接用关键词分）；整体耗时 ≈ 最慢单批（~6s），前端取回后合并并重排。
+ */
+app.post('/api/resumes/custom-screen/scores', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const position = String(body.position || '').trim();
+    const condition = String(body.condition || '').trim();
+    if (!position || !condition) return c.json({ detail: '缺少岗位或筛选条件' }, 400);
+    if (condition.length > 2000) return c.json({ detail: '筛选条件过长（最多 2000 字）' }, 400);
+    const limit = Math.max(1, Math.min(200, Number(body.limit) || 100));
+    const owner = getOwnerName(c);
+    const { pool, tokens } = await buildCustomScreenPool(c.env as any, position, condition, owner, limit);
+    if (tokens.length === 0) return c.json({ scores: [], total: 0 });
+    const scores = await aiScoreCustomScreenPool(c.env as any, pool, position, condition, tokens);
+    return c.json({ scores, total: pool.length, ai_pending: false });
+  } catch (e: any) {
+    console.error(`[custom-screen] AI 语义分计算失败: ${e.message}`);
+    return c.json({ detail: 'AI 语义分计算失败: ' + e.message }, 500);
   }
 });
 
