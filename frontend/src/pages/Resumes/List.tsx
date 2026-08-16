@@ -675,55 +675,51 @@ const ResumesList: React.FC = () => {
     const runId = ++customRunRef.current;
     setCustomLoading(true);
     try {
-      // 第一层：关键词命中立即返回（~1s），卡片先出
-      const res: any = await request.post('/resumes/custom-screen', {
-        position: customPosition,
-        condition: cond,
-        threshold: customThreshold,
-        limit: 100,
-      }, { timeout: 12000 });
-      setCustomResults(res?.items || []);
-      setCustomTotal(res?.total ?? (res?.items || []).length);
+      // 候选集（关键词召回，~1-2s）与 AI 语义分（~10-30s）并行获取，合并后再一次性展示；
+      // 用户要求只显示 AI 解析后的结果，关键词卡片不再提前上屏
+      const [kwRes, scoresRes] = await Promise.all([
+        request.post('/resumes/custom-screen', {
+          position: customPosition,
+          condition: cond,
+          threshold: customThreshold,
+          limit: 100,
+        }, { timeout: 20000 }),
+        request.post('/resumes/custom-screen/scores', {
+          position: customPosition,
+          condition: cond,
+          threshold: customThreshold,
+          limit: 100,
+        }, { timeout: 60000 }),
+      ]);
+      if (runId !== customRunRef.current) return; // 已被新的筛选/清除覆盖
+      const scores: Array<{ id: string; score: number; reason: string }> =
+        Array.isArray(scoresRes?.scores) ? scoresRes.scores : [];
+      if (scores.length === 0) {
+        message.error('AI 语义解析失败，请稍后重试');
+        return;
+      }
+      const scoreMap = new Map(scores.map((s) => [String(s.id), s]));
+      const items: any[] = Array.isArray(kwRes?.items) ? kwRes.items : [];
+      // 只展示拿到 AI 语义分的简历（否则会显示不准的关键词卡片）
+      const merged = items
+        .map((item: any) => {
+          const s = scoreMap.get(String(item.id));
+          if (!s) return null;
+          return { ...item, custom_match: { score: s.score, reason: s.reason || '符合筛选条件', method: 'ai' } };
+        })
+        .filter((item: any) => item !== null)
+        .sort((a: any, b: any) => b.custom_match.score - a.custom_match.score);
+      setCustomResults(merged);
+      setCustomTotal(merged.length);
       setCustomActive(true);
       setPollingEnabled(false);
       setSelectedRowKeys([]);
-      // 第二层：AI 语义分后台补齐，合并一次
-      if (res?.ai_pending) {
-        fetchCustomScreenScores(cond, runId);
-      }
     } catch (e: any) {
       const timedOut = e?.code === 'ECONNABORTED' || /timeout|超时/i.test(String(e?.message || ''));
       message.error(e?.response?.data?.detail || (timedOut ? '筛选请求超时，请重试' : '自定义筛选失败'));
     } finally {
-      setCustomLoading(false);
-    }
-  };
-
-  const fetchCustomScreenScores = async (cond: string, runId: number) => {
-    try {
-      const res: any = await request.post('/resumes/custom-screen/scores', {
-        position: customPosition,
-        condition: cond,
-        threshold: customThreshold,
-        limit: 100,
-      }, { timeout: 60000 });
-      if (runId !== customRunRef.current) return; // 已被新的筛选/清除覆盖
-      const scores: Array<{ id: string; score: number; reason: string }> =
-        Array.isArray(res?.scores) ? res.scores : [];
-      if (scores.length === 0) return;
-      const scoreMap = new Map(scores.map((s) => [String(s.id), s]));
-      setCustomResults((prev) => {
-        if (!Array.isArray(prev) || prev.length === 0) return prev;
-        const merged = prev.map((item: any) => {
-          const s = scoreMap.get(String(item.id));
-          if (!s) return item;
-          return { ...item, custom_match: { score: s.score, reason: s.reason || '符合筛选条件', method: 'ai' } };
-        });
-        return merged.slice().sort((a: any, b: any) => (b.custom_match?.score ?? 0) - (a.custom_match?.score ?? 0));
-      });
-    } catch (e) {
-      // AI 分补齐失败时保留关键词分，静默降级
-      console.warn('[custom-screen] AI 语义分补齐失败，保留关键词分', e);
+      // 仅当仍是本轮筛选时才收起 loading，避免覆盖后续新筛选
+      if (runId === customRunRef.current) setCustomLoading(false);
     }
   };
 
@@ -1691,7 +1687,7 @@ const handleUploadClick = () => {
       ) : customLoading ? (
         <div style={{ textAlign: 'center', padding: 60 }}>
           <SyncOutlined spin style={{ fontSize: 32, color: '#1677ff' }} />
-          <p style={{ marginTop: 12, color: '#666' }}>正在筛选「{customCondition}」的匹配简历...</p>
+          <p style={{ marginTop: 12, color: '#666' }}>正在 AI 解析「{customCondition}」的匹配简历，请稍候...</p>
         </div>
       ) : isCustomMode && customResults.length === 0 ? (
         <Empty description="没有符合条件的简历" style={{ padding: 60 }} />
