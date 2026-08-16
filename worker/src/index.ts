@@ -8870,15 +8870,16 @@ app.get('/api/public/positions/:id/progress', async (c) => {
       return c.json({ detail: 'Not found' }, 404);
     }
     const title = position.title || '';
-    // 简历按岗位匹配须经 position_mappings 解析，与前端 /api/resumes 的 position 过滤一致
+    // 简历按岗位匹配须与前端 /api/resumes 的 position 过滤完全一致：
+    // raw = mapped_position || position_applied（单一取值，mapped 优先），
+    // raw === 标题 或经 position_mappings 解析后 === 标题。不做 position_id 直连。
     const positionMap = await buildPositionMapping(c.env.DB);
-    const isPositionResume = (r: any) =>
-      String(r.position_id || '') === String(position.id)
-      || [r.mapped_position, r.position_applied].some(
-        (raw: any) => !!raw && (raw === title || resolveMappedPosition(positionMap, raw) === title)
-      );
+    const isPositionResume = (r: any) => {
+      const raw = r.mapped_position || r.position_applied || '';
+      return raw === title || resolveMappedPosition(positionMap, raw) === title;
+    };
     const resumeRows = await c.env.DB.prepare(
-      'SELECT status, parse_status, position_id, mapped_position, position_applied FROM resumes'
+      'SELECT status, parse_status, mapped_position, position_applied FROM resumes'
     ).all();
     const resumes = ((resumeRows.results || []) as any[]).filter(isPositionResume);
     const totalResumes = resumes.length;
@@ -8948,18 +8949,17 @@ app.get('/api/public/positions/:id/resumes', async (c) => {
     const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
     const statusFilter = c.req.query('status');
     const title = position.title || '';
-    // 与 progress 接口一致：经 position_mappings 解析匹配，保证数量与前端 /api/resumes 一致
+    // 与 progress 接口一致：与前端 /api/resumes 的 position 过滤完全相同，保证数量一致
     const positionMap = await buildPositionMapping(c.env.DB);
     const rows = await c.env.DB.prepare(
-      `SELECT id, candidate_name, mapped_position, position_applied, status, stage, match_score, screening_result, parse_status, created_at, updated_at, position_id
+      `SELECT id, candidate_name, mapped_position, position_applied, status, stage, match_score, screening_result, parse_status, created_at, updated_at
        FROM resumes`
     ).all();
-    let matched = ((rows.results || []) as any[]).filter((r: any) =>
-      String(r.position_id || '') === String(position.id)
-      || [r.mapped_position, r.position_applied].some(
-        (raw: any) => !!raw && (raw === title || resolveMappedPosition(positionMap, raw) === title)
-      )
-    );
+    const isPositionResume = (r: any) => {
+      const raw = r.mapped_position || r.position_applied || '';
+      return raw === title || resolveMappedPosition(positionMap, raw) === title;
+    };
+    let matched = ((rows.results || []) as any[]).filter(isPositionResume);
     if (statusFilter) matched = matched.filter((r: any) => r.status === statusFilter);
     matched.sort((a: any, b: any) => {
       const cmp = (x: string, y: string) => (x < y ? 1 : x > y ? -1 : 0);

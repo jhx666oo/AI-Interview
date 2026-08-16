@@ -74,12 +74,12 @@ describe('GET /api/public/positions/:id/progress', () => {
   it('returns position info and funnel progress for a public position', async () => {
     const env = makeEnv(makeDb({
       progressResumes: [
-        { position_id: 'pos-1', status: 'pending_screening', parse_status: 'ai_screened' },
-        { position_id: 'pos-1', status: 'pending_screening', parse_status: 'ai_screened' },
-        { position_id: 'pos-1', status: 'pending_interview', parse_status: 'ai_screened' },
-        { position_id: 'pos-1', status: 'interview_passed', parse_status: 'ai_screened' },
-        { position_id: 'pos-1', status: 'rejected', parse_status: 'ai_screened' },
-        { position_id: 'pos-1', status: 'offered', parse_status: 'processing' },
+        { mapped_position: '软件工程师', status: 'pending_screening', parse_status: 'ai_screened' },
+        { mapped_position: '软件工程师', status: 'pending_screening', parse_status: 'ai_screened' },
+        { mapped_position: '软件工程师', status: 'pending_interview', parse_status: 'ai_screened' },
+        { mapped_position: '软件工程师', status: 'interview_passed', parse_status: 'ai_screened' },
+        { mapped_position: '软件工程师', status: 'rejected', parse_status: 'ai_screened' },
+        { mapped_position: '软件工程师', status: 'offered', parse_status: 'processing' },
       ],
       counts: { scheduled: 4, first_pass: 3, second_pass: 2, third_pass: 1, offers: 1, hired: 1 },
     }));
@@ -110,9 +110,9 @@ describe('GET /api/public/positions/:id/progress', () => {
     const env = makeEnv(makeDb({
       mappings: [{ raw_name: 'IoT产品经理', mapped_name: '软件工程师' }],
       progressResumes: [
-        { position_id: 'pos-1', status: 'pending_screening', parse_status: 'ai_screened' },
-        { position_id: '', mapped_position: 'IoT产品经理', status: 'pending_screening', parse_status: 'ai_screened' },
-        { position_id: '', mapped_position: '后端开发', status: 'rejected', parse_status: 'ai_screened' },
+        { mapped_position: '软件工程师', status: 'pending_screening', parse_status: 'ai_screened' },
+        { mapped_position: '', position_applied: 'IoT产品经理', status: 'pending_screening', parse_status: 'ai_screened' },
+        { mapped_position: '后端开发', status: 'rejected', parse_status: 'ai_screened' },
       ],
     }));
     const res = await worker.fetch(new Request(`${BASE}/api/public/positions/pos-1/progress`), env);
