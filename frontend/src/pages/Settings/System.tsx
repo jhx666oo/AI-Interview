@@ -72,6 +72,8 @@ const SystemSettingsPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [meta, setMeta] = useState<SystemSettings | null>(null);
   const [editing, setEditing] = useState<Record<string, boolean>>({});
+  // 模型表单是否有未保存修改（填写了密钥/链接后提醒及时保存）
+  const [dirty, setDirty] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   // 4 个 AI 配置槽位的展示顺序（llm → llm4 即优先级从高到低），拖拽后保存即生效
   const [order, setOrder] = useState<string[]>(['llm', 'llm2', 'llm3', 'llm4']);
@@ -104,6 +106,7 @@ const SystemSettingsPage: React.FC = () => {
       form.setFieldsValue(values);
       setOrder(['llm', 'llm2', 'llm3', 'llm4']);
       setEditing({});
+      setDirty(false);
     } catch (e) {
       const status = (e as any)?.response?.status;
       if (status === 403) message.error('无权限访问系统设置');
@@ -189,6 +192,7 @@ const SystemSettingsPage: React.FC = () => {
       for (const block of LLM_BLOCKS) reset[`${block.prefix}_api_key`] = '';
       form.setFieldsValue(reset);
       setEditing({});
+      setDirty(false);
       await fetchSettings();
       message.success('模型配置已保存');
     } catch (e) {
@@ -379,7 +383,7 @@ const SystemSettingsPage: React.FC = () => {
         <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
           最多可配置 4 组模型，调用时按优先级从上到下依次尝试，上一组失败（超时 / 格式错误 / 空响应）后自动降级到下一组。拖动左侧手柄或使用 ↑↓ 箭头调整优先级，保存后立即生效。
         </Text>
-        <Form form={form} layout="vertical" autoComplete="off">
+        <Form form={form} layout="vertical" autoComplete="off" onValuesChange={() => setDirty(true)}>
           <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} />
           <input type="password" name="password" autoComplete="current-password" style={{ display: 'none' }} />
 
@@ -478,6 +482,11 @@ const SystemSettingsPage: React.FC = () => {
             );
           })}
         </Form>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 8 }}>
+          {dirty && <Text type="warning">有未保存的修改，请点保存</Text>}
+          <Button icon={<ReloadOutlined />} onClick={fetchSettings}>放弃修改</Button>
+          <Button type="primary" icon={<SaveOutlined />} onClick={handleSave} loading={saving}>保存模型配置</Button>
+        </div>
       </Card>
 
       {/* AI 初筛阈值 */}
