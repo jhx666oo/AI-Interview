@@ -17,6 +17,7 @@ const RESUME_NURSE = {
   status: 'pending_interview',
   screening_result: '通过',
   ocr_markdown: '本人持有护士执业证书，在三甲医院工作三年。',
+  hit_count: 3, // SQL hit_count（"持有护士证"→持有/有护/护士/士证 命中 3 个）
 };
 
 const RESUME_NO_MATCH = {
@@ -26,6 +27,7 @@ const RESUME_NO_MATCH = {
   position_applied: '护士',
   status: 'pending_interview',
   ocr_markdown: '无相关工作经历。',
+  hit_count: 0,
 };
 
 // 条件「持有护士证」→ 持有/有护/护士/士证 4 个 token；本条全命中 → 关键词分 100，跳过 AI
@@ -36,6 +38,7 @@ const RESUME_FULL_MATCH = {
   position_applied: '护士',
   status: 'pending_interview',
   ocr_markdown: '持有护士证，完全符合条件。',
+  hit_count: 4,
 };
 
 const RESUME_DOCTOR = {
@@ -45,6 +48,7 @@ const RESUME_DOCTOR = {
   position_applied: '医生',
   status: 'pending_interview',
   ocr_markdown: '有医师资格，五年经验。',
+  hit_count: 2,
 };
 
 type MockOpts = {
@@ -68,7 +72,19 @@ function makeDb(opts: MockOpts = {}) {
         async all() {
           if (sql.includes('FROM resumes')) {
             opts.capture?.push({ sql, params });
-            return { results: resumes };
+            // 模拟 SQL 预筛：用绑定参数里 %..% 的 LIKE 模式过滤（真实 D1 在 WHERE 里做）
+            const likePatterns = (params || []).filter(
+              (p) => typeof p === 'string' && /^%.+%$/.test(p),
+            );
+            let result = resumes;
+            if (likePatterns.length > 0) {
+              const textOf = (r: any) =>
+                [r.ocr_markdown, r.raw_text, r.resume_markdown, r.parsed_data].filter(Boolean).join(' ').toLowerCase();
+              result = resumes.filter((r) =>
+                likePatterns.some((p) => textOf(r).includes(p.slice(1, -1).toLowerCase())),
+              );
+            }
+            return { results: result };
           }
           if (sql.includes('FROM position_mappings') && sql.includes('responsible_person')) {
             const owner = String(params[0] ?? '');
@@ -159,8 +175,8 @@ describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）
     const item = body.items[0];
     expect(item.id).toBe('res-1');
     expect(item.standard_position).toBe('护士');
-    // "持有护士证" → 持有/有护/护士/士证 共 4 个 token；正文命中 3 个 → 75 分
-    expect(item.custom_match).toEqual({ score: 75, reason: '关键词命中 3/4：持有、有护、护士', method: 'keyword' });
+    // "持有护士证" → 持有/有护/护士/士证 共 4 个 token；SQL hit_count=3 → 75 分（kwRes 不拉全文，matched 为空）
+    expect(item.custom_match).toEqual({ score: 75, reason: '关键词命中 3/4', method: 'keyword' });
   });
 
   it('sorts keyword-phase results by score descending', async () => {
@@ -178,15 +194,19 @@ describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）
     await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证' });
     const hit = capture.find((c) => c.sql.includes('FROM resumes'));
     expect(hit).toBeTruthy();
-    // "持有护士证" → 持有/有护/护士/士证 4 个 len>=2 token → 4 组 LIKE（每组 4 列 = 16 个 ESCAPE）
+    // "持有护士证" → 持有/有护/护士/士证 4 个 len>=2 token → 4 组 LIKE（每组 4 列）；
+    // 每组出现在 SELECT hit_count CASE 与 WHERE 预筛各一次 → 4 组 × 4 列 × 2 = 32 个 ESCAPE
     const escapes = (hit!.sql.match(/ESCAPE/g) || []).length;
-    expect(escapes).toBe(16);
+    expect(escapes).toBe(32);
+    expect(hit!.sql).toContain('AS hit_count');
+    expect(hit!.sql).toContain('CASE WHEN');
+    expect(hit!.sql).toContain('ORDER BY hit_count DESC');
     expect(hit!.sql).toContain('LIMIT ?');
     expect(hit!.params).toContain('%持有%');
     expect(hit!.params).toContain('%士证%');
-    // 2 个岗位参数 + 16 个 LIKE 参数 + 末尾的 LIMIT 值
-    expect(hit!.params).toHaveLength(19);
-    expect(hit!.params[hit!.params.length - 1]).toBe(1000);
+    // 16 个 SELECT hit_params + 2 个岗位参数 + 16 个 WHERE 预筛参数 + 末尾 LIMIT 值
+    expect(hit!.params).toHaveLength(35);
+    expect(hit!.params[hit!.params.length - 1]).toBe(200);
   });
 
   it('excludes single-char tokens from the SQL LIKE prefilter', async () => {
@@ -194,9 +214,9 @@ describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）
     const db = makeDb({ resumes: [RESUME_NURSE], capture });
     await postCustomScreen(makeEnv(db), { position: '护士', condition: 'C语言' });
     const hit = capture.find((c) => c.sql.includes('FROM resumes'));
-    // 只有 "语言" 1 个 len>=2 token → 1 组 LIKE（4 个 ESCAPE）；"c" 不进入 SQL
+    // 只有 "语言" 1 个 len>=2 token → 1 组 LIKE（4 列 × SELECT+WHERE 两处 = 8 个 ESCAPE）；"c" 不进入 SQL
     const escapes = (hit!.sql.match(/ESCAPE/g) || []).length;
-    expect(escapes).toBe(4);
+    expect(escapes).toBe(8);
     expect(hit!.params).not.toContain('%c%');
     expect(hit!.params).toContain('%语言%');
   });

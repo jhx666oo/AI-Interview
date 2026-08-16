@@ -5830,11 +5830,16 @@ app.get('/api/resumes', authMiddleware, async (c) => {
 });
 
 // 构建自定义筛选候选池：岗位别名 + HR 权限隔离 + 关键词预筛（两阶段路由共用，保证同一候选池）
+// 候选池上限：展示最多 ~100 条，AI 打分给 2 倍余量让语义分重排。
+// 池子过大会把上千份简历的整段全文一次拉回 → D1 传输超时（前端"筛选请求超时"）。
+const CUSTOM_SCREEN_POOL_CAP = 200;
+
 async function buildCustomScreenPool(
   env: any,
   position: string,
   condition: string,
   owner: string | null,
+  opts: { includeText?: boolean } = {},
 ): Promise<{ pool: Array<{ row: any; hits: number; matched: string[]; combined: string }>; tokens: string[]; positionMap: Map<string, string> }> {
   // 岗位别名：标准岗位名 + 映射表里映射到该标准名的全部原始岗位名（与列表路由 position 过滤语义一致）
   const aliasRaws = new Set<string>([position]);
@@ -5857,34 +5862,41 @@ async function buildCustomScreenPool(
 
   const tokens = tokenizeCondition(condition);
 
-  // SQL 预筛：用条件里长度>=2 的 token 做 LIKE 粗筛，只回传命中行，避免岗位下简历过多时
-  // 全量拉取文本列导致 D1 传输超时；单字符 token（如 "c"）噪声太大不入 SQL，仍参与 JS 精确计数。
-  // 最多取 8 个 token 控制 SQL 长度。
+  // SQL 预筛 + 命中计数：长度>=2 的 token 做 LIKE 粗筛（最多 8 个），并在 SELECT 里用
+  // CASE 统计每个 token 命中数（hit_count），按命中数降序取前 CUSTOM_SCREEN_POOL_CAP 份。
+  // 命中数排序让真正相关的简历（如含"小米"）排到前面，被"工作"这类人人命中词灌满的池子
+  // 不再截断真命中；单字符 token（如 "c"）噪声大不入 SQL，仍参与 JS 精确计数。
+  // includeText=false（关键词层）不拉长文本列，只传小字段 + hit_count，避免一次几十 MB 传输。
   const prefilterTokens = tokens.filter((t) => t.length >= 2).slice(0, 8);
-  let prefilterSql = '';
-  const prefilterParams: string[] = [];
-  if (prefilterTokens.length > 0) {
-    const escape = (s: string) => s.replace(/[%_\\]/g, (m) => `\\${m}`);
-    const tokenGroup = prefilterTokens
-      .map(() => `(ocr_markdown LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\' OR resume_markdown LIKE ? ESCAPE '\\' OR parsed_data LIKE ? ESCAPE '\\')`)
-      .join(' OR ');
-    prefilterSql = ` AND ${tokenGroup}`;
-    for (const t of prefilterTokens) {
-      const pattern = `%${escape(t)}%`;
-      for (let i = 0; i < 4; i++) prefilterParams.push(pattern);
-    }
+  const escape = (s: string) => s.replace(/[%_\\]/g, (m) => `\\${m}`);
+  const likeGroups: string[] = [];
+  const hitExprs: string[] = [];
+  const hitParams: string[] = [];       // SELECT hit_count CASE 的占位符（先出现在 SQL 文本中）
+  const prefilterParams: string[] = []; // WHERE 预筛的占位符
+  for (const t of prefilterTokens) {
+    const group = `(ocr_markdown LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\' OR resume_markdown LIKE ? ESCAPE '\\' OR parsed_data LIKE ? ESCAPE '\\')`;
+    const pattern = `%${escape(t)}%`;
+    likeGroups.push(group);
+    hitExprs.push(`CASE WHEN ${group} THEN 1 ELSE 0 END`);
+    hitParams.push(pattern, pattern, pattern, pattern);
+    prefilterParams.push(pattern, pattern, pattern, pattern);
   }
+  const prefilterSql = likeGroups.length > 0 ? ` AND (${likeGroups.join(' OR ')})` : '';
+  const hitCountSql = hitExprs.length > 0 ? `(${hitExprs.join(' + ')})` : '0';
 
-  const POOL_SQL_LIMIT = 1000; // 召回上限：只取最新的命中简历，避免全量文本传输；够 AI 全量打分
+  const textCols = opts.includeText
+    ? 'parsed_data, raw_text, resume_markdown, ocr_markdown, '
+    : '';
   const rows = await env.DB.prepare(
-    `SELECT id, candidate_name, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, hr_disposition, business_screening_status, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at
+    `SELECT id, candidate_name, contact, position_applied, mapped_position, status, screening_result, business_screening_status, hr_disposition, gender, birthday, education, hard_requirement_result, capability_scores, ${textCols}datetime(created_at) as created_at, datetime(updated_at) as updated_at,
+     ${hitCountSql} AS hit_count
      FROM resumes
      WHERE (mapped_position IN (${placeholders}) OR position_applied IN (${placeholders}))
        AND (ocr_markdown IS NOT NULL OR raw_text IS NOT NULL OR resume_markdown IS NOT NULL OR parsed_data IS NOT NULL)
        ${prefilterSql}
-     ORDER BY created_at DESC, updated_at DESC
+     ORDER BY hit_count DESC, created_at DESC, updated_at DESC
      LIMIT ?`
-  ).bind(...aliasRaws, ...aliasRaws, ...prefilterParams, POOL_SQL_LIMIT).all();
+  ).bind(...hitParams, ...aliasRaws, ...aliasRaws, ...prefilterParams, CUSTOM_SCREEN_POOL_CAP).all();
   let candidates = (rows.results || []) as any[];
 
   // HR 权限隔离：非 admin 只筛选自己负责的岗位（与列表路由逻辑一致）
@@ -5907,12 +5919,21 @@ async function buildCustomScreenPool(
 
   const positionMap = await buildPositionMapping(env.DB).catch(() => new Map<string, string>());
 
-  // 关键词预筛：命中 ≥1 的全部进入候选池（不截断），按命中数降序；全部交给 AI 语义打分
+  // 关键词预筛：命中 ≥1 的全部进入候选池，按命中数降序；全部交给 AI 语义打分。
+  // kwRes（includeText=false）无全文，靠 SQL hit_count 计分且不筛除（已过 SQL 预筛）；
+  // scores（includeText=true）有全文，用 JS 精确计数过滤并生成 AI 提示词用的 combined 文本。
   const poolRows: Array<{ row: any; hits: number; matched: string[]; combined: string }> = [];
   for (const row of candidates) {
-    const combined = buildResumeFullText(row);
-    const { hits, matched } = countTokenHits(combined, tokens);
-    if (hits > 0) poolRows.push({ row, hits, matched, combined });
+    let hits = Math.max(0, Number(row.hit_count) || 0);
+    let matched: string[] = [];
+    let combined = '';
+    if (opts.includeText) {
+      combined = buildResumeFullText(row);
+      const r = countTokenHits(combined, tokens);
+      hits = r.hits;
+      matched = r.matched;
+    }
+    if (!opts.includeText || hits > 0) poolRows.push({ row, hits, matched, combined });
   }
   poolRows.sort((a, b) => b.hits - a.hits);
   return { pool: poolRows, tokens, positionMap };
@@ -6006,7 +6027,7 @@ app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
       : 60;
     const owner = getOwnerName(c);
 
-    const { pool, tokens, positionMap } = await buildCustomScreenPool(c.env as any, position, condition, owner);
+    const { pool, tokens, positionMap } = await buildCustomScreenPool(c.env as any, position, condition, owner, { includeText: false });
     if (tokens.length === 0) return c.json({ detail: '筛选条件无法识别' }, 400);
 
     // 组装卡片字段 + custom_match（符合程度 + 理由 + 打分方式）
@@ -6022,7 +6043,9 @@ app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
       item.standard_position = resolveMappedPosition(positionMap, raw);
       item.custom_match = {
         score: keywordMatchScore(hits, tokens.length),
-        reason: `关键词命中 ${matched.length}/${tokens.length}：${matched.join('、') || '无'}`,
+        reason: matched.length
+          ? `关键词命中 ${matched.length}/${tokens.length}：${matched.join('、')}`
+          : `关键词命中 ${hits}/${tokens.length}`,
         method: 'keyword' as const,
       };
       return item;
@@ -6049,7 +6072,7 @@ app.post('/api/resumes/custom-screen/scores', authMiddleware, async (c) => {
     if (!position || !condition) return c.json({ detail: '缺少岗位或筛选条件' }, 400);
     if (condition.length > 2000) return c.json({ detail: '筛选条件过长（最多 2000 字）' }, 400);
     const owner = getOwnerName(c);
-    const { pool, tokens } = await buildCustomScreenPool(c.env as any, position, condition, owner);
+    const { pool, tokens } = await buildCustomScreenPool(c.env as any, position, condition, owner, { includeText: true });
     if (tokens.length === 0) return c.json({ scores: [], total: 0 });
     const result = await aiScoreCustomScreenPool(c.env as any, pool, position, condition);
     return c.json({
