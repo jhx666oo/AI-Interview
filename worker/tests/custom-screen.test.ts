@@ -56,6 +56,7 @@ type MockOpts = {
   mappings?: Array<Record<string, unknown>>;
   resumes?: Array<Record<string, unknown>>;
   capture?: Array<{ sql: string; params: unknown[] }>;
+  systemConfigs?: Record<string, unknown>;
 };
 
 function makeDb(opts: MockOpts = {}) {
@@ -67,7 +68,8 @@ function makeDb(opts: MockOpts = {}) {
       const stmt = (params: unknown[]) => ({
         async first() {
           if (sql.includes('SELECT * FROM users WHERE email')) return user;
-          return null; // system_configs 读取（提示词 / LLM 配置）走默认
+          if (sql.includes('FROM system_configs')) return opts.systemConfigs ?? null;
+          return null; // 其他 system_configs 读取（提示词等）走默认
         },
         async all() {
           if (sql.includes('FROM resumes')) {
@@ -263,6 +265,36 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(callCount).toBe(1); // 2 份同批
     const ids = body.scores.map((s: any) => s.id).sort();
     expect(ids).toEqual(['res-1', 'res-4']);
+  });
+
+  it('shards the pool across multiple configured LLMs concurrently', async () => {
+    const calls: string[][] = [];
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      const body = init.body as string;
+      const ids = [...body.matchAll(/#id:([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
+      calls.push(ids);
+      const content = ids.map((id) => JSON.stringify({ id, score: 80, reason: '符合' }));
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: `[${content.join(',')}]` } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as any;
+
+    // 配置了 2 个 LLM（system_configs 有 2 组 key）→ 候选池分 2 片，各配置并发处理一片
+    const db = makeDb({
+      resumes: [RESUME_NURSE, RESUME_FULL_MATCH],
+      systemConfigs: {
+        llm_api_key: 'sk-a', llm_base_url: 'https://api.a.com/v1', llm_model: 'model-a',
+        llm2_api_key: 'sk-b', llm2_base_url: 'https://api.b.com/v1', llm2_model: 'model-b',
+      },
+    });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(calls.length).toBe(2); // 两个配置各处理一片（每片 1 份 → 各 1 批）
+    const seen = calls.flat();
+    expect(seen.sort()).toEqual(['res-1', 'res-4']);
+    expect(body.scores.map((s: any) => s.id).sort()).toEqual(['res-1', 'res-4']);
   });
 
   it('keeps keyword scores when the AI call fails (returns empty scores)', async () => {

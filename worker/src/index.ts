@@ -5962,22 +5962,35 @@ async function aiScoreCustomScreenPool(
   // 批内超时给足余量；各批并发执行，总耗时 ≈ 最慢单批，远小于前端 90s 请求超时。
   // 之前 6s 必超时 → 每批都失败 → 前端一直拿到空分。
   const AI_TIMEOUT_MS = Math.max(3000, Number(env.CUSTOM_SCREEN_AI_TIMEOUT_MS) || 30000);
-  const batches: Array<Array<{ row: any; hits: number; matched: string[]; combined: string }>> = [];
-  for (let i = 0; i < eligible.length; i += BATCH) batches.push(eligible.slice(i, i + BATCH));
+  const chunk = <T>(arr: T[]): T[][] => {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += BATCH) out.push(arr.slice(i, i + BATCH));
+    return out;
+  };
 
-  async function scoreBatch(batch: Array<{ row: any; hits: number; matched: string[]; combined: string }>): Promise<Map<string, { id: string; score: number; reason: string }>> {
+  async function scoreBatch(
+    batch: Array<{ row: any; hits: number; matched: string[]; combined: string }>,
+    config?: { apiKey: string; baseUrl: string; model: string },
+  ): Promise<Map<string, { id: string; score: number; reason: string }>> {
     const prompt = await getAIPrompt(env, 'resume_custom_screen', DEFAULT_CUSTOM_SCREEN_PROMPT);
     const resumeBlock = batch.map(({ row, combined }) => `#id:${row.id}\n${combined.slice(0, 400)}`).join('\n\n');
     const userText = prompt.user
       .replace('{position}', position)
       .replace('{condition}', condition)
       .replace('{resumes}', resumeBlock);
+    const textPromise = config
+      ? callConfiguredAIWithMetadata(env, config, prompt.system, userText, 'deepseek-v4-flash', {
+          structured: true,
+          temperature: 0,
+          maxTokens: 1024, // 8 份简历的 JSON 输出，512 易被截断 → 解析失败 → 整批空分
+        }).then(r => r.text)
+      : callAI(env, prompt.system, userText, 'deepseek-v4-flash', {
+          structured: true,
+          temperature: 0,
+          maxTokens: 1024,
+        });
     const resultText = await Promise.race([
-      callAI(env, prompt.system, userText, 'deepseek-v4-flash', {
-        structured: true,
-        temperature: 0,
-        maxTokens: 1024, // 8 份简历的 JSON 输出，512 易被截断 → 解析失败 → 整批空分
-      }),
+      textPromise,
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('CUSTOM_SCREEN_AI_TIMEOUT')), AI_TIMEOUT_MS)),
     ]);
     const parsed = extractJSON(resultText);
@@ -5994,15 +6007,34 @@ async function aiScoreCustomScreenPool(
     return out;
   }
 
+  // 多配置并发：配置 ≥2 时把候选池均分成 N 片，各账号并发处理自己那份，整体耗时 ≈ 单片耗时，更快。
+  // 每个简历只由一个模型筛选，不做多模型综合评分。单配置保持原有 callAI 降级语义。
+  const configs = await getLLMConfigs(env).catch(() => [] as Array<{ apiKey: string; baseUrl: string; model: string }>);
+  const groups: Array<{
+    config?: { apiKey: string; baseUrl: string; model: string };
+    batches: Array<Array<{ row: any; hits: number; matched: string[]; combined: string }>>;
+  }> = [];
+  if (configs.length >= 2) {
+    const size = Math.ceil(eligible.length / configs.length);
+    for (let i = 0; i < configs.length; i++) {
+      const shard = eligible.slice(i * size, (i + 1) * size);
+      if (shard.length > 0) groups.push({ config: configs[i], batches: chunk(shard) });
+    }
+  } else {
+    groups.push({ batches: chunk(eligible) });
+  }
+
   let firstError: string | null = null;
-  const scored = await Promise.all(batches.map((b) => scoreBatch(b).catch((e) => {
-    const msg = String((e as Error)?.message || e).slice(0, 300);
-    firstError = firstError || msg;
-    console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${msg}`);
-    return new Map<string, { id: string; score: number; reason: string }>();
-  })));
+  const perGroup = await Promise.all(groups.map(({ config, batches }) =>
+    Promise.all(batches.map((b) => scoreBatch(b, config).catch((e) => {
+      const msg = String((e as Error)?.message || e).slice(0, 300);
+      firstError = firstError || msg;
+      console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${msg}`);
+      return new Map<string, { id: string; score: number; reason: string }>();
+    })))
+  ));
   const scores = new Map<string, { id: string; score: number; reason: string }>();
-  for (const m of scored) for (const [id, v] of m) scores.set(id, v);
+  for (const group of perGroup) for (const m of group) for (const [id, v] of m) scores.set(id, v);
   const list = [...scores.values()];
   // 全部批次失败时把首个真实报错回传给前端，便于定位（配置/超时/限额等）
   if (list.length === 0 && firstError) return { scores: list, error: firstError };
