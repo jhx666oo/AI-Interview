@@ -1622,13 +1622,14 @@ const handleUploadClick = () => {
                     <Select.Option key={p.id || p.title} value={p.title}>{p.title}</Select.Option>
                   ))}
                 </Select>
-                <Input
+                <Input.TextArea
                   allowClear
                   value={customCondition}
                   onChange={event => setCustomCondition(event.target.value)}
                   onPressEnter={runCustomScreen}
                   placeholder="如：持有护士证"
-                  style={{ width: 150 }}
+                  autoSize={{ minRows: 1, maxRows: 6 }}
+                  style={{ width: 220 }}
                 />
                 <Text style={{ fontSize: 13, color: '#333' }}>阈值</Text>
                 <InputNumber min={0} max={100} value={customThreshold} onChange={value => setCustomThreshold(value == null ? 60 : Number(value))} style={{ width: 60 }} />

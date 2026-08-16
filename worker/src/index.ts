@@ -5841,9 +5841,8 @@ app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
     const condition = String(body.condition || '').trim();
     if (!position) return c.json({ detail: '缺少岗位参数' }, 400);
     if (!condition) return c.json({ detail: '请输入筛选条件' }, 400);
-    if (position.length > 200 || condition.length > 200) {
-      return c.json({ detail: '岗位或筛选条件过长（各最多 200 字）' }, 400);
-    }
+    if (position.length > 200) return c.json({ detail: '岗位名称过长（最多 200 字）' }, 400);
+    if (condition.length > 2000) return c.json({ detail: '筛选条件过长（最多 2000 字）' }, 400);
     const threshold = Number.isFinite(Number(body.threshold))
       ? Math.max(0, Math.min(100, Math.round(Number(body.threshold))))
       : 60;
