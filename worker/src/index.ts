@@ -8870,10 +8870,17 @@ app.get('/api/public/positions/:id/progress', async (c) => {
       return c.json({ detail: 'Not found' }, 404);
     }
     const title = position.title || '';
+    // 简历按岗位匹配须经 position_mappings 解析，与前端 /api/resumes 的 position 过滤一致
+    const positionMap = await buildPositionMapping(c.env.DB);
+    const isPositionResume = (r: any) =>
+      String(r.position_id || '') === String(position.id)
+      || [r.mapped_position, r.position_applied].some(
+        (raw: any) => !!raw && (raw === title || resolveMappedPosition(positionMap, raw) === title)
+      );
     const resumeRows = await c.env.DB.prepare(
-      'SELECT status, parse_status FROM resumes WHERE (position_id = ? OR LOWER(mapped_position) = LOWER(?) OR LOWER(position_applied) = LOWER(?))'
-    ).bind(position.id, title, title).all();
-    const resumes = (resumeRows.results || []) as any[];
+      'SELECT status, parse_status, position_id, mapped_position, position_applied FROM resumes'
+    ).all();
+    const resumes = ((resumeRows.results || []) as any[]).filter(isPositionResume);
     const totalResumes = resumes.length;
     const aiScreened = resumes.filter((r: any) => r.parse_status === 'ai_screened').length;
     const statusBreakdown: Record<string, number> = {};
@@ -8941,20 +8948,26 @@ app.get('/api/public/positions/:id/resumes', async (c) => {
     const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
     const statusFilter = c.req.query('status');
     const title = position.title || '';
-
-    let where = '(position_id = ? OR LOWER(mapped_position) = LOWER(?) OR LOWER(position_applied) = LOWER(?))';
-    const params: any[] = [position.id, title, title];
-    if (statusFilter) {
-      where += ' AND status = ?';
-      params.push(statusFilter);
-    }
-    const countRow = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM resumes WHERE ${where}`).bind(...params).first();
+    // 与 progress 接口一致：经 position_mappings 解析匹配，保证数量与前端 /api/resumes 一致
+    const positionMap = await buildPositionMapping(c.env.DB);
     const rows = await c.env.DB.prepare(
-      `SELECT id, candidate_name, mapped_position, position_applied, status, stage, match_score, screening_result, parse_status, created_at, updated_at
-       FROM resumes WHERE ${where} ORDER BY created_at DESC, updated_at DESC LIMIT ? OFFSET ?`
-    ).bind(...params, limit, offset).all();
-
-    const items = (rows.results || []).map((r: any) => ({
+      `SELECT id, candidate_name, mapped_position, position_applied, status, stage, match_score, screening_result, parse_status, created_at, updated_at, position_id
+       FROM resumes`
+    ).all();
+    let matched = ((rows.results || []) as any[]).filter((r: any) =>
+      String(r.position_id || '') === String(position.id)
+      || [r.mapped_position, r.position_applied].some(
+        (raw: any) => !!raw && (raw === title || resolveMappedPosition(positionMap, raw) === title)
+      )
+    );
+    if (statusFilter) matched = matched.filter((r: any) => r.status === statusFilter);
+    matched.sort((a: any, b: any) => {
+      const cmp = (x: string, y: string) => (x < y ? 1 : x > y ? -1 : 0);
+      const byCreated = cmp(a.created_at || '', b.created_at || '');
+      if (byCreated !== 0) return byCreated;
+      return cmp(a.updated_at || '', b.updated_at || '');
+    });
+    const items = matched.slice(offset, offset + limit).map((r: any) => ({
       id: r.id,
       candidate_name: r.candidate_name,
       position_applied: r.mapped_position || r.position_applied || '',
@@ -8969,7 +8982,7 @@ app.get('/api/public/positions/:id/resumes', async (c) => {
 
     return c.json({
       position: { id: position.id, title: position.title, status: position.status },
-      total: countRow?.cnt ?? 0,
+      total: matched.length,
       limit,
       offset,
       items,

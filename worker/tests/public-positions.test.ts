@@ -26,6 +26,7 @@ function makeDb(opts: {
   position?: Record<string, unknown> | null;
   progressResumes?: Array<Record<string, unknown>>;
   listRows?: Array<Record<string, unknown>>;
+  mappings?: Array<Record<string, unknown>>;
   counts?: Record<string, number>;
 }) {
   const position = opts.position === undefined ? PUBLIC_POSITION : opts.position;
@@ -33,27 +34,31 @@ function makeDb(opts: {
   const c = (key: string, fallback = 0) => counts[key] ?? fallback;
   return {
     prepare(sql: string) {
+      const stmt = {
+        first: async () => {
+          if (sql.startsWith('SELECT * FROM positions')) return position;
+          if (sql.includes('FROM interviews')) {
+            if (sql.includes('round = 3')) return { cnt: c('third_pass') };
+            if (sql.includes('result2')) return { cnt: c('second_pass') };
+            if (sql.includes('status2')) return { cnt: c('first_pass') };
+            return { cnt: c('scheduled') };
+          }
+          if (sql.includes('FROM offers')) return { cnt: c('offers') };
+          if (sql.includes('FROM onboarding_records')) return { cnt: c('hired') };
+          if (sql.includes('COUNT(*)') && sql.includes('FROM resumes')) return { cnt: c('total_resumes', 0) };
+          return null;
+        },
+        all: async () => {
+          if (sql.includes('FROM position_mappings')) return { results: opts.mappings ?? [] };
+          if (sql.includes('FROM resumes')) return { results: opts.listRows ?? opts.progressResumes ?? [] };
+          return { results: [] };
+        },
+      };
       return {
-        bind: (..._params: unknown[]) => ({
-          first: async () => {
-            if (sql.startsWith('SELECT * FROM positions')) return position;
-            if (sql.includes('FROM interviews')) {
-              if (sql.includes('round = 3')) return { cnt: c('third_pass') };
-              if (sql.includes('result2')) return { cnt: c('second_pass') };
-              if (sql.includes('status2')) return { cnt: c('first_pass') };
-              return { cnt: c('scheduled') };
-            }
-            if (sql.includes('FROM offers')) return { cnt: c('offers') };
-            if (sql.includes('FROM onboarding_records')) return { cnt: c('hired') };
-            if (sql.includes('COUNT(*)') && sql.includes('FROM resumes')) return { cnt: c('total_resumes', 0) };
-            return null;
-          },
-          all: async () => {
-            if (sql.includes('SELECT status, parse_status FROM resumes')) return { results: opts.progressResumes ?? [] };
-            if (sql.includes('FROM resumes')) return { results: opts.listRows ?? [] };
-            return { results: [] };
-          },
-        }),
+        bind: () => stmt,
+        first: () => stmt.first(),
+        all: () => stmt.all(),
+        run: () => ({ meta: { changes: 1 } }),
       };
     },
   };
@@ -69,12 +74,12 @@ describe('GET /api/public/positions/:id/progress', () => {
   it('returns position info and funnel progress for a public position', async () => {
     const env = makeEnv(makeDb({
       progressResumes: [
-        { status: 'pending_screening', parse_status: 'ai_screened' },
-        { status: 'pending_screening', parse_status: 'ai_screened' },
-        { status: 'pending_interview', parse_status: 'ai_screened' },
-        { status: 'interview_passed', parse_status: 'ai_screened' },
-        { status: 'rejected', parse_status: 'ai_screened' },
-        { status: 'offered', parse_status: 'processing' },
+        { position_id: 'pos-1', status: 'pending_screening', parse_status: 'ai_screened' },
+        { position_id: 'pos-1', status: 'pending_screening', parse_status: 'ai_screened' },
+        { position_id: 'pos-1', status: 'pending_interview', parse_status: 'ai_screened' },
+        { position_id: 'pos-1', status: 'interview_passed', parse_status: 'ai_screened' },
+        { position_id: 'pos-1', status: 'rejected', parse_status: 'ai_screened' },
+        { position_id: 'pos-1', status: 'offered', parse_status: 'processing' },
       ],
       counts: { scheduled: 4, first_pass: 3, second_pass: 2, third_pass: 1, offers: 1, hired: 1 },
     }));
@@ -99,6 +104,23 @@ describe('GET /api/public/positions/:id/progress', () => {
         offered: 1,
       },
     });
+  });
+
+  it('按 position_mappings 解析原始岗位名计入 progress（与前端一致）', async () => {
+    const env = makeEnv(makeDb({
+      mappings: [{ raw_name: 'IoT产品经理', mapped_name: '软件工程师' }],
+      progressResumes: [
+        { position_id: 'pos-1', status: 'pending_screening', parse_status: 'ai_screened' },
+        { position_id: '', mapped_position: 'IoT产品经理', status: 'pending_screening', parse_status: 'ai_screened' },
+        { position_id: '', mapped_position: '后端开发', status: 'rejected', parse_status: 'ai_screened' },
+      ],
+    }));
+    const res = await worker.fetch(new Request(`${BASE}/api/public/positions/pos-1/progress`), env);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.progress.total_resumes).toBe(2);
+    expect(body.progress.ai_screened).toBe(2);
+    expect(body.progress.resume_status_breakdown).toMatchObject({ pending_screening: 2 });
   });
 
   it('returns 404 when the position status is not public', async () => {
@@ -130,7 +152,9 @@ describe('GET /api/public/positions/:id/resumes', () => {
     expect(body.limit).toBe(50);
     expect(body.offset).toBe(0);
     expect(body.items).toHaveLength(2);
-    expect(body.items[0]).toEqual({
+    // 按 created_at DESC 排序，最新在前
+    expect(body.items[0].id).toBe('r2');
+    expect(body.items[1]).toEqual({
       id: 'r1',
       candidate_name: '李四',
       position_applied: '软件工程师',
@@ -149,64 +173,53 @@ describe('GET /api/public/positions/:id/resumes', () => {
     expect(serialized).not.toContain('parsed_data');
   });
 
-  it('passes limit/offset and status filter into SQL', async () => {
-    let capturedSql = '';
-    let capturedParams: unknown[] = [];
-    const db = {
-      prepare(sql: string) {
-        return {
-          bind: (...params: unknown[]) => {
-            capturedSql = sql;
-            capturedParams = params;
-            return {
-              first: async () => {
-                if (sql.startsWith('SELECT * FROM positions')) return PUBLIC_POSITION;
-                if (sql.includes('COUNT(*)')) return { cnt: 1 };
-                return null;
-              },
-              all: async () => ({ results: [resumeRows[0]] }),
-            };
-          },
-        };
-      },
-    };
-    const env = makeEnv(db);
-    const res = await worker.fetch(new Request(`${BASE}/api/public/positions/pos-1/resumes?limit=5&offset=10&status=rejected`), env);
+  it('按 position_mappings 解析原始岗位名计入列表（与前端一致）', async () => {
+    const db = makeDb({
+      mappings: [{ raw_name: 'IoT产品经理', mapped_name: '软件工程师' }],
+      listRows: [
+        { id: 'r1', candidate_name: '李四', mapped_position: '软件工程师', position_applied: '软件工程师', status: 'pending_interview', stage: 'interview', match_score: 85, screening_result: '通过', parse_status: 'ai_screened', created_at: '2026-08-05 09:00:00', updated_at: '2026-08-05 09:00:00' },
+        { id: 'r2', candidate_name: '王五', mapped_position: '', position_applied: 'IoT产品经理', status: 'rejected', stage: 'rejected', match_score: 60, screening_result: '不通过', parse_status: 'ai_screened', created_at: '2026-08-06 09:00:00', updated_at: '2026-08-06 09:00:00' },
+        { id: 'r3', candidate_name: '赵六', mapped_position: '', position_applied: '后端开发', status: 'pending_screening', stage: 'new', match_score: 70, screening_result: '', parse_status: 'ai_screened', created_at: '2026-08-07 09:00:00', updated_at: '2026-08-07 09:00:00' },
+      ],
+    });
+    const res = await worker.fetch(new Request(`${BASE}/api/public/positions/pos-1/resumes`), makeEnv(db));
     expect(res.status).toBe(200);
-    expect(capturedSql).toContain('LIMIT ? OFFSET ?');
-    expect(capturedSql).toContain('AND status = ?');
-    // 岗位匹配的 OR 组必须带括号，避免 AND status 只作用于最后一个 OR 分支
-    expect(capturedSql).toContain('(position_id = ? OR LOWER(mapped_position) = LOWER(?) OR LOWER(position_applied) = LOWER(?)) AND status = ?');
-    // 前 3 个参数是岗位匹配（position_id + title + title），之后是 status、limit、offset
-    expect(capturedParams).toEqual(['pos-1', '软件工程师', '软件工程师', 'rejected', 5, 10]);
+    const body = await res.json() as any;
+    expect(body.total).toBe(2); // r1 标题精确 + r2 经映射，r3 无关岗位被排除
+    const names = body.items.map((i: any) => i.candidate_name);
+    expect(names).toContain('李四');
+    expect(names).toContain('王五');
+    expect(names).not.toContain('赵六');
+  });
+
+  it('status 过滤与分页在服务端 JS 生效', async () => {
+    const db = makeDb({
+      listRows: [
+        { id: 'r1', candidate_name: '李四', mapped_position: '软件工程师', position_applied: '软件工程师', status: 'pending_interview', stage: 'interview', match_score: 85, screening_result: '通过', parse_status: 'ai_screened', created_at: '2026-08-05 09:00:00', updated_at: '2026-08-05 09:00:00' },
+        { id: 'r2', candidate_name: '王五', mapped_position: '软件工程师', position_applied: '软件工程师', status: 'rejected', stage: 'rejected', match_score: 60, screening_result: '不通过', parse_status: 'ai_screened', created_at: '2026-08-06 09:00:00', updated_at: '2026-08-06 09:00:00' },
+      ],
+    });
+    const res = await worker.fetch(new Request(`${BASE}/api/public/positions/pos-1/resumes?status=rejected`), makeEnv(db));
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.total).toBe(1);
+    expect(body.items[0].id).toBe('r2');
   });
 
   it('clamps limit to max 200 and negative offset to 0', async () => {
-    let capturedParams: unknown[] = [];
-    const db = {
-      prepare(sql: string) {
-        return {
-          bind: (...params: unknown[]) => {
-            capturedParams = params;
-            return {
-              first: async () => {
-                if (sql.startsWith('SELECT * FROM positions')) return PUBLIC_POSITION;
-                if (sql.includes('COUNT(*)')) return { cnt: 0 };
-                return null;
-              },
-              all: async () => ({ results: [] }),
-            };
-          },
-        };
-      },
-    };
-    const env = makeEnv(db);
-    const res = await worker.fetch(new Request(`${BASE}/api/public/positions/pos-1/resumes?limit=99999&offset=-5`), env);
+    const rows = Array.from({ length: 5 }, (_, i) => ({
+      id: `r${i}`, candidate_name: `候选人${i}`, mapped_position: '软件工程师', position_applied: '软件工程师',
+      status: 'pending_screening', stage: 'new', match_score: 0, screening_result: '', parse_status: '',
+      created_at: `2026-08-0${i + 1} 09:00:00`, updated_at: `2026-08-0${i + 1} 09:00:00`,
+    }));
+    const db = makeDb({ listRows: rows });
+    const res = await worker.fetch(new Request(`${BASE}/api/public/positions/pos-1/resumes?limit=99999&offset=-5`), makeEnv(db));
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.limit).toBe(200);
-    expect(capturedParams[3]).toBe(200);
-    expect(capturedParams[4]).toBe(0);
+    expect(body.offset).toBe(0);
+    expect(body.total).toBe(5);
+    expect(body.items).toHaveLength(5);
   });
 
   it('returns 404 when the position status is not public', async () => {

@@ -40,6 +40,8 @@ GET /api/public/positions/{positionId}/progress
 ```
 返回岗位基本信息 + `progress` 漏斗（简历数、AI 初筛、各轮面试、offer、入职）+ `resume_status_breakdown` 状态分布。**只对招聘中的岗位开放**（`status` 为 open/published/recruiting），草稿/暂停/已关闭返回 404。
 
+> **简历数口径（与前端简历页一致）**：`position_id` 直接命中，或原始岗位名（`mapped_position`/`position_applied`）经 `position_mappings` 解析后等于本岗位标题的简历都计入。因此数量可能远大于「标题精确匹配」——例如「软件产品经理（智能硬件方向）」会把「IoT产品经理（双休）」「智能硬件产品经理」等映射名的简历都算进来（实际 200+ 份，而非 2 份）。
+
 ### 1.3 岗位简历列表
 ```
 GET /api/public/positions/{positionId}/resumes?limit=50&offset=0&status=pending_interview
