@@ -201,6 +201,8 @@ const ResumesList: React.FC = () => {
   const [customTotal, setCustomTotal] = useState(0);
   const [customActive, setCustomActive] = useState(false);
   const [customLoading, setCustomLoading] = useState(false);
+  const [conditionExpanded, setConditionExpanded] = useState(false);
+  const customRunRef = useRef(0);
   const isCustomMode = customActive;
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewRecord, setPreviewRecord] = useState<any>(null);
@@ -670,19 +672,25 @@ const ResumesList: React.FC = () => {
     if (!customPosition) { message.warning('请选择岗位'); return; }
     const cond = customCondition.trim();
     if (!cond) { message.warning('请输入筛选条件'); return; }
+    const runId = ++customRunRef.current;
     setCustomLoading(true);
     try {
+      // 第一层：关键词命中立即返回（~1s），卡片先出
       const res: any = await request.post('/resumes/custom-screen', {
         position: customPosition,
         condition: cond,
         threshold: customThreshold,
         limit: 100,
-      }, { timeout: 60000 });
+      }, { timeout: 8000 });
       setCustomResults(res?.items || []);
       setCustomTotal(res?.total ?? (res?.items || []).length);
       setCustomActive(true);
       setPollingEnabled(false);
       setSelectedRowKeys([]);
+      // 第二层：AI 语义分后台补齐，合并一次
+      if (res?.ai_pending) {
+        fetchCustomScreenScores(cond, runId);
+      }
     } catch (e: any) {
       const timedOut = e?.code === 'ECONNABORTED' || /timeout|超时/i.test(String(e?.message || ''));
       message.error(e?.response?.data?.detail || (timedOut ? '筛选请求超时，请重试' : '自定义筛选失败'));
@@ -691,7 +699,36 @@ const ResumesList: React.FC = () => {
     }
   };
 
+  const fetchCustomScreenScores = async (cond: string, runId: number) => {
+    try {
+      const res: any = await request.post('/resumes/custom-screen/scores', {
+        position: customPosition,
+        condition: cond,
+        threshold: customThreshold,
+        limit: 100,
+      }, { timeout: 15000 });
+      if (runId !== customRunRef.current) return; // 已被新的筛选/清除覆盖
+      const scores: Array<{ id: string; score: number; reason: string }> =
+        Array.isArray(res?.scores) ? res.scores : [];
+      if (scores.length === 0) return;
+      const scoreMap = new Map(scores.map((s) => [String(s.id), s]));
+      setCustomResults((prev) => {
+        if (!Array.isArray(prev) || prev.length === 0) return prev;
+        const merged = prev.map((item: any) => {
+          const s = scoreMap.get(String(item.id));
+          if (!s) return item;
+          return { ...item, custom_match: { score: s.score, reason: s.reason || '符合筛选条件', method: 'ai' } };
+        });
+        return merged.slice().sort((a: any, b: any) => (b.custom_match?.score ?? 0) - (a.custom_match?.score ?? 0));
+      });
+    } catch (e) {
+      // AI 分补齐失败时保留关键词分，静默降级
+      console.warn('[custom-screen] AI 语义分补齐失败，保留关键词分', e);
+    }
+  };
+
   const clearCustomScreen = () => {
+    customRunRef.current++;
     setCustomActive(false);
     setCustomResults([]);
     setCustomTotal(0);
@@ -714,6 +751,7 @@ const ResumesList: React.FC = () => {
     setMinimumAge(null);
     setMaximumAge(null);
     setGenderFilters([]);
+    customRunRef.current++;
     setCustomActive(false);
     setCustomResults([]);
     setCustomTotal(0);
@@ -1626,10 +1664,12 @@ const handleUploadClick = () => {
                   allowClear
                   value={customCondition}
                   onChange={event => setCustomCondition(event.target.value)}
-                  onPressEnter={runCustomScreen}
-                  placeholder="如：持有护士证"
-                  autoSize={{ minRows: 1, maxRows: 6 }}
-                  style={{ width: 220 }}
+                  onFocus={() => setConditionExpanded(true)}
+                  onBlur={() => setConditionExpanded(false)}
+                  onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') runCustomScreen(); }}
+                  autoSize={{ minRows: conditionExpanded ? 3 : 1, maxRows: 8 }}
+                  placeholder="如：持有护士证（点击展开）"
+                  style={{ width: conditionExpanded ? 260 : 150 }}
                 />
                 <Text style={{ fontSize: 13, color: '#333' }}>阈值</Text>
                 <InputNumber min={0} max={100} value={customThreshold} onChange={value => setCustomThreshold(value == null ? 60 : Number(value))} style={{ width: 60 }} />

@@ -28,13 +28,23 @@ const RESUME_NO_MATCH = {
   ocr_markdown: '无相关工作经历。',
 };
 
+// 条件「持有护士证」→ 持有/有护/护士/士证 4 个 token；本条全命中 → 关键词分 100，跳过 AI
+const RESUME_FULL_MATCH = {
+  id: 'res-4',
+  candidate_name: '赵六',
+  mapped_position: '护士',
+  position_applied: '护士',
+  status: 'pending_interview',
+  ocr_markdown: '持有护士证，完全符合条件。',
+};
+
 const RESUME_DOCTOR = {
   id: 'res-3',
   candidate_name: '李四',
   mapped_position: '医生',
   position_applied: '医生',
   status: 'pending_interview',
-  ocr_markdown: '持有医师执业证书。',
+  ocr_markdown: '有医师资格，五年经验。',
 };
 
 type MockOpts = {
@@ -101,24 +111,27 @@ async function mintJwt(email: string): Promise<string> {
   return `${data}.${sig}`;
 }
 
-async function postCustomScreen(env: any, body: Record<string, unknown>) {
-  const token = await mintJwt('hr@x.com');
+async function authedRequest(env: any, path: string, method: string, body: Record<string, unknown>, email = 'hr@x.com') {
+  const token = await mintJwt(email);
   return worker.fetch(
-    new Request(`${BASE}/api/resumes/custom-screen`, {
-      method: 'POST',
+    new Request(`${BASE}${path}`, {
+      method,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
+      body: body ? JSON.stringify(body) : undefined,
     }),
     env,
   );
 }
+
+const postCustomScreen = (env: any, body: Record<string, unknown>) => authedRequest(env, '/api/resumes/custom-screen', 'POST', body);
+const postScores = (env: any, body: Record<string, unknown>, email?: string) => authedRequest(env, '/api/resumes/custom-screen/scores', 'POST', body, email);
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-describe('POST /api/resumes/custom-screen', () => {
+describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）', () => {
   it('requires a non-empty condition', async () => {
     const db = makeDb({ resumes: [RESUME_NURSE] });
     const res = await postCustomScreen(makeEnv(db), { position: '护士', condition: '  ' });
@@ -127,11 +140,9 @@ describe('POST /api/resumes/custom-screen', () => {
     expect(body.detail).toContain('筛选条件');
   });
 
-  it('pre-filters by keyword, AI scores the pool and attaches custom_match', async () => {
-    globalThis.fetch = (async () => new Response(
-      JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":92,"reason":"持有护士执业证书，符合条件"}]' } }] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    )) as any;
+  it('returns keyword scores immediately and does not call the AI', async () => {
+    // 若 POST 阶段误调 AI，会走到网络 fetch，这里直接抛错暴露
+    globalThis.fetch = (() => { throw new Error('POST /custom-screen 不应调用 AI'); }) as any;
 
     const db = makeDb({ resumes: [RESUME_NURSE, RESUME_NO_MATCH] });
     const res = await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证', threshold: 60 });
@@ -140,51 +151,21 @@ describe('POST /api/resumes/custom-screen', () => {
     // res-2 关键词零命中，被预筛排除
     expect(body.total).toBe(1);
     expect(body.items).toHaveLength(1);
+    expect(body.ai_pending).toBe(true);
     const item = body.items[0];
     expect(item.id).toBe('res-1');
     expect(item.standard_position).toBe('护士');
-    expect(item.custom_match).toEqual({ score: 92, reason: '持有护士执业证书，符合条件', method: 'ai' });
-  });
-
-  it('falls back to keyword scoring when the AI call fails', async () => {
-    globalThis.fetch = (async () => new Response('bad request', { status: 400 })) as any;
-
-    const db = makeDb({ resumes: [RESUME_NURSE] });
-    const res = await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证' });
-    expect(res.status).toBe(200);
-    const body = await res.json() as any;
-    const item = body.items[0];
     // "持有护士证" → 持有/有护/护士/士证 共 4 个 token；正文命中 3 个 → 75 分
-    expect(item.custom_match.method).toBe('keyword');
-    expect(item.custom_match.score).toBe(75);
-    expect(item.custom_match.reason).toContain('关键词命中 3/4');
+    expect(item.custom_match).toEqual({ score: 75, reason: '关键词命中 3/4：持有、有护、护士', method: 'keyword' });
   });
 
-  it('filters a failed AI id back to keyword scoring', async () => {
-    globalThis.fetch = (async () => new Response(
-      JSON.stringify({ choices: [{ message: { content: '[]' } }] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    )) as any;
-
-    const db = makeDb({ resumes: [RESUME_NURSE] });
-    const res = await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证' });
-    expect(res.status).toBe(200);
-    const body = await res.json() as any;
-    expect(body.items[0].custom_match.method).toBe('keyword');
-  });
-
-  it('sorts results by score descending', async () => {
-    const low = { ...RESUME_NURSE, id: 'res-low', ocr_markdown: '有护士资格证，经验一般。' };
-    globalThis.fetch = (async () => new Response(
-      JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":80,"reason":"a"},{"id":"res-low","score":55,"reason":"b"}]' } }] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    )) as any;
-
-    const db = makeDb({ resumes: [low, RESUME_NURSE] });
+  it('sorts keyword-phase results by score descending', async () => {
+    const db = makeDb({ resumes: [RESUME_FULL_MATCH, RESUME_NURSE] });
     const res = await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证' });
     const body = await res.json() as any;
-    expect(body.items[0].id).toBe('res-1');
-    expect(body.items[1].id).toBe('res-low');
+    // 全命中 res-4 (100) 应排在 res-1 (75) 之前
+    expect(body.items[0].id).toBe('res-4');
+    expect(body.items[1].id).toBe('res-1');
   });
 
   it('enforces HR owner isolation (only own positions)', async () => {
@@ -195,6 +176,79 @@ describe('POST /api/resumes/custom-screen', () => {
     const body = await res.json() as any;
     expect(body.total).toBe(0);
     expect(body.items).toEqual([]);
+  });
+});
+
+describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后台补齐）', () => {
+  it('returns AI semantic scores for eligible (keyword < 80%) resumes', async () => {
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":92,"reason":"持有护士执业证书，符合条件"}]' } }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE, RESUME_NO_MATCH] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证', threshold: 60 });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ai_pending).toBe(false);
+    expect(body.scores).toHaveLength(1);
+    expect(body.scores[0]).toMatchObject({ id: 'res-1', score: 92 });
+  });
+
+  it('skips high-keyword-hit resumes (>=80%) from AI scoring', async () => {
+    let callCount = 0;
+    globalThis.fetch = (async () => { callCount++; return new Response(
+      JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":80,"reason":"符合"}]' } }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ); }) as any;
+
+    // res-1 (75%) 该走 AI；res-4 (100%) 直接关键词分，不进 AI 批次
+    const db = makeDb({ resumes: [RESUME_NURSE, RESUME_FULL_MATCH] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(callCount).toBe(1); // 只有 res-1 一批
+    const ids = body.scores.map((s: any) => s.id);
+    expect(ids).toEqual(['res-1']);
+    expect(ids).not.toContain('res-4');
+  });
+
+  it('keeps keyword scores when the AI call fails (returns empty scores)', async () => {
+    globalThis.fetch = (async () => new Response('bad request', { status: 400 })) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.scores).toEqual([]);
+  });
+
+  it('bounds AI latency: slow AI returns empty scores without hanging the request', async () => {
+    // AI fetch 永不返回，靠全局截止时间兜底，避免超过前端请求超时
+    globalThis.fetch = (() => new Promise<never>(() => {})) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE] });
+    const env = makeEnv(db, { CUSTOM_SCREEN_AI_TIMEOUT_MS: '50' });
+    const res = await postScores(env, { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.scores).toEqual([]);
+  });
+
+  it('caps AI cost: requests small max_tokens', async () => {
+    let sentBody: any;
+    globalThis.fetch = (async (url: unknown, init: any) => {
+      sentBody = JSON.parse(init.body as string);
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":92,"reason":"持有护士执业证书"}]' } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    expect(sentBody.max_tokens).toBe(512);
   });
 
   it('admins bypass owner isolation', async () => {
@@ -207,49 +261,16 @@ describe('POST /api/resumes/custom-screen', () => {
       user: { email: 'admin@x.com', full_name: '管理员', role: 'admin', is_active: 1 },
       resumes: [RESUME_DOCTOR],
     });
-    const token = await mintJwt('admin@x.com');
-    const res = await worker.fetch(
-      new Request(`${BASE}/api/resumes/custom-screen`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ position: '医生', condition: '医师执业证' }),
-      }),
-      makeEnv(db),
-    );
+    const res = await postScores(makeEnv(db), { position: '医生', condition: '医师执业证' }, 'admin@x.com');
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(body.total).toBe(1);
-    expect(body.items[0].custom_match.method).toBe('ai');
+    expect(body.scores.length).toBeGreaterThan(0);
+    expect(body.scores[0].id).toBe('res-3');
   });
 
-  it('bounds AI latency: slow AI falls back to keyword without hanging the request', async () => {
-    // AI fetch 永不返回，靠路由内的全局截止时间兜底回退关键词，避免超过前端请求超时
-    globalThis.fetch = (() => new Promise<never>(() => {})) as any;
-
-    const db = makeDb({ resumes: [RESUME_NURSE] });
-    const env = makeEnv(db, { CUSTOM_SCREEN_AI_TIMEOUT_MS: '50' });
-    const res = await postCustomScreen(env, { position: '护士', condition: '持有护士证' });
-    expect(res.status).toBe(200);
-    const body = await res.json() as any;
-    expect(body.items.length).toBeGreaterThan(0);
-    for (const item of body.items) {
-      expect(item.custom_match.method).toBe('keyword');
-    }
-  });
-
-  it('caps AI cost: requests small max_tokens and trimmed resume text', async () => {
-    let sentBody: any;
-    globalThis.fetch = (async (url: unknown, init: any) => {
-      sentBody = JSON.parse(init.body as string);
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":92,"reason":"持有护士执业证书"}]' } }] }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    }) as any;
-
-    const db = makeDb({ resumes: [RESUME_NURSE] });
-    const res = await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证' });
-    expect(res.status).toBe(200);
-    expect(sentBody.max_tokens).toBe(1024);
+  it('validates missing position/condition', async () => {
+    const db = makeDb({ resumes: [] });
+    const res = await postScores(makeEnv(db), {});
+    expect(res.status).toBe(400);
   });
 });
