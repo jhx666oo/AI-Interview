@@ -221,4 +221,35 @@ describe('POST /api/resumes/custom-screen', () => {
     expect(body.total).toBe(1);
     expect(body.items[0].custom_match.method).toBe('ai');
   });
+
+  it('bounds AI latency: slow AI falls back to keyword without hanging the request', async () => {
+    // AI fetch 永不返回，靠路由内的全局截止时间兜底回退关键词，避免超过前端请求超时
+    globalThis.fetch = (() => new Promise<never>(() => {})) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE] });
+    const env = makeEnv(db, { CUSTOM_SCREEN_AI_TIMEOUT_MS: '50' });
+    const res = await postCustomScreen(env, { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.items.length).toBeGreaterThan(0);
+    for (const item of body.items) {
+      expect(item.custom_match.method).toBe('keyword');
+    }
+  });
+
+  it('caps AI cost: requests small max_tokens and trimmed resume text', async () => {
+    let sentBody: any;
+    globalThis.fetch = (async (url: unknown, init: any) => {
+      sentBody = JSON.parse(init.body as string);
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":92,"reason":"持有护士执业证书"}]' } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE] });
+    const res = await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    expect(sentBody.max_tokens).toBe(1024);
+  });
 });

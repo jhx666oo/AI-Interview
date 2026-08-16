@@ -5841,9 +5841,8 @@ app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
     const condition = String(body.condition || '').trim();
     if (!position) return c.json({ detail: '缺少岗位参数' }, 400);
     if (!condition) return c.json({ detail: '请输入筛选条件' }, 400);
-    if (position.length > 200 || condition.length > 200) {
-      return c.json({ detail: '岗位或筛选条件过长（各最多 200 字）' }, 400);
-    }
+    if (position.length > 200) return c.json({ detail: '岗位名称过长（最多 200 字）' }, 400);
+    if (condition.length > 2000) return c.json({ detail: '筛选条件过长（最多 2000 字）' }, 400);
     const threshold = Number.isFinite(Number(body.threshold))
       ? Math.max(0, Math.min(100, Math.round(Number(body.threshold))))
       : 60;
@@ -5911,41 +5910,59 @@ app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
     poolRows.sort((a, b) => b.hits - a.hits);
     const pool = poolRows.slice(0, Math.min(60, Math.max(limit, 20)));
 
-    // AI 语义打分（分批），任一 id 缺省或整批失败时回退关键词打分
+    // AI 语义打分（并发分批）：所有批次并行发起，每批由全局截止时间兜底。
+    // 截止时间内完成批次的简历用 AI 语义分，超时/失败批次回退关键词打分；
+    // 整体耗时 ≈ 最慢单批（~12s），而非各批之和，尽量多候选拿到语义分（前端请求超时 30s）。
     const aiScores = new Map<string, { score: number; reason: string }>();
-    const BATCH = 15;
-    for (let i = 0; i < pool.length; i += BATCH) {
-      const batch = pool.slice(i, i + BATCH);
-      try {
-        const prompt = await getAIPrompt(c.env as any, 'resume_custom_screen', DEFAULT_CUSTOM_SCREEN_PROMPT);
-        const resumeBlock = batch.map(({ row, combined }) => `#id:${row.id}\n${combined.slice(0, 1500)}`).join('\n\n');
-        const userText = prompt.user
-          .replace('{position}', position)
-          .replace('{condition}', condition)
-          .replace('{resumes}', resumeBlock);
-        const resultText = await callAI(c.env as any, prompt.system, userText, 'deepseek-v4-flash', {
+    const BATCH = 8;
+    const AI_TIMEOUT_MS = Math.max(3000, Number((c.env as any).CUSTOM_SCREEN_AI_TIMEOUT_MS) || 12000);
+    const batches: Array<Array<{ row: any; hits: number; matched: string[]; combined: string }>> = [];
+    for (let i = 0; i < pool.length; i += BATCH) batches.push(pool.slice(i, i + BATCH));
+
+    async function scoreBatch(batch: Array<{ row: any; hits: number; matched: string[]; combined: string }>): Promise<Map<string, { score: number; reason: string }>> {
+      const prompt = await getAIPrompt(c.env as any, 'resume_custom_screen', DEFAULT_CUSTOM_SCREEN_PROMPT);
+      const resumeBlock = batch.map(({ row, combined }) => `#id:${row.id}\n${combined.slice(0, 700)}`).join('\n\n');
+      const userText = prompt.user
+        .replace('{position}', position)
+        .replace('{condition}', condition)
+        .replace('{resumes}', resumeBlock);
+      const resultText = await Promise.race([
+        callAI(c.env as any, prompt.system, userText, 'deepseek-v4-flash', {
           structured: true,
           temperature: 0,
-          maxTokens: 8192,
-        });
-        const parsed = extractJSON(resultText);
-        const list = Array.isArray(parsed) ? parsed : (parsed?.items || parsed?.results || []);
-        if (Array.isArray(list)) {
-          for (const entry of list) {
-            const id = String(entry?.id ?? '');
-            if (!id) continue;
-            const score = Math.max(0, Math.min(100, Math.round(Number(entry?.score) || 0)));
-            aiScores.set(id, { score, reason: String(entry?.reason ?? '').slice(0, 120) });
-          }
+          maxTokens: 1024,
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('CUSTOM_SCREEN_AI_TIMEOUT')), AI_TIMEOUT_MS)),
+      ]);
+      const parsed = extractJSON(resultText);
+      const list = Array.isArray(parsed) ? parsed : (parsed?.items || parsed?.results || []);
+      const scores = new Map<string, { score: number; reason: string }>();
+      if (Array.isArray(list)) {
+        for (const entry of list) {
+          const id = String(entry?.id ?? '');
+          if (!id) continue;
+          const score = Math.max(0, Math.min(100, Math.round(Number(entry?.score) || 0)));
+          scores.set(id, { score, reason: String(entry?.reason ?? '').slice(0, 120) });
         }
-      } catch (e) {
-        console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${(e as Error)?.message}`);
       }
+      return scores;
     }
+
+    const scored = await Promise.all(batches.map((b) => scoreBatch(b).catch((e) => {
+      console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${(e as Error)?.message}`);
+      return new Map<string, { score: number; reason: string }>();
+    })));
+    for (const m of scored) for (const [id, v] of m) aiScores.set(id, v);
 
     // 组装卡片字段 + custom_match（符合程度 + 理由 + 打分方式）
     const items = pool.map(({ row, hits, matched }) => {
-      const item = serializeResumeCardRow(row);
+      let item: any;
+      try {
+        item = serializeResumeCardRow(row);
+      } catch (e) {
+        console.warn(`[custom-screen] 简历卡片序列化失败（${row.id}）：${(e as Error)?.message}`);
+        item = { id: row.id, candidate_name: row.candidate_name || '未知' };
+      }
       const raw = row.mapped_position || row.position_applied || '';
       item.standard_position = resolveMappedPosition(positionMap, raw);
       const ai = aiScores.get(String(row.id));

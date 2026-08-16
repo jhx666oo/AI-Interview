@@ -677,14 +677,15 @@ const ResumesList: React.FC = () => {
         condition: cond,
         threshold: customThreshold,
         limit: 100,
-      });
+      }, { timeout: 60000 });
       setCustomResults(res?.items || []);
       setCustomTotal(res?.total ?? (res?.items || []).length);
       setCustomActive(true);
       setPollingEnabled(false);
       setSelectedRowKeys([]);
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || '自定义筛选失败');
+      const timedOut = e?.code === 'ECONNABORTED' || /timeout|超时/i.test(String(e?.message || ''));
+      message.error(e?.response?.data?.detail || (timedOut ? '筛选请求超时，请重试' : '自定义筛选失败'));
     } finally {
       setCustomLoading(false);
     }
@@ -1621,13 +1622,14 @@ const handleUploadClick = () => {
                     <Select.Option key={p.id || p.title} value={p.title}>{p.title}</Select.Option>
                   ))}
                 </Select>
-                <Input
+                <Input.TextArea
                   allowClear
                   value={customCondition}
                   onChange={event => setCustomCondition(event.target.value)}
                   onPressEnter={runCustomScreen}
                   placeholder="如：持有护士证"
-                  style={{ width: 150 }}
+                  autoSize={{ minRows: 1, maxRows: 6 }}
+                  style={{ width: 220 }}
                 />
                 <Text style={{ fontSize: 13, color: '#333' }}>阈值</Text>
                 <InputNumber min={0} max={100} value={customThreshold} onChange={value => setCustomThreshold(value == null ? 60 : Number(value))} style={{ width: 60 }} />
