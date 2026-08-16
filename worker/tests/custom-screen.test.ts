@@ -51,6 +51,7 @@ type MockOpts = {
   user?: Record<string, unknown>;
   mappings?: Array<Record<string, unknown>>;
   resumes?: Array<Record<string, unknown>>;
+  capture?: Array<{ sql: string; params: unknown[] }>;
 };
 
 function makeDb(opts: MockOpts = {}) {
@@ -65,12 +66,15 @@ function makeDb(opts: MockOpts = {}) {
           return null; // system_configs 读取（提示词 / LLM 配置）走默认
         },
         async all() {
+          if (sql.includes('FROM resumes')) {
+            opts.capture?.push({ sql, params });
+            return { results: resumes };
+          }
           if (sql.includes('FROM position_mappings') && sql.includes('responsible_person')) {
             const owner = String(params[0] ?? '');
             return { results: mappings.filter((m) => String(m.responsible_person ?? '') === owner) };
           }
           if (sql.includes('FROM position_mappings')) return { results: mappings };
-          if (sql.includes('FROM resumes')) return { results: resumes };
           return { results: [] };
         },
         async run() {
@@ -166,6 +170,35 @@ describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）
     // 全命中 res-4 (100) 应排在 res-1 (75) 之前
     expect(body.items[0].id).toBe('res-4');
     expect(body.items[1].id).toBe('res-1');
+  });
+
+  it('prefilters candidates in SQL via LIKE and caps the transfer with LIMIT', async () => {
+    const capture: Array<{ sql: string; params: unknown[] }> = [];
+    const db = makeDb({ resumes: [RESUME_NURSE], capture });
+    await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    const hit = capture.find((c) => c.sql.includes('FROM resumes'));
+    expect(hit).toBeTruthy();
+    // "持有护士证" → 持有/有护/护士/士证 4 个 len>=2 token → 4 组 LIKE（每组 4 列 = 16 个 ESCAPE）
+    const escapes = (hit!.sql.match(/ESCAPE/g) || []).length;
+    expect(escapes).toBe(16);
+    expect(hit!.sql).toContain('LIMIT ?');
+    expect(hit!.params).toContain('%持有%');
+    expect(hit!.params).toContain('%士证%');
+    // 2 个岗位参数 + 16 个 LIKE 参数 + 末尾的 LIMIT 值
+    expect(hit!.params).toHaveLength(19);
+    expect(hit!.params[hit!.params.length - 1]).toBe(200);
+  });
+
+  it('excludes single-char tokens from the SQL LIKE prefilter', async () => {
+    const capture: Array<{ sql: string; params: unknown[] }> = [];
+    const db = makeDb({ resumes: [RESUME_NURSE], capture });
+    await postCustomScreen(makeEnv(db), { position: '护士', condition: 'C语言' });
+    const hit = capture.find((c) => c.sql.includes('FROM resumes'));
+    // 只有 "语言" 1 个 len>=2 token → 1 组 LIKE（4 个 ESCAPE）；"c" 不进入 SQL
+    const escapes = (hit!.sql.match(/ESCAPE/g) || []).length;
+    expect(escapes).toBe(4);
+    expect(hit!.params).not.toContain('%c%');
+    expect(hit!.params).toContain('%语言%');
   });
 
   it('enforces HR owner isolation (only own positions)', async () => {
