@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Card, Form, Input, InputNumber, Space, Typography, message, Tag, Tabs, Tooltip } from 'antd';
-import { SaveOutlined, ReloadOutlined, ApiOutlined } from '@ant-design/icons';
+import { SaveOutlined, ReloadOutlined, ApiOutlined, HolderOutlined, UpOutlined, DownOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { PageHeader, ResponsiveToolbar } from '../../components/Responsive';
@@ -72,7 +72,10 @@ const SystemSettingsPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [meta, setMeta] = useState<SystemSettings | null>(null);
   const [editing, setEditing] = useState<Record<string, boolean>>({});
-  const [testing, setTesting] = useState<number | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
+  // 4 个 AI 配置槽位的展示顺序（llm → llm4 即优先级从高到低），拖拽后保存即生效
+  const [order, setOrder] = useState<string[]>(['llm', 'llm2', 'llm3', 'llm4']);
+  const dragFromRef = useRef<string | null>(null);
   const [screeningRules, setScreeningRules] = useState<ScreeningRules>({ ...DEFAULT_SCREENING_RULES });
   const [screeningRulesLoading, setScreeningRulesLoading] = useState(false);
   const [screeningRulesSaving, setScreeningRulesSaving] = useState(false);
@@ -99,6 +102,7 @@ const SystemSettingsPage: React.FC = () => {
         values[`${block.prefix}_api_key`] = '';
       }
       form.setFieldsValue(values);
+      setOrder(['llm', 'llm2', 'llm3', 'llm4']);
       setEditing({});
     } catch (e) {
       const status = (e as any)?.response?.status;
@@ -197,22 +201,22 @@ const SystemSettingsPage: React.FC = () => {
     }
   };
 
-  const handleTest = async (idx: number) => {
-    const block = LLM_BLOCKS[idx];
-    const p = block.prefix;
+  const handleTest = async (prefix: string) => {
+    const blockIndex = LLM_BLOCKS.findIndex(b => b.prefix === prefix);
+    const p = LLM_BLOCKS[blockIndex].prefix;
     const baseUrl = form.getFieldValue(`${p}_base_url`);
     const model = form.getFieldValue(`${p}_model`);
     const typedKey = ((form.getFieldValue(`${p}_api_key`) as string) || '').trim();
     const savedKeySet = !!meta?.[`${p}_api_key_set`];
     if (!typedKey && !savedKeySet) {
-      message.warning(`请先填写「${block.title}」的 API Key`);
+      message.warning(`请先填写「配置 ${blockIndex + 1}」的 API Key`);
       return;
     }
-    setTesting(idx);
+    setTesting(p);
     try {
       const payload: any = typedKey
         ? { base_url: baseUrl, model, api_key: typedKey }
-        : { index: idx };
+        : { index: blockIndex };
       const res = (await request.post('/settings/system/test', payload)) as { ok?: boolean; message?: string };
       if (res.ok) message.success(res.message || '连接成功');
       else message.error(res.message || '连接失败');
@@ -221,6 +225,48 @@ const SystemSettingsPage: React.FC = () => {
     } finally {
       setTesting(null);
     }
+  };
+
+  // 拖拽 / 上下箭头交换两个槽位：连同表单值、meta（已设置/末4位）、编辑态一起交换，
+  // 保存时按 llm→llm4 槽位写入 DB，即完成优先级调整
+  const swapBlocks = (a: string, b: string) => {
+    if (a === b) return;
+    const fieldKeys = ['base_url', 'model', 'api_key'] as const;
+    const values: Record<string, unknown> = {};
+    for (const key of fieldKeys) {
+      values[`${a}_${key}`] = form.getFieldValue(`${a}_${key}`);
+      values[`${b}_${key}`] = form.getFieldValue(`${b}_${key}`);
+    }
+    const swapped: Record<string, unknown> = {};
+    for (const key of fieldKeys) {
+      swapped[`${a}_${key}`] = values[`${b}_${key}`];
+      swapped[`${b}_${key}`] = values[`${a}_${key}`];
+    }
+    form.setFieldsValue(swapped);
+    setMeta(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        [`${a}_api_key_set`]: prev[`${b}_api_key_set`],
+        [`${b}_api_key_set`]: prev[`${a}_api_key_set`],
+        [`${a}_api_key_last4`]: prev[`${b}_api_key_last4`],
+        [`${b}_api_key_last4`]: prev[`${a}_api_key_last4`],
+      };
+    });
+    setEditing(prev => {
+      const next = { ...prev };
+      next[a] = !!prev[b];
+      next[b] = !!prev[a];
+      return next;
+    });
+    setOrder(prev => {
+      const next = [...prev];
+      const ia = next.indexOf(a);
+      const ib = next.indexOf(b);
+      if (ia < 0 || ib < 0) return prev;
+      [next[ia], next[ib]] = [next[ib], next[ia]];
+      return next;
+    });
   };
 
   const handleSavePrompt = async () => {
@@ -331,28 +377,52 @@ const SystemSettingsPage: React.FC = () => {
           <span />
         </ResponsiveToolbar>
         <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-          最多可配置 4 组模型，调用时按优先级从上到下依次尝试，上一组失败（超时 / 格式错误 / 空响应）后自动降级到下一组。
+          最多可配置 4 组模型，调用时按优先级从上到下依次尝试，上一组失败（超时 / 格式错误 / 空响应）后自动降级到下一组。拖动左侧手柄或使用 ↑↓ 箭头调整优先级，保存后立即生效。
         </Text>
         <Form form={form} layout="vertical" autoComplete="off">
           <input type="text" name="username" autoComplete="username" style={{ display: 'none' }} />
           <input type="password" name="password" autoComplete="current-password" style={{ display: 'none' }} />
 
-          {LLM_BLOCKS.map((block, idx) => {
+          {order.map((prefix, idx) => {
+            const block = LLM_BLOCKS.find(b => b.prefix === prefix) as LLMBlock;
             const p = block.prefix;
             const keySet = !!meta?.[`${p}_api_key_set`];
             const keyLast4 = meta?.[`${p}_api_key_last4`];
             const isEditing = !!editing[p];
+            const title = `配置 ${idx + 1}`;
             return (
-              <div key={block.prefix} style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 16, marginBottom: 16, background: '#fafafa' }}>
-                <Text strong>
-                  {block.title}
-                  {idx === 0 ? '（首选）' : '（备用）'}
-                </Text>
-                <Text type="secondary" style={{ marginLeft: 8 }}>
-                  {idx === 0 ? '调用 AI 时优先使用' : `配置 ${idx + 1} 失败后自动降级到本配置`}
-                </Text>
+              <div
+                key={p}
+                style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 16, marginBottom: 16, background: '#fafafa' }}
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragFromRef.current && dragFromRef.current !== p) swapBlocks(dragFromRef.current, p);
+                  dragFromRef.current = null;
+                }}
+              >
+                <Space style={{ marginBottom: 12 }} align="center" wrap>
+                  <span
+                    draggable
+                    onDragStart={(e) => { dragFromRef.current = p; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p); }}
+                    onDragEnd={() => { dragFromRef.current = null; }}
+                    style={{ cursor: 'grab', fontSize: 18, color: '#999', padding: '0 4px' }}
+                    title="按住拖拽调整优先级"
+                  >
+                    <HolderOutlined />
+                  </span>
+                  <Button type="text" size="small" icon={<UpOutlined />} disabled={idx === 0} onClick={() => swapBlocks(p, order[idx - 1])} />
+                  <Button type="text" size="small" icon={<DownOutlined />} disabled={idx === order.length - 1} onClick={() => swapBlocks(p, order[idx + 1])} />
+                  <Text strong>
+                    {title}
+                    {idx === 0 ? '（首选）' : '（备用）'}
+                  </Text>
+                  <Text type="secondary">
+                    {idx === 0 ? '调用 AI 时优先使用' : `${title} 失败后自动降级到本配置`}
+                  </Text>
+                </Space>
 
-                <Form.Item name={`${p}_base_url`} label="Base URL" style={{ marginTop: 12 }}>
+                <Form.Item name={`${p}_base_url`} label="Base URL" style={{ marginBottom: 12 }}>
                   <Input placeholder="https://api.deepseek.com/v1" autoComplete="off" />
                 </Form.Item>
 
@@ -368,13 +438,11 @@ const SystemSettingsPage: React.FC = () => {
                   name={`${p}_api_key`}
                   label="API Key"
                   extra={
-                    <Space orientation="vertical" size={4}>
-                      <Text type="secondary">
-                        {keySet
-                          ? `已设置${keyLast4 ? `（末 4 位：${keyLast4}）` : ''}`
-                          : (idx === 0 ? '未设置，将降级使用 Cloudflare Workers AI（免费，Llama 模型）' : '未设置，该配置不会被使用')}
-                      </Text>
-                    </Space>
+                    <Text type="secondary">
+                      {keySet
+                        ? `已设置${keyLast4 ? `（末 4 位：${keyLast4}）` : ''}`
+                        : (idx === 0 ? '未设置，将降级使用 Cloudflare Workers AI（免费，Llama 模型）' : '未设置，该配置不会被使用')}
+                    </Text>
                   }
                   rules={[
                     {
@@ -393,7 +461,7 @@ const SystemSettingsPage: React.FC = () => {
                 </Form.Item>
 
                 <Space>
-                  <Button onClick={() => handleTest(idx)} loading={testing === idx} icon={<ApiOutlined />}>
+                  <Button onClick={() => handleTest(p)} loading={testing === p} icon={<ApiOutlined />}>
                     测试连通性
                   </Button>
                   {keySet && !isEditing && (
