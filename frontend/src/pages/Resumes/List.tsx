@@ -1678,7 +1678,15 @@ const handleUploadClick = () => {
                   style={{ width: conditionExpanded ? 260 : 150 }}
                 />
                 <Text style={{ fontSize: 13, color: '#333' }}>阈值</Text>
-                <InputNumber min={0} max={100} value={customThreshold} onChange={value => setCustomThreshold(value == null ? 60 : Number(value))} style={{ width: 60 }} />
+                <InputNumber
+                  min={0}
+                  max={100}
+                  value={customThreshold}
+                  onChange={value => setCustomThreshold(value == null ? 60 : Number(value))}
+                  onFocus={e => (e.target as HTMLInputElement).select()}
+                  suffix="%"
+                  style={{ width: 72 }}
+                />
                 <Button type="primary" icon={<SearchOutlined />} loading={customLoading} onClick={runCustomScreen}>筛选</Button>
                 {customActive && (
                   <Button onClick={clearCustomScreen}>清除</Button>
