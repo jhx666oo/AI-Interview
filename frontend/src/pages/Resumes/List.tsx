@@ -710,14 +710,14 @@ const ResumesList: React.FC = () => {
         return;
       }
       const scoreMap = new Map(scores.map((s) => [String(s.id), s]));
-      // 只展示拿到 AI 语义分的简历（否则会显示不准的关键词卡片）
+      // 阈值即硬门槛：匹配度低于阈值的简历不展示（默认 60），只留达标卡片
       const merged = items
         .map((item: any) => {
           const s = scoreMap.get(String(item.id));
           if (!s) return null;
           return { ...item, custom_match: { score: s.score, reason: s.reason || '符合筛选条件', method: 'ai' } };
         })
-        .filter((item: any) => item !== null)
+        .filter((item: any) => item !== null && item.custom_match.score >= customThreshold)
         .sort((a: any, b: any) => b.custom_match.score - a.custom_match.score);
       setCustomResults(merged);
       setCustomTotal(merged.length);
