@@ -5829,17 +5829,16 @@ app.get('/api/resumes', authMiddleware, async (c) => {
   }
 });
 
-// 构建自定义筛选候选池：岗位别名 + HR 权限隔离 + 关键词预筛（两阶段路由共用，保证同一候选池）
-// 候选池上限：展示最多 ~100 条，AI 打分给 2 倍余量让语义分重排。
-// 池子过大会把上千份简历的整段全文一次拉回 → D1 传输超时（前端"筛选请求超时"）。
-const CUSTOM_SCREEN_POOL_CAP = 200;
+// 构建自定义筛选候选池：岗位别名 + HR 权限隔离 + 全量简历进 AI 语义匹配（两阶段路由共用，保证同一候选池）。
+// 不再做 SQL 关键词预筛（预筛漏持证者），候选池 = 该岗位全部有文本的简历，AI 分片并发对全量打分。
+// LIMIT 仅防极端大岗位：与 aiScoreCustomScreenPool 的 AI_HARD_CAP 对齐（>cap 的部分保留关键词分不达显）。
+const CUSTOM_SCREEN_POOL_CAP = 1000;
 
 async function buildCustomScreenPool(
   env: any,
   position: string,
   condition: string,
   owner: string | null,
-  opts: { includeText?: boolean } = {},
 ): Promise<{ pool: Array<{ row: any; hits: number; matched: string[]; combined: string }>; tokens: string[]; positionMap: Map<string, string> }> {
   // 岗位别名：标准岗位名 + 映射表里映射到该标准名的全部原始岗位名（与列表路由 position 过滤语义一致）
   const aliasRaws = new Set<string>([position]);
@@ -5862,41 +5861,17 @@ async function buildCustomScreenPool(
 
   const tokens = tokenizeCondition(condition);
 
-  // SQL 预筛 + 命中计数：长度>=2 的 token 做 LIKE 粗筛（最多 8 个），并在 SELECT 里用
-  // CASE 统计每个 token 命中数（hit_count），按命中数降序取前 CUSTOM_SCREEN_POOL_CAP 份。
-  // 命中数排序让真正相关的简历（如含"小米"）排到前面，被"工作"这类人人命中词灌满的池子
-  // 不再截断真命中；单字符 token（如 "c"）噪声大不入 SQL，仍参与 JS 精确计数。
-  // includeText=false（关键词层）不拉长文本列，只传小字段 + hit_count，避免一次几十 MB 传输。
-  const prefilterTokens = tokens.filter((t) => t.length >= 2).slice(0, 8);
-  const escape = (s: string) => s.replace(/[%_\\]/g, (m) => `\\${m}`);
-  const likeGroups: string[] = [];
-  const hitExprs: string[] = [];
-  const hitParams: string[] = [];       // SELECT hit_count CASE 的占位符（先出现在 SQL 文本中）
-  const prefilterParams: string[] = []; // WHERE 预筛的占位符
-  for (const t of prefilterTokens) {
-    const group = `(ocr_markdown LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\' OR resume_markdown LIKE ? ESCAPE '\\' OR parsed_data LIKE ? ESCAPE '\\')`;
-    const pattern = `%${escape(t)}%`;
-    likeGroups.push(group);
-    hitExprs.push(`CASE WHEN ${group} THEN 1 ELSE 0 END`);
-    hitParams.push(pattern, pattern, pattern, pattern);
-    prefilterParams.push(pattern, pattern, pattern, pattern);
-  }
-  const prefilterSql = likeGroups.length > 0 ? ` AND (${likeGroups.join(' OR ')})` : '';
-  const hitCountSql = hitExprs.length > 0 ? `(${hitExprs.join(' + ')})` : '0';
-
-  const textCols = opts.includeText
-    ? 'parsed_data, raw_text, resume_markdown, ocr_markdown, '
-    : '';
+  // 不再 SQL 关键词预筛：直接把该岗位全部有文本的简历交给 AI 语义打分（简历量小时全量匹配提示词，
+  // 靠多模型分片并发提速）。之前预筛按条件开头通用词截断候选池，导致持护士资格证/执业证的人被排除。
+  // LIMIT 仅防极端大岗位（cap 与 AI 全量打分上限一致），命中/匹配由 JS 侧对全文精确计数。
   const rows = await env.DB.prepare(
-    `SELECT id, candidate_name, contact, position_applied, mapped_position, status, screening_result, business_screening_status, hr_disposition, gender, birthday, education, hard_requirement_result, capability_scores, ${textCols}datetime(created_at) as created_at, datetime(updated_at) as updated_at,
-     ${hitCountSql} AS hit_count
+    `SELECT id, candidate_name, contact, position_applied, mapped_position, status, screening_result, business_screening_status, hr_disposition, gender, birthday, education, hard_requirement_result, capability_scores, parsed_data, raw_text, resume_markdown, ocr_markdown, datetime(created_at) as created_at, datetime(updated_at) as updated_at
      FROM resumes
      WHERE (mapped_position IN (${placeholders}) OR position_applied IN (${placeholders}))
        AND (ocr_markdown IS NOT NULL OR raw_text IS NOT NULL OR resume_markdown IS NOT NULL OR parsed_data IS NOT NULL)
-       ${prefilterSql}
-     ORDER BY hit_count DESC, created_at DESC, updated_at DESC
+     ORDER BY created_at DESC, updated_at DESC
      LIMIT ?`
-  ).bind(...hitParams, ...aliasRaws, ...aliasRaws, ...prefilterParams, CUSTOM_SCREEN_POOL_CAP).all();
+  ).bind(...aliasRaws, ...aliasRaws, CUSTOM_SCREEN_POOL_CAP).all();
   let candidates = (rows.results || []) as any[];
 
   // HR 权限隔离：非 admin 只筛选自己负责的岗位（与列表路由逻辑一致）
@@ -5919,29 +5894,20 @@ async function buildCustomScreenPool(
 
   const positionMap = await buildPositionMapping(env.DB).catch(() => new Map<string, string>());
 
-  // 关键词预筛：命中 ≥1 的全部进入候选池，按命中数降序；全部交给 AI 语义打分。
-  // kwRes（includeText=false）无全文，靠 SQL hit_count 计分且不筛除（已过 SQL 预筛）；
-  // scores（includeText=true）有全文，用 JS 精确计数过滤并生成 AI 提示词用的 combined 文本。
+  // 全量进候选池：JS 精确计数关键词命中（供第一阶段关键词粗分与排序），combined 供 AI 打分。
   const poolRows: Array<{ row: any; hits: number; matched: string[]; combined: string }> = [];
   for (const row of candidates) {
-    let hits = Math.max(0, Number(row.hit_count) || 0);
-    let matched: string[] = [];
-    let combined = '';
-    if (opts.includeText) {
-      combined = buildResumeFullText(row);
-      const r = countTokenHits(combined, tokens);
-      hits = r.hits;
-      matched = r.matched;
-    }
-    if (!opts.includeText || hits > 0) poolRows.push({ row, hits, matched, combined });
+    const combined = buildResumeFullText(row);
+    const r = countTokenHits(combined, tokens);
+    poolRows.push({ row, hits: r.hits, matched: r.matched, combined });
   }
   poolRows.sort((a, b) => b.hits - a.hits);
   return { pool: poolRows, tokens, positionMap };
 }
 
-// AI 语义打分：对候选池全部命中简历做语义评分（不再跳过命中明显的——用户要求全量解析保准度）。
-// 并发分批 + 全局截止时间兜底；超时/失败批次回退关键词分（不返回该 id 即可）。
-// 命中数靠前的 AI_HARD_CAP 份才打分（防止通用词命中上千份时请求爆炸），其余保留关键词分。
+// AI 语义打分：对候选池全部简历做语义评分（不再做关键词预筛，直接让 AI 按完整筛选条件逐份匹配，
+// 用户要求全量解析保准度）。并发分批 + 全局截止时间兜底；超时/失败批次回退关键词分（不返回该 id 即可）。
+// 简历数超 AI_HARD_CAP 时只对前 cap 份打分（防极端大岗位请求爆炸），其余保留关键词分。
 async function aiScoreCustomScreenPool(
   env: any,
   pool: Array<{ row: any; hits: number; matched: string[]; combined: string }>,
@@ -5950,11 +5916,11 @@ async function aiScoreCustomScreenPool(
 ): Promise<{ scores: Array<{ id: string; score: number; reason: string }>; error?: string }> {
   if (pool.length === 0) return { scores: [] };
 
-  const AI_HARD_CAP = 1000; // 与 SQL 召回上限一致：命中简历全部交给 AI 打分（用户要求全量解析保准度，慢可以接受）
+  const AI_HARD_CAP = 1000; // 与候选池 cap 一致：全量简历交给 AI 打分（用户要求全量解析保准度，慢可以接受）
   let eligible = pool;
   if (eligible.length > AI_HARD_CAP) {
     eligible = pool.slice(0, AI_HARD_CAP);
-    console.warn(`[custom-screen] 命中简历 ${pool.length} 份，AI 只对命中数前 ${AI_HARD_CAP} 份打分，其余保留关键词分`);
+    console.warn(`[custom-screen] 简历 ${pool.length} 份，AI 只对前 ${AI_HARD_CAP} 份打分，其余保留关键词分`);
   }
 
   const BATCH = 8;
@@ -6059,7 +6025,7 @@ app.post('/api/resumes/custom-screen', authMiddleware, async (c) => {
       : 60;
     const owner = getOwnerName(c);
 
-    const { pool, tokens, positionMap } = await buildCustomScreenPool(c.env as any, position, condition, owner, { includeText: false });
+    const { pool, tokens, positionMap } = await buildCustomScreenPool(c.env as any, position, condition, owner);
     if (tokens.length === 0) return c.json({ detail: '筛选条件无法识别' }, 400);
 
     // 组装卡片字段 + custom_match（符合程度 + 理由 + 打分方式）
@@ -6104,7 +6070,7 @@ app.post('/api/resumes/custom-screen/scores', authMiddleware, async (c) => {
     if (!position || !condition) return c.json({ detail: '缺少岗位或筛选条件' }, 400);
     if (condition.length > 2000) return c.json({ detail: '筛选条件过长（最多 2000 字）' }, 400);
     const owner = getOwnerName(c);
-    const { pool, tokens } = await buildCustomScreenPool(c.env as any, position, condition, owner, { includeText: true });
+    const { pool, tokens } = await buildCustomScreenPool(c.env as any, position, condition, owner);
     if (tokens.length === 0) return c.json({ scores: [], total: 0 });
     const result = await aiScoreCustomScreenPool(c.env as any, pool, position, condition);
     return c.json({
@@ -8278,6 +8244,10 @@ app.get('/api/settings/prompts', authMiddleware, async (c) => {
         result.prompts[key] = normalizeScreeningPrompt(key, prompt);
       }
     }
+    // 自定义筛选提示词模板始终可调节：未保存过则注入默认模板（避免老用户看不到该 tab）
+    if (!result.prompts.resume_custom_screen?.system || !result.prompts.resume_custom_screen?.user) {
+      result.prompts.resume_custom_screen = { ...DEFAULT_CUSTOM_SCREEN_PROMPT };
+    }
     return c.json(result);
   } catch { return c.json({ prompts: {} }); }
 });
@@ -8321,6 +8291,11 @@ app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
       { name: 'job_description', description: '岗位职责与要求' },
       { name: 'personalized_requirements', description: '个性化需求' },
       { name: 'missing_dimensions', description: '缺失待补充的能力维度名称' },
+    ],
+    resume_custom_screen: [
+      { name: 'position', description: '应聘岗位' },
+      { name: 'condition', description: '自定义筛选条件' },
+      { name: 'resumes', description: '待评估的简历列表（每份含 #id 前缀）' },
     ],
   };
   const all_variables: Record<string, string> = {};
@@ -8428,6 +8403,10 @@ app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
     resume_screening_supplement: {
       system: `你是专业人才能力量化评估专家，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
       user: '# 人才能力评估AI打分提示词\n\n## 角色定位\n你是一名专业的人才能力量化评估专家，具备严谨客观的评分准则与标准化输出能力。你的核心任务是**100%基于PDF解析后的原文内容**，对照指定的能力维度清单逐项打分，评分需紧密结合岗位职责要求与招聘方个性化需求，最终输出**可直接用于前端页面渲染的标准化结构化数据**，禁止输出任何无依据的主观推断与补充信息。\n\n## 核心评分规则\n### 基础准则\n- **原文唯一依据原则**：仅以简历文本中明确表述的经历、成果、技能、资质为评分依据；原文未提及的维度，统一标记为「信息不足」，不得随意赋分或主观推断。\n- **岗位对标原则**：每项能力的评分高低，需结合岗位职责对该能力的要求层级与应用场景判断。\n- **需求加权原则**：个性化需求中明确强调的核心维度，需严格提高评估标准，并在评分说明中重点标注匹配程度。\n- **统一分制规则**：全程采用1-5分整数评分制\n  - 5分：远超岗位要求，具备深度经验与可验证的突出成果\n  - 4分：完全满足岗位要求，具备明确的相关实践经验\n  - 3分：基本符合岗位要求，有一定基础但经验深度不足\n  - 2分：仅部分匹配要求，相关经验薄弱\n  - 1分：完全不符合岗位要求\n  - N/A：原文无对应信息，无法评估\n\n## 输入材料\n### 简历原文\n{resume_text}\n\n### 已提取字段\n{fields}\n\n### 能力维度清单（需逐项评估）\n{capability_dimensions}\n\n### 岗位职责与要求\n{job_description}\n\n### 个性化需求\n{personalized_requirements}'
+    },
+    resume_custom_screen: {
+      system: DEFAULT_CUSTOM_SCREEN_PROMPT.system,
+      user: DEFAULT_CUSTOM_SCREEN_PROMPT.user,
     },
   };
 

@@ -170,15 +170,14 @@ describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）
     const res = await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证', threshold: 60 });
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    // res-2 关键词零命中，被预筛排除
-    expect(body.total).toBe(1);
-    expect(body.items).toHaveLength(1);
+    // 不再 SQL 预筛：该岗位全部简历（res-1、res-2）都返回关键词粗分，AI 后续对全量打分
+    expect(body.total).toBe(2);
+    expect(body.items).toHaveLength(2);
     expect(body.ai_pending).toBe(true);
-    const item = body.items[0];
-    expect(item.id).toBe('res-1');
+    const item = body.items.find((i: any) => i.id === 'res-1');
     expect(item.standard_position).toBe('护士');
-    // "持有护士证" → 持有/有护/护士/士证 共 4 个 token；SQL hit_count=3 → 75 分（kwRes 不拉全文，matched 为空）
-    expect(item.custom_match).toEqual({ score: 75, reason: '关键词命中 3/4', method: 'keyword' });
+    // "持有护士证" → 持有/有护/护士/士证 共 4 个 token；res-1 命中 3 个 → 75 分（matched 列出命中词）
+    expect(item.custom_match).toEqual({ score: 75, reason: '关键词命中 3/4：持有、有护、护士', method: 'keyword' });
   });
 
   it('sorts keyword-phase results by score descending', async () => {
@@ -190,37 +189,22 @@ describe('POST /api/resumes/custom-screen（第一层：关键词立即返回）
     expect(body.items[1].id).toBe('res-1');
   });
 
-  it('prefilters candidates in SQL via LIKE and caps the transfer with LIMIT', async () => {
+  it('does not prefilter in SQL: fetches all position resumes and caps with LIMIT', async () => {
     const capture: Array<{ sql: string; params: unknown[] }> = [];
     const db = makeDb({ resumes: [RESUME_NURSE], capture });
     await postCustomScreen(makeEnv(db), { position: '护士', condition: '持有护士证' });
     const hit = capture.find((c) => c.sql.includes('FROM resumes'));
     expect(hit).toBeTruthy();
-    // "持有护士证" → 持有/有护/护士/士证 4 个 len>=2 token → 4 组 LIKE（每组 4 列）；
-    // 每组出现在 SELECT hit_count CASE 与 WHERE 预筛各一次 → 4 组 × 4 列 × 2 = 32 个 ESCAPE
-    const escapes = (hit!.sql.match(/ESCAPE/g) || []).length;
-    expect(escapes).toBe(32);
-    expect(hit!.sql).toContain('AS hit_count');
-    expect(hit!.sql).toContain('CASE WHEN');
-    expect(hit!.sql).toContain('ORDER BY hit_count DESC');
+    // 去掉 SQL 关键词预筛：不再生成 LIKE/ESCAPE 组，也不再 SELECT hit_count CASE
+    expect(hit!.sql).not.toContain('LIKE');
+    expect(hit!.sql).not.toContain('ESCAPE');
+    expect(hit!.sql).not.toContain('AS hit_count');
+    expect(hit!.sql).not.toContain('CASE WHEN');
     expect(hit!.sql).toContain('LIMIT ?');
-    expect(hit!.params).toContain('%持有%');
-    expect(hit!.params).toContain('%士证%');
-    // 16 个 SELECT hit_params + 2 个岗位参数 + 16 个 WHERE 预筛参数 + 末尾 LIMIT 值
-    expect(hit!.params).toHaveLength(35);
-    expect(hit!.params[hit!.params.length - 1]).toBe(200);
-  });
-
-  it('excludes single-char tokens from the SQL LIKE prefilter', async () => {
-    const capture: Array<{ sql: string; params: unknown[] }> = [];
-    const db = makeDb({ resumes: [RESUME_NURSE], capture });
-    await postCustomScreen(makeEnv(db), { position: '护士', condition: 'C语言' });
-    const hit = capture.find((c) => c.sql.includes('FROM resumes'));
-    // 只有 "语言" 1 个 len>=2 token → 1 组 LIKE（4 列 × SELECT+WHERE 两处 = 8 个 ESCAPE）；"c" 不进入 SQL
-    const escapes = (hit!.sql.match(/ESCAPE/g) || []).length;
-    expect(escapes).toBe(8);
-    expect(hit!.params).not.toContain('%c%');
-    expect(hit!.params).toContain('%语言%');
+    // 只 bind 岗位别名（mapped_position IN 与 position_applied IN 各一次）+ LIMIT 值
+    expect(hit!.params).toHaveLength(3);
+    expect(hit!.params[0]).toBe('护士');
+    expect(hit!.params[hit!.params.length - 1]).toBe(1000);
   });
 
   it('enforces HR owner isolation (only own positions)', async () => {

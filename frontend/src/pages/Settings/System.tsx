@@ -63,6 +63,7 @@ const promptNames: Record<string, string> = {
   resume_extract_fields: '简历字段提取',
   resume_screening: '简历初筛',
   resume_screening_supplement: '简历初筛补充评分',
+  resume_custom_screen: '自定义筛选',
 };
 
 const SystemSettingsPage: React.FC = () => {
