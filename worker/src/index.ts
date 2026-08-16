@@ -5855,13 +5855,37 @@ async function buildCustomScreenPool(
   } catch {}
 
   const placeholders = [...aliasRaws].map(() => '?').join(', ');
+
+  const tokens = tokenizeCondition(condition);
+
+  // SQL 预筛：用条件里长度>=2 的 token 做 LIKE 粗筛，只回传命中行，避免岗位下简历过多时
+  // 全量拉取文本列导致 D1 传输超时；单字符 token（如 "c"）噪声太大不入 SQL，仍参与 JS 精确计数。
+  // 最多取 8 个 token 控制 SQL 长度。
+  const prefilterTokens = tokens.filter((t) => t.length >= 2).slice(0, 8);
+  let prefilterSql = '';
+  const prefilterParams: string[] = [];
+  if (prefilterTokens.length > 0) {
+    const escape = (s: string) => s.replace(/[%_\\]/g, (m) => `\\${m}`);
+    const tokenGroup = prefilterTokens
+      .map(() => `(ocr_markdown LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\' OR resume_markdown LIKE ? ESCAPE '\\' OR parsed_data LIKE ? ESCAPE '\\')`)
+      .join(' OR ');
+    prefilterSql = ` AND ${tokenGroup}`;
+    for (const t of prefilterTokens) {
+      const pattern = `%${escape(t)}%`;
+      for (let i = 0; i < 4; i++) prefilterParams.push(pattern);
+    }
+  }
+
+  const POOL_SQL_LIMIT = 200; // 上限：避免全量文本传输，只取最新的命中简历（足够填充 60 份候选池）
   const rows = await env.DB.prepare(
     `SELECT id, candidate_name, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, hr_disposition, business_screening_status, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at
      FROM resumes
      WHERE (mapped_position IN (${placeholders}) OR position_applied IN (${placeholders}))
        AND (ocr_markdown IS NOT NULL OR raw_text IS NOT NULL OR resume_markdown IS NOT NULL OR parsed_data IS NOT NULL)
-     ORDER BY created_at DESC, updated_at DESC`
-  ).bind(...aliasRaws, ...aliasRaws).all();
+       ${prefilterSql}
+     ORDER BY created_at DESC, updated_at DESC
+     LIMIT ?`
+  ).bind(...aliasRaws, ...aliasRaws, ...prefilterParams, POOL_SQL_LIMIT).all();
   let candidates = (rows.results || []) as any[];
 
   // HR 权限隔离：非 admin 只筛选自己负责的岗位（与列表路由逻辑一致）
@@ -5883,7 +5907,6 @@ async function buildCustomScreenPool(
   }
 
   const positionMap = await buildPositionMapping(env.DB).catch(() => new Map<string, string>());
-  const tokens = tokenizeCondition(condition);
 
   // 关键词预筛：命中 ≥1 的进入候选池，按命中数降序截断，控制 AI 打分成本
   const poolRows: Array<{ row: any; hits: number; matched: string[]; combined: string }> = [];

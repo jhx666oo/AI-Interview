@@ -681,7 +681,7 @@ const ResumesList: React.FC = () => {
         condition: cond,
         threshold: customThreshold,
         limit: 100,
-      }, { timeout: 8000 });
+      }, { timeout: 12000 });
       setCustomResults(res?.items || []);
       setCustomTotal(res?.total ?? (res?.items || []).length);
       setCustomActive(true);
