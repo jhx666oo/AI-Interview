@@ -255,6 +255,18 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(body.scores).toEqual([]);
   });
 
+  it('surfaces the real ai_error when all AI batches fail (for diagnosis)', async () => {
+    globalThis.fetch = (async () => new Response('invalid key', { status: 401 })) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.scores).toEqual([]);
+    expect(typeof body.ai_error).toBe('string');
+    expect(body.ai_error.length).toBeGreaterThan(0);
+  });
+
   it('bounds AI latency: slow AI returns empty scores without hanging the request', async () => {
     // AI fetch 永不返回，靠全局截止时间兜底，避免超过前端请求超时
     globalThis.fetch = (() => new Promise<never>(() => {})) as any;
@@ -267,7 +279,7 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(body.scores).toEqual([]);
   });
 
-  it('caps AI cost: requests small max_tokens', async () => {
+  it('caps AI cost: keeps max_tokens modest', async () => {
     let sentBody: any;
     globalThis.fetch = (async (url: unknown, init: any) => {
       sentBody = JSON.parse(init.body as string);
@@ -280,7 +292,7 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     const db = makeDb({ resumes: [RESUME_NURSE] });
     const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
     expect(res.status).toBe(200);
-    expect(sentBody.max_tokens).toBe(512);
+    expect(sentBody.max_tokens).toBe(1024);
   });
 
   it('admins bypass owner isolation', async () => {
