@@ -689,17 +689,27 @@ const ResumesList: React.FC = () => {
           condition: cond,
           threshold: customThreshold,
           limit: 100,
-        }, { timeout: 60000 }),
+        }, { timeout: 90000 }),
       ]);
       if (runId !== customRunRef.current) return; // 已被新的筛选/清除覆盖
+      const items: any[] = Array.isArray(kwRes?.items) ? kwRes.items : [];
+      if (items.length === 0) {
+        // 没有关键词命中的简历：正常空态，不是 AI 失败
+        setCustomResults([]);
+        setCustomTotal(0);
+        setCustomActive(true);
+        setPollingEnabled(false);
+        setSelectedRowKeys([]);
+        return;
+      }
       const scores: Array<{ id: string; score: number; reason: string }> =
         Array.isArray(scoresRes?.scores) ? scoresRes.scores : [];
       if (scores.length === 0) {
-        message.error('AI 语义解析失败，请稍后重试');
+        const reason = scoresRes?.ai_error ? `：${String(scoresRes.ai_error).slice(0, 200)}` : '';
+        message.error(`AI 语义解析失败，请稍后重试${reason}`);
         return;
       }
       const scoreMap = new Map(scores.map((s) => [String(s.id), s]));
-      const items: any[] = Array.isArray(kwRes?.items) ? kwRes.items : [];
       // 只展示拿到 AI 语义分的简历（否则会显示不准的关键词卡片）
       const merged = items
         .map((item: any) => {

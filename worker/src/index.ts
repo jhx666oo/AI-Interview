@@ -5926,8 +5926,8 @@ async function aiScoreCustomScreenPool(
   pool: Array<{ row: any; hits: number; matched: string[]; combined: string }>,
   position: string,
   condition: string,
-): Promise<Array<{ id: string; score: number; reason: string }>> {
-  if (pool.length === 0) return [];
+): Promise<{ scores: Array<{ id: string; score: number; reason: string }>; error?: string }> {
+  if (pool.length === 0) return { scores: [] };
 
   const AI_HARD_CAP = 1000; // 与 SQL 召回上限一致：命中简历全部交给 AI 打分（用户要求全量解析保准度，慢可以接受）
   let eligible = pool;
@@ -5937,7 +5937,10 @@ async function aiScoreCustomScreenPool(
   }
 
   const BATCH = 8;
-  const AI_TIMEOUT_MS = Math.max(3000, Number(env.CUSTOM_SCREEN_AI_TIMEOUT_MS) || 6000);
+  // 生成速度是主要瓶颈（DeepSeek 约 30-60 token/s，8 份简历的 JSON 输出需 5-17s），
+  // 批内超时给足余量；各批并发执行，总耗时 ≈ 最慢单批，远小于前端 90s 请求超时。
+  // 之前 6s 必超时 → 每批都失败 → 前端一直拿到空分。
+  const AI_TIMEOUT_MS = Math.max(3000, Number(env.CUSTOM_SCREEN_AI_TIMEOUT_MS) || 30000);
   const batches: Array<Array<{ row: any; hits: number; matched: string[]; combined: string }>> = [];
   for (let i = 0; i < eligible.length; i += BATCH) batches.push(eligible.slice(i, i + BATCH));
 
@@ -5952,7 +5955,7 @@ async function aiScoreCustomScreenPool(
       callAI(env, prompt.system, userText, 'deepseek-v4-flash', {
         structured: true,
         temperature: 0,
-        maxTokens: 512,
+        maxTokens: 1024, // 8 份简历的 JSON 输出，512 易被截断 → 解析失败 → 整批空分
       }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('CUSTOM_SCREEN_AI_TIMEOUT')), AI_TIMEOUT_MS)),
     ]);
@@ -5970,13 +5973,19 @@ async function aiScoreCustomScreenPool(
     return out;
   }
 
+  let firstError: string | null = null;
   const scored = await Promise.all(batches.map((b) => scoreBatch(b).catch((e) => {
-    console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${(e as Error)?.message}`);
+    const msg = String((e as Error)?.message || e).slice(0, 300);
+    firstError = firstError || msg;
+    console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${msg}`);
     return new Map<string, { id: string; score: number; reason: string }>();
   })));
   const scores = new Map<string, { id: string; score: number; reason: string }>();
   for (const m of scored) for (const [id, v] of m) scores.set(id, v);
-  return [...scores.values()];
+  const list = [...scores.values()];
+  // 全部批次失败时把首个真实报错回传给前端，便于定位（配置/超时/限额等）
+  if (list.length === 0 && firstError) return { scores: list, error: firstError };
+  return { scores: list };
 }
 
 /**
@@ -6042,8 +6051,13 @@ app.post('/api/resumes/custom-screen/scores', authMiddleware, async (c) => {
     const owner = getOwnerName(c);
     const { pool, tokens } = await buildCustomScreenPool(c.env as any, position, condition, owner);
     if (tokens.length === 0) return c.json({ scores: [], total: 0 });
-    const scores = await aiScoreCustomScreenPool(c.env as any, pool, position, condition);
-    return c.json({ scores, total: pool.length, ai_pending: false });
+    const result = await aiScoreCustomScreenPool(c.env as any, pool, position, condition);
+    return c.json({
+      scores: result.scores,
+      total: pool.length,
+      ai_pending: false,
+      ...(result.error ? { ai_error: result.error } : {}),
+    });
   } catch (e: any) {
     console.error(`[custom-screen] AI 语义分计算失败: ${e.message}`);
     return c.json({ detail: 'AI 语义分计算失败: ' + e.message }, 500);
