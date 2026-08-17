@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress } from 'antd';
+import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress, Radio } from 'antd';
 import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import DOMPurify from 'dompurify';
 import request from '../../utils/request';
@@ -125,6 +125,7 @@ const ResumesList: React.FC = () => {
   const resumeListRequestInFlightRef = useRef(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [batchPushing, setBatchPushing] = useState(false);
+  const [pushExpiry, setPushExpiry] = useState<number>(7);
   const canBatchPush = user?.role === 'admin' || user?.role === 'hr';
   const [businessScreeningState, setBusinessScreeningState] = useState<Record<string, BusinessScreeningOverlay>>(
     () => loadStoredJson<Record<string, BusinessScreeningOverlay>>(BUSINESS_SCREENING_STATE_KEY, {}),
@@ -1054,15 +1055,37 @@ const ResumesList: React.FC = () => {
       return;
     }
     const selectedIds = selectedRowKeys.map(String);
+    const expiryOptions = [
+      { label: '7天', value: 7 },
+      { label: '30天', value: 30 },
+      { label: '90天', value: 90 },
+      { label: '永久', value: 0 },
+    ];
     Modal.confirm({
       title: '确认批量推送',
-      content: `确定将选中的 ${selectedIds.length} 份简历推送给岗位配置的责任人吗？`,
+      content: (
+        <div>
+          <p style={{ marginTop: 0 }}>确定将选中的 {selectedIds.length} 份简历推送给岗位配置的责任人吗？</p>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ marginBottom: 6, fontWeight: 500 }}>链接有效期</div>
+            <Radio.Group
+              options={expiryOptions}
+              optionType="button"
+              value={pushExpiry}
+              onChange={(e) => setPushExpiry(e.target.value)}
+            />
+            <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
+              {pushExpiry === 0 ? '永久链接长期公开，简历被淘汰或重新推送后自动失效' : `链接 ${pushExpiry} 天后到期，需重新推送生成`}
+            </div>
+          </div>
+        </div>
+      ),
       okText: '确认推送',
       cancelText: '取消',
       onOk: async () => {
         setBatchPushing(true);
         try {
-          const res = await request.post('/resumes/business-screening/push', { ids: selectedIds }) as BusinessScreeningPushResult;
+          const res = await request.post('/resumes/business-screening/push', { ids: selectedIds, expires_in_days: pushExpiry }) as BusinessScreeningPushResult;
           const pushedIds = Array.isArray(res.pushed) ? res.pushed : [];
           mergeBusinessScreeningState(pushedIds, { hr_disposition: 'pushed', business_screening_status: 'pending' });
           setData(prev => prev.map(item => pushedIds.includes(item.id) ? { ...item, hr_disposition: 'pushed', business_screening_status: 'pending' } : item));
@@ -1083,7 +1106,7 @@ const ResumesList: React.FC = () => {
 
   const handlePush = async (record: any) => {
     try {
-      const res = await request.post('/resumes/business-screening/push', { ids: [record.id] }) as BusinessScreeningPushResult;
+      const res = await request.post('/resumes/business-screening/push', { ids: [record.id], expires_in_days: pushExpiry }) as BusinessScreeningPushResult;
       const pushedIds = Array.isArray(res.pushed) ? res.pushed : [];
       if (pushedIds.includes(record.id)) {
         mergeBusinessScreeningState([record.id], { hr_disposition: 'pushed', business_screening_status: 'pending' });

@@ -217,6 +217,15 @@ function plusDays(iso: string, days: number): string {
   return at.toISOString();
 }
 
+// 链接有效期解析：不传/非法 → 默认 7 天；0 或负数 → 永久（expires_at 为 null，永不过期）；正数 → 按天
+function resolveExpiresAt(nowIso: string, raw: unknown): string | null {
+  if (raw === undefined || raw === null) return plusDays(nowIso, 7);
+  const days = Number(raw);
+  if (!Number.isFinite(days)) return plusDays(nowIso, 7);
+  if (days <= 0) return null;
+  return plusDays(nowIso, Math.floor(days));
+}
+
 function isBatchAccessible(batch: ResumePushBatchRow, nowIso: string): { ok: true } | { ok: false; status: 410; nextStatus?: 'expired' } {
   if (batch.status === 'revoked' || batch.status === 'expired') {
     return { ok: false, status: 410 };
@@ -370,7 +379,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const currentUserToken = user.email ? await deps.getCurrentUserToken(c.env, user.email) : null;
     const pushedResumeIds = uniqueStrings([...grouped.values()].flatMap((group) => group.resumes.map((resume) => resume.id)));
     const failed: Array<{ interviewer: string; reason: string }> = [];
-    const batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number }> = [];
+    const batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number; expiresAt: string | null }> = [];
     const dispatchGroupId = deps.uuid();
 
     for (const group of grouped.values()) {
@@ -386,6 +395,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         createdAt: itemCreatedAt,
         dispatchGroupId,
       }));
+      const expiresAt = resolveExpiresAt(nowIso, body.expires_in_days);
 
       await deps.store.createBatch(db, {
         id: batchId,
@@ -393,7 +403,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         interviewerName: group.interviewer.name,
         interviewerOpenId: group.interviewer.openId,
         tokenHash: issued.tokenHash,
-        expiresAt: plusDays(nowIso, 7),
+        expiresAt,
         createdBy: user.email || 'system',
         createdAt: nowIso,
         lastSentAt: null,
@@ -406,6 +416,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         interviewer: group.interviewer.name,
         url,
         itemCount: items.length,
+        expiresAt,
       });
 
       if (!currentUserToken) {
@@ -605,6 +616,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const batchId = c.req.param('batchId');
     const db = c.env.DB as D1Database;
     const user = ((c as any).get('user') || {}) as HrUser;
+    const body = await c.req.json().catch(() => ({}));
     const batch = await deps.store.loadBatchById(db, batchId);
     if (!batch) return c.json({ detail: 'Batch not found' }, 404);
 
@@ -635,7 +647,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       interviewerName: batch.interviewer_name,
       interviewerOpenId: batch.interviewer_open_id,
       tokenHash: issued.tokenHash,
-      expiresAt: plusDays(nowIso, 7),
+      expiresAt: resolveExpiresAt(nowIso, body.expires_in_days),
       createdBy: user.email || 'system',
       createdAt: nowIso,
       lastSentAt: null,

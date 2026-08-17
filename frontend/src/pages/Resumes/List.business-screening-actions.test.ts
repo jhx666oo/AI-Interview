@@ -11,6 +11,17 @@ describe('resume list business-screening wiring', () => {
     expect(source).not.toContain("request.post('/resumes/batch-approve-to-talent-pool'");
   });
 
+  it('lets the HR choose a link expiry (7d default / 30d / 90d / permanent) on push', () => {
+    expect(source).toContain('expires_in_days: pushExpiry');
+    expect(source).toContain('useState<number>(7)');
+    expect(source).toContain('{ label: \'7天\', value: 7 }');
+    expect(source).toContain('{ label: \'30天\', value: 30 }');
+    expect(source).toContain('{ label: \'90天\', value: 90 }');
+    expect(source).toContain('{ label: \'永久\', value: 0 }');
+    expect(source).toContain('链接有效期');
+    expect(source).toContain('永久链接长期公开，简历被淘汰或重新推送后自动失效');
+  });
+
   it('renders the new push/reject action labels and business-screening status copy', () => {
     expect(source).toContain("getBusinessScreeningActions(record)");
     expect(source).toContain("handlePush(record)");

@@ -398,6 +398,142 @@ describe('business screening routes', () => {
     expect(response.status).toBe(401);
   });
 
+  it('defaults batch expiry to 7 days and supports permanent links via expires_in_days=0', async () => {
+    const { request, batches } = buildHarness({
+      resumes: [
+        {
+          id: 'resume-1',
+          candidate_name: '候选人甲',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-2',
+          candidate_name: '候选人乙',
+          screening_result: '通过',
+          status: 'pending_review',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+      ],
+    });
+
+    const push = (ids: string[], body?: object) => request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, ...(body || {}) }),
+    });
+
+    // 不传 expires_in_days → 默认 7 天
+    const defaultResp = await push(['resume-1']);
+    expect(defaultResp.status).toBe(200);
+    const defaultBatch = [...batches.values()][0];
+    expect(defaultBatch.expires_at).toBe('2026-08-19T12:00:00.000Z');
+    await expect(defaultResp.json()).resolves.toMatchObject({
+      batches: [{ expiresAt: '2026-08-19T12:00:00.000Z' }],
+    });
+
+    // expires_in_days=0 → 永久（expires_at 为 null，永不过期）
+    const permanentResp = await push(['resume-2'], { expires_in_days: 0 });
+    expect(permanentResp.status).toBe(200);
+    const permanentBatch = [...batches.values()].find((batch) => batch.id !== defaultBatch.id);
+    expect(permanentBatch?.expires_at).toBeNull();
+    await expect(permanentResp.json()).resolves.toMatchObject({
+      batches: [{ expiresAt: null }],
+    });
+  });
+
+  it('honors a custom positive expiry in days for the push batch', async () => {
+    const { request, batches } = buildHarness();
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['resume-1'], expires_in_days: 30 }),
+    });
+    expect(response.status).toBe(200);
+    const batch = [...batches.values()][0];
+    expect(batch.expires_at).toBe('2026-09-11T12:00:00.000Z');
+    await expect(response.json()).resolves.toMatchObject({
+      batches: [{ expiresAt: '2026-09-11T12:00:00.000Z' }],
+    });
+  });
+
+  it('keeps a permanent batch accessible past the default 7-day window and treats expired ones as 410', async () => {
+    const { request, batches } = buildHarness({
+      initialBatches: [
+        {
+          id: 'batch-permanent',
+          interviewer_id: 'user-zhang',
+          interviewer_name: '张三',
+          interviewer_open_id: 'ou_zhang',
+          token_hash: 'hash-permanent',
+          expires_at: null,
+          status: 'active',
+          created_by: 'hr@example.com',
+          created_at: '2026-08-01T00:00:00.000Z',
+          last_sent_at: null,
+          rawToken: 'permanent-token',
+        },
+        {
+          id: 'batch-expired',
+          interviewer_id: 'user-zhang',
+          interviewer_name: '张三',
+          interviewer_open_id: 'ou_zhang',
+          token_hash: 'hash-expired',
+          expires_at: '2026-08-01T00:00:00.000Z',
+          status: 'active',
+          created_by: 'hr@example.com',
+          created_at: '2026-07-01T00:00:00.000Z',
+          last_sent_at: null,
+          rawToken: 'expired-token',
+        },
+      ],
+      initialItems: [
+        {
+          id: 'item-permanent',
+          batch_id: 'batch-permanent',
+          resume_id: 'resume-1',
+          position_id: 'position-1',
+          status: 'pending',
+          remark: null,
+          processed_at: null,
+          created_at: '2026-08-01T00:00:00.000Z',
+          candidate_name: '候选人甲',
+          mapped_position: '标准运营',
+        },
+      ],
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+      }],
+    });
+
+    // 永久批次（expires_at=null）：即使生成已远超 7 天仍可访问
+    const permanentAccess = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/permanent-token', {
+      method: 'GET',
+    });
+    expect(permanentAccess.status).toBe(200);
+
+    // 过期批次：返回 410
+    const expiredAccess = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/expired-token', {
+      method: 'GET',
+    });
+    expect(expiredAccess.status).toBe(410);
+    expect(batches.get('batch-expired')?.status).toBe('expired');
+  });
+
   it('rejects HR elimination when business screening is already completed', async () => {
     const { request } = buildHarness({
       resumes: [{
