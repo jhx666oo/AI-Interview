@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { Alert, Spin, Typography } from 'antd';
 import { useParams } from 'react-router-dom';
 import { RecruitingBoardView } from '../Dashboard/components/RecruitingBoardView';
+import { MiaodaDashboardView } from '../Dashboard/components/MiaodaDashboardView';
 import type { RecruitingBoard } from '../Dashboard/types';
+import { isDashboardV3Board, type DashboardV3Board } from '../Dashboard/v3-types';
 import request from '../../utils/request';
 
 const { Title, Text } = Typography;
@@ -32,7 +34,7 @@ const SharedDashboard = () => {
   const { token } = useParams();
   const [result, setResult] = useState<{
     token: string;
-    board: RecruitingBoard | null;
+    board: RecruitingBoard | DashboardV3Board | null;
     invalid: boolean;
   } | null>(null);
 
@@ -41,7 +43,7 @@ const SharedDashboard = () => {
 
     let active = true;
     request.get(`/shared/dashboard/${token}`)
-      .then((data: RecruitingBoard) => {
+      .then((data: RecruitingBoard | DashboardV3Board) => {
         if (active) setResult({ token, board: data, invalid: false });
       })
       .catch(() => {
@@ -62,11 +64,11 @@ const SharedDashboard = () => {
     <main style={{ maxWidth: 1600, margin: '0 auto', padding: '32px 24px 48px' }}>
       <header style={{ marginBottom: 28 }}>
         <Title level={3} style={{ marginBottom: 4 }}>招聘运营看板</Title>
-        <Text type="secondary">
-          数据截止：{board.snapshot_date || '最新实时数据'} · 仅含聚合数据
-        </Text>
+        <Text type="secondary">数据截止：{board.snapshot_date || '最新实时数据'} · 仅含聚合数据</Text>
       </header>
-      <RecruitingBoardView board={board} />
+      {isDashboardV3Board(board)
+        ? <MiaodaDashboardView board={board} />
+        : <RecruitingBoardView board={board} />}
     </main>
   );
 };

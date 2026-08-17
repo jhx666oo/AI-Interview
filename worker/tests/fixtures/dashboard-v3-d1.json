@@ -1,0 +1,14 @@
+{
+  "resumes": [
+    { "id": "resume-local-1", "position_id": "d1-position-1", "resume_source": "local_upload", "resume_ingest_key": "file:abc" }
+  ],
+  "positions": [
+    { "id": "d1-position-1", "title": "运营专员", "location": "杭州", "department": "职培事业部", "headcount": 1, "status": "open" }
+  ],
+  "scheduled": [],
+  "first_pass": [],
+  "second_pass": [],
+  "third_pass": [],
+  "offers": [],
+  "hired": []
+}

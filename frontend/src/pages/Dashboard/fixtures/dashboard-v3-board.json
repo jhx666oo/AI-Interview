@@ -1,0 +1,15 @@
+{
+  "schema_version": "dashboard-v3",
+  "data_mode": "live",
+  "snapshot_date": null,
+  "updated_at": "2026-08-17T00:00:00.000Z",
+  "kpis": {},
+  "funnel": [],
+  "divisions": [],
+  "hrbps": [],
+  "p2_positions": [],
+  "positions": [],
+  "totals": { "active_positions": 0, "headcount": 0, "resume_push": 0, "first_scheduled": 0, "first_pass": 0, "second_pass": 0, "final_pass": 0, "offers": 0, "hired": 0, "interview_pass_rate": null, "offer_conversion_rate": null, "hire_conversion_rate": null, "average_completed_cycle_days": null, "in_progress_position_count": 0, "in_progress_average_elapsed_days": null },
+  "insights": { "summary": "", "bottlenecks": [], "recommendations": [] },
+  "weekly_dynamic": { "resume_push": 0, "first_scheduled": 0, "offers": 0, "hired": 0, "baseline_date": null }
+}

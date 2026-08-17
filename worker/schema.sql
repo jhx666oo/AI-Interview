@@ -107,6 +107,10 @@ CREATE TABLE IF NOT EXISTS resumes (
   three_layer_match TEXT DEFAULT '{}',
   feishu_file_token TEXT DEFAULT '',
   uploaded_at TEXT DEFAULT '',
+  resume_received_at TEXT,
+  resume_source TEXT DEFAULT 'unknown',
+  resume_source_record_id TEXT DEFAULT '',
+  resume_ingest_key TEXT DEFAULT '',
   mineru_task_id TEXT DEFAULT '',
   mineru_status TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now')),
@@ -114,6 +118,9 @@ CREATE TABLE IF NOT EXISTS resumes (
 );
 CREATE INDEX IF NOT EXISTS idx_resumes_email ON resumes(email);
 CREATE INDEX IF NOT EXISTS idx_resumes_position ON resumes(position_id);
+CREATE INDEX IF NOT EXISTS idx_resumes_received_at ON resumes(resume_received_at);
+CREATE INDEX IF NOT EXISTS idx_resumes_ingest_key ON resumes(resume_ingest_key);
+CREATE INDEX IF NOT EXISTS idx_resumes_source_record ON resumes(resume_source, resume_source_record_id);
 
 -- Durable Resume Processing Jobs
 CREATE TABLE IF NOT EXISTS resume_processing_jobs (
