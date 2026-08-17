@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, Tag, Typography } from 'antd';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import request from '../../utils/request';
 import {
   applyBusinessScreeningDecision,
@@ -272,22 +270,6 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
   );
 }
 
-/** 简历原文（MinerU OCR / 原始文本，antd Card / ant-card-body 样式，与简历管理详情页一致） */
-function ResumeTextCard({ resumeText }: { resumeText?: string }) {
-  if (!resumeText) return null;
-  return (
-    <Card bordered={false} style={cardBodyStyle}>
-      <Text strong style={cardTitleStyle}>
-        简历文本识别
-        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12, fontWeight: 400 }}>MinerU OCR 结构化文本</Text>
-      </Text>
-      <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: 12, border: '1px solid #E2E8F0', maxHeight: 600, overflow: 'auto' }}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{resumeText}</ReactMarkdown>
-      </div>
-    </Card>
-  );
-}
-
 const BusinessScreeningPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [loading, setLoading] = useState(true);
@@ -510,9 +492,6 @@ const BusinessScreeningPage: React.FC = () => {
 
                     {/* AI 初筛评估（ant-card-body 卡片，与简历管理模块一致） */}
                     <AiEvaluationCard resume={activeResume} />
-
-                    {/* 简历原文（OCR 结构化文本，ant-card-body 卡片，与简历管理模块一致） */}
-                    <ResumeTextCard resumeText={activeResume.resumeText} />
 
                     <div style={{ marginTop: 20 }}>
                       <label htmlFor="business-screening-remark" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
