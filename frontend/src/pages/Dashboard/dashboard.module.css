@@ -873,9 +873,15 @@
 .miaodaDiagnostic ol { display: grid; gap: 7px; margin: 0; padding-left: 22px; color: #3e4a60; font-size: 13px; line-height: 1.7; }
 
 .miaodaFunnelCard { display: grid; gap: 0; padding: 27px 14%; border: 1px solid var(--miaoda-border); border-radius: 10px; background: #fff; box-shadow: 0 2px 6px rgb(34 45 65 / 3%); }
-.miaodaFunnelRow { display: grid; grid-template-columns: minmax(270px, 1fr) minmax(310px, .9fr); min-height: 62px; align-items: center; gap: 18px; }
+.miaodaFunnelRow { display: grid; grid-template-columns: minmax(270px, 1fr) 16px minmax(310px, .9fr); min-height: 62px; align-items: center; gap: 8px; }
 .miaodaFunnelShapeWrap { display: flex; justify-content: center; height: 42px; }
-.miaodaFunnelShape { height: 42px; clip-path: polygon(7% 0, 93% 0, 100% 100%, 0 100%); background: linear-gradient(90deg, #e8e9ed, #aeb5c1); transition: width .25s ease; }
+.miaodaFunnelShape { height: 42px; clip-path: polygon(7% 0, 93% 0, 100% 100%, 0 100%); border: 2px solid #fff; box-sizing: border-box; transition: width .25s ease, filter .2s ease; }
+.miaodaFunnelShapeWrap { cursor: help; outline: none; }
+.miaodaFunnelShapeWrap:focus-visible .miaodaFunnelShape, .miaodaFunnelShapeWrap:hover .miaodaFunnelShape { filter: brightness(.96); }
+.miaodaFunnelConnector { width: 14px; border-top: 1px solid #d1d5db; }
+.miaodaFunnelTooltip { display: grid; gap: 5px; min-width: 150px; font-size: 12px; line-height: 1.45; }
+.miaodaFunnelTooltip strong { color: #1f2937; font-size: 13px; }
+.miaodaFunnelTooltip span { color: #5f6b7d; }
 .miaodaFunnelText { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 11px; white-space: nowrap; }
 .miaodaFunnelText strong { color: #354052; font-size: 14px; }.miaodaFunnelText span { color: #354052; font-size: 15px; font-weight: 700; }.miaodaFunnelText small { color: #707b8e; font-size: 12px; }.miaodaFunnelScale { color: #a4adba; font-size: 11px; text-align: right; }
 
@@ -899,8 +905,8 @@
 
 @media (max-width: 1250px) { .miaodaMetricGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }.miaodaWeeklyGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 1180px) { .miaodaDivisionGrid { grid-template-columns: 1fr; }.miaodaHrbpGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaFunnelCard { padding-inline: 6%; } }
-@media (max-width: 860px) { .miaodaMetricGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaWeeklyHero, .miaodaWeeklyGrid, .miaodaHrbpGrid { grid-template-columns: 1fr; }.miaodaWeeklyGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaDivisionMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaHrbpMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }.miaodaFunnelCard { padding: 18px 8px; }.miaodaFunnelRow { grid-template-columns: minmax(85px, 1fr) minmax(155px, 1.5fr); gap: 6px; }.miaodaFunnelText { grid-template-columns: auto auto; gap: 5px; }.miaodaFunnelText small { grid-column: 1 / -1; }.miaodaMiniFunnelRows { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; }.miaodaDesktopTableWrap { display: none; }.miaodaMobileRows { display: grid; gap: 8px; padding: 10px; background: #f7f8fa; } }
-@media (max-width: 520px) { .miaodaDataMeta { flex-direction: column; }.miaodaSectionHeading { align-items: flex-start; flex-direction: column; gap: 7px; }.miaodaSectionHeading h2 { font-size: 19px; }.miaodaSectionMeta { white-space: normal; }.miaodaMetricGrid, .miaodaWeeklyGrid { grid-template-columns: 1fr 1fr; }.miaodaMetricCard { padding-inline: 11px; }.miaodaMetricLabel { font-size: 11px; }.miaodaMetricCard strong { font-size: 23px; }.miaodaDivisionCard, .miaodaHrbpCard { padding: 13px; }.miaodaHrbpMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaHrbpPipeline { gap: 1px; }.miaodaHrbpNode i { right: -5px; }.miaodaFunnelRow { grid-template-columns: 16px minmax(62px, 1fr) minmax(130px, 1.6fr); }.miaodaFunnelShapeWrap, .miaodaFunnelShape { height: 32px; }.miaodaFunnelText strong { font-size: 12px; }.miaodaFunnelText span { font-size: 13px; }.miaodaMobileMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) { .miaodaMetricGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaWeeklyHero, .miaodaWeeklyGrid, .miaodaHrbpGrid { grid-template-columns: 1fr; }.miaodaWeeklyGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaDivisionMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaHrbpMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }.miaodaFunnelCard { padding: 18px 8px; }.miaodaFunnelRow { grid-template-columns: minmax(85px, 1fr) 6px minmax(155px, 1.5fr); gap: 6px; }.miaodaFunnelConnector { width: 6px; }.miaodaFunnelText { grid-template-columns: auto auto; gap: 5px; }.miaodaFunnelText small { grid-column: 1 / -1; }.miaodaMiniFunnelRows { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; }.miaodaDesktopTableWrap { display: none; }.miaodaMobileRows { display: grid; gap: 8px; padding: 10px; background: #f7f8fa; } }
+@media (max-width: 520px) { .miaodaDataMeta { flex-direction: column; }.miaodaSectionHeading { align-items: flex-start; flex-direction: column; gap: 7px; }.miaodaSectionHeading h2 { font-size: 19px; }.miaodaSectionMeta { white-space: normal; }.miaodaMetricGrid, .miaodaWeeklyGrid { grid-template-columns: 1fr 1fr; }.miaodaMetricCard { padding-inline: 11px; }.miaodaMetricLabel { font-size: 11px; }.miaodaMetricCard strong { font-size: 23px; }.miaodaDivisionCard, .miaodaHrbpCard { padding: 13px; }.miaodaHrbpMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaHrbpPipeline { gap: 1px; }.miaodaHrbpNode i { right: -5px; }.miaodaFunnelRow { grid-template-columns: minmax(62px, 1fr) 6px minmax(130px, 1.6fr); }.miaodaFunnelConnector { width: 6px; }.miaodaFunnelShapeWrap, .miaodaFunnelShape { height: 32px; }.miaodaFunnelText strong { font-size: 12px; }.miaodaFunnelText span { font-size: 13px; }.miaodaMobileMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* Match the reference dashboard shell while keeping the shared app header intact. */
 .dashboardPage .pageHeader {
@@ -923,6 +929,13 @@
 .dashboardPage .miaodaPageActions :global(.ant-select-selector) { min-height: 36px; border-color: #cfd5df !important; border-radius: 7px !important; }
 .dashboardPage .filterCard { margin-bottom: 23px; border-color: #e0e3e8; border-radius: 10px; background: #fff; box-shadow: 0 2px 7px rgb(34 45 65 / 3%); }
 .dashboardPage .filterCard :global(.ant-card-body) { padding: 13px 15px; }
+/* Keep the dashboard filters in one predictable row on desktop. The shared
+   toolbar intentionally wraps for dense management pages, but this board has
+   only five compact controls and the reference layout keeps them horizontal. */
+.dashboardPage .filterCard :global(.responsive-toolbar) { align-items: center; flex-wrap: nowrap; }
+.dashboardPage .filterCard :global(.responsive-toolbar__fields) { width: 100%; flex: 1 1 auto; flex-wrap: nowrap; min-width: 0; }
+.dashboardPage .filterCard :global(.responsive-toolbar__fields > *) { flex: 0 0 auto; }
+.dashboardPage .filterCard :global(.responsive-toolbar__actions) { flex: 0 0 auto; }
 .snapshotModalToolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
 
 @media (max-width: 1180px) {
@@ -931,9 +944,42 @@
 }
 
 @media (max-width: 760px) {
+  .dashboardPage .filterCard :global(.responsive-toolbar) { align-items: stretch; flex-wrap: wrap; }
+  .dashboardPage .filterCard :global(.responsive-toolbar__fields) { width: 100%; flex-wrap: wrap; }
+  .dashboardPage .filterCard :global(.responsive-toolbar__fields > *) { flex: 1 1 auto; }
   .dashboardPage .pageHeader { align-items: flex-start; flex-direction: column; gap: 16px; }
   .dashboardPage .pageHeader h1 { font-size: 23px; }
   .dashboardPage .miaodaPageActions { width: 100%; justify-content: flex-start; }
   .dashboardPage .miaodaPageActions :global(.ant-btn), .dashboardPage .miaodaPageActions :global(.ant-select) { flex: 1 1 auto; }
   .snapshotModalToolbar { align-items: flex-start; flex-direction: column; }
+}
+
+/* Weekly recruitment dynamics: match the reference card actions and semantic colors. */
+.miaodaWeeklyHeading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.miaodaWeeklyTitle { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 8px; }
+.miaodaWeeklyHeading .miaodaSectionHeading { flex: 0 0 auto; align-items: center; }
+.miaodaWeeklyPeriod { color: #172033; font-size: 20px; font-weight: 760; line-height: 1.25; letter-spacing: -0.02em; }
+.miaodaWeeklyActions { display: flex; align-items: center; gap: 8px; color: #9ca3af; font-size: 12px; white-space: nowrap; }
+.miaodaWeeklyActions :global(.ant-btn) { color: #6b7280; border-color: #e5e7eb; background: #fff; }
+.miaodaWeeklyActions :global(.ant-btn:hover) { color: #111827; border-color: #d1d5db; }
+.miaodaTableRateGood { color: #4b9b45; }
+.miaodaTableRateGood i { background: #4b9b45; }
+.miaodaTableRateWarn { color: #d7821b; }
+.miaodaTableRateWarn i { background: #d7821b; }
+.miaodaTableRateBad { color: #d92920; }
+.miaodaTableRateBad i { background: #d92920; }
+.miaodaTableRateNeutral { color: #9ba4b2; }
+.miaodaTableRateNeutral i { background: #cdd2da; }
+.miaodaStatusTag { margin: 0; border: 0; border-radius: 999px; font-size: 11px; }
+.miaodaStatusGreen { color: #4b9b45; background: #eaf6e8; }
+.miaodaStatusOrange { color: #d7821b; background: #fff4d6; }
+.miaodaStatusRed { color: #d92920; background: #fff0ef; }
+.miaodaStatusBlue { color: #347cf3; background: #eaf2ff; }
+.miaodaStatusNeutral { color: #7b8595; background: #f1f3f6; }
+
+@media (max-width: 520px) {
+  .miaodaWeeklyHeading { align-items: flex-start; flex-direction: column; }
+  .miaodaWeeklyTitle { align-items: flex-start; }
+  .miaodaWeeklyPeriod { font-size: 19px; }
+  .miaodaWeeklyActions { width: 100%; justify-content: flex-end; }
 }

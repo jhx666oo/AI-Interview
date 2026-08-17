@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import { MiaodaDashboardView } from './MiaodaDashboardView';
 import type { DashboardV3Board } from '../v3-types';
 
@@ -45,6 +45,8 @@ const board: DashboardV3Board = {
 };
 
 describe('MiaodaDashboardView', () => {
+  afterEach(() => cleanup());
+
   it('renders the reference dashboard sections and live values', () => {
     render(<MiaodaDashboardView board={board} />);
     expect(screen.getByText('总体概览')).toBeTruthy();
@@ -53,6 +55,28 @@ describe('MiaodaDashboardView', () => {
     expect(screen.getByText('职培事业部')).toBeTruthy();
     expect(screen.getAllByText('简历推送').length).toBeGreaterThan(0);
     expect(screen.getByText('当前有 1 个统计岗位。')).toBeTruthy();
+  });
+
+  it('exposes funnel stages as hoverable data points with entry and previous-stage rates', () => {
+    const view = render(<MiaodaDashboardView board={{ ...board, funnel: [
+      { key: 'resume_push', label: '简历推送', count: 10, conversion_rate: null },
+      { key: 'first_scheduled', label: '安排1面', count: 5, conversion_rate: 50 },
+    ] }} />);
+
+    const firstStage = view.getAllByRole('img', {
+      name: '简历推送：10人，相对上一层100.0%，相对总入口100.0%',
+    })[0];
+    expect(firstStage).toBeTruthy();
+    expect(view.getAllByRole('img', {
+      name: '安排1面：5人，相对上一层50.0%，相对总入口50.0%',
+    }).length).toBeGreaterThan(0);
+  });
+
+  it('provides a weekly dynamic refresh control', async () => {
+    let refreshCount = 0;
+    const view = render(<MiaodaDashboardView board={board} onRefresh={async () => { refreshCount += 1; }} />);
+    fireEvent.click(view.getByRole('button', { name: '刷新' }));
+    await waitFor(() => expect(refreshCount).toBe(1));
   });
 
   it('renders the grouped detail table with a collapsed department control', () => {

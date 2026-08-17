@@ -516,7 +516,7 @@ const Dashboard: React.FC = () => {
       </Card>
 
       {v3Error && <Alert type="warning" showIcon message="新版双源仪表盘暂不可用" description="当前暂时展示兼容版看板，飞书或 D1 数据源恢复后点击刷新即可切换。" />}
-      {filteredBoardV3 ? <MiaodaDashboardView board={filteredBoardV3} /> : <RecruitingBoardView board={filteredBoard} />}
+      {filteredBoardV3 ? <MiaodaDashboardView board={filteredBoardV3} onRefresh={() => fetchBoard(false)} /> : <RecruitingBoardView board={filteredBoard} />}
 
       <ResponsiveModal title="历史 Excel 存档" open={historyOpen} onCancel={() => setHistoryOpen(false)} footer={null} destroyOnHidden>
         <div className={styles.snapshotModalToolbar}>

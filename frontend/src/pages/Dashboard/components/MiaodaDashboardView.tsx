@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Tag } from 'antd';
-import { CaretDownOutlined, CaretRightOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { Button, Tag, Tooltip } from 'antd';
+import { CaretDownOutlined, CaretRightOutlined, ClockCircleOutlined, ReloadOutlined } from '@ant-design/icons';
 import type {
   DashboardV3Board,
   DashboardV3Division,
@@ -13,6 +13,7 @@ import styles from '../dashboard.module.css';
 const number = (value: number | null | undefined) => value == null ? '—' : value.toLocaleString('zh-CN');
 const percent = (value: number | null | undefined) => value == null ? 'N/A' : `${value.toFixed(1)}%`;
 const rate = (numerator: number, denominator: number) => denominator > 0 ? (numerator / denominator) * 100 : null;
+const funnelColors = ['#f2f3f5', '#e8eaef', '#dfe2e8', '#d5d9e1', '#c8cdd7', '#bcc2cc', '#afb5c0'];
 
 function SectionHeading({ eyebrow, title, description, meta }: { eyebrow?: string; title: string; description?: string; meta?: string }) {
   return <div className={styles.miaodaSectionHeading}>
@@ -69,14 +70,32 @@ function Diagnostic({ board }: { board: DashboardV3Board }) {
 
 function Funnel({ stages }: { stages: DashboardV3FunnelStage[] }) {
   const max = Math.max(1, ...stages.map((stage) => stage.count));
+  const entry = stages[0]?.count || 0;
   return <section className={styles.miaodaSection}>
     <SectionHeading title="招聘漏斗（全事业部汇总 · 岗位累计口径）" />
     <div className={styles.miaodaFunnelCard}>
       {stages.map((stage, index) => {
         const conversion = index === 0 ? 100 : stage.conversion_rate;
+        const overallRate = entry > 0 ? (stage.count / entry) * 100 : null;
         const width = `${Math.max(stage.count > 0 ? 18 : 8, stage.count / max * 100)}%`;
+        const accessibleName = `${stage.label}：${number(stage.count)}人，相对上一层${percent(conversion)}，相对总入口${percent(overallRate)}`;
         return <div className={styles.miaodaFunnelRow} key={stage.key}>
-          <div className={styles.miaodaFunnelShapeWrap}><div className={styles.miaodaFunnelShape} style={{ width, opacity: stage.count === 0 ? 0.72 : 1 }} /></div>
+          <Tooltip
+            placement="right"
+            color="#fff"
+            title={<div className={styles.miaodaFunnelTooltip}>
+              <strong>{stage.label}</strong>
+              <span>数量：{number(stage.count)} 人</span>
+              <span>相对上一层：{percent(conversion)}</span>
+              <span>相对总入口：{percent(overallRate)}</span>
+            </div>}
+            styles={{ container: { color: '#354052', boxShadow: '0 8px 24px rgb(31 41 55 / 16%)' } }}
+          >
+            <div className={styles.miaodaFunnelShapeWrap} role="img" aria-label={accessibleName} tabIndex={0}>
+              <div className={styles.miaodaFunnelShape} style={{ width, opacity: stage.count === 0 ? 0.72 : 1, background: funnelColors[index % funnelColors.length] }} />
+            </div>
+          </Tooltip>
+          <span className={styles.miaodaFunnelConnector} aria-hidden="true" />
           <div className={styles.miaodaFunnelText}><strong>{stage.label}</strong><span>{number(stage.count)}</span><small>转化率 {percent(conversion)}</small></div>
         </div>;
       })}
@@ -84,19 +103,56 @@ function Funnel({ stages }: { stages: DashboardV3FunnelStage[] }) {
   </section>;
 }
 
-function WeeklyDynamic({ board }: { board: DashboardV3Board }) {
+const shortDate = (value: string | null | undefined) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+};
+
+const timeLabel = (value: string | Date | null | undefined) => {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+};
+
+function WeeklyDynamic({ board, onRefresh }: { board: DashboardV3Board; onRefresh?: () => Promise<void> }) {
   const dynamic = board.weekly_dynamic;
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const currentDate = shortDate(board.snapshot_date || board.updated_at);
+  const baselineDate = shortDate(dynamic.baseline_date);
+  const periodLabel = baselineDate && currentDate ? `（${baselineDate} – ${currentDate}）` : '';
   const items = [
-    ['新增简历', dynamic.resume_push],
-    ['新增面试', dynamic.first_scheduled],
-    ['新增1面通过', dynamic.first_pass],
-    ['新增2面通过', dynamic.second_pass],
-    ['新增终面', dynamic.final_pass],
-    ['新增Offer', dynamic.offers],
-    ['新增入职', dynamic.hired],
+    ['新增简历', dynamic.resume_push ?? 0],
+    ['新增面试', dynamic.first_scheduled ?? 0],
+    ['新增1面通过', dynamic.first_pass ?? 0],
+    ['新增2面通过', dynamic.second_pass ?? 0],
+    ['新增终面', dynamic.final_pass ?? 0],
+    ['新增Offer', dynamic.offers ?? 0],
+    ['新增入职', dynamic.hired ?? 0],
   ] as const;
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh?.();
+      setLastRefresh(new Date());
+    } finally {
+      setRefreshing(false);
+    }
+  };
   return <section className={styles.miaodaWeeklyPanel}>
-    <div className={styles.miaodaWeeklyHeading}><SectionHeading title="周招聘动态" meta={`${dynamic.baseline_date ? `${dynamic.baseline_date} 起` : '实时累计'} · 数据更新于 ${new Date(board.updated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`} /></div>
+    <div className={styles.miaodaWeeklyHeading}>
+      <div className={styles.miaodaWeeklyTitle}>
+        <SectionHeading title="周招聘动态" />
+        {periodLabel && <span className={styles.miaodaWeeklyPeriod}>{periodLabel}</span>}
+      </div>
+      <div className={styles.miaodaWeeklyActions}>
+        <span>{timeLabel(lastRefresh || board.updated_at)} 更新</span>
+        <Button size="small" icon={<ReloadOutlined aria-hidden="true" spin={refreshing} />} loading={refreshing} onClick={handleRefresh}>刷新</Button>
+      </div>
+    </div>
     <div className={styles.miaodaWeeklyHero}>
       <MetricCard label="在招岗位数" value={number(board.totals.active_positions)} caption={`截至 ${board.snapshot_date || '今日'}`} />
       <MetricCard label="本周新增岗位" value="—" caption="暂无岗位新增快照" tone="blue" />
@@ -194,7 +250,9 @@ function sumPositionTotals(positions: DashboardV3Position[]): PositionTotals {
 
 function TableRate({ finalPass, firstScheduled }: { finalPass: number; firstScheduled: number }) {
   const value = rate(finalPass, firstScheduled);
-  return <span className={styles.miaodaTableRate}>
+  const tone = rateTone(value);
+  const toneClass = styles[`miaodaTableRate${tone[0].toUpperCase()}${tone.slice(1)}`];
+  return <span className={`${styles.miaodaTableRate} ${toneClass}`}>
     <i style={{ width: `${Math.min(100, value || 0)}%` }} />
     {percent(value)}
   </span>;
@@ -228,16 +286,36 @@ function DetailTable({ title, positions, accent }: { title: string; positions: D
   </section>;
 }
 
+function rateTone(value: number | null): 'good' | 'warn' | 'bad' | 'neutral' {
+  if (value == null || value <= 0) return 'neutral';
+  if (value >= 30) return 'good';
+  if (value >= 15) return 'warn';
+  return 'bad';
+}
+
+function statusTone(status: string): 'green' | 'orange' | 'red' | 'blue' | 'neutral' {
+  if (/完成|入职/.test(status)) return 'green';
+  if (/初筛/.test(status)) return 'orange';
+  if (/拟|待发布/.test(status)) return 'blue';
+  if (/OFFER|复试|面试|招聘中/i.test(status)) return 'red';
+  return 'neutral';
+}
+
+function StatusTag({ status }: { status: string }) {
+  const value = status || '未知';
+  const tone = statusTone(value);
+  return <Tag className={`${styles.miaodaStatusTag} ${styles[`miaodaStatus${tone[0].toUpperCase()}${tone.slice(1)}`]}`}>{value}</Tag>;
+}
+
 function PositionTableRow({ position }: { position: DashboardV3Position }) {
-  const interviewRate = rate(position.final_pass, position.first_scheduled);
-  return <tr><td>{position.department}</td><td>{position.hrbps.join(' / ') || '未分配'}</td><td><strong>{position.display_name}</strong></td><td><Tag className={styles.miaodaPriorityTag}>{position.priority === 'P0' ? 'P0-紧急' : position.priority === 'P1' ? 'P1-正常' : 'P2-储备'}</Tag></td><td>{number(position.headcount)}</td><td>{number(position.resume_push)}</td><td>{number(position.first_scheduled)}</td><td>{number(position.first_pass)}</td><td>{number(position.second_pass)}</td><td>{number(position.final_pass)}</td><td><span className={styles.miaodaTableRate}><i style={{ width: `${Math.min(100, interviewRate || 0)}%` }} />{percent(interviewRate)}</span></td><td>{number(position.offers)}</td><td>{number(position.hired)}</td><td className={styles.miaodaNoteCell}>{position.notes || '—'}</td><td><Tag color={/(完成|取消)/.test(position.status) ? 'green' : 'red'}>{position.status || '未知'}</Tag></td></tr>;
+  return <tr><td>{position.department}</td><td>{position.hrbps.join(' / ') || '未分配'}</td><td><strong>{position.display_name}</strong></td><td><Tag className={styles.miaodaPriorityTag}>{position.priority === 'P0' ? 'P0-紧急' : position.priority === 'P1' ? 'P1-正常' : 'P2-储备'}</Tag></td><td>{number(position.headcount)}</td><td>{number(position.resume_push)}</td><td>{number(position.first_scheduled)}</td><td>{number(position.first_pass)}</td><td>{number(position.second_pass)}</td><td>{number(position.final_pass)}</td><td><TableRate finalPass={position.final_pass} firstScheduled={position.first_scheduled} /></td><td>{number(position.offers)}</td><td>{number(position.hired)}</td><td className={styles.miaodaNoteCell}>{position.notes || '—'}</td><td><StatusTag status={position.status} /></td></tr>;
 }
 
 function PositionMobileRow({ position }: { position: DashboardV3Position }) {
-  return <article className={styles.miaodaMobileRow}><div className={styles.miaodaMobileRowHeader}><strong>{position.display_name}</strong><Tag color={position.priority === 'P0' ? 'red' : 'blue'}>{position.priority}</Tag></div><p>{position.department} · {position.hrbps.join(' / ') || '未分配'} · {position.city || '城市未识别'}</p><div className={styles.miaodaMobileMetrics}><span>在招 {number(position.headcount)}</span><span>简历 {number(position.resume_push)}</span><span>1面 {number(position.first_scheduled)}</span><span>终面 {number(position.final_pass)}</span><span>Offer {number(position.offers)}</span><span>入职 {number(position.hired)}</span></div><Tag color={/(完成|取消)/.test(position.status) ? 'green' : 'red'}>{position.status || '未知'}</Tag></article>;
+  return <article className={styles.miaodaMobileRow}><div className={styles.miaodaMobileRowHeader}><strong>{position.display_name}</strong><Tag color={position.priority === 'P0' ? 'red' : 'blue'}>{position.priority}</Tag></div><p>{position.department} · {position.hrbps.join(' / ') || '未分配'} · {position.city || '城市未识别'}</p><div className={styles.miaodaMobileMetrics}><span>在招 {number(position.headcount)}</span><span>简历 {number(position.resume_push)}</span><span>1面 {number(position.first_scheduled)}</span><span>终面 {number(position.final_pass)}</span><span>Offer {number(position.offers)}</span><span>入职 {number(position.hired)}</span></div><StatusTag status={position.status} /></article>;
 }
 
-export function MiaodaDashboardView({ board }: { board: DashboardV3Board }) {
+export function MiaodaDashboardView({ board, onRefresh }: { board: DashboardV3Board; onRefresh?: () => Promise<void> }) {
   const statisticalInProgress = board.positions.filter((position) => positionStatusGroup(position) === 'inProgress');
   const completed = board.positions.filter((position) => positionStatusGroup(position) === 'completed');
   const sourceDescription = board.data_source === 'static_excel' ? 'Excel 静态快照 + 系统 D1 流程数据' : board.data_source === 'feishu' ? '飞书实时数据 + 系统 D1 流程数据' : '飞书、Excel 与系统 D1 合并数据';
@@ -246,7 +324,7 @@ export function MiaodaDashboardView({ board }: { board: DashboardV3Board }) {
     <Overview board={board} />
     <Diagnostic board={board} />
     <Funnel stages={board.funnel} />
-    <WeeklyDynamic board={board} />
+    <WeeklyDynamic board={board} onRefresh={onRefresh} />
     <section className={styles.miaodaSection}><SectionHeading title="事业部分部看板" description="数据起始日期：职培事业部-2026/6/11，其他四大事业部-2026/7/16" /><div className={styles.miaodaDivisionGrid}>{board.divisions.map((division) => <DivisionCard key={division.department} division={division} />)}</div></section>
     <section className={styles.miaodaSection}><SectionHeading title="招聘效能（按 HRBP）" description={`数据截至 ${board.snapshot_date || new Date(board.updated_at).toLocaleDateString('zh-CN')} · 已剔除 P2 储备岗`} /><div className={styles.miaodaHrbpGrid}>{board.hrbps.map((hrbp) => <HrbpCard key={hrbp.name} hrbp={hrbp} />)}</div></section>
     <FieldDefinitions />

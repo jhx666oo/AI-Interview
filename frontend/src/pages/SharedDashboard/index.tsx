@@ -59,6 +59,11 @@ const SharedDashboard = () => {
   if (!result || result.token !== token) return <FullPageSpinner />;
   if (result.invalid || !result.board) return <InvalidShareLink />;
   const { board } = result;
+  const refreshSharedBoard = async () => {
+    if (!token) return;
+    const data = await request.get(`/shared/dashboard/${token}`) as RecruitingBoard | DashboardV3Board;
+    setResult({ token, board: data, invalid: false });
+  };
 
   return (
     <main style={{ maxWidth: 1600, margin: '0 auto', padding: '32px 24px 48px' }}>
@@ -67,7 +72,7 @@ const SharedDashboard = () => {
         <Text type="secondary">数据截止：{board.snapshot_date || '最新实时数据'} · 仅含聚合数据</Text>
       </header>
       {isDashboardV3Board(board)
-        ? <MiaodaDashboardView board={board} />
+        ? <MiaodaDashboardView board={board} onRefresh={refreshSharedBoard} />
         : <RecruitingBoardView board={board} />}
     </main>
   );
