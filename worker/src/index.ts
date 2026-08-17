@@ -21,6 +21,7 @@ import { cancelReprocessBatch, getReprocessBatchView, getActiveReprocessBatchVie
 import type { ReprocessScope, ResumeProcessingQueueMessage } from './resume-processing/types';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
+import { fetchFeishuLinkContent } from './feishu-link';
 import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
 import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
 import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
@@ -8361,6 +8362,57 @@ function sseBody(content: string): string {
   return `data: ${JSON.stringify({ content })}\n\ndata: ${JSON.stringify({ done: true })}\n\n`;
 }
 
+// 一键生成评分维度（能力维度）的默认提示词，可通过系统设置「提示词管理」覆盖
+const DEFAULT_CAPABILITY_DIMENSIONS_PROMPT = {
+  system: `你是一名资深招聘专家。根据岗位名称和岗位要求材料，为该岗位设计一套用于 AI 简历初筛的评分维度（能力维度）。
+
+要求：
+1. 只输出严格的 JSON 数组，不要包含 markdown 代码块标记或任何额外说明；
+2. 每项格式为 {"name": "维度名称", "definition": "简要定义（30字以内）", "behavior": "典型行为表现或考察要点", "weight": 权重}；
+3. 生成 5-8 个维度，尽量覆盖：硬性条件（学历/经验/证书等）、专业技能、软素质、加分项；
+4. weight 为 0-100 的整数百分比，表示该维度在加权评分中的占比，全部维度 weight 总和尽量接近 100；
+5. 属于「一票否决」类硬门槛的维度（如学历不达标、重大风险），weight 设为 0；
+6. 维度名称简洁（不超过 8 个字），如「专业技能」「项目经验」「学历门槛」「沟通能力」。`,
+  user: '',
+};
+
+// AI 一键生成岗位评分维度（能力维度）：支持飞书链接或岗位要求文本
+app.post('/api/positions/generate-capability-dimensions', authMiddleware, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { title, source_link, source_text, job_description, job_requirements } = body;
+  const hasText = String(source_text || '').trim() || String(job_description || '').trim() || String(job_requirements || '').trim();
+  if (!source_link && !hasText) {
+    return c.json({ detail: '请提供飞书链接或岗位要求文本作为生成依据' }, 400);
+  }
+
+  let material = '';
+  if (source_link && String(source_link).trim()) {
+    try {
+      material = await fetchFeishuLinkContent(c.env, String(source_link).trim());
+    } catch (err: any) {
+      return c.json({ detail: `飞书链接内容读取失败：${err.message}。请确认链接格式正确且当前飞书应用可访问，或改用「岗位要求文本」粘贴内容。` }, 422);
+    }
+  } else if (String(source_text || '').trim()) {
+    material = String(source_text).trim();
+  }
+  const extra = [String(job_description || '').trim(), String(job_requirements || '').trim()].filter(Boolean).join('\n');
+
+  const prompt = await getAIPrompt(c.env, 'generate_capability_dimensions', DEFAULT_CAPABILITY_DIMENSIONS_PROMPT);
+  const userPrompt = `岗位名称：${title || '未指定'}\n\n岗位要求材料：\n${material}\n${extra ? `\n岗位职责/任职要求补充：\n${extra}` : ''}\n\n请根据以上内容生成该岗位的评分维度（能力维度）JSON 数组。`;
+  try {
+    const result = await callAI(c.env, prompt.system, userPrompt);
+    let parsed: any = extractJSON(result);
+    if (!Array.isArray(parsed)) {
+      parsed = parsed && Array.isArray(parsed.dimensions) ? parsed.dimensions : [parsed];
+    }
+    const dimensions = normalizeCapabilityDimensionsForStorage(parsed);
+    if (!dimensions.length) return c.json({ detail: 'AI 未能生成有效评分维度，请重试或调整输入内容' }, 502);
+    return c.json({ dimensions });
+  } catch (err: any) {
+    return c.json({ detail: 'AI 生成失败', error: err.message }, 500);
+  }
+});
+
 // JD generation (streaming SSE, compatible with JDGeneratorModal)
 app.post('/api/positions/generate-jd-stream', authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({}));
@@ -8836,6 +8888,11 @@ app.get('/api/settings/prompts/variables', authMiddleware, async (c) => {
       { name: 'position', description: '应聘岗位' },
       { name: 'condition', description: '自定义筛选条件' },
       { name: 'resumes', description: '待评估的简历列表（每份含 #id 前缀）' },
+    ],
+    generate_capability_dimensions: [
+      { name: 'position_title', description: '岗位名称' },
+      { name: 'material', description: '岗位要求材料（飞书链接抓取内容或粘贴文本）' },
+      { name: 'job_extra', description: '岗位职责/任职要求补充信息' },
     ],
   };
   const all_variables: Record<string, string> = {};

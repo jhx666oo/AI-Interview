@@ -4,10 +4,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
+import GenerateCapabilityDimensionsModal from '../../components/GenerateCapabilityDimensionsModal';
 import { PageHeader } from '../../components/Responsive/PageHeader';
 import { buildInterviewerOptions, INTERVIEWER_DIRECTORY_CACHE_KEY } from './interviewerOptions';
 import ScreeningRulesFields from '../../components/ScreeningRulesFields';
 import { DEFAULT_SCREENING_RULES, parseScreeningRules, serializeScreeningRules } from '../../types/screeningRules';
+import CapabilityDimensionsField from './CapabilityDimensionsField';
 
 const { Title, Text } = Typography;
 
@@ -19,6 +21,7 @@ const PositionForm: React.FC = () => {
   const [users, setUsers] = useState<any[]>([]);
   const [interviewers, setInterviewers] = useState<any[]>([]);
   const [jdModalVisible, setJdModalVisible] = useState(false);
+  const [dimGenVisible, setDimGenVisible] = useState(false);
   const [allDimensionNames, setAllDimensionNames] = useState<string[]>([]);
   const primaryInterviewer = Form.useWatch('primary_interviewer', form);
   const secondaryInterviewer = Form.useWatch('secondary_interviewer', form);
@@ -111,6 +114,15 @@ const PositionForm: React.FC = () => {
       description,
       requirements
     });
+  };
+
+  const handleOpenDimGen = () => {
+    setDimGenVisible(true);
+  };
+
+  const handleDimGenConfirm = (dimensions: any[]) => {
+    form.setFieldValue('capability_dimensions', dimensions);
+    message.success(`已生成 ${dimensions.length} 个评分维度，可继续调整后提交`);
   };
 
   const onFinish = async (values: any) => {
@@ -306,14 +318,21 @@ const PositionForm: React.FC = () => {
             </Select>
           </Form.Item>
 
-          <Form.Item name="capability_dimensions" label="能力维度（多选）">
-            <Select
-              mode="multiple"
-              size="large"
-              placeholder="选择已有能力维度，或直接输入新维度名称"
-              tokenSeparators={[',']}
-              options={allDimensionNames.map(n => ({ label: n, value: n }))}
-            />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Text strong>能力维度（AI 评分维度）</Text>
+            <Button
+              type="link"
+              icon={<RobotOutlined />}
+              onClick={handleOpenDimGen}
+            >
+              AI 一键生成
+            </Button>
+          </div>
+          <Form.Item
+            name="capability_dimensions"
+            extra="粘贴飞书链接或岗位要求文本，一键生成评分维度；也可手动添加或从已有维度选择。"
+          >
+            <CapabilityDimensionsField allDimensionNames={allDimensionNames} />
           </Form.Item>
 
           <Form.Item label="AI 初筛条件" extra="默认沿用系统设置；如需单独调整当前岗位，请开启岗位覆盖。">
@@ -339,6 +358,15 @@ const PositionForm: React.FC = () => {
         department={form.getFieldValue('department')}
         location={form.getFieldValue('location')}
         salary_range={form.getFieldValue('salary_range')}
+      />
+
+      <GenerateCapabilityDimensionsModal
+        open={dimGenVisible}
+        onCancel={() => setDimGenVisible(false)}
+        onConfirm={handleDimGenConfirm}
+        positionTitle={form.getFieldValue('title') || ''}
+        jobDescription={form.getFieldValue('description') || ''}
+        jobRequirements={form.getFieldValue('requirements') || ''}
       />
     </div>
   );
