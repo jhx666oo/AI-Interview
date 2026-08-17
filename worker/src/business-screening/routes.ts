@@ -589,12 +589,13 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     if (!file.bytes) {
       return c.json({ detail: '该简历源文件未本地缓存，无法下载。请重新上传 PDF 或联系管理员', not_cached: true }, 404);
     }
+    const isPreview = c.req.query('preview') === 'true';
     const safeName = (item.candidate_name || 'resume').replace(/[\\/:*?"<>|]/g, '_');
     return new Response(file.bytes, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(safeName)}.pdf"`,
+        'Content-Disposition': `${isPreview ? 'inline' : 'attachment'}; filename="${encodeURIComponent(safeName)}.pdf"`,
         'Cache-Control': 'private, max-age=300',
       },
     });

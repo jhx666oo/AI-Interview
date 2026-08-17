@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Tag, Typography, message } from 'antd';
+import { Card, Tag, Tooltip, Typography, message } from 'antd';
 import request from '../../utils/request';
 import {
   applyBusinessScreeningDecision,
@@ -13,9 +13,8 @@ import {
   type BusinessScreeningView,
 } from './businessScreeningLogic';
 import {
-  asDisplayTextList,
   formatWeightedScore,
-  getScreeningGateRows,
+  getDimensionScoreTotal,
   normalizeResumeEvaluation,
 } from '../../utils/resumeEvaluation';
 
@@ -166,7 +165,10 @@ const cardTitleStyle: React.CSSProperties = {
   marginBottom: 12,
 };
 
-/** AI 初筛评估（antd Card / ant-card-body 样式，与简历管理详情页一致） */
+/**
+ * AI 初筛评估（与简历管理列表页简历卡片 ant-card-body 内评估区一致）：
+ * AI 评估符合度、加权分、维度合计、各维度标签（悬浮显示评分理由）、初筛结论。
+ */
 function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
   const evaluation = normalizeResumeEvaluation({
     ai_evaluation: resume.aiEvaluation,
@@ -188,117 +190,86 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
         .filter((d: any) => d.name && Number.isFinite(d.score));
     } catch { return []; }
   })();
-  // 合并维度：ai_evaluation 的 dimensions 优先，capability_scores 补充缺失维度（核心画像/核心职责等）
-  const dimensions = [...evaluation.dimensions];
-  const knownNames = new Set(dimensions.map((d) => d.name));
+  // 合并维度：ai_evaluation 的 dimensions 优先，capability_scores 补充缺失维度
+  const scoreDetails = [...evaluation.dimensions];
+  const knownNames = new Set(scoreDetails.map((d) => d.name));
   for (const d of capabilityDimensions) {
     if (!knownNames.has(d.name)) {
-      dimensions.push({ name: d.name, score: Math.max(0, Math.min(5, d.score)), reason: d.reason });
+      scoreDetails.push({ name: d.name, score: Math.max(0, Math.min(5, d.score)), reason: d.reason });
       knownNames.add(d.name);
     }
   }
 
+  const scoreTotal = getDimensionScoreTotal(scoreDetails);
+  const matchCount = scoreDetails.filter((d) => d.score >= 3).length;
+  const totalDims = scoreDetails.length;
   const hasAny = !!(resume.aiReview || resume.aiEvaluation || resume.screeningResult
-    || evaluation.overallScore != null || evaluation.screeningReason || dimensions.length > 0);
+    || evaluation.overallScore != null || evaluation.screeningReason || scoreDetails.length > 0);
   if (!hasAny) return null;
-
-  const gateRows = getScreeningGateRows(evaluation);
-  const summary = evaluation.summary;
-  const recommendation = String(evaluation.source?.recommendation || '');
-  const strengths = asDisplayTextList(evaluation.source?.strengths);
-  const risks = asDisplayTextList(evaluation.source?.risks);
-  const matchedSkills = asDisplayTextList(evaluation.source?.skill_match?.matched_skills ?? evaluation.source?.matched_skills);
-  const skillGaps = asDisplayTextList(evaluation.source?.skill_match?.skill_gaps ?? evaluation.source?.skill_gaps);
-  const suggestedQuestions = asDisplayTextList(evaluation.source?.suggested_questions);
-  const recommendationText =
-    recommendation === 'strongly_recommend' ? '强烈推荐'
-      : recommendation === 'recommend' ? '推荐'
-        : recommendation === 'neutral' ? '中立'
-          : recommendation === 'not_recommend' ? '不推荐'
-            : recommendation === 'strongly_not_recommend' ? '强烈不推荐'
-              : recommendation;
-  const screeningColor = resume.screeningResult === '通过' ? 'green'
-    : resume.screeningResult === '不通过' ? 'red' : 'gold';
 
   return (
     <Card bordered={false} style={cardBodyStyle}>
       <Text strong style={cardTitleStyle}>AI 初筛评估</Text>
-      <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-        {resume.screeningResult && (
-          <Tag color={screeningColor} style={{ margin: 0, fontSize: 14, padding: '2px 10px' }}>
-            AI 初筛：{resume.screeningResult}
-          </Tag>
-        )}
-        {evaluation.overallScore != null && (
-          <Tag color={evaluation.overallScore >= 4 ? 'green' : evaluation.overallScore >= 3 ? 'blue' : 'orange'} style={{ margin: 0 }}>
-            加权分 {formatWeightedScore(evaluation.overallScore)}
-          </Tag>
-        )}
-        {gateRows.map((gate) => (
-          <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
-            {gate.passed ? `${gate.label}已通过` : gate.reason}
-          </Tag>
-        ))}
-        {recommendationText && (
-          <Tag color={recommendation.includes('recommend') && !recommendation.includes('not') ? 'blue' : recommendation.includes('not') ? 'red' : 'gold'} style={{ margin: 0 }}>
-            {recommendationText}
-          </Tag>
-        )}
-      </div>
-      {dimensions.length > 0 && (
-        <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {dimensions.map((dimension) => (
-            <Tag key={dimension.name} color={dimension.score >= 4 ? 'green' : dimension.score >= 3 ? 'blue' : dimension.score >= 2 ? 'orange' : 'red'} style={{ margin: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
-              {dimension.name} {dimension.score}/5
+      {scoreDetails.length > 0 || evaluation.overallScore != null || resume.screeningResult ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 8 }}>
+          {scoreDetails.length > 0 && (
+            <span style={{ fontSize: 12, color: '#1677ff', fontWeight: 600, background: '#f0f5ff', padding: '1px 8px', borderRadius: 4 }}>
+              AI 评估 {matchCount}/{totalDims} 符合
+            </span>
+          )}
+          {evaluation.overallScore != null && (
+            <span style={{ fontSize: 12, color: '#8c8c8c' }}>加权分：{formatWeightedScore(evaluation.overallScore)}</span>
+          )}
+          {scoreDetails.length > 0 && (
+            <span style={{ fontSize: 12, color: '#8c8c8c' }}>维度合计：{scoreTotal.total}/{scoreTotal.maximum}</span>
+          )}
+          {resume.screeningResult && (
+            <Tag color={resume.screeningResult === '通过' ? 'green' : resume.screeningResult === '不通过' ? 'red' : 'gold'} style={{ margin: 0 }}>
+              AI 初筛：{resume.screeningResult}
             </Tag>
+          )}
+        </div>
+      ) : null}
+      {scoreDetails.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {scoreDetails.map((d, i) => (
+            <Tooltip key={i} title={d.reason || d.name}>
+              <Tag
+                color={d.score >= 4 ? 'green' : d.score >= 3 ? 'blue' : d.score >= 2 ? 'orange' : 'red'}
+                style={{ margin: 0, cursor: 'pointer', fontSize: 11, lineHeight: '18px' }}
+              >
+                {d.name} {d.score}/5
+              </Tag>
+            </Tooltip>
           ))}
         </div>
       )}
-      {evaluation.screeningReason && <Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>初筛结论：{evaluation.screeningReason}</Text>}
-      {summary && (
-        <div style={{ marginBottom: 12, padding: '12px 16px', background: '#EEF2FF', borderRadius: 8, borderLeft: '4px solid #6366F1' }}>
-          <Text strong style={{ color: '#4338CA' }}>总体评价：</Text>
-          <Text style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{summary}</Text>
+      {evaluation.screeningReason ? (
+        <div style={{ marginTop: 8 }}>
+          <span style={{ color: '#8c8c8c', fontSize: 12 }}>初筛结论：{evaluation.screeningReason}</span>
         </div>
-      )}
-      {strengths.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <Text strong style={{ color: '#10B981', display: 'block', marginBottom: 6 }}>核心优势</Text>
-          <div>{strengths.map((s, i) => <Tag key={i} color="green" style={{ marginBottom: 4, whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>)}</div>
+      ) : scoreDetails.length === 0 && evaluation.overallScore == null ? (
+        <div style={{ marginTop: 8 }}>
+          <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无 AI 评估</span>
         </div>
-      )}
-      {risks.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <Text strong style={{ color: '#EF4444', display: 'block', marginBottom: 6 }}>潜在风险</Text>
-          <div>{risks.map((r, i) => <Tag key={i} color="red" style={{ marginBottom: 4, whiteSpace: 'normal', wordBreak: 'break-word' }}>{r}</Tag>)}</div>
-        </div>
-      )}
-      {(matchedSkills.length > 0 || skillGaps.length > 0) && (
-        <div style={{ marginBottom: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-          {matchedSkills.length > 0 && (
-            <div>
-              <Text strong style={{ color: '#3B82F6', display: 'block', marginBottom: 6 }}>匹配技能</Text>
-              <div>{matchedSkills.map((s, i) => <Tag key={i} color="blue" style={{ marginBottom: 4, whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>)}</div>
-            </div>
-          )}
-          {skillGaps.length > 0 && (
-            <div>
-              <Text strong style={{ color: '#F59E0B', display: 'block', marginBottom: 6 }}>技能差距</Text>
-              <div>{skillGaps.map((s, i) => <Tag key={i} color="orange" style={{ marginBottom: 4, whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>)}</div>
-            </div>
-          )}
-        </div>
-      )}
-      {suggestedQuestions.length > 0 && (
-        <div>
-          <Text strong style={{ display: 'block', marginBottom: 6, color: '#7C3AED' }}>建议面试问题</Text>
-          {suggestedQuestions.map((q, i) => (
-            <div key={i} style={{ padding: '8px 12px', marginBottom: 4, background: '#FDF4FF', borderRadius: 6, borderLeft: '3px solid #7C3AED', fontSize: 14 }}>
-              {i + 1}. {q}
-            </div>
-          ))}
-        </div>
-      )}
+      ) : null}
+    </Card>
+  );
+}
+
+/** 简历源文件预览（PDF iframe，免登录内嵌） */
+function ResumePreviewCard({ token, resume }: { token: string; resume: BusinessScreeningResume }) {
+  return (
+    <Card bordered={false} style={cardBodyStyle}>
+      <Text strong style={cardTitleStyle}>
+        简历预览
+        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12, fontWeight: 400 }}>PDF 源文件</Text>
+      </Text>
+      <iframe
+        title="简历预览"
+        src={`/api/public/business-screening/${token}/resumes/${resume.id}/file?preview=1`}
+        style={{ width: '100%', height: 640, border: '1px solid #E2E8F0', borderRadius: 8, background: '#fff' }}
+      />
     </Card>
   );
 }
@@ -576,10 +547,13 @@ const BusinessScreeningPage: React.FC = () => {
                       </div>
                     </div>
 
+                    {/* AI 初筛评估（简历列表卡片式评估区，ant-card-body 样式） */}
+                    <AiEvaluationCard resume={activeResume} />
+
                     {activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}
 
-                    {/* AI 初筛评估（ant-card-body 卡片，与简历管理模块一致） */}
-                    <AiEvaluationCard resume={activeResume} />
+                    {/* 简历源文件预览（PDF） */}
+                    <ResumePreviewCard token={token || ''} resume={activeResume} />
 
                     <div style={{ marginTop: 20 }}>
                       <label htmlFor="business-screening-remark" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
