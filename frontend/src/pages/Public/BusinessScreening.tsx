@@ -173,7 +173,33 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
     ai_review: resume.aiReview,
     match_score: resume.matchScore,
   });
-  const hasAny = !!(resume.aiReview || resume.aiEvaluation || evaluation.overallScore != null || evaluation.screeningReason);
+
+  // 能力维度分兜底：capability_scores 格式 {"scores":[{"dimension":"核心画像","score":4,"reason":"..."}]}
+  const capabilityDimensions: Array<{ name: string; score: number; reason: string }> = (() => {
+    try {
+      const raw = JSON.parse(resume.capabilityScores || '{}');
+      const scores = Array.isArray(raw?.scores) ? raw.scores : [];
+      return scores
+        .map((s: any) => ({
+          name: String(s?.dimension || s?.name || '').trim(),
+          score: Number(s?.score),
+          reason: String(s?.reason || ''),
+        }))
+        .filter((d: any) => d.name && Number.isFinite(d.score));
+    } catch { return []; }
+  })();
+  // 合并维度：ai_evaluation 的 dimensions 优先，capability_scores 补充缺失维度（核心画像/核心职责等）
+  const dimensions = [...evaluation.dimensions];
+  const knownNames = new Set(dimensions.map((d) => d.name));
+  for (const d of capabilityDimensions) {
+    if (!knownNames.has(d.name)) {
+      dimensions.push({ name: d.name, score: Math.max(0, Math.min(5, d.score)), reason: d.reason });
+      knownNames.add(d.name);
+    }
+  }
+
+  const hasAny = !!(resume.aiReview || resume.aiEvaluation || resume.screeningResult
+    || evaluation.overallScore != null || evaluation.screeningReason || dimensions.length > 0);
   if (!hasAny) return null;
 
   const gateRows = getScreeningGateRows(evaluation);
@@ -191,11 +217,18 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
           : recommendation === 'not_recommend' ? '不推荐'
             : recommendation === 'strongly_not_recommend' ? '强烈不推荐'
               : recommendation;
+  const screeningColor = resume.screeningResult === '通过' ? 'green'
+    : resume.screeningResult === '不通过' ? 'red' : 'gold';
 
   return (
     <Card bordered={false} style={cardBodyStyle}>
       <Text strong style={cardTitleStyle}>AI 初筛评估</Text>
       <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+        {resume.screeningResult && (
+          <Tag color={screeningColor} style={{ margin: 0, fontSize: 14, padding: '2px 10px' }}>
+            AI 初筛：{resume.screeningResult}
+          </Tag>
+        )}
         {evaluation.overallScore != null && (
           <Tag color={evaluation.overallScore >= 4 ? 'green' : evaluation.overallScore >= 3 ? 'blue' : 'orange'} style={{ margin: 0 }}>
             加权分 {formatWeightedScore(evaluation.overallScore)}
@@ -212,10 +245,10 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
           </Tag>
         )}
       </div>
-      {evaluation.dimensions.length > 0 && (
+      {dimensions.length > 0 && (
         <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {evaluation.dimensions.map((dimension) => (
-            <Tag key={dimension.name} color={dimension.score >= 4 ? 'green' : dimension.score >= 3 ? 'blue' : dimension.score >= 2 ? 'orange' : 'red'} style={{ margin: 0 }}>
+          {dimensions.map((dimension) => (
+            <Tag key={dimension.name} color={dimension.score >= 4 ? 'green' : dimension.score >= 3 ? 'blue' : dimension.score >= 2 ? 'orange' : 'red'} style={{ margin: 0, whiteSpace: 'normal', wordBreak: 'break-word' }}>
               {dimension.name} {dimension.score}/5
             </Tag>
           ))}

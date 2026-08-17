@@ -50,6 +50,7 @@ export interface BusinessScreeningResume {
   matchScore?: number;
   capabilityScores?: string;
   hardRequirementResult?: string;
+  screeningResult?: string;
 }
 
 export interface BusinessScreeningBatch {

@@ -63,6 +63,7 @@ export interface BusinessScreeningBatchItemView {
   match_score?: number | null;
   capability_scores?: string | null;
   hard_requirement_result?: string | null;
+  screening_result?: string | null;
 }
 
 // 业务筛选公开页透出的结构化档案（与简历详情页 Descriptions 字段一致，不含联系方式与简历原文）
@@ -248,6 +249,7 @@ function sanitizePublicItem(item: BusinessScreeningBatchItemView) {
     matchScore: item.match_score === null || item.match_score === undefined ? undefined : Number(item.match_score),
     capabilityScores: item.capability_scores || undefined,
     hardRequirementResult: item.hard_requirement_result || undefined,
+    screeningResult: text(item.screening_result) || undefined,
     // 结构化档案：parsed_data 中的字段（不含 email）
     profile: buildPublicProfile(item.parsed_data),
   };
@@ -745,7 +747,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
                 r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience, r.parsed_data,
                 r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at,
-                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result
+                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result, r.screening_result
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
           WHERE i.batch_id = ?
@@ -758,7 +760,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
                 r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience, r.parsed_data,
                 r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at,
-                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result
+                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result, r.screening_result
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
           WHERE i.batch_id = ? AND i.resume_id = ?
