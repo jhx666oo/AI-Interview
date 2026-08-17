@@ -311,7 +311,7 @@ describe('weighted role rules', () => {
     });
   });
 
-  it('drops non-screening model dimensions before applying gate rules', () => {
+  it('uses the configured position dimensions instead of restoring legacy model dimensions', () => {
     expect(enrichScreeningEvaluation(
       {
         dimensions: [
@@ -331,20 +331,15 @@ describe('weighted role rules', () => {
       ],
     )).toMatchObject({
       dimensions: [
-        { name: '核心画像', score: 4 },
-        { name: '核心职责', score: 4 },
-        { name: '任职要求', score: 4 },
-        { name: '企业背景', score: 4 },
-        { name: '加分项', score: 4 },
-        { name: '关键词匹配', score: 5 },
-        { name: '避坑雷区', score: 5 },
+        { name: '业务', score: 0 },
+        { name: '沟通', score: 0 },
       ],
       configured_dimensions: [
         { name: '业务', weight: 60, description: '业务理解' },
         { name: '沟通', weight: 40, description: '协作表达' },
       ],
-      weighted_score: 4,
-      screening_result: '通过',
+      weighted_score: 0,
+      screening_result: '不通过',
     });
   });
 });

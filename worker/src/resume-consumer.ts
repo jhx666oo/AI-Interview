@@ -8,8 +8,9 @@ import { normalizeResumeFields } from './resume-processing/fields';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { assembleScreeningEvaluation, missingDimensionNames, normalizeDimensionScores, requireCompleteScreeningEvaluation, type DimensionScore } from './resume-processing/dimension-scores';
 import { buildScreeningRepairPrompt, parseStructuredOutput, type StructuredOutputFailureCode, type StructuredOutputResult } from './resume-processing/structured-output';
-import { callAI, callAIWithMetadata, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
-import { buildPositionScreeningContextText, buildPositionSpecificScreeningRule, buildScreeningRulesPrompt, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
+import { callAI, callAIWithMetadata, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, resolvePositionTitle } from './index';
+import { buildPositionDimensionContract, buildPositionScreeningContextText, buildPositionSpecificScreeningRule, buildScreeningRulesPrompt, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
+import { LEGACY_SCREENING_DIMENSION_NAMES } from './resume-processing/screening-dimensions';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
 import { EventRepository } from './recruitment-events/repository';
 import { ResumeSearchDocumentGenerator } from './resume-search/document-generator';
@@ -179,8 +180,9 @@ async function repairStructuredOutput(
   kind: 'screening' | 'dimensions',
   raw: string,
   failureCode: StructuredOutputFailureCode,
+  requiredNames: readonly string[] = LEGACY_SCREENING_DIMENSION_NAMES,
 ): Promise<string> {
-  const prompt = buildScreeningRepairPrompt(kind, raw, failureCode);
+  const prompt = buildScreeningRepairPrompt(kind, raw, failureCode, requiredNames);
   return callAI(env as any, prompt.system, prompt.user, 'deepseek-v4-flash', {
     structured: true,
     temperature: 0,
@@ -201,25 +203,29 @@ function classifyAIResponseShape(text: string, finishReason?: string | null): st
 async function parseScreeningResponse(
   env: ConsumerEnv,
   response: string,
+  requiredNames: readonly string[] = LEGACY_SCREENING_DIMENSION_NAMES,
 ): Promise<StructuredOutputResult> {
   return parseStructuredOutput(
     response,
     'screening',
     extractJSON,
-    (input) => repairStructuredOutput(env, input.kind, input.raw, input.failureCode),
+    (input) => repairStructuredOutput(env, input.kind, input.raw, input.failureCode, requiredNames),
+    requiredNames,
   );
 }
 
 async function tryParseDimensionScores(
   env: ConsumerEnv,
   response: string,
+  requiredNames: readonly string[] = LEGACY_SCREENING_DIMENSION_NAMES,
 ): Promise<{ scores: DimensionScore[]; ok: boolean }> {
   try {
     const parsed = await parseStructuredOutput(
       response,
       'dimensions',
       extractJSON,
-      (input) => repairStructuredOutput(env, input.kind, input.raw, input.failureCode),
+      (input) => repairStructuredOutput(env, input.kind, input.raw, input.failureCode, requiredNames),
+      requiredNames,
     );
     return { scores: normalizeDimensionScores(parsed.value), ok: true };
   } catch {
@@ -302,10 +308,13 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
     screen: async (text, fields, resume) => {
       const position = String(resume.position_applied || resume.mapped_position || '');
       const context = await getPositionContext(env.DB, position);
+      const screeningDimensions = context.capabilityDimensionItems;
+      const requiredNames = screeningDimensions.map((item) => item.name);
+      const dimensionContract = buildPositionDimensionContract(screeningDimensions);
       // 第一步：基础筛选（match_score + recommendation + summary + strengths + risks）
       const screenPrompt = await getAIPrompt(env as any, 'resume_screening', {
         system: `你是资深招聘评估AI，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
-        user: '岗位：{position}\n岗位职责与要求：{job_description}\n个性化要求：{personalized_requirements}\n能力维度：{capability_dimensions}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}'
+        user: '岗位：{position}\n岗位职责与要求：{job_description}\n个性化要求：{personalized_requirements}\n能力维度：{capability_dimensions}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON，dimensions 只能包含本次岗位能力维度协议中的维度，每项格式为 {"name":"当前岗位维度名","score":0,"reason":"中文依据"}'
       });
       const screenUserText = screenPrompt.user
         .replace('{position}', context.standardPosition || position)
@@ -328,8 +337,8 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         personalizedRequirements: context.personalizedRequirements,
         capabilityDimensions: context.capabilityDimensions,
       });
-      const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
-      const finalScreenUserText = [screenUserText, positionContextText, positionSpecificRule, screeningRulesPrompt]
+      const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules, screeningDimensions);
+      const finalScreenUserText = [screenUserText, positionContextText, dimensionContract, positionSpecificRule, screeningRulesPrompt]
         .filter(Boolean)
         .join('\n\n');
       const screeningResult = await callAIWithMetadata(
@@ -353,7 +362,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       });
       let evaluation: Record<string, any>;
       try {
-        const parsed = await parseScreeningResponse(env, screeningResult.text);
+        const parsed = await parseScreeningResponse(env, screeningResult.text, requiredNames);
         evaluation = parsed.value as Record<string, any>;
         await updateJobAIDiagnostics(env.DB, message.jobId, {
           formatAttempt: parsed.diagnostics.repairAttempted ? 2 : 1,
@@ -377,37 +386,12 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         throw error;
       }
 
-      // 第二步：加载岗位完整信息（含能力维度描述、岗位职责、个性化需求）
-      const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
-      let posDescription = '', posRequirements = '', personalizedReqs = '';
-      let configuredDimensions: any[] = [];
-      try {
-        const posRow = await env.DB.prepare(
-          'SELECT title, description, requirements, personalized_requirements, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
-        ).bind(resolvedTitle).first() as any;
-        if (posRow) {
-          posDescription = posRow.description || '';
-          posRequirements = posRow.requirements || '';
-          personalizedReqs = posRow.personalized_requirements || '';
-          configuredDimensions = normalizeCapabilityDimensions(posRow.capability_dimensions || []);
-        }
-      } catch {}
-      // 从 capability_dimensions 独立表补充
-      try {
-        const dimRow = await env.DB.prepare(
-          'SELECT dimensions_json, personalized_requirements FROM capability_dimensions WHERE position_name = ? LIMIT 1'
-        ).bind(resolvedTitle).first() as any;
-        if (dimRow?.dimensions_json) {
-          const extraDims = normalizeCapabilityDimensions(dimRow.dimensions_json);
-          if (extraDims.length > 0) configuredDimensions = extraDims;
-        }
-        if (dimRow?.personalized_requirements && !personalizedReqs) {
-          personalizedReqs = dimRow.personalized_requirements;
-        }
-      } catch {}
-
-      // 第三步：能力维度专项评分（使用详细提示词，含维度描述、岗位职责、个性化需求）
-      const screeningDimensions = WEIGHTED_SCREENING_DIMENSION_NAMES.map((name) => configuredDimensions.find((item: any) => item.name === name) || { name, weight: 0, description: '' });
+      // 第二步：能力维度专项评分（使用详细提示词，含维度描述、岗位职责、个性化需求）
+      const resolvedTitle = context.standardPosition || position;
+      const posDescription = context.description;
+      const posRequirements = context.requirements;
+      const personalizedReqs = context.personalizedRequirements;
+      const configuredDimensions = screeningDimensions;
       if (screeningDimensions.length > 0) {
         try {
           const dimsText = screeningDimensions.map((d: any) => {
@@ -468,7 +452,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             personalizedRequirements: personalizedReqs,
             capabilityDimensions: dimsText,
           });
-          const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
+          const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules, screeningDimensions);
           if (positionSpecificRule) supUserText += `\n\n${positionSpecificRule}`;
           supUserText += `\n\n${screeningRulesPrompt}`;
           const dimResponse = await callAI(
@@ -479,9 +463,9 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             { structured: true, temperature: 0, maxTokens: 4096 },
           );
           // 专项维度只补主评估缺失项，绝不覆盖完整主评估
-          const { scores: dimScores, ok: dimOk } = await tryParseDimensionScores(env, dimResponse);
+          const { scores: dimScores, ok: dimOk } = await tryParseDimensionScores(env, dimResponse, requiredNames);
           if (dimOk && dimScores.length > 0) {
-            evaluation = assembleScreeningEvaluation(evaluation, dimScores);
+            evaluation = assembleScreeningEvaluation(evaluation, dimScores, requiredNames);
           } else {
             logResumeProcessingError('ai.screening.supplement_invalid', new Error('supplement dimensions invalid after one repair'), {
               resumeId: message.resumeId,
@@ -493,7 +477,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       }
 
       // 第四步：检查缺失维度并补充
-      const missingDimensions = missingDimensionNames([...WEIGHTED_SCREENING_DIMENSION_NAMES], evaluation);
+      const missingDimensions = missingDimensionNames(requiredNames, evaluation);
       if (missingDimensions.length > 0) {
         try {
           const supplementPrompt = await getAIPrompt(env as any, 'resume_screening_supplement', {
@@ -510,7 +494,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             personalizedRequirements: personalizedReqs,
             capabilityDimensions: configuredDimensions.map((item: any) => `${item.name || ''}：${item.description || ''}`).join('\n'),
           });
-          const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
+          const screeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules, screeningDimensions);
           const finalSupUserText = [supUserText, positionSpecificRule, screeningRulesPrompt].filter(Boolean).join('\n\n');
           const supplemental = await callAI(
             env as any,
@@ -519,10 +503,9 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             'deepseek-v4-flash',
             { structured: true, temperature: 0, maxTokens: 4096 },
           );
-          // 服务端最低要求是完整七项维度，不按 configuredDimensions 过滤
-          const { scores, ok } = await tryParseDimensionScores(env, supplemental);
+          const { scores, ok } = await tryParseDimensionScores(env, supplemental, missingDimensions);
           if (ok && scores.length > 0) {
-            evaluation = assembleScreeningEvaluation(evaluation, scores);
+            evaluation = assembleScreeningEvaluation(evaluation, scores, requiredNames);
           } else {
             logResumeProcessingError('ai.screening.supplement_invalid', new Error('missing dimension supplement invalid'), {
               resumeId: message.resumeId,
@@ -543,7 +526,7 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         const parsedRequirements = typeof value === 'string' ? JSON.parse(value) : value;
         hardRequirements = Array.isArray(parsedRequirements) ? parsedRequirements : [];
       } catch {}
-      const completeEvaluation = requireCompleteScreeningEvaluation(evaluation);
+      const completeEvaluation = requireCompleteScreeningEvaluation(evaluation, requiredNames);
       const enrichedEvaluation = enrichScreeningEvaluation(
         completeEvaluation,
         configuredDimensions,
@@ -649,6 +632,9 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
     screen: async (text, fields, resume) => {
       const position = String(resume.position_applied || resume.mapped_position || '');
       const context = await getPositionContext(env.DB, position);
+      const screeningDimensions = context.capabilityDimensionItems;
+      const requiredNames = screeningDimensions.map((item) => item.name);
+      const dimensionContract = buildPositionDimensionContract(screeningDimensions);
       const r2ScreenPrompt = await getAIPrompt(env as any, 'resume_screening', {
         system: `你是资深招聘评估 AI，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
         user: '岗位：{position}\n岗位职责与要求：{job_description}\n个性化要求：{personalized_requirements}\n能力维度：{capability_dimensions}\n字段：{fields}\n简历：{resume_text}'
@@ -674,8 +660,8 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         personalizedRequirements: context.personalizedRequirements,
         capabilityDimensions: context.capabilityDimensions,
       });
-      const r2ScreeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
-      const finalR2ScreenUser = [r2ScreenUser, r2PositionContextText, r2PositionSpecificRule, r2ScreeningRulesPrompt]
+      const r2ScreeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules, screeningDimensions);
+      const finalR2ScreenUser = [r2ScreenUser, r2PositionContextText, dimensionContract, r2PositionSpecificRule, r2ScreeningRulesPrompt]
         .filter(Boolean)
         .join('\n\n');
       const screeningResult = await callAIWithMetadata(
@@ -699,7 +685,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       });
       let evaluation: Record<string, any>;
       try {
-        const parsed = await parseScreeningResponse(env, screeningResult.text);
+        const parsed = await parseScreeningResponse(env, screeningResult.text, requiredNames);
         evaluation = parsed.value as Record<string, any>;
         await updateJobAIDiagnostics(env.DB, message.jobId, {
           formatAttempt: parsed.diagnostics.repairAttempted ? 2 : 1,
@@ -723,11 +709,8 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
         throw error;
       }
       const resolvedTitle = await resolvePositionTitle(env.DB, context.standardPosition || position);
-      const positionRow = await env.DB.prepare(
-        'SELECT title, capability_dimensions FROM positions WHERE title = ? LIMIT 1'
-      ).bind(resolvedTitle).first() as any;
-      const configuredDimensions = normalizeCapabilityDimensions(positionRow?.capability_dimensions || []);
-      const missingDimensions = missingDimensionNames([...WEIGHTED_SCREENING_DIMENSION_NAMES], evaluation);
+      const configuredDimensions = screeningDimensions;
+      const missingDimensions = missingDimensionNames(requiredNames, evaluation);
       if (missingDimensions.length > 0) {
         try {
           const r2SupplementPrompt = await getAIPrompt(env as any, 'resume_screening_supplement', {
@@ -744,7 +727,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             personalizedRequirements: context.personalizedRequirements,
             capabilityDimensions: context.capabilityDimensions,
           });
-          const r2ScreeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules);
+          const r2ScreeningRulesPrompt = buildScreeningRulesPrompt(context.screeningRules, screeningDimensions);
           const finalR2SupUser = [r2SupUser, r2PositionSpecificRule, r2ScreeningRulesPrompt].filter(Boolean).join('\n\n');
           const supplemental = await callAI(
             env as any,
@@ -754,9 +737,9 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
             { structured: true, temperature: 0, maxTokens: 4096 },
           );
           // 专项只补主评估缺失项，primary 优先，不覆盖
-          const { scores, ok } = await tryParseDimensionScores(env, supplemental);
+          const { scores, ok } = await tryParseDimensionScores(env, supplemental, missingDimensions);
           if (ok && scores.length > 0) {
-            evaluation = assembleScreeningEvaluation(evaluation, scores);
+            evaluation = assembleScreeningEvaluation(evaluation, scores, requiredNames);
           } else {
             logResumeProcessingError('ai.screening.supplement_invalid', new Error('missing dimension supplement invalid'), {
               resumeId: message.resumeId,
@@ -770,12 +753,12 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       try {
         const requisition = await env.DB.prepare(
           'SELECT hard_requirements FROM job_requisitions WHERE title = ? LIMIT 1'
-        ).bind(positionRow?.title || context.standardPosition || position).first() as any;
+        ).bind(resolvedTitle || context.standardPosition || position).first() as any;
         const value = requisition?.hard_requirements;
         const parsedRequirements = typeof value === 'string' ? JSON.parse(value) : value;
         hardRequirements = Array.isArray(parsedRequirements) ? parsedRequirements : [];
       } catch {}
-      const completeEvaluation = requireCompleteScreeningEvaluation(evaluation);
+      const completeEvaluation = requireCompleteScreeningEvaluation(evaluation, requiredNames);
       const enrichedEvaluation = enrichScreeningEvaluation(
         completeEvaluation,
         configuredDimensions,
