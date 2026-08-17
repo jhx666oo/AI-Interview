@@ -369,7 +369,36 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     const db = makeDb({ resumes: [RESUME_NURSE] });
     const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
     expect(res.status).toBe(200);
-    expect(sentBody.max_tokens).toBe(1024);
+    expect(sentBody.max_tokens).toBe(2048); // 8 份简历的 JSON 输出，留足空间避免截断整批空分
+  });
+
+  it('recovers scores when AI returns a single object instead of an array', async () => {
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ choices: [{ message: { content: '{"id":"res-1","score":92,"reason":"持有护士执业证书，符合"}' } }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.scores).toHaveLength(1);
+    expect(body.scores[0]).toMatchObject({ id: 'res-1', score: 92 });
+  });
+
+  it('recovers complete entries from a truncated JSON array', async () => {
+    // 输出被 max_tokens 截断：第二个对象不完整 → 只恢复第一个完整项，避免整批空分
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":92,"reason":"符合"},{"id":"res-2","score":60,"reason":"部分符' } }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )) as any;
+
+    const db = makeDb({ resumes: [RESUME_NURSE, RESUME_NO_MATCH] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.scores).toHaveLength(1);
+    expect(body.scores[0]).toMatchObject({ id: 'res-1', score: 92 });
   });
 
   it('admins bypass owner isolation', async () => {

@@ -5644,8 +5644,8 @@ function serializeResumeCardRow(r: any): any {
 
 // 默认打分提示词（可在系统设置「提示词模板」按 resume_custom_screen 覆盖）
 const DEFAULT_CUSTOM_SCREEN_PROMPT = {
-  system: '你是资深招聘筛选助手，只返回 JSON。根据给定的筛选条件逐份评估简历的符合程度，输出 JSON 数组，每项为 {"id":"简历id","score":0-100 的整数,"reason":"一句中文依据"}。未提及该条件的简历 score 给低分。',
-  user: '岗位：{position}\n筛选条件：{condition}\n\n简历列表：\n{resumes}\n\n请逐份评估符合程度并返回 JSON 数组。',
+  system: '你是资深招聘筛选助手，只返回 JSON，禁止输出 JSON 之外的任何文字或代码块。根据给定的筛选条件逐份评估简历的符合程度，输出 JSON 数组（必须数组，不要单个对象），数组元素为 {"id":"简历id","score":0到100的整数,"reason":"中文依据一句话，20字以内"}。未提及该条件的简历 score 给低分。',
+  user: '岗位：{position}\n筛选条件：{condition}\n\n简历列表（每份以 #id 开头）：\n{resumes}\n\n请对列表中的每一份简历各输出一条评分项，返回 JSON 数组。',
 };
 
 // 把条件分词：英文/数字词块 + 中文双字滑窗 bigram
@@ -5948,27 +5948,36 @@ async function aiScoreCustomScreenPool(
       ? callConfiguredAIWithMetadata(env, config, prompt.system, userText, 'deepseek-v4-flash', {
           structured: true,
           temperature: 0,
-          maxTokens: 1024, // 8 份简历的 JSON 输出，512 易被截断 → 解析失败 → 整批空分
+          maxTokens: 2048, // 8 份简历的 JSON 输出，1024 在 reason 写长时易截断 → 解析失败 → 整批空分
         }).then(r => r.text)
       : callAI(env, prompt.system, userText, 'deepseek-v4-flash', {
           structured: true,
           temperature: 0,
-          maxTokens: 1024,
+          maxTokens: 2048,
         });
     const resultText = await Promise.race([
       textPromise,
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('CUSTOM_SCREEN_AI_TIMEOUT')), AI_TIMEOUT_MS)),
     ]);
+    // 解析容错：优先取数组；兼容模型返回单个对象（{"id":...,"score":...}）而非数组；
+    // 数组解析失败时从原始文本逐项提取 {"id":"...",...} 对象（截断恢复），保证该批尽量不整批空分。
     const parsed = extractJSON(resultText);
-    const list = Array.isArray(parsed) ? parsed : (parsed?.items || parsed?.results || []);
+    let list: any[] = Array.isArray(parsed) ? parsed : (parsed?.items || parsed?.results || []);
+    if (Array.isArray(list) && list.length === 0 && parsed && typeof parsed === 'object' && parsed?.id) {
+      list = [parsed];
+    }
+    if (!Array.isArray(list) || list.length === 0) {
+      const recovered = (String(resultText).match(/\{[^{}]*"id"\s*:\s*"[^"]+"[^{}]*\}/g) || [])
+        .map((s) => { try { return JSON.parse(s); } catch { return null; } })
+        .filter(Boolean);
+      if (recovered.length > 0) list = recovered;
+    }
     const out = new Map<string, { id: string; score: number; reason: string }>();
-    if (Array.isArray(list)) {
-      for (const entry of list) {
-        const id = String(entry?.id ?? '');
-        if (!id) continue;
-        const score = Math.max(0, Math.min(100, Math.round(Number(entry?.score) || 0)));
-        out.set(id, { id, score, reason: String(entry?.reason ?? '').slice(0, 120) });
-      }
+    for (const entry of Array.isArray(list) ? list : []) {
+      const id = String(entry?.id ?? '');
+      if (!id) continue;
+      const score = Math.max(0, Math.min(100, Math.round(Number(entry?.score) || 0)));
+      out.set(id, { id, score, reason: String(entry?.reason ?? '').slice(0, 120) });
     }
     return out;
   }
@@ -6018,8 +6027,11 @@ async function aiScoreCustomScreenPool(
   const scores = new Map<string, { id: string; score: number; reason: string }>();
   for (const group of perGroup) for (const m of group) for (const [id, v] of m) scores.set(id, v);
   const list = [...scores.values()];
-  // 全部批次失败时把首个真实报错回传给前端，便于定位（配置/超时/限额等）
-  if (list.length === 0 && firstError) return { scores: list, error: firstError };
+  // 没有拿到任何 AI 分时，把具体原因回传给前端（超时/调用失败/返回内容无法解析），避免前端只显示笼统报错
+  if (list.length === 0) {
+    const msg = firstError || 'AI 返回内容无法解析为评分（可能是输出被截断或格式不符），请稍后重试或检查模型配置';
+    return { scores: list, error: msg };
+  }
   return { scores: list };
 }
 
