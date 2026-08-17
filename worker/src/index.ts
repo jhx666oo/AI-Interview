@@ -484,6 +484,8 @@ export type AICallOptions = {
   structured?: boolean;
   maxTokens?: number;
   temperature?: number;
+  /** 多配置时起始尝试的配置下标（默认随机）；用于批量任务把并发分摊到不同模型 */
+  startIndex?: number;
 };
 
 const AI_RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
@@ -523,13 +525,20 @@ export async function callAIWithMetadata(
 ): Promise<AICallResult> {
   const llmConfigs = await getLLMConfigs(env);
   if (llmConfigs.length > 0) {
+    // 多配置时默认随机起点：批量并发任务会自然分摊到不同模型（避免全部挤在配置 1）。
+    // 从起点按顺序环绕尝试，失败自动降级到下一个模型（含环绕回起点），
+    // 即"某个模型报错时由下一个模型顶上"，直到全部尝试完。
+    const start = options.startIndex !== undefined
+      ? ((options.startIndex % llmConfigs.length) + llmConfigs.length) % llmConfigs.length
+      : Math.floor(Math.random() * llmConfigs.length);
     let lastError: unknown = null;
-    for (let i = 0; i < llmConfigs.length; i++) {
+    for (let step = 0; step < llmConfigs.length; step++) {
+      const i = (start + step) % llmConfigs.length;
       try {
         return await callConfiguredAIWithMetadata(env, llmConfigs[i], systemPrompt, userPrompt, model, options);
       } catch (error) {
         lastError = error;
-        if (i < llmConfigs.length - 1) {
+        if (step < llmConfigs.length - 1) {
           try {
             console.log(JSON.stringify({
               scope: 'resume-processing',
@@ -6527,12 +6536,30 @@ async function aiScoreCustomScreenPool(
 
   let firstError: string | null = null;
   const perGroup = await Promise.all(groups.map(({ config, batches }) =>
-    mapLimit(batches, CONCURRENCY, (b) => scoreBatch(b, config).catch((e) => {
-      const msg = String((e as Error)?.message || e).slice(0, 300);
-      firstError = firstError || msg;
-      console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${msg}`);
-      return new Map<string, { id: string; score: number; reason: string }>();
-    }))
+    mapLimit(batches, CONCURRENCY, async (b) => {
+      const fallbackToKeywords = (e: unknown) => {
+        const msg = String((e as Error)?.message || e).slice(0, 300);
+        firstError = firstError || msg;
+        console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${msg}`);
+        return new Map<string, { id: string; score: number; reason: string }>();
+      };
+      try {
+        return await scoreBatch(b, config);
+      } catch (e) {
+        // 超时不换模型重试（避免叠加等待拖长任务，直接回退关键词）；
+        // 明确报错（HTTP 错误/解析失败等）则换模型顶上重试一次——
+        // 改用全局 callAI（多配置随机起点 + 自动环绕降级，由下一个可用模型接手）。
+        const isTimeout = String((e as Error)?.message || e).includes('CUSTOM_SCREEN_AI_TIMEOUT');
+        if (!isTimeout) {
+          try {
+            return await scoreBatch(b, undefined);
+          } catch (e2) {
+            return fallbackToKeywords(e2);
+          }
+        }
+        return fallbackToKeywords(e);
+      }
+    })
   ));
   const scores = new Map<string, { id: string; score: number; reason: string }>();
   for (const group of perGroup) for (const m of group) for (const [id, v] of m) scores.set(id, v);

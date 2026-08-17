@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { callAI, callAIWithMetadata } from '../src/index';
 
 function makeEnv(overrides: Record<string, unknown> = {}) {
@@ -54,10 +54,16 @@ function envWithSystemConfig(row: Record<string, unknown> = {}, overrides: Recor
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 describe('callAIWithMetadata', () => {
+  // 默认随机起点会随机选择配置；以下多配置用例固定 Math.random=0（从配置 1 开始），
+  // 保持"第一个配置成功则使用之 / 失败按顺序降级"的既有断言语义。
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+  });
   it('requests JSON mode for structured calls', async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse('{"ok":true}'));
     vi.stubGlobal('fetch', fetchMock);
@@ -251,6 +257,61 @@ describe('callAIWithMetadata', () => {
     const result = await callAIWithMetadata(env, 'sys', 'user');
     expect(result.text).toBe('only-config-1');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('defaults to a random start config so concurrent batch calls spread across models', async () => {
+    // Math.random≈0.5 → start=1 → 先尝试配置 2（而不是所有请求都挤在配置 1）
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('from-config-2'));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = envWithSystemConfig({
+      llm_api_key: 'key-1', llm_base_url: 'https://config1.example.com', llm_model: 'model-1',
+      llm2_api_key: 'key-2', llm2_base_url: 'https://config2.example.com', llm2_model: 'model-2',
+    });
+
+    const result = await callAIWithMetadata(env, 'sys', 'user');
+    expect(result.text).toBe('from-config-2');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('config2.example.com');
+  });
+
+  it('reads all 7 slots from llm_slots and spreads attempts across them', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(6 / 7); // start=6 → 先尝试第 7 个配置
+    const fetchMock = vi.fn().mockResolvedValue(okResponse('from-config-7'));
+    vi.stubGlobal('fetch', fetchMock);
+    const slots = Array.from({ length: 7 }, (_, i) => ({
+      baseUrl: `https://config${i + 1}.example.com/v1`,
+      model: `model-${i + 1}`,
+      apiKey: `key-${i + 1}`,
+    }));
+    const env = envWithSystemConfig({ llm_slots: slots });
+
+    const result = await callAIWithMetadata(env, 'sys', 'user');
+    expect(result.text).toBe('from-config-7');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('config7.example.com');
+  });
+
+  it('pins the start config via startIndex and wraps around to the next model on failure', async () => {
+    // startIndex=1（配置 2）：配置 2 连续 500 重试 3 次失败后，环绕降级到配置 3 成功
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 500 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 500 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 500 }))
+      .mockResolvedValueOnce(okResponse('from-config-3'));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = envWithSystemConfig({
+      llm_api_key: 'key-1', llm_base_url: 'https://config1.example.com', llm_model: 'model-1',
+      llm2_api_key: 'key-2', llm2_base_url: 'https://config2.example.com', llm2_model: 'model-2',
+      llm3_api_key: 'key-3', llm3_base_url: 'https://config3.example.com', llm3_model: 'model-3',
+    });
+
+    const resultPromise = callAIWithMetadata(env, 'sys', 'user', undefined, { startIndex: 1 });
+    const result = await vi.advanceTimersByTimeAsync(10_000).then(() => resultPromise);
+
+    expect(result.text).toBe('from-config-3');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(String(fetchMock.mock.calls[3][0])).toContain('config3.example.com');
   });
 });
 
