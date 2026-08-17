@@ -401,6 +401,34 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(body.scores[0]).toMatchObject({ id: 'res-1', score: 92 });
   });
 
+  it('sends the evidence window to AI, not just the first 400 chars', async () => {
+    // 护士证/执业证信息在简历中后部（工作经历/证书栏）：AI 必须能看到，否则误判低分被阈值过滤漏人
+    const longPrefix = '多年临床护理经历，负责病房日常护理与患者照护。'.repeat(20); // ~400+ 字符，不含护士证
+    const longResume = {
+      id: 'res-9',
+      candidate_name: '美云',
+      mapped_position: '护士',
+      position_applied: '护士',
+      status: 'pending_interview',
+      ocr_markdown: `${longPrefix}\n持有护士执业证书和护士资格证，在养老院工作五年。`,
+    };
+    let sentText = '';
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      sentText = String(init.body ?? '');
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"id":"res-9","score":90,"reason":"持有护士执业证书"}]' } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as any;
+
+    const db = makeDb({ resumes: [longResume] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '有护士证' });
+    expect(res.status).toBe(200);
+    // 摘录必须包含中后部的资格证据，AI 才判断得出「有护士证」
+    expect(sentText).toContain('护士执业证书');
+    expect(sentText).toContain('护士资格证');
+  });
+
   it('admins bypass owner isolation', async () => {
     globalThis.fetch = (async () => new Response(
       JSON.stringify({ choices: [{ message: { content: '[{"id":"res-3","score":88,"reason":"持有医师执业证"}]' } }] }),

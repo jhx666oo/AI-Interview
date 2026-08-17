@@ -5691,6 +5691,42 @@ function keywordMatchScore(hits: number, totalTokens: number): number {
   return Math.min(100, Math.round((hits / totalTokens) * 100));
 }
 
+// 送 AI 的简历摘录：保留简历开头（个人信息/教育），再拼接筛选关键词命中位置附近的证据窗口。
+// 之前只取前 400 字符，护士证/执业证等资格信息在简历中后部时 AI 完全看不到 → 误判低分 → 被阈值过滤漏人。
+function buildAIResumeExcerpt(combined: string, tokens: string[], maxLen = 1200): string {
+  if (!combined) return '';
+  if (combined.length <= maxLen) return combined;
+  const lower = combined.toLowerCase();
+  const spans: Array<[number, number]> = [];
+  for (const t of tokens) {
+    if (!t) continue;
+    let idx = lower.indexOf(t);
+    while (idx !== -1) {
+      spans.push([Math.max(0, idx - 200), Math.min(combined.length, idx + t.length + 300)]);
+      idx = lower.indexOf(t, idx + t.length);
+    }
+  }
+  if (spans.length === 0) return combined.slice(0, maxLen);
+  spans.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const s of spans) {
+    const last = merged[merged.length - 1];
+    if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]);
+    else merged.push([...s]);
+  }
+  // 预算：开头 1/3 + 证据窗口 2/3
+  const head = combined.slice(0, Math.floor(maxLen / 3));
+  let budget = maxLen - head.length;
+  const parts = [head];
+  for (const [start, end] of merged) {
+    const seg = combined.slice(start, end).trim();
+    if (!seg || parts.includes(seg)) continue;
+    if (seg.length <= budget) { parts.push(seg); budget -= seg.length; }
+    else { parts.push(seg.slice(0, budget)); break; }
+  }
+  return parts.join('\n');
+}
+
 app.get('/api/resumes', authMiddleware, async (c) => {
   try {
     // Feature Flag: 开启 SQL 分页查询时走优化路径，不 select 长文本列
@@ -5928,6 +5964,7 @@ async function aiScoreCustomScreenPool(
   // 批内超时给足余量；各批并发执行，总耗时 ≈ 最慢单批，远小于前端 90s 请求超时。
   // 之前 6s 必超时 → 每批都失败 → 前端一直拿到空分。
   const AI_TIMEOUT_MS = Math.max(3000, Number(env.CUSTOM_SCREEN_AI_TIMEOUT_MS) || 30000);
+  const tokens = tokenizeCondition(condition);
   const chunk = <T>(arr: T[]): T[][] => {
     const out: T[][] = [];
     for (let i = 0; i < arr.length; i += BATCH) out.push(arr.slice(i, i + BATCH));
@@ -5939,7 +5976,7 @@ async function aiScoreCustomScreenPool(
     config?: { apiKey: string; baseUrl: string; model: string },
   ): Promise<Map<string, { id: string; score: number; reason: string }>> {
     const prompt = await getAIPrompt(env, 'resume_custom_screen', DEFAULT_CUSTOM_SCREEN_PROMPT);
-    const resumeBlock = batch.map(({ row, combined }) => `#id:${row.id}\n${combined.slice(0, 400)}`).join('\n\n');
+    const resumeBlock = batch.map(({ row, combined }) => `#id:${row.id}\n${buildAIResumeExcerpt(combined, tokens)}`).join('\n\n');
     const userText = prompt.user
       .replace('{position}', position)
       .replace('{condition}', condition)
