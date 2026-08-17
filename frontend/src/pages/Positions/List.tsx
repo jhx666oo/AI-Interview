@@ -6,6 +6,7 @@ import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import JDGeneratorModal from '../../components/JDGeneratorModal';
+import GenerateCapabilityDimensionsModal from '../../components/GenerateCapabilityDimensionsModal';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { buildPositionCapabilitySave } from './capabilitySave';
@@ -103,6 +104,7 @@ const PositionsList: React.FC = () => {
   const [users, setUsers] = useState<any[]>([]);
   const [interviewers, setInterviewers] = useState<any[]>([]);
   const [jdModalVisible, setJdModalVisible] = useState(false);
+  const [dimGenVisible, setDimGenVisible] = useState(false);
   const [aiMatchingId, setAiMatchingId] = useState<string | null>(null);
   const [aiMatchResult, setAiMatchResult] = useState<any>(null);
   const [aiMatchVisible, setAiMatchVisible] = useState(false);
@@ -600,6 +602,11 @@ const PositionsList: React.FC = () => {
     });
   };
 
+  const handleDimGenConfirm = (dimensions: any[]) => {
+    form.setFieldValue('capability_dimensions', dimensions);
+    message.success(`已生成 ${dimensions.length} 个评分维度，可继续调整后保存`);
+  };
+
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
@@ -1053,9 +1060,18 @@ const PositionsList: React.FC = () => {
               <Space>
                 <RadarChartOutlined />
                 <span>能力维度</span>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<RobotOutlined />}
+                  onClick={() => setDimGenVisible(true)}
+                  style={{ padding: 0, height: 'auto' }}
+                >
+                  AI 一键生成
+                </Button>
               </Space>
             }
-            extra="勾选维度后展开描述区域，填写该维度的具体表现和评分标准"
+            extra="勾选维度后展开描述区域，填写该维度的具体表现和评分标准；也可点击「AI 一键生成」，粘贴飞书链接或岗位要求文本自动生成评分维度"
           >
             <CapabilityDimensionEditor 
               allDimNames={allDimNames} 
@@ -1106,6 +1122,15 @@ const PositionsList: React.FC = () => {
         department={form.getFieldValue('department')}
         location={form.getFieldValue('location')}
         salary_range={form.getFieldValue('salary_range')}
+      />
+
+      <GenerateCapabilityDimensionsModal
+        open={dimGenVisible}
+        onCancel={() => setDimGenVisible(false)}
+        onConfirm={handleDimGenConfirm}
+        positionTitle={form.getFieldValue('title') || ''}
+        jobDescription={form.getFieldValue('description') || ''}
+        jobRequirements={form.getFieldValue('requirements') || ''}
       />
 
       {/* 评估维度编辑弹窗 */}
