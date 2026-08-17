@@ -299,14 +299,14 @@ const SystemSettingsPage: React.FC = () => {
         </Button>
         <Collapse
           ghost
-          activeKey={slots.map((_, i) => String(i))}
+          activeKey={[]}
           onChange={() => {}}
           items={slots.map((slot, idx) => {
             const isEditing = !!editing[idx];
             const keySet = !!slot.apiKeySet;
             const keyLast4 = slot.apiKeyLast4;
             return {
-              key: String(idx),
+              key: `slot-${idx}`,
               label: (
                 <Space style={{ width: '100%', justifyContent: 'space-between' }} align="center">
                   <Space>
