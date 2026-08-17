@@ -236,10 +236,14 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
 
   it('AI-scores all keyword-matched resumes including obvious hits (>=80%)', async () => {
     let callCount = 0;
-    globalThis.fetch = (async () => { callCount++; return new Response(
-      JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":80,"reason":"符合"},{"id":"res-4","score":95,"reason":"完全符合"}]' } }] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    ); }) as any;
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      // 只统计 AI 打分请求（含 #id:），忽略缺摘要简历的补解析请求
+      if (String(init.body ?? '').includes('#id:')) callCount++;
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":80,"reason":"符合"},{"id":"res-4","score":95,"reason":"完全符合"}]' } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as any;
 
     // 全量解析：res-1 (75%) 与 res-4 (100% 命中) 都进 AI 批次打分，不再跳过明显命中
     const db = makeDb({ resumes: [RESUME_NURSE, RESUME_FULL_MATCH] });
@@ -256,7 +260,7 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     globalThis.fetch = (async (_url: unknown, init: any) => {
       const body = init.body as string;
       const ids = [...body.matchAll(/#id:([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
-      calls.push(ids);
+      if (ids.length) calls.push(ids);
       const content = ids.map((id) => JSON.stringify({ id, score: 80, reason: '符合' }));
       return new Response(
         JSON.stringify({ choices: [{ message: { content: `[${content.join(',')}]` } }] }),
@@ -299,7 +303,7 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
       try {
         const body = init.body as string;
         const ids = [...body.matchAll(/#id:([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
-        calls.push(ids);
+        if (ids.length) calls.push(ids);
         await new Promise(r => setTimeout(r, 20));
         const content = ids.map((id) => JSON.stringify({ id, score: 80, reason: '符合' }));
         return new Response(
@@ -345,10 +349,13 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
   });
 
   it('bounds AI latency: slow AI returns empty scores without hanging the request', async () => {
-    // AI fetch 永不返回，靠全局截止时间兜底，避免超过前端请求超时
+    // AI fetch 永不返回，靠全局截止时间兜底，避免超过前端请求超时。
+    // 简历带摘要（hasSummary），跳过补解析，只测打分阶段不挂死。
     globalThis.fetch = (() => new Promise<never>(() => {})) as any;
 
-    const db = makeDb({ resumes: [RESUME_NURSE] });
+    const db = makeDb({
+      resumes: [{ ...RESUME_NURSE, parsed_data: JSON.stringify({ highest_degree: '大专', certifications: ['护士执业证书'] }) }],
+    });
     const env = makeEnv(db, { CUSTOM_SCREEN_AI_TIMEOUT_MS: '50' });
     const res = await postScores(env, { position: '护士', condition: '持有护士证' });
     expect(res.status).toBe(200);
@@ -359,7 +366,8 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
   it('caps AI cost: keeps max_tokens modest', async () => {
     let sentBody: any;
     globalThis.fetch = (async (url: unknown, init: any) => {
-      sentBody = JSON.parse(init.body as string);
+      // 只记录 AI 打分请求（含 #id:），忽略缺摘要简历的补解析请求
+      if (String(init.body ?? '').includes('#id:')) sentBody = JSON.parse(init.body as string);
       return new Response(
         JSON.stringify({ choices: [{ message: { content: '[{"id":"res-1","score":92,"reason":"持有护士执业证书"}]' } }] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -495,6 +503,47 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(sentText).toContain('护士执业证书');
     expect(sentText).toContain('县医院');
     expect(sentText).not.toContain('这段原文不含护士证'); // 原文不作为筛选依据
+  });
+
+  it('reparses resumes without a structured summary from raw text before scoring', async () => {
+    // 没有 AI 解析摘要的简历：先用原始文本补解析出完整字段（含证书/资质），本轮就用新摘要打分
+    const noSummaryResume = {
+      id: 'res-13',
+      candidate_name: '毛琴',
+      mapped_position: '护士',
+      position_applied: '护士',
+      status: 'pending_interview',
+      ocr_markdown: '中专毕业，在县医院做了五年护士，持有护士执业证书。',
+    };
+    const sentBodies: string[] = [];
+    let call = 0;
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      call++;
+      sentBodies.push(String(init.body ?? ''));
+      if (call === 1) {
+        // 补解析：返回完整结构化字段（含证书/资质、工作经历）
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+          highest_degree: '中专',
+          certifications: ['护士执业证书', '护士资格证'],
+          work_experience: [{ company: '县医院', title: '护士', duration: '2019-2024' }],
+        }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"id":"res-13","score":90,"reason":"持有护士执业证书"}]' } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as any;
+
+    const db = makeDb({ resumes: [noSummaryResume] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.scores).toHaveLength(1);
+    expect(body.scores[0]).toMatchObject({ id: 'res-13', score: 90 });
+    // 补解析后的结构化摘要（证书/资质）进入 AI 打分请求
+    const scoreBody = sentBodies[sentBodies.length - 1];
+    expect(scoreBody).toContain('证书/资质');
+    expect(scoreBody).toContain('护士执业证书');
   });
 
   it('degrades only abnormally long resumes to stay within the AI context budget', async () => {

@@ -5700,16 +5700,68 @@ function buildStructuredResumeText(p: any): string {
 }
 
 // 自定义筛选依据：只用 AI 解析的结构化摘要（简历详情页 Descriptions 同源信息，含证书/资质/工作经历等）。
-// 无 parsed_data 或解析失败时回退原文全文，保证仍有筛选依据。
-function buildCustomScreenResumeText(r: any): string {
+// 无 parsed_data 或解析失败时回退原文全文，保证仍有筛选依据；hasSummary 标记供缺摘要简历即时补解析。
+function buildCustomScreenResumeText(r: any): { text: string; hasSummary: boolean } {
   if (r.parsed_data) {
     try {
       const parsed = typeof r.parsed_data === 'string' ? JSON.parse(r.parsed_data) : r.parsed_data;
       const structured = buildStructuredResumeText(parsed);
-      if (structured) return `【AI 解析摘要】\n${structured}`;
+      if (structured) return { text: `【AI 解析摘要】\n${structured}`, hasSummary: true };
     } catch {}
   }
-  return buildResumeFullText(r);
+  return { text: buildResumeFullText(r), hasSummary: false };
+}
+
+// 纯原文文本（不含 AI 摘要），供缺摘要简历补解析用。
+function buildResumeRawText(r: any): string {
+  return [r.ocr_markdown, r.raw_text, r.resume_markdown].filter(Boolean).join('\n');
+}
+
+// 用原始文本对缺结构化摘要的简历补解析，生成覆盖详情页 Descriptions 的完整字段（含证书/资质、工作经历、
+// 教育经历），合并写回 parsed_data，返回新摘要文本；失败返回空串，调用方保持原文本兜底。
+async function tryParseResumeStructuredFields(env: any, row: any, text: string): Promise<string> {
+  try {
+    const sys = `你是一个简历解析助手。请从简历文本中提取以下字段，用 JSON 返回。找不到的字段设为空字符串或空数组。只返回 JSON，不要输出任何其他文字。
+
+{
+  "highest_degree": "最高学历，如 大专/本科/硕士/博士",
+  "school": "毕业院校全称",
+  "major": "专业全称",
+  "years_of_experience": "工作年限（数字）",
+  "recent_company": "最近任职公司",
+  "current_position": "最近职位",
+  "gender": "性别",
+  "birthday": "出生年月",
+  "phone": "手机号",
+  "skills": ["技能1", "技能2"],
+  "certifications": ["证书/资格证/执业证，如 护士执业证书、护士资格证"],
+  "self_evaluation": "自我评价原文",
+  "work_experience": [{"company":"公司","title":"职位","duration":"起止时间","description":"职责描述"}],
+  "education": [{"school":"学校","degree":"学历","major":"专业","start":"开始时间","end":"结束时间"}]
+}`;
+    const resp = await Promise.race([
+      callAI(env, sys, text.slice(0, 4000)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('REPARSE_TIMEOUT')), Math.max(3000, Number(env?.CUSTOM_SCREEN_AI_TIMEOUT_MS) || 20000))),
+    ]);
+    if (!resp) return '';
+    // extractJSON 对合法 JSON 已返回解析对象；仅当返回字符串（解析失败）时才二次兜底
+    let parsed: any = extractJSON(resp);
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed || '{}'); } catch { parsed = {}; }
+    }
+    if (!parsed || typeof parsed !== 'object') return '';
+    const structured = buildStructuredResumeText(parsed);
+    if (!structured) return '';
+    // 合并已有 parsed_data 的既有字段（如飞书元数据），避免覆盖丢失
+    const existing = (() => { try { return JSON.parse(row.parsed_data); } catch { return {}; } })();
+    const merged = { ...existing, ...parsed };
+    await env.DB.prepare('UPDATE resumes SET parsed_data=?, updated_at=datetime(\'now\') WHERE id=?')
+      .bind(JSON.stringify(merged), row.id).run().catch(() => {});
+    return `【AI 解析摘要】\n${structured}`;
+  } catch (e) {
+    console.warn(`[custom-screen] 简历补解析失败（${row?.id}）：${(e as Error)?.message}`);
+    return '';
+  }
 }
 
 // 组装简历全文：AI 解析摘要（结构化，最前，信息最可靠）+ 原始文本。
@@ -5953,7 +6005,7 @@ async function buildCustomScreenPool(
   position: string,
   condition: string,
   owner: string | null,
-): Promise<{ pool: Array<{ row: any; hits: number; matched: string[]; combined: string }>; tokens: string[]; positionMap: Map<string, string> }> {
+): Promise<{ pool: Array<{ row: any; hits: number; matched: string[]; combined: string; hasSummary: boolean }>; tokens: string[]; positionMap: Map<string, string> }> {
   // 岗位别名：标准岗位名 + 映射表里映射到该标准名的全部原始岗位名（与列表路由 position 过滤语义一致）
   const aliasRaws = new Set<string>([position]);
   try {
@@ -6009,12 +6061,12 @@ async function buildCustomScreenPool(
   const positionMap = await buildPositionMapping(env.DB).catch(() => new Map<string, string>());
 
   // 全量进候选池：JS 精确计数关键词命中（供第一阶段关键词粗分与排序），combined 供 AI 打分。
-  // 筛选依据只用 AI 解析摘要（无摘要的简历回退原文）。
-  const poolRows: Array<{ row: any; hits: number; matched: string[]; combined: string }> = [];
+  // 筛选依据只用 AI 解析摘要；无摘要的简历回退原文，并标记 hasSummary=false 供补解析。
+  const poolRows: Array<{ row: any; hits: number; matched: string[]; combined: string; hasSummary: boolean }> = [];
   for (const row of candidates) {
-    const combined = buildCustomScreenResumeText(row);
-    const r = countTokenHits(combined, tokens);
-    poolRows.push({ row, hits: r.hits, matched: r.matched, combined });
+    const built = buildCustomScreenResumeText(row);
+    const r = countTokenHits(built.text, tokens);
+    poolRows.push({ row, hits: r.hits, matched: r.matched, combined: built.text, hasSummary: built.hasSummary });
   }
   poolRows.sort((a, b) => b.hits - a.hits);
   return { pool: poolRows, tokens, positionMap };
@@ -6025,7 +6077,7 @@ async function buildCustomScreenPool(
 // 简历数超 AI_HARD_CAP 时只对前 cap 份打分（防极端大岗位请求爆炸），其余保留关键词分。
 async function aiScoreCustomScreenPool(
   env: any,
-  pool: Array<{ row: any; hits: number; matched: string[]; combined: string }>,
+  pool: Array<{ row: any; hits: number; matched: string[]; combined: string; hasSummary: boolean }>,
   position: string,
   condition: string,
 ): Promise<{ scores: Array<{ id: string; score: number; reason: string }>; error?: string }> {
@@ -6051,7 +6103,7 @@ async function aiScoreCustomScreenPool(
   };
 
   async function scoreBatch(
-    batch: Array<{ row: any; hits: number; matched: string[]; combined: string }>,
+    batch: Array<{ row: any; hits: number; matched: string[]; combined: string; hasSummary: boolean }>,
     config?: { apiKey: string; baseUrl: string; model: string },
   ): Promise<Map<string, { id: string; score: number; reason: string }>> {
     const prompt = await getAIPrompt(env, 'resume_custom_screen', DEFAULT_CUSTOM_SCREEN_PROMPT);
@@ -6098,25 +6150,8 @@ async function aiScoreCustomScreenPool(
     return out;
   }
 
-  // 多配置并发：配置 ≥2 时把候选池均分成 N 片，各账号并发处理自己那份，整体耗时 ≈ 单片耗时，更快。
-  // 每个简历只由一个模型筛选，不做多模型综合评分。单配置保持原有 callAI 降级语义。
-  const configs = await getLLMConfigs(env).catch(() => [] as Array<{ apiKey: string; baseUrl: string; model: string }>);
-  const groups: Array<{
-    config?: { apiKey: string; baseUrl: string; model: string };
-    batches: Array<Array<{ row: any; hits: number; matched: string[]; combined: string }>>;
-  }> = [];
-  if (configs.length >= 2) {
-    const size = Math.ceil(eligible.length / configs.length);
-    for (let i = 0; i < configs.length; i++) {
-      const shard = eligible.slice(i * size, (i + 1) * size);
-      if (shard.length > 0) groups.push({ config: configs[i], batches: chunk(shard) });
-    }
-  } else {
-    groups.push({ batches: chunk(eligible) });
-  }
-
-  // 每个配置内的并发批数上限：简历多时若把全部批次同时打同一个 API，会触发限流导致整批失败，
-  // 全部批次失败前端就报 CUSTOM_SCREEN_AI_TIMEOUT。限并发后其余批排队，避免限流全挂。
+  // 缺 AI 解析摘要的简历：用原始文本即时补解析（写回库），本轮即用新摘要打分，避免原文漏信息或原文本作依据。
+  // 补解析失败不影响其他简历，保持原文本兜底。并发受限，防止补解析打爆 API。
   const CONCURRENCY = Math.max(1, Number(env.CUSTOM_SCREEN_MAX_CONCURRENCY) || 3);
   const mapLimit = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> => {
     const out: R[] = new Array(items.length);
@@ -6130,6 +6165,41 @@ async function aiScoreCustomScreenPool(
     await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
     return out;
   };
+
+  const missingSummary = eligible.filter((p) => !p.hasSummary);
+  if (missingSummary.length > 0) {
+    const reparsed = await mapLimit(missingSummary, CONCURRENCY, async (p) => {
+      const raw = buildResumeRawText(p.row);
+      if (!raw || raw.trim().length < 20) return { id: p.row.id, summary: '' };
+      const summary = await tryParseResumeStructuredFields(env, p.row, raw);
+      return { id: p.row.id, summary };
+    });
+    const byId = new Map(reparsed.filter((r) => r.summary).map((r) => [r.id, r.summary]));
+    if (byId.size > 0) {
+      eligible = eligible.map((p) => {
+        const s = byId.get(p.row.id);
+        return s ? { ...p, combined: s, hasSummary: true } : p;
+      });
+      console.warn(`[custom-screen] 已补解析 ${byId.size} 份缺摘要简历`);
+    }
+  }
+
+  // 多配置并发：配置 ≥2 时把候选池均分成 N 片，各账号并发处理自己那份，整体耗时 ≈ 单片耗时，更快。
+  // 每个简历只由一个模型筛选，不做多模型综合评分。单配置保持原有 callAI 降级语义。
+  const configs = await getLLMConfigs(env).catch(() => [] as Array<{ apiKey: string; baseUrl: string; model: string }>);
+  const groups: Array<{
+    config?: { apiKey: string; baseUrl: string; model: string };
+    batches: Array<Array<{ row: any; hits: number; matched: string[]; combined: string; hasSummary: boolean }>>;
+  }> = [];
+  if (configs.length >= 2) {
+    const size = Math.ceil(eligible.length / configs.length);
+    for (let i = 0; i < configs.length; i++) {
+      const shard = eligible.slice(i * size, (i + 1) * size);
+      if (shard.length > 0) groups.push({ config: configs[i], batches: chunk(shard) });
+    }
+  } else {
+    groups.push({ batches: chunk(eligible) });
+  }
 
   let firstError: string | null = null;
   const perGroup = await Promise.all(groups.map(({ config, batches }) =>
