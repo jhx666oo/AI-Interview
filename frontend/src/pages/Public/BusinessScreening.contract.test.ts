@@ -26,4 +26,14 @@ describe('public business screening page contract', () => {
     expect(source).toContain('筛选备注');
     expect(source).toContain('候选人列表');
   });
+
+  it('renders the structured candidate profile (parsed_data fields, no source file)', () => {
+    expect(source).toContain('ProfileDescriptions');
+    expect(source).toContain('候选人档案');
+    expect(source).toContain('profile.workExperience?.length');
+    expect(source).toContain('profile.educationHistory?.length');
+    expect(source).toContain('selfEvaluation');
+    expect(source).toContain('profile.skills?.length ? profile.skills.join(\'、\')');
+    expect(source).toContain('{activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}');
+  });
 });

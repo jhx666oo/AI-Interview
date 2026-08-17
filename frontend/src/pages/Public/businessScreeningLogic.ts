@@ -1,11 +1,45 @@
 export type BusinessScreeningResumeStatus = 'pending' | 'passed' | 'rejected';
 
+export interface BusinessScreeningWorkExperience {
+  company?: string;
+  title?: string;
+  duration?: string;
+  start?: string;
+  end?: string;
+  description?: string;
+}
+
+export interface BusinessScreeningEducation {
+  school?: string;
+  degree?: string;
+  major?: string;
+  start?: string;
+  end?: string;
+}
+
+export interface BusinessScreeningProfile {
+  highestDegree?: string;
+  school?: string;
+  major?: string;
+  yearsOfExperience?: string;
+  recentCompany?: string;
+  currentTitle?: string;
+  gender?: string;
+  birthday?: string;
+  skills?: string[];
+  certifications?: string[];
+  selfEvaluation?: string;
+  workExperience?: BusinessScreeningWorkExperience[];
+  educationHistory?: BusinessScreeningEducation[];
+}
+
 export interface BusinessScreeningResume {
   id: string;
   candidateName: string;
   position: string;
   education?: string;
   workExperience?: string;
+  profile?: BusinessScreeningProfile;
   status: BusinessScreeningResumeStatus;
   remark?: string;
   processedAt?: string;

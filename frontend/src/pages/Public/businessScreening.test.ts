@@ -65,4 +65,19 @@ describe('business screening public helpers', () => {
       },
     ]);
   });
+
+  it('keeps the structured profile when applying a decision', () => {
+    const profile = {
+      highestDegree: '本科',
+      school: '北京邮电大学',
+      skills: ['产品规划'],
+      workExperience: [{ company: '甲公司', title: '产品经理' }],
+    };
+    const result = applyBusinessScreeningDecision(
+      [{ id: 'resume-1', candidateName: '候选人甲', position: '产品经理', status: 'pending' as const, profile }],
+      { resumeId: 'resume-1', action: 'reject', remark: '', processedAt: '2026-08-12T09:30:00.000Z' },
+    );
+    expect(result[0].status).toBe('rejected');
+    expect(result[0].profile).toEqual(profile);
+  });
 });

@@ -48,11 +48,90 @@ export interface BusinessScreeningBatchItemView {
   contact?: string | null;
   education?: string | null;
   work_experience?: string | null;
+  parsed_data?: string | null;
   hr_disposition?: string | null;
   business_screening_status?: string | null;
   business_screening_remark?: string | null;
   business_screened_at?: string | null;
   dispatch_group_id?: string | null;
+}
+
+// 业务筛选公开页透出的结构化档案（与简历详情页 Descriptions 字段一致，不含联系方式与简历原文）
+export interface BusinessScreeningPublicProfile {
+  highestDegree?: string;
+  school?: string;
+  major?: string;
+  yearsOfExperience?: string;
+  recentCompany?: string;
+  currentTitle?: string;
+  gender?: string;
+  birthday?: string;
+  skills?: string[];
+  certifications?: string[];
+  selfEvaluation?: string;
+  workExperience?: Array<{ company?: string; title?: string; duration?: string; start?: string; end?: string; description?: string }>;
+  educationHistory?: Array<{ school?: string; degree?: string; major?: string; start?: string; end?: string }>;
+}
+
+function toStringOrUndefined(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function toStringArrayOrUndefined(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return typeof value === 'string' && value.trim() ? [value.trim()] : undefined;
+  const items = value.map((item) => toStringOrUndefined(item)).filter(Boolean) as string[];
+  return items.length ? items : undefined;
+}
+
+function toHistoryOrUndefined<T>(value: unknown, map: (record: Record<string, unknown>) => T): T[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const mapped = value
+    .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null)
+    .map(map);
+  return mapped.length ? mapped : undefined;
+}
+
+export function buildPublicProfile(parsedData: unknown): BusinessScreeningPublicProfile | undefined {
+  let parsed: Record<string, unknown> | null = null;
+  if (typeof parsedData === 'string') {
+    try { parsed = JSON.parse(parsedData); } catch { parsed = null; }
+  } else if (typeof parsedData === 'object' && parsedData !== null) {
+    parsed = parsedData as Record<string, unknown>;
+  }
+  if (!parsed) return undefined;
+
+  const profile: BusinessScreeningPublicProfile = {
+    highestDegree: toStringOrUndefined(parsed.highest_degree),
+    school: toStringOrUndefined(parsed.school),
+    major: toStringOrUndefined(parsed.major),
+    yearsOfExperience: toStringOrUndefined(parsed.years_of_experience),
+    recentCompany: toStringOrUndefined(parsed.recent_company),
+    currentTitle: toStringOrUndefined(parsed.current_position),
+    gender: toStringOrUndefined(parsed.gender),
+    birthday: toStringOrUndefined(parsed.birthday),
+    skills: toStringArrayOrUndefined(parsed.skills),
+    certifications: toStringArrayOrUndefined(parsed.certifications),
+    selfEvaluation: toStringOrUndefined(parsed.self_evaluation),
+    workExperience: toHistoryOrUndefined(parsed.work_experience, (w) => ({
+      company: toStringOrUndefined(w.company),
+      title: toStringOrUndefined(w.title),
+      duration: toStringOrUndefined(w.duration),
+      start: toStringOrUndefined(w.start),
+      end: toStringOrUndefined(w.end),
+      description: toStringOrUndefined(w.description),
+    })),
+    educationHistory: toHistoryOrUndefined(parsed.education, (e) => ({
+      school: toStringOrUndefined(e.school),
+      degree: toStringOrUndefined(e.degree),
+      major: toStringOrUndefined(e.major),
+      start: toStringOrUndefined(e.start),
+      end: toStringOrUndefined(e.end),
+    })),
+  };
+  const hasAny = Object.values(profile).some((value) => value !== undefined);
+  return hasAny ? profile : undefined;
 }
 
 export interface BusinessScreeningRouteStore {
@@ -147,6 +226,8 @@ function sanitizePublicItem(item: BusinessScreeningBatchItemView) {
     status: item.status,
     remark: item.remark || undefined,
     processedAt: item.processed_at || undefined,
+    // 结构化档案：parsed_data 中的非敏感字段（不含 phone/email/contact 与简历原文）
+    profile: buildPublicProfile(item.parsed_data),
   };
 }
 
@@ -640,7 +721,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
       return queryAll<BusinessScreeningBatchItemView>(
         db,
         `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
-                r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience,
+                r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience, r.parsed_data,
                 r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
@@ -652,7 +733,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     async loadBatchItem(db, batchId, resumeId) {
       return await db.prepare(
         `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
-                r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience,
+                r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience, r.parsed_data,
                 r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id

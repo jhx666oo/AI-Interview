@@ -7,6 +7,7 @@ import {
   classifyBusinessScreeningLoadError,
   mapBusinessScreeningDecisionError,
   pickActiveBusinessScreeningResumeId,
+  type BusinessScreeningProfile,
   type BusinessScreeningResume,
   type BusinessScreeningView,
 } from './businessScreeningLogic';
@@ -42,6 +43,105 @@ const cardStyle: React.CSSProperties = {
   borderRadius: 16,
   boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
 };
+
+const profileRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(96px, 132px) minmax(0, 1fr)',
+  borderBottom: '1px solid #eef2f7',
+};
+
+const profileLabelStyle: React.CSSProperties = {
+  background: '#f8fafc',
+  color: '#475569',
+  fontSize: 13,
+  padding: '10px 14px',
+  borderRight: '1px solid #eef2f7',
+};
+
+const profileValueStyle: React.CSSProperties = {
+  color: '#1e293b',
+  fontSize: 14,
+  padding: '10px 14px',
+  whiteSpace: 'pre-wrap',
+  overflowWrap: 'anywhere',
+};
+
+function formatProfileDuration(entry: { start?: string; end?: string; duration?: string }): string {
+  if (entry.duration) return entry.duration;
+  if (entry.start || entry.end) return `${entry.start || ''}~${entry.end || ''}`;
+  return '';
+}
+
+function ProfileDescriptions({ profile }: { profile: BusinessScreeningProfile }) {
+  const rows: Array<{ label: string; value?: string; full?: boolean }> = [
+    { label: '学历', value: profile.highestDegree },
+    { label: '毕业院校', value: profile.school },
+    { label: '专业', value: profile.major },
+    { label: '工作年限', value: profile.yearsOfExperience },
+    { label: '最近公司', value: profile.recentCompany },
+    { label: '当前职位', value: profile.currentTitle },
+    { label: '性别', value: profile.gender },
+    { label: '出生年月', value: profile.birthday },
+    { label: '技能', value: profile.skills?.length ? profile.skills.join('、') : undefined },
+    { label: '证书/资质', value: profile.certifications?.length ? profile.certifications.join('、') : undefined },
+    { label: '自我评价', value: profile.selfEvaluation, full: true },
+    { label: '工作经历', value: undefined, full: true },
+    { label: '教育经历', value: undefined, full: true },
+  ];
+
+  return (
+    <div className="business-screening-profile" style={{ marginTop: 20, border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 600, fontSize: 15 }}>
+        候选人档案
+      </div>
+      {rows.map((row) => {
+        if (row.label === '工作经历') {
+          if (!profile.workExperience?.length) return null;
+          return (
+            <div key={row.label} style={{ ...profileRowStyle, gridTemplateColumns: 'minmax(96px, 132px) minmax(0, 1fr)' }}>
+              <div style={profileLabelStyle}>工作经历</div>
+              <div style={profileValueStyle}>
+                {profile.workExperience.map((work, index) => (
+                  <div key={index} style={{ marginBottom: index < (profile.workExperience?.length || 0) - 1 ? 8 : 0 }}>
+                    <strong>{work.company || '公司不详'}</strong>
+                    {work.title ? ` · ${work.title}` : ''}
+                    {formatProfileDuration(work) ? `（${formatProfileDuration(work)}）` : ''}
+                    {work.description ? <div style={{ color: '#666', fontSize: 13 }}>{work.description}</div> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        if (row.label === '教育经历') {
+          if (!profile.educationHistory?.length) return null;
+          return (
+            <div key={row.label} style={{ ...profileRowStyle, gridTemplateColumns: 'minmax(96px, 132px) minmax(0, 1fr)' }}>
+              <div style={profileLabelStyle}>教育经历</div>
+              <div style={profileValueStyle}>
+                {profile.educationHistory.map((edu, index) => (
+                  <div key={index} style={{ marginBottom: index < (profile.educationHistory?.length || 0) - 1 ? 4 : 0 }}>
+                    <strong>{edu.school || '学校不详'}</strong>
+                    {edu.degree ? ` · ${edu.degree}` : ''}
+                    {edu.major ? ` · ${edu.major}` : ''}
+                    {formatProfileDuration(edu) ? `（${formatProfileDuration(edu)}）` : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        if (row.value === undefined) return null;
+        return (
+          <div key={row.label} style={row.full ? { ...profileRowStyle, gridTemplateColumns: 'minmax(96px, 132px) minmax(0, 1fr)' } : profileRowStyle}>
+            <div style={profileLabelStyle}>{row.label}</div>
+            <div style={profileValueStyle}>{row.value}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const BusinessScreeningPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
@@ -260,6 +360,8 @@ const BusinessScreeningPage: React.FC = () => {
                         <div>{formatTime(activeResume.processedAt)}</div>
                       </div>
                     </div>
+
+                    {activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}
 
                     <div style={{ marginTop: 20 }}>
                       <label htmlFor="business-screening-remark" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
