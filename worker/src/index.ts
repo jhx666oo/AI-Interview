@@ -8380,7 +8380,14 @@ const DEFAULT_CAPABILITY_DIMENSIONS_PROMPT = {
 2. 每项格式为 {"name": "维度名称", "definition": "简要定义", "behavior": "典型行为表现或考察要点", "weight": 权重整数}；
 3. definition 和 behavior 必须尽量摘录岗位要求材料中的原文，不要改写、不要总结归纳、不要自行补充材料中不存在的内容；材料中确实没有对应内容的维度填「无」；
 4. weight 严格使用上面给定的固定值。`,
-  user: '',
+  user: `岗位名称：{position_title}
+
+岗位要求材料：
+{material}
+
+{job_extra}
+
+请根据以上内容，将岗位要求拆解到固定的 7 个评分维度中，输出 JSON 数组。`,
 };
 
 // AI 一键生成岗位评分维度（能力维度）：支持飞书链接或岗位要求文本
@@ -8405,7 +8412,12 @@ app.post('/api/positions/generate-capability-dimensions', authMiddleware, async 
   const extra = [String(job_description || '').trim(), String(job_requirements || '').trim()].filter(Boolean).join('\n');
 
   const prompt = await getAIPrompt(c.env, 'generate_capability_dimensions', DEFAULT_CAPABILITY_DIMENSIONS_PROMPT);
-  const userPrompt = `岗位名称：${title || '未指定'}\n\n岗位要求材料：\n${material}\n${extra ? `\n岗位职责/任职要求补充：\n${extra}` : ''}\n\n请根据以上内容生成该岗位的评分维度（能力维度）JSON 数组。`;
+  // user 模板支持变量插值：{position_title} / {material} / {job_extra}；未配置自定义模板时用默认
+  const userTemplate = (prompt.user && String(prompt.user).trim()) ? String(prompt.user) : DEFAULT_CAPABILITY_DIMENSIONS_PROMPT.user;
+  const userPrompt = userTemplate
+    .replaceAll('{position_title}', title || '未指定')
+    .replaceAll('{material}', material)
+    .replaceAll('{job_extra}', extra ? `岗位职责/任职要求补充：\n${extra}` : '');
   try {
     const result = await callAI(c.env, prompt.system, userPrompt);
     let parsed: any = extractJSON(result);
@@ -8879,7 +8891,7 @@ app.put('/api/settings/mail', authMiddleware, async (c) => {
 
 app.get('/api/settings/prompts', authMiddleware, async (c) => {
   const row = await c.env.DB.prepare('SELECT prompt_configs FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
-  if (!row?.prompt_configs) return c.json({ prompts: {} });
+  if (!row?.prompt_configs) return c.json({ prompts: { generate_capability_dimensions: { ...DEFAULT_CAPABILITY_DIMENSIONS_PROMPT } } });
   try {
     const configs = JSON.parse(row.prompt_configs);
     // 确保返回的结构始终包含 prompts 字段
@@ -8898,6 +8910,10 @@ app.get('/api/settings/prompts', authMiddleware, async (c) => {
     // 自定义筛选提示词模板始终可调节：未保存过则注入默认模板（避免老用户看不到该 tab）
     if (!result.prompts.resume_custom_screen?.system || !result.prompts.resume_custom_screen?.user) {
       result.prompts.resume_custom_screen = { ...DEFAULT_CUSTOM_SCREEN_PROMPT };
+    }
+    // 评分维度生成提示词：未保存过则注入默认模板，保证「提示词管理」可见可编辑
+    if (!result.prompts.generate_capability_dimensions?.system || !result.prompts.generate_capability_dimensions?.user) {
+      result.prompts.generate_capability_dimensions = { ...DEFAULT_CAPABILITY_DIMENSIONS_PROMPT };
     }
     return c.json(result);
   } catch { return c.json({ prompts: {} }); }
