@@ -1283,8 +1283,8 @@ function shouldPersistSystemConfigField(k: string, v: unknown): boolean {
   if (!validCol(k)) return false;
   if (['id', 'updated_at'].includes(k)) return false;
   if (k.endsWith('_set') || k.endsWith('_last4')) return false;
-  // 新格式：llm_slots 列直接存 JSON 数组
-  if (k === 'llm_slots') return v !== undefined && v !== null;
+  // 新格式：llm_slots 列直接存 JSON 数组；空数组不写入（避免覆盖已有数据）
+  if (k === 'llm_slots') return v !== undefined && v !== null && (!Array.isArray(v) || v.length > 0);
   // 旧格式兼容：llmN_* 列仍允许写入（不影响新字段读取）
   if (validLLMSlotKey(k)) return true;
   if (/^llm\d*_api_key$/.test(k) && (!v || !String(v).trim())) return false;
@@ -8709,7 +8709,7 @@ app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
         // 先写入 llm_slots
         await c.env.DB.prepare('UPDATE system_configs SET llm_slots = ?, updated_at = ? WHERE id = ?')
           .bind(JSON.stringify(oldSlots), now(), existing.id).run();
-        // 然后处理其他字段
+        // 然后处理其他字段（跳过 llm_slots，避免被空数组覆盖）
         const otherBody = { ...body };
         delete otherBody.llm_slots;
         if (Object.keys(otherBody).length > 0) {
@@ -8724,6 +8724,9 @@ app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
           const setClause = cols.map(k => `${k} = ?`).join(', ');
           await c.env.DB.prepare(`UPDATE system_configs SET ${setClause} WHERE id = ?`).bind(...vals, existing.id).run();
         }
+        // 迁移完成，直接返回，不走下面的通用 PUT（否则空数组会覆盖刚迁移的数据）
+        const row = await c.env.DB.prepare('SELECT * FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
+        return c.json(transformRow(row));
       }
     }
   }
