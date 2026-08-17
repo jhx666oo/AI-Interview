@@ -5699,6 +5699,19 @@ function buildStructuredResumeText(p: any): string {
   return lines.join('\n');
 }
 
+// 自定义筛选依据：只用 AI 解析的结构化摘要（简历详情页 Descriptions 同源信息，含证书/资质/工作经历等）。
+// 无 parsed_data 或解析失败时回退原文全文，保证仍有筛选依据。
+function buildCustomScreenResumeText(r: any): string {
+  if (r.parsed_data) {
+    try {
+      const parsed = typeof r.parsed_data === 'string' ? JSON.parse(r.parsed_data) : r.parsed_data;
+      const structured = buildStructuredResumeText(parsed);
+      if (structured) return `【AI 解析摘要】\n${structured}`;
+    } catch {}
+  }
+  return buildResumeFullText(r);
+}
+
 // 组装简历全文：AI 解析摘要（结构化，最前，信息最可靠）+ 原始文本。
 function buildResumeFullText(r: any): string {
   let summary = '';
@@ -5996,9 +6009,10 @@ async function buildCustomScreenPool(
   const positionMap = await buildPositionMapping(env.DB).catch(() => new Map<string, string>());
 
   // 全量进候选池：JS 精确计数关键词命中（供第一阶段关键词粗分与排序），combined 供 AI 打分。
+  // 筛选依据只用 AI 解析摘要（无摘要的简历回退原文）。
   const poolRows: Array<{ row: any; hits: number; matched: string[]; combined: string }> = [];
   for (const row of candidates) {
-    const combined = buildResumeFullText(row);
+    const combined = buildCustomScreenResumeText(row);
     const r = countTokenHits(combined, tokens);
     poolRows.push({ row, hits: r.hits, matched: r.matched, combined });
   }

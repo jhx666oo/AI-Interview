@@ -464,6 +464,39 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(sentText).toContain('工作经历');
   });
 
+  it('screens only the AI-parsed summary, not the raw resume text', async () => {
+    // 用户要求自定义筛选只依据 AI 解析摘要（详情页 Descriptions 同源）：有摘要时原文不作为筛选依据
+    const resume = {
+      id: 'res-12',
+      candidate_name: '王小妹',
+      mapped_position: '护士',
+      position_applied: '护士',
+      status: 'pending_interview',
+      ocr_markdown: '这段原文不含护士证相关信息，仅作噪声。',
+      parsed_data: JSON.stringify({
+        highest_degree: '中专',
+        certifications: ['护士执业证书'],
+        work_experience: [{ company: '县医院', title: '护士', duration: '2019-2024', description: '住院部护理' }],
+      }),
+    };
+    let sentText = '';
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      sentText = String(init.body ?? '');
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"id":"res-12","score":86,"reason":"持有护士执业证书"}]' } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as any;
+
+    const db = makeDb({ resumes: [resume] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '有护士证' });
+    expect(res.status).toBe(200);
+    expect(sentText).toContain('证书/资质');
+    expect(sentText).toContain('护士执业证书');
+    expect(sentText).toContain('县医院');
+    expect(sentText).not.toContain('这段原文不含护士证'); // 原文不作为筛选依据
+  });
+
   it('degrades only abnormally long resumes to stay within the AI context budget', async () => {
     // 单份全文 9000+ 字符：超过单份上限 → 降级为「开头 + 关键词证据窗口」，
     // 末尾的资格信息仍通过证据窗口送达 AI，且不会把 9000+ 字符全塞进 prompt 爆上下文
