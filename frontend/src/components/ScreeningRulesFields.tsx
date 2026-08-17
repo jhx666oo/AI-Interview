@@ -39,8 +39,8 @@ const ScreeningRulesFields: React.FC<ScreeningRulesFieldsProps> = ({ name = 'scr
           </Form.Item>
           <Form.Item
             name={[name, 'values', 'weighted_score_min']}
-            label="普通能力加权最低分"
-            rules={[{ required: true, message: '请输入普通能力加权最低分' }]}
+            label="五项能力加权最低分"
+            rules={[{ required: true, message: '请输入五项能力加权最低分' }]}
             style={{ marginBottom: 0 }}
           >
             <InputNumber min={0} max={5} step={0.1} precision={1} />

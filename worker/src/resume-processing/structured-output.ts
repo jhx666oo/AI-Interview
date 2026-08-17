@@ -5,7 +5,7 @@ import {
   normalizeScreeningEvaluation,
   type DimensionScore,
 } from './dimension-scores';
-import { LEGACY_SCREENING_DIMENSION_NAMES } from './screening-dimensions';
+import { WEIGHTED_SCREENING_DIMENSION_NAMES } from './weighted-screening';
 
 export type StructuredOutputKind = 'screening' | 'dimensions';
 
@@ -43,14 +43,13 @@ export function buildScreeningRepairPrompt(
   kind: StructuredOutputKind,
   rawResponse: string,
   failureCode: StructuredOutputFailureCode,
-  requiredNames: readonly string[] = LEGACY_SCREENING_DIMENSION_NAMES,
 ): { system: string; user: string } {
   const raw = (typeof rawResponse === 'string' ? rawResponse : String(rawResponse ?? '')).slice(0, REPAIR_INPUT_MAX_CHARS);
   const system = '你只负责把上一条模型输出转换为合法 JSON。不要解释，不要复述提示词，不要输出 Markdown，不要输出代码。只返回 JSON。';
-  const dimensionList = requiredNames.join('、');
+  const dimensionList = WEIGHTED_SCREENING_DIMENSION_NAMES.join('、');
   const user = kind === 'screening'
-    ? `请把下面内容修复为一个合法的 screening 评估 JSON 对象，必须包含 summary（中文综合分析）和完整的岗位维度（${dimensionList}）。AI 必须且只能返回这些维度。无法判断的 score 使用 0，reason 写“信息不足”。失败原因：${failureCode}\n\n原始输出：\n${raw}`
-    : `请把下面内容修复为一个合法的 dimensions JSON 数组（或 {"dimensions":[...]}），必须且只能包含当前岗位维度（${dimensionList}）。无法判断的 score 使用 0，reason 写“信息不足”。失败原因：${failureCode}\n\n原始输出：\n${raw}`;
+    ? `请把下面内容修复为一个合法的 screening 评估 JSON 对象，必须包含 summary（中文综合分析）和完整的七项 dimensions（${dimensionList}）。无法判断的 score 使用 0，reason 写“信息不足”。失败原因：${failureCode}\n\n原始输出：\n${raw}`
+    : `请把下面内容修复为一个合法的 dimensions JSON 数组（或 {"dimensions":[...]}），必须包含完整的七项（${dimensionList}）。无法判断的 score 使用 0，reason 写“信息不足”。失败原因：${failureCode}\n\n原始输出：\n${raw}`;
   return { system, user };
 }
 
@@ -79,7 +78,6 @@ export async function parseStructuredOutput(
   kind: StructuredOutputKind,
   extractJson: (text: string) => unknown,
   repair: (input: RepairInput) => Promise<string>,
-  requiredNames: readonly string[] = LEGACY_SCREENING_DIMENSION_NAMES,
 ): Promise<StructuredOutputResult> {
   const responseChars = typeof raw === 'string' ? raw.length : 0;
 
@@ -89,8 +87,8 @@ export async function parseStructuredOutput(
       // A non-object response is not a valid screening payload and cannot be repaired.
       const obj = toObject(extracted);
       if (!obj) return { value: extracted, error: 'AI_SCREENING_INVALID_JSON' };
-      const normalized = normalizeScreeningEvaluation(obj, requiredNames);
-      if (!hasAllDimensionScores(normalized, requiredNames)) {
+      const normalized = normalizeScreeningEvaluation(obj);
+      if (!hasAllDimensionScores(normalized)) {
         return { value: normalized, error: 'AI_SCREENING_INVALID_DIMENSIONS' };
       }
       if (isPromptLikeSummary(normalized.summary)) {
@@ -101,7 +99,7 @@ export async function parseStructuredOutput(
     // dimensions mode: accept array or { dimensions: [...] }
     const scores = normalizeDimensionScores(extracted);
     if (scores.length === 0) return { value: extracted, error: 'AI_SCREENING_INVALID_JSON' };
-    if (!hasAllDimensionScores(scores, requiredNames)) {
+    if (!hasAllDimensionScores(scores)) {
       return { value: scores, error: 'AI_SCREENING_INVALID_DIMENSIONS' };
     }
     return { value: scores, error: null };

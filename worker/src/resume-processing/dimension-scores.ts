@@ -48,10 +48,7 @@ export function hasAllDimensionScores(
  * Models occasionally put the complete evaluation JSON inside summary. Prefer that
  * payload when the outer payload is incomplete or only contains placeholder zeros.
  */
-export function normalizeScreeningEvaluation(
-  value: unknown,
-  requiredNames: readonly string[] = WEIGHTED_SCREENING_DIMENSION_NAMES,
-): ScreeningEvaluation {
+export function normalizeScreeningEvaluation(value: unknown): ScreeningEvaluation {
   const outer = asObject(value);
   if (!outer) return { summary: typeof value === 'string' ? value.trim() : '' };
 
@@ -64,8 +61,8 @@ export function normalizeScreeningEvaluation(
 
   const outerIsPlaceholder = outerScores.length === 0
     || outerScores.every((item) => item.score === 0);
-  const nestedIsComplete = hasAllDimensionScores(nested, requiredNames);
-  if (!outerIsPlaceholder && hasAllDimensionScores(outer, requiredNames)) return outer;
+  const nestedIsComplete = hasAllDimensionScores(nested);
+  if (!outerIsPlaceholder && hasAllDimensionScores(outer)) return outer;
   if (outerIsPlaceholder || nestedIsComplete) {
     return { ...outer, ...nested };
   }
@@ -73,13 +70,10 @@ export function normalizeScreeningEvaluation(
 }
 
 /** Prevents a malformed AI response from being persisted as a successful screening. */
-export function requireCompleteScreeningEvaluation(
-  value: unknown,
-  requiredNames: readonly string[] = WEIGHTED_SCREENING_DIMENSION_NAMES,
-): ScreeningEvaluation {
-  const normalized = normalizeScreeningEvaluation(value, requiredNames);
-  if (!hasAllDimensionScores(normalized, requiredNames)) {
-    const error = new Error('AI_SCREENING_INVALID_DIMENSIONS: AI 未返回完整的岗位能力维度评分');
+export function requireCompleteScreeningEvaluation(value: unknown): ScreeningEvaluation {
+  const normalized = normalizeScreeningEvaluation(value);
+  if (!hasAllDimensionScores(normalized)) {
+    const error = new Error('AI_SCREENING_INVALID_DIMENSIONS: AI 未返回完整的七项能力维度评分');
     (error as Error & { code?: string }).code = 'AI_SCREENING_INVALID_DIMENSIONS';
     throw error;
   }

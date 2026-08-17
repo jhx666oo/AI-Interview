@@ -14,7 +14,7 @@ import {
   matchesBusinessScreeningStatusFilter,
 } from './resume-list/business-screening-status';
 import { filterDimensionScoresToConfigured, normalizeDimensionScores, normalizeScreeningEvaluation, requireCompleteScreeningEvaluation } from './resume-processing/dimension-scores';
-import { buildPositionDimensionContract, buildScreeningRulesPrompt, evaluateWeightedScreening, normalizeScreeningPrompt, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
+import { buildScreeningRulesPrompt, evaluateWeightedScreening, normalizeScreeningPrompt, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { DEFAULT_SCREENING_RULES, normalizeScreeningRuleValues, resolveScreeningRules, type ResolvedScreeningRules, type ScreeningRuleValues } from './resume-processing/screening-rules';
 import { enqueueResumeReprocess, enqueueResumeReprocessBatchForIds, recoverStalledHistoricalResumeReprocess, ResumeNotFoundError, selectVisibleResumeIdsForReprocess, startHistoricalResumeReprocess, selectResumeIdsForBatchScope } from './resume-processing/reprocess';
 import { cancelReprocessBatch, getReprocessBatchView, getActiveReprocessBatchView, appendEvaluationJobProjection } from './resume-processing/batch-repository';
@@ -25,7 +25,6 @@ import { fetchFeishuLinkContent } from './feishu-link';
 import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
 import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
 import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
-import { normalizeScreeningDimensions, resolveEffectiveScreeningDimensions, type ScreeningDimensionDefinition } from './resume-processing/screening-dimensions';
 import { buildPositionMappingFromRows, resolveMappedPosition } from './position-mapping';
 import { mergeInterviewerDirectoryEntries } from './interviewer-directory';
 import {
@@ -878,13 +877,12 @@ export function enrichScreeningEvaluation(
   candidateFields: Record<string, any> = {},
   screeningRules: ScreeningRuleValues = DEFAULT_SCREENING_RULES,
 ): any {
-  const configured_dimensions = resolveEffectiveScreeningDimensions(configuredDimensionInput);
-  const requiredNames = configured_dimensions.map((item) => item.name);
-  evaluation = normalizeScreeningEvaluation(evaluation, requiredNames);
+  evaluation = normalizeScreeningEvaluation(evaluation);
+  const configured_dimensions = normalizeCapabilityDimensions(configuredDimensionInput);
   const configuredByName = new Map(configured_dimensions.map(item => [item.name, item]));
   const dimensions = filterDimensionScoresToConfigured(
     normalizeDimensionScores(evaluation),
-    requiredNames,
+    [...configured_dimensions.map(item => item.name), ...WEIGHTED_SCREENING_DIMENSION_NAMES],
   ).map((item: any) => ({
     ...item,
     weight: configuredByName.get(item.name)?.weight,
@@ -903,8 +901,6 @@ export function enrichScreeningEvaluation(
 
 // 构建 AI 初筛 prompt（移植自 zpzt 项目）
 function buildAIScreeningPrompt(resumeText: string, positionReq: any | null, extraContext?: { location?: string, salary?: string, metaInfo?: string }): { systemPrompt: string, userPrompt: string } {
-  const effectiveDimensions = resolveEffectiveScreeningDimensions(positionReq?.capability_dimensions || []);
-  const dimensionContract = buildPositionDimensionContract(effectiveDimensions);
   let positionSections = '';
   if (positionReq) {
     const dimsText = (positionReq.capability_dimensions || []).map((d: any) =>
@@ -958,7 +954,7 @@ function buildAIScreeningPrompt(resumeText: string, positionReq: any | null, ext
 - recommendation: 推荐建议（"strongly_recommend"/"recommend"/"neutral"/"not_recommend"/"strongly_not_recommend"）
 - summary: 综合分析摘要（中文，2-3句话）
 - suggested_questions: 建议面试问题（中文，3-5个）
-- dimensions: 必须且只能包含当前岗位维度协议中的维度，每个包含 { name, score(0-5), reason }。门槛和加权结果由服务端最终判定。
+- dimensions: 必须且只能包含七项 ${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}，每个包含 { name, score(0-5), reason }。关键词匹配达到 2 分、避坑雷区达到 5 分后，才进入服务端加权判定。
 
 ${WEIGHTED_SCREENING_PROMPT}
 
@@ -970,8 +966,7 @@ ${WEIGHTED_SCREENING_PROMPT}
   const userPrompt = [
     `简历文本（请提取完整信息）：\n${resumeText}`,
     positionSections,
-    dimensionContract,
-    positionReq?.screeningRules ? buildScreeningRulesPrompt(positionReq.screeningRules, effectiveDimensions) : '',
+    positionReq?.screeningRules ? buildScreeningRulesPrompt(positionReq.screeningRules) : '',
     extraInfo,
   ].filter(Boolean).join('\n');
 
@@ -994,8 +989,7 @@ async function callAIScreening(env: Env, resumeText: string, positionReq?: any |
       flattened[k] = v;
     }
   }
-  const effectiveDimensions = resolveEffectiveScreeningDimensions(positionReq?.capability_dimensions || []);
-  const completeEvaluation = requireCompleteScreeningEvaluation({ ...parsed, ...flattened }, effectiveDimensions.map((item) => item.name));
+  const completeEvaluation = requireCompleteScreeningEvaluation({ ...parsed, ...flattened });
   const screeningRules = positionReq?.screeningRules || resolveScreeningRules(await getSystemScreeningRules(env.DB));
   return enrichScreeningEvaluation(
     completeEvaluation,
@@ -3531,11 +3525,8 @@ export async function getPositionContext(db: any, positionName: string): Promise
   personalizedRequirements: string;
   salaryRange: string;
   screeningRules: ResolvedScreeningRules;
-  capabilityDimensionItems: ScreeningDimensionDefinition[];
-  usesLegacyDimensions: boolean;
 }> {
   const systemScreeningRules = await getSystemScreeningRules(db);
-  let configuredDimensions: CapabilityDimension[] = [];
   const result = {
     standardPosition: positionName,
     description: '',
@@ -3544,8 +3535,6 @@ export async function getPositionContext(db: any, positionName: string): Promise
     personalizedRequirements: '',
     salaryRange: '',
     screeningRules: resolveScreeningRules(systemScreeningRules),
-    capabilityDimensionItems: resolveEffectiveScreeningDimensions([]),
-    usesLegacyDimensions: true,
   };
   if (!positionName) return result;
 
@@ -3580,7 +3569,9 @@ export async function getPositionContext(db: any, positionName: string): Promise
         result.personalizedRequirements = String(pos.personalized_requirements);
       }
       if (pos.capability_dimensions) {
-        configuredDimensions = normalizeCapabilityDimensions(pos.capability_dimensions);
+        let dims = pos.capability_dimensions;
+        try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? ((d.name || d.title || '') + '：' + (d.description || d.definition || '')) : String(d)).join('\n\n'); } catch {}
+        result.capabilityDimensions = String(dims);
       }
       if (pos.salary_range) result.salaryRange = pos.salary_range;
     }
@@ -3592,21 +3583,14 @@ export async function getPositionContext(db: any, positionName: string): Promise
       'SELECT dimensions_json, personalized_requirements FROM capability_dimensions WHERE position_name = ? LIMIT 1'
     ).bind(lookupName).first() as any;
     if (dimRow?.dimensions_json) {
-      const independentDimensions = normalizeCapabilityDimensions(dimRow.dimensions_json);
-      if (independentDimensions.length > 0) configuredDimensions = independentDimensions;
+      let dims = dimRow.dimensions_json;
+      try { dims = JSON.parse(dims); if (Array.isArray(dims)) dims = dims.map((d: any) => typeof d === 'object' ? ((d.name || d.title || '') + '：' + (d.description || d.definition || '')) : String(d)).join('\n\n'); } catch {}
+      if (dims && String(dims) !== '[]') result.capabilityDimensions = String(dims);
     }
     if (dimRow?.personalized_requirements && !result.personalizedRequirements) {
       result.personalizedRequirements = String(dimRow.personalized_requirements);
     }
   } catch {}
-
-  const normalizedDimensions = normalizeScreeningDimensions(configuredDimensions);
-  result.capabilityDimensionItems = resolveEffectiveScreeningDimensions(normalizedDimensions);
-  result.usesLegacyDimensions = normalizedDimensions.length === 0;
-  result.capabilityDimensions = result.capabilityDimensionItems.map((dimension, index) => {
-    const description = dimension.description ? `：${dimension.description}` : '';
-    return `${index + 1}. ${dimension.name}${description}`;
-  }).join('\n');
 
   // 3. 个性化需求：从 job_requisitions 表读取
   try {
@@ -6980,7 +6964,7 @@ app.post('/api/resumes/batch-auto-screen', authMiddleware, async (c) => {
 - strengths: 3-5 个核心优势（中文数组）
 - risks: 2-4 个潜在风险（中文数组）
 - suggested_questions: 3-5 个建议面试问题（中文数组）
-- dimensions: 必须且只能包含当前岗位能力维度协议中的维度；每项格式为 { "name": "当前岗位维度名", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }。`,
+- dimensions: 必须且只能包含 ${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}；每项格式为 { "name": "指定维度名", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }。`,
           user: ''
         });
 
@@ -7673,11 +7657,6 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
     if (reparsePosContext.capabilityDimensions) appendContext += `- 能力维度：${reparsePosContext.capabilityDimensions}\n`;
     if (reparsePosContext.personalizedRequirements) appendContext += `- 个性化要求：${reparsePosContext.personalizedRequirements}\n`;
   }
-  const reparseDimensions = reparsePosContext?.capabilityDimensionItems || resolveEffectiveScreeningDimensions([]);
-  const reparseDimensionContract = buildPositionDimensionContract(reparseDimensions);
-  const reparseRulesPrompt = reparsePosContext
-    ? buildScreeningRulesPrompt(reparsePosContext.screeningRules, reparseDimensions)
-    : '';
 
   // 优先读取数据库中的自定义 prompt，key 为 resume_screening
   const customPrompt = await getCustomPrompt(c.env, 'resume_screening');
@@ -7725,11 +7704,10 @@ app.post('/api/resumes/:id/reparse', authMiddleware, async (c) => {
 - recommendation: 推荐建议（"strongly_recommend"/"recommend"/"neutral"/"not_recommend"/"strongly_not_recommend"）
 - summary: 综合分析摘要（中文，2-3句话）
 - suggested_questions: 建议面试问题（中文，3-5个）
-- dimensions: 必须且只能包含当前岗位能力维度协议中的维度；每项包含 { name, score(0-5), reason }。`;
+- dimensions: 必须且只能包含 ${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}；每项包含 { name, score(0-5), reason }。`;
     const inputHint = reparseSource === 'parsed' ? '已解析的结构化字段（来自飞书同步）：' : '简历文本（请提取完整信息）：';
     userPrompt = inputHint + appendContext + '\n\n' + reparseInputText;
   }
-  userPrompt = [userPrompt, reparseDimensionContract, reparseRulesPrompt].filter(Boolean).join('\n\n');
   // 既无原文也无结构化字段：尝试从 PDF 提取文本
   if (reparseSource === 'none') {
     try {
@@ -7939,7 +7917,7 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
 - strengths: 3-5 个核心优势（中文数组）
 - risks: 2-4 个潜在风险（中文数组）
 - suggested_questions: 3-5 个建议面试问题（中文数组）
-- dimensions: 必须且只能包含当前岗位能力维度协议中的维度；每项格式为 { "name": "当前岗位维度名", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }。`,
+- dimensions: 必须且只能包含 ${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}；每项格式为 { "name": "指定维度名", "score": 0-5 的整数, "reason": "打分依据（中文，1-2 句）" }。`,
     user: ''
   });
   const systemPrompt = prompt.system;
@@ -7970,8 +7948,6 @@ app.post('/api/resumes/:id/ai-screen', authMiddleware, async (c) => {
     `Department: ${posDept}\nDescription: ${posDesc}\nRequirements: ${posReq}\n` +
     (posContext.capabilityDimensions ? `\nCapability Dimensions (能力维度):\n${posContext.capabilityDimensions}\n` : '') +
     (posContext.personalizedRequirements ? `\nPersonalized Requirements (个性化要求):\n${posContext.personalizedRequirements}\n` : '') +
-    `\n${buildPositionDimensionContract(posContext.capabilityDimensionItems)}\n` +
-    `${buildScreeningRulesPrompt(posContext.screeningRules, posContext.capabilityDimensionItems)}\n` +
     structuredBlock +
     `\nCandidate Resume (full text):\n${resumeText}\n\nPlease analyze and return the JSON assessment.`;
   try {
@@ -9134,7 +9110,7 @@ app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
     },
     resume_screening: {
       system: `你是资深招聘评估AI，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
-      user: '岗位：{position}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON，dimensions 只能包含本次岗位能力维度协议中的维度，每项格式为 {"name":"当前岗位维度名","score":0,"reason":"中文依据"}'
+      user: '岗位：{position}\n简历：{resume_text}\n字段：{fields}\n\n请返回JSON：{"match_score":"非权威参考值","recommendation":"strongly_recommend/recommend/neutral/not_recommend/strongly_not_recommend","summary":"综合分析（中文2-3句）","strengths":"优势分析（中文）","risks":"风险点（中文）","suggested_questions":["问题1","问题2"],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}'
     },
     resume_screening_supplement: {
       system: `你是专业人才能力量化评估专家，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
@@ -10834,20 +10810,19 @@ async function analyzeResumeScreeningRecord(env: Env, record: any) {
 
   const positionRequirements = await getPositionRequirements(env, mappedPosition);
   const configuredDimensions = positionRequirements?.capability_dimensions || [];
-  const effectiveDimensions = resolveEffectiveScreeningDimensions(configuredDimensions);
   const screeningRules = positionRequirements?.screeningRules
     || resolveScreeningRules(await getSystemScreeningRules(env.DB));
   const result = await callAI(
     env,
     `你是专业的简历初筛专家，只返回 JSON。${WEIGHTED_SCREENING_PROMPT}`,
-    `岗位：${mappedPosition}\n岗位职责：${positionRequirements?.description || '-'}\n岗位要求：${positionRequirements?.requirements || '-'}\n能力维度：${JSON.stringify(effectiveDimensions)}\n${buildPositionDimensionContract(effectiveDimensions)}\n候选人：${record.candidate_name || '未知'}\n简历：${resumeText}\n${buildScreeningRulesPrompt(screeningRules, effectiveDimensions)}\n请返回 {"summary":"摘要","strengths":[],"risks":[],"suggested_questions":[],"dimensions":[{"name":"当前岗位维度名","score":0,"reason":"中文依据"}]}。`,
+    `岗位：${mappedPosition}\n岗位职责：${positionRequirements?.description || '-'}\n岗位要求：${positionRequirements?.requirements || '-'}\n能力维度：${JSON.stringify(configuredDimensions)}\n候选人：${record.candidate_name || '未知'}\n简历：${resumeText}\n${buildScreeningRulesPrompt(screeningRules)}\n请返回 {"summary":"摘要","strengths":[],"risks":[],"suggested_questions":[],"dimensions":[{"name":"七个指定维度之一","score":0,"reason":"中文依据"}]}。`,
     'deepseek-v4-flash',
   );
   const parsed = extractJSON(result);
   const evidence = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
     ? parsed as Record<string, unknown>
     : { summary: String(parsed || '') };
-  const persistence = buildScreeningQueuePersistence(evidence, effectiveDimensions, screeningRules);
+  const persistence = buildScreeningQueuePersistence(evidence, configuredDimensions, screeningRules);
   await env.DB.prepare(`UPDATE resume_screening_queue SET
     ai_analysis=?, ai_result=?, screening_result=?, match_score=?, weighted_score=?, gate_results=?, screening_reason=?, mapped_position=?, updated_at=?
     WHERE id=?`)

@@ -1,18 +1,22 @@
 import { DEFAULT_SCREENING_RULES, buildScreeningRulesPrompt, type ScreeningRuleValues } from './screening-rules';
-import {
-  getActiveGateDimensions,
-  getWeightedDimensions,
-  LEGACY_SCREENING_DIMENSION_NAMES,
-  resolveEffectiveScreeningDimensions,
-  type ScreeningDimensionDefinition,
-} from './screening-dimensions';
 
 export { buildScreeningRulesPrompt } from './screening-rules';
-export { LEGACY_SCREENING_DIMENSION_NAMES } from './screening-dimensions';
 
-export const WEIGHTED_SCREENING_DIMENSION_NAMES = LEGACY_SCREENING_DIMENSION_NAMES;
+const SCORING_DIMENSIONS = ['核心画像', '核心职责', '任职要求', '企业背景', '加分项'] as const;
+const GATE_DIMENSIONS = ['关键词匹配', '避坑雷区'] as const;
+export const WEIGHTED_SCREENING_DIMENSION_NAMES = [...SCORING_DIMENSIONS, ...GATE_DIMENSIONS] as const;
 export const KEYWORD_MATCH_MIN_SCORE = DEFAULT_SCREENING_RULES.keyword_match_min_score;
 export const RED_FLAG_MIN_SCORE = DEFAULT_SCREENING_RULES.red_flag_min_score;
+
+const DEFAULT_WEIGHTS: Record<(typeof SCORING_DIMENSIONS)[number], number> = {
+  核心画像: 25,
+  核心职责: 22,
+  任职要求: 22,
+  企业背景: 13,
+  加分项: 10,
+};
+
+type DimensionName = (typeof SCORING_DIMENSIONS)[number] | (typeof GATE_DIMENSIONS)[number];
 
 export type WeightedScreeningDimension = {
   name: string;
@@ -30,10 +34,7 @@ function normalizeScore(value: unknown): number {
   return Number.isFinite(score) ? Math.max(0, Math.min(5, score)) : 0;
 }
 
-function normalizedDimensions(
-  evaluation: { dimensions?: unknown } | null | undefined,
-  requiredNames: readonly string[],
-) {
+function normalizedDimensions(evaluation: { dimensions?: unknown } | null | undefined) {
   const dimensions = Array.isArray(evaluation?.dimensions) ? evaluation.dimensions : [];
   const byName = new Map<string, WeightedScreeningDimension>();
   for (const dimension of dimensions) {
@@ -42,7 +43,7 @@ function normalizedDimensions(
     if (name && !byName.has(name)) byName.set(name, item);
   }
 
-  return requiredNames.map((name) => {
+  return WEIGHTED_SCREENING_DIMENSION_NAMES.map((name) => {
     const source = byName.get(name);
     return {
       name,
@@ -52,87 +53,75 @@ function normalizedDimensions(
   });
 }
 
-function hasSameDimensionSet(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  const rightSet = new Set(right);
-  return left.every(name => rightSet.has(name));
+function scoringWeights(configuredDimensions: readonly ConfiguredDimension[] | null | undefined) {
+  const configuredByName = new Map<string, number>();
+  for (const dimension of configuredDimensions || []) {
+    const name = String(dimension?.name || '').trim();
+    const weight = Number(dimension?.weight);
+    if (name && Number.isFinite(weight) && weight >= 0 && !configuredByName.has(name)) {
+      configuredByName.set(name, weight);
+    }
+  }
+
+  const hasPositiveConfiguredWeight = SCORING_DIMENSIONS.some((name) => (configuredByName.get(name) ?? 0) > 0);
+  return SCORING_DIMENSIONS.map((name) => hasPositiveConfiguredWeight
+    ? configuredByName.get(name) ?? 0
+    : DEFAULT_WEIGHTS[name]);
 }
 
-/** Applies only the gates and weighted dimensions configured for this position. */
+/** Applies the keyword/red-flag gates and five-dimension weighted score. */
 export function evaluateWeightedScreening(
   evaluation: { dimensions?: unknown; match_score?: unknown } | null | undefined,
   configuredDimensions: readonly ConfiguredDimension[] | null | undefined,
   rules: ScreeningRuleValues = DEFAULT_SCREENING_RULES,
 ) {
-  const effectiveDimensions = resolveEffectiveScreeningDimensions(configuredDimensions);
-  const requiredNames = effectiveDimensions.map(item => item.name);
-  const dimensions = normalizedDimensions(evaluation, requiredNames);
+  const dimensions = normalizedDimensions(evaluation);
   const scores = new Map(dimensions.map((dimension) => [dimension.name, dimension.score]));
-  const gate_results: Record<string, { score: number; passed: boolean }> = {};
-  for (const gate of getActiveGateDimensions(effectiveDimensions)) {
-    const score = scores.get(gate.name) || 0;
-    const isKeywordGate = gate.name === '关键词匹配';
-    const minimum = isKeywordGate ? rules.keyword_match_min_score : rules.red_flag_min_score;
-    const key = isKeywordGate ? 'keyword_match' : 'red_flag';
-    gate_results[key] = { score, passed: score >= minimum };
-    if (score < minimum) {
-      return {
-        dimensions,
-        weighted_score: null,
-        screening_result: '不通过' as const,
-        screening_reason: `${gate.name}未达 ${minimum} 分`,
-        gate_results,
-      };
-    }
-  }
+  const keywordScore = scores.get('关键词匹配') || 0;
+  const redFlagScore = scores.get('避坑雷区') || 0;
+  const gate_results = {
+    keyword_match: { score: keywordScore, passed: keywordScore >= rules.keyword_match_min_score },
+    red_flag: { score: redFlagScore, passed: redFlagScore >= rules.red_flag_min_score },
+  };
 
-  const weightedDimensions = getWeightedDimensions(effectiveDimensions);
-  if (weightedDimensions.length === 0) {
+  if (!gate_results.keyword_match.passed) {
     return {
       dimensions,
       weighted_score: null,
       screening_result: '不通过' as const,
-      screening_reason: '岗位未配置可加权的普通能力维度',
+      screening_reason: `关键词匹配未达 ${rules.keyword_match_min_score} 分`,
       gate_results,
     };
   }
 
-  const isLegacy = hasSameDimensionSet(requiredNames, WEIGHTED_SCREENING_DIMENSION_NAMES);
-  const legacyWeightByName = new Map(
-    resolveEffectiveScreeningDimensions([]).map(item => [item.name, Number(item.weight) || 0]),
-  );
-  const positiveWeightDimensions = weightedDimensions.filter(item => Number(item.weight) > 0);
-  const useConfiguredWeights = positiveWeightDimensions.length > 0;
-  const useLegacyWeights = isLegacy && !useConfiguredWeights;
-  const totalWeight = useConfiguredWeights
-    ? positiveWeightDimensions.reduce((sum, item) => sum + Number(item.weight), 0)
-    : useLegacyWeights
-      ? weightedDimensions.reduce((sum, item) => sum + (legacyWeightByName.get(item.name) || 0), 0)
-      : weightedDimensions.length;
+  if (!gate_results.red_flag.passed) {
+    return {
+      dimensions,
+      weighted_score: null,
+      screening_result: '不通过' as const,
+      screening_reason: `避坑雷区未达 ${rules.red_flag_min_score} 分`,
+      gate_results,
+    };
+  }
+
+  const weights = scoringWeights(configuredDimensions);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
   const weighted_score = Math.round(
-    weightedDimensions.reduce((sum, item) => {
-      const weight = useConfiguredWeights
-        ? Math.max(0, Number(item.weight) || 0)
-        : useLegacyWeights
-          ? legacyWeightByName.get(item.name) || 0
-          : 1;
-      return sum + (scores.get(item.name) || 0) * weight;
-    }, 0) / totalWeight * 10,
+    SCORING_DIMENSIONS.reduce((sum, name, index) => sum + (scores.get(name) || 0) * weights[index], 0) / totalWeight * 10,
   ) / 10;
-  const weightedLabel = isLegacy ? '五项能力加权分' : '岗位普通维度加权分';
 
   return {
     dimensions,
     weighted_score,
     screening_result: weighted_score >= rules.weighted_score_min ? '通过' as const : '不通过' as const,
     screening_reason: weighted_score >= rules.weighted_score_min
-      ? `${weightedLabel}达到 ${rules.weighted_score_min} 分`
-      : `${weightedLabel}未达 ${rules.weighted_score_min} 分`,
+      ? `五项能力加权分达到 ${rules.weighted_score_min} 分`
+      : `五项能力加权分未达 ${rules.weighted_score_min} 分`,
     gate_results,
   };
 }
 
-// 全局初筛提示词只描述通用协议，岗位维度由每次请求动态附加。
+// 初筛提示词模板，基于七个能力维度构建。
 // 岗位专属规则不能写进这里，否则系统设置中的一份全局 prompt 会影响所有岗位。
 export const SCREENING_PROMPT_VERSION = '[简历初筛规则版本：position-aware-v4]';
 export const LEGACY_POSITION_AWARE_PROMPT_VERSION = '[简历初筛规则版本：position-aware-v3]';
@@ -140,23 +129,10 @@ export const LEGACY_SCREENING_PROMPT_VERSION = '[简历初筛规则版本：keyw
 export const LEGACY_KEYWORD_GATE_TEXT = '其中「关键词匹配」与「避坑雷区」是硬门槛，只有各自为 5 分才通过；其余五项用于计算加权分。';
 
 export const WEIGHTED_SCREENING_PROMPT = `${SCREENING_PROMPT_VERSION}
-初筛必须且只能返回本次请求附带的当前岗位能力维度，每项 score 为 0-5 整数并提供中文事实依据，不得追加当前岗位未配置的旧维度。
+初筛必须且只能返回以下七个能力维度，每项 score 为 0-5 整数并提供中文事实依据：${WEIGHTED_SCREENING_DIMENSION_NAMES.join('、')}。
 「关键词匹配」必须依据当前岗位上下文（岗位职责、岗位要求、个性化需求和能力维度）评估，不得把其他岗位的专属关键词套用到当前岗位。
 如果当前岗位提供岗位专属初筛规则，优先遵循该规则；没有专属规则时，应从当前岗位要求中提取最相关的证据进行判断。
-当前岗位已配置的门槛和普通维度加权分的具体通过阈值由本次请求附带的“本次 AI 初筛通过条件”决定；未配置的门槛不启用，最终是否通过由服务端计算；match_score 和 recommendation 仅作非权威参考。`;
-
-export function buildPositionDimensionContract(
-  dimensions: readonly ScreeningDimensionDefinition[],
-): string {
-  const lines = dimensions.map((dimension, index) => {
-    const description = dimension.description ? `：${dimension.description}` : '';
-    return `${index + 1}. ${dimension.name}${description}`;
-  });
-  return `本次岗位能力维度协议（只适用于当前岗位）：
-本次岗位共 ${dimensions.length} 个能力维度，AI 必须且只能评估以下维度：
-${lines.join('\n')}
-不得返回其他岗位或系统默认维度。服务端将按以上维度顺序校验、保存和计算。`;
-}
+关键词匹配、避坑雷区和五项能力加权分的具体通过阈值由本次请求附带的“本次 AI 初筛通过条件”决定；以上三项必须同时满足，最终是否通过由服务端计算；match_score 和 recommendation 仅作非权威参考。`;
 
 export type PositionScreeningContext = {
   standardPosition?: unknown;

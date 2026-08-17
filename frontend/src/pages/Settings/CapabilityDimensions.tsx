@@ -397,7 +397,7 @@ const CapabilityDimensions: React.FC = () => {
                           {...restField}
                           name={[name, 'weight']}
                           label="评分权重"
-                          extra="普通能力维度参与加权分；门槛维度不计入加权分。"
+                          extra="仅五项能力参与加权分。"
                         >
                           <InputNumber min={0} max={100} precision={0} addonAfter="%" style={{ width: '100%' }} />
                         </Form.Item>

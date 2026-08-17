@@ -1201,7 +1201,7 @@ const PositionsList: React.FC = () => {
                         {...restField}
                         name={[name, 'weight']}
                         label="评分权重"
-                        extra="普通能力维度计入加权分；关键词匹配、避坑雷区等门槛维度不计入加权分。"
+                        extra="仅五项能力计入加权分；总权重不必手动校验。"
                       >
                         <InputNumber min={0} max={100} precision={0} addonAfter="%" style={{ width: '100%' }} />
                       </Form.Item>

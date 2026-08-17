@@ -408,12 +408,8 @@ const SystemSettingsPage: React.FC = () => {
               onChange={(value) => value !== null && setScreeningRules((current) => ({ ...current, red_flag_min_score: value }))} />
           </div>
           <div>
-            <Text strong style={{ display: 'block', marginBottom: 8 }}>普通能力加权最低分</Text>
-            <InputNumber
-              min={0}
-              max={5}
-              step={0.1}
-              precision={1}
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>五项能力加权最低分</Text>
+            <InputNumber min={0} max={5} step={0.1} precision={1}
               value={screeningRules.weighted_score_min}
               onChange={(value) => value !== null && setScreeningRules((current) => ({ ...current, weighted_score_min: value }))} />
           </div>
