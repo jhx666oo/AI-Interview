@@ -3,6 +3,7 @@ import { ArtifactRepository } from '../resume-storage/artifact-repository';
 import { generatePresignedPutUrl } from './presigner';
 import type { InitUploadRequest, InitUploadResponse, CompleteUploadResponse } from './types';
 import { logResumeProcessing, logResumeProcessingError } from '../resume-processing/logging';
+import { buildResumeIngestionIdentity } from '../recruiting-operations/resume-ingestion';
 
 interface UploadServiceDeps {
   db: D1Database;
@@ -25,6 +26,7 @@ export class UploadService {
     const resumeId = `res_${crypto.randomUUID()}`;
     const pdfArtifactId = generateArtifactId();
     const pdfObjectKey = generateObjectKey('pdf', resumeId, 1);
+    const ingestion = buildResumeIngestionIdentity({ source: 'local_upload', fileSha256: req.fileSha256, receivedAt: new Date().toISOString() });
     logResumeProcessing('upload.init.start', {
       resumeId,
       fileNameLength: req.originalFilename.length,
@@ -33,9 +35,9 @@ export class UploadService {
 
     // 创建简历记录
     await this.deps.db.prepare(`
-      INSERT INTO resumes (id, candidate_name, status, created_at, updated_at)
-      VALUES (?, ?, 'pending_upload', datetime('now'), datetime('now'))
-    `).bind(resumeId, req.originalFilename).run();
+      INSERT INTO resumes (id, candidate_name, status, file_sha256, resume_received_at, resume_source, resume_source_record_id, resume_ingest_key, created_at, updated_at)
+      VALUES (?, ?, 'pending_upload', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).bind(resumeId, req.originalFilename, req.fileSha256, ingestion.receivedAt, ingestion.source, ingestion.sourceRecordId, ingestion.ingestKey).run();
 
     // 创建 artifact 记录
     await this.deps.artifactRepo.insert({

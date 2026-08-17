@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   Card,
   Input,
@@ -25,6 +26,7 @@ import { downloadExcel } from '../../utils/exportExcel';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import { RecruitingBoardView } from './components/RecruitingBoardView';
+import { MiaodaDashboardView } from './components/MiaodaDashboardView';
 import { ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 import type {
   BoardPosition,
@@ -37,7 +39,9 @@ import type {
   HrbpBoard,
   RecruitingBoard,
 } from './types';
+import { filterDashboardV3Board, type DashboardV3Board } from './v3-types';
 import styles from './dashboard.module.css';
+import { createDashboardV3Snapshot, fetchDashboardLegacy, fetchDashboardV3 } from './api';
 
 type Priority = BoardPosition['priority'];
 type ShareExpiry = '1d' | '7d' | '30d' | 'permanent';
@@ -180,6 +184,8 @@ function rebuildBoard(board: RecruitingBoard, positions: BoardPosition[]): Recru
 
 const Dashboard: React.FC = () => {
   const [board, setBoard] = useState<RecruitingBoard | null>(null);
+  const [boardV3, setBoardV3] = useState<DashboardV3Board | null>(null);
+  const [v3Error, setV3Error] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dataMode, setDataMode] = useState<DashboardDataMode>('live');
@@ -206,10 +212,19 @@ const Dashboard: React.FC = () => {
     if (showLoading) setLoading(true);
     else setRefreshing(true);
     try {
-      const params = dataMode === 'snapshot'
-        ? { mode: 'snapshot', snapshot_date: snapshotDate, ...(selectedOwner ? { responsible_person: selectedOwner } : {}) }
-        : { mode: 'live', ...(selectedOwner ? { responsible_person: selectedOwner } : {}) };
-      setBoard(await request.get('/dashboard/recruiting-board', { params }) as RecruitingBoard);
+      const [legacyResult, v3Result] = await Promise.allSettled([
+        fetchDashboardLegacy(dataMode, snapshotDate, selectedOwner),
+        fetchDashboardV3(dataMode, snapshotDate, selectedOwner),
+      ]);
+      if (legacyResult.status === 'fulfilled') setBoard(legacyResult.value as RecruitingBoard);
+      if (v3Result.status === 'fulfilled') {
+        setBoardV3(v3Result.value as DashboardV3Board);
+        setV3Error(false);
+      } else {
+        setBoardV3(null);
+        setV3Error(true);
+      }
+      if (legacyResult.status === 'rejected' && v3Result.status === 'rejected') throw legacyResult.reason;
     } catch (error) {
       console.error('Recruiting board error:', error);
       message.error('看板数据加载失败，请稍后重试');
@@ -239,7 +254,7 @@ const Dashboard: React.FC = () => {
   const createMissingSnapshot = async () => {
     setCreatingSnapshot(true);
     try {
-      const snapshot = await request.post('/dashboard/snapshots', {}) as DashboardSnapshotMeta;
+      const snapshot = await createDashboardV3Snapshot();
       await loadSnapshots();
       setSnapshotDate(snapshot.snapshot_date);
       setDataMode('snapshot');
@@ -275,6 +290,7 @@ const Dashboard: React.FC = () => {
         expiry: shareExpiry,
         data_mode: shareMode,
         snapshot_id: shareMode === 'snapshot' ? shareSnapshotId : null,
+        dashboard_version: 'v3',
       }) as { token: string };
       const url = `${window.location.origin}/shared/dashboard/${data.token}`;
       setNewShareUrl(url);
@@ -327,6 +343,20 @@ const Dashboard: React.FC = () => {
     });
     return rebuildBoard(board, filteredPositions);
   }, [board, division, hasFilters, hrbp, keyword, positions, priority, status]);
+
+  const filteredBoardV3 = useMemo(() => {
+    if (!boardV3 || !hasFilters) return boardV3;
+    const search = keyword.trim().toLocaleLowerCase('zh-CN');
+    return filterDashboardV3Board(boardV3, (position) => {
+      if (division && position.department !== division) return false;
+      if (hrbp && !position.hrbps.includes(hrbp)) return false;
+      if (priority && position.priority !== priority) return false;
+      if (status && position.status !== status) return false;
+      if (!search) return true;
+      return [position.display_name, position.position_name, position.department, ...position.hrbps]
+        .some((value) => value.toLocaleLowerCase('zh-CN').includes(search));
+    });
+  }, [boardV3, division, hasFilters, hrbp, keyword, priority, status]);
 
   const clearFilters = () => {
     setDivision(undefined);
@@ -386,7 +416,7 @@ const Dashboard: React.FC = () => {
     return <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spin size="large" description="加载招聘看板..." /></div>;
   }
 
-  if (!filteredBoard) {
+  if (!filteredBoard && !boardV3) {
     return <Card><div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>看板暂时无法加载，请稍后刷新重试。</div></Card>;
   }
 
@@ -398,7 +428,7 @@ const Dashboard: React.FC = () => {
             <span className={styles.pageTitleIcon}><AppstoreOutlined /></span>
             <h1 id="recruiting-dashboard-title">招聘运营看板</h1>
           </div>
-          <p>数据更新时间：{board?.updated_at ? new Date(board.updated_at).toLocaleString('zh-CN') : '—'}</p>
+          <p>数据更新时间：{(boardV3?.updated_at || board?.updated_at) ? new Date((boardV3?.updated_at || board?.updated_at) as string).toLocaleString('zh-CN') : '—'}</p>
         </div>
         <div className={styles.pageActions}>
           <Select
@@ -447,7 +477,9 @@ const Dashboard: React.FC = () => {
         </ResponsiveToolbar>
       </Card>
 
-      <RecruitingBoardView board={filteredBoard} />
+      {v3Error && <Alert type="warning" showIcon message="新版双源仪表盘暂不可用" description="当前暂时展示兼容版看板，飞书或 D1 数据源恢复后点击刷新即可切换。" />}
+
+      {filteredBoardV3 ? <MiaodaDashboardView board={filteredBoardV3} /> : <RecruitingBoardView board={filteredBoard} />}
 
       <ResponsiveModal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
         <Typography.Paragraph type="secondary">公开链接仅展示聚合招聘数据，不包含候选人或 AI 评估信息。</Typography.Paragraph>

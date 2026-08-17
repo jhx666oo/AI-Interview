@@ -7,6 +7,7 @@ import { R2ArtifactStore } from '../resume-storage/r2-artifact-store';
 import { generateObjectKey, generateArtifactId } from '../resume-storage/object-key';
 import { createOrGetActiveJob } from '../resume-processing/job-repository';
 import { EventRepository } from '../recruitment-events/repository';
+import { buildResumeIngestionIdentity } from '../recruiting-operations/resume-ingestion';
 
 export async function handleR2Upload(
   c: any,
@@ -27,12 +28,20 @@ export async function handleR2Upload(
   const artifactId = generateArtifactId();
   const objectKey = generateObjectKey('pdf', resumeId, 1);
   const displayName = parsedCandidateName || file.name.replace(/\.pdf$/i, '');
+  const fileSha256 = await sha256Hex(fileBuffer);
+  const ingestion = buildResumeIngestionIdentity({ source: 'local_upload', fileSha256, receivedAt: now() });
+  const existing = await c.env.DB.prepare(
+    'SELECT id, candidate_name FROM resumes WHERE file_sha256 = ? OR resume_ingest_key = ? LIMIT 1',
+  ).bind(fileSha256, ingestion.ingestKey).first<any>().catch(() => null);
+  if (existing) {
+    return c.json({ id: existing.id, candidate_name: existing.candidate_name, dedup: true, detail: '文件已存在，返回已有记录' }, 200);
+  }
 
   // 1. 创建简历记录
   const mappedPos = positionId || parsedPositionName || '';
   await c.env.DB.prepare(`
-    INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, file_sha256, resume_received_at, resume_source, resume_source_record_id, resume_ingest_key, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     resumeId,
     displayName,
@@ -41,6 +50,11 @@ export async function handleR2Upload(
     JSON.stringify({ name: displayName }),
     '',
     'pending_screening',
+    fileSha256,
+    ingestion.receivedAt,
+    ingestion.source,
+    ingestion.sourceRecordId,
+    ingestion.ingestKey,
     now()
   ).run();
 
@@ -108,6 +122,11 @@ export async function handleR2Upload(
     parse_status: 'queued',
     detail: '简历已入队（R2 存储），正在后台处理',
   }, 202);
+}
+
+async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 // 从 index.ts 复用的 logOperation 和 bitable 相关函数

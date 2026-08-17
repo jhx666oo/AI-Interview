@@ -6,6 +6,8 @@ compatibility_date = "2024-12-01"
 # 已通过 wrangler secret 或 Dashboard 环境变量设置的配置：
 #   SECRET_KEY, FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_BITABLE_APP_TOKEN
 #   FEISHU_REQUISITION_TABLE_ID, FEISHU_POSITION_TABLE_ID
+#   FEISHU_ZHIPEI_RECRUITMENT_TABLE_ID, FEISHU_YANGLAO_RECRUITMENT_TABLE_ID
+#     （仪表盘 v3 的两张招聘明细表；未设置时兼容回退到上面两个旧变量）
 
 # AI 配置（通过 `npx wrangler secret put` 设置）
 #   AI_API_KEY — DeepSeek / 兼容 OpenAI API 的密钥

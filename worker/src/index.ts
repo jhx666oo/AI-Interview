@@ -60,6 +60,12 @@ import type { DailyReportSnapshot } from './daily-reports/report';
 
 
 import type { ShareExpiryOption } from './recruiting-operations/types';
+import { buildResumeIngestionIdentity } from './recruiting-operations/resume-ingestion';
+import { loadD1DashboardOverlay, type D1DashboardOverlay } from './recruiting-operations/d1-dashboard-overlay';
+import { buildDashboardV3, scopeDashboardV3Board } from './recruiting-operations/dashboard-v3';
+import { buildDashboardReconciliation } from './recruiting-operations/dashboard-reconciliation';
+import { normalizeFeishuPositionRecord, type FeishuBoardSourceRecord, type FeishuPositionMetric } from './recruiting-operations/feishu-board-source';
+import type { DashboardV3Board } from './recruiting-operations/dashboard-v3-types';
 import {
   buildRecruitingBoard,
   getBoardFirstInterviewCount,
@@ -91,6 +97,8 @@ interface Env {
   FEISHU_REQUISITION_TABLE_ID?: string;
   FEISHU_POSITION_TABLE_ID?: string;
   FEISHU_TALENT_TABLE_ID?: string;
+  FEISHU_ZHIPEI_RECRUITMENT_TABLE_ID?: string;
+  FEISHU_YANGLAO_RECRUITMENT_TABLE_ID?: string;
   FEISHU_RECRUITMENT_GROUP_CHAT_ID?: string;
   FEISHU_OAUTH_REDIRECT_URI?: string;
   RESUMES_KV?: KVNamespace;
@@ -1287,6 +1295,11 @@ function now(): string {
   return new Date().toISOString();
 }
 
+async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function safeJsonParse(v: any): any {
   if (!v || typeof v !== 'string') return null;
   try { return JSON.parse(v); } catch { return null; }
@@ -2031,6 +2044,29 @@ export async function createDashboardSnapshot(
   return row;
 }
 
+export async function createDashboardV3Snapshot(
+  db: D1Database,
+  snapshotDate: string,
+  board: DashboardV3Board,
+  generatedBy: string,
+  generatedAt: string,
+) {
+  const present = await db.prepare('SELECT id FROM dashboard_snapshots WHERE snapshot_date = ?').bind(snapshotDate).first();
+  if (present) throw new Error('snapshot already exists');
+  const row = {
+    id: uuid(),
+    snapshot_date: snapshotDate,
+    payload_json: JSON.stringify({ ...board, data_mode: 'snapshot', snapshot_date: snapshotDate, schema_version: 'dashboard-v3' }),
+    generated_at: generatedAt,
+    generated_by: generatedBy,
+    created_at: generatedAt,
+  };
+  await db.prepare(
+    'INSERT INTO dashboard_snapshots (id, snapshot_date, payload_json, generated_at, generated_by, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).bind(row.id, row.snapshot_date, row.payload_json, row.generated_at, row.generated_by, row.created_at).run();
+  return row;
+}
+
 export async function readDashboardSnapshot(db: D1Database, snapshotDate: string): Promise<RecruitingBoard | null> {
   const row = await db.prepare('SELECT payload_json FROM dashboard_snapshots WHERE snapshot_date = ?').bind(snapshotDate).first<{ payload_json: string }>();
   return row ? JSON.parse(row.payload_json) as RecruitingBoard : null;
@@ -2070,6 +2106,105 @@ app.get('/api/dashboard/recruiting-board', authMiddleware, async (c) => {
   return c.json(mode === 'snapshot' ? applyRecruitingBoardOwnerScope(board, owner) : board);
 });
 
+function dashboardRecruitmentTableIds(env: Env): { zhipei: string; yanglao: string } {
+  return {
+    zhipei: env.FEISHU_ZHIPEI_RECRUITMENT_TABLE_ID || env.FEISHU_REQUISITION_TABLE_ID || FEISHU_CONFIG.requisitionTableId,
+    yanglao: env.FEISHU_YANGLAO_RECRUITMENT_TABLE_ID || env.FEISHU_POSITION_TABLE_ID || FEISHU_CONFIG.positionTableId,
+  };
+}
+
+async function loadFeishuDashboardPositions(env: Env): Promise<FeishuPositionMetric[]> {
+  const tableIds = dashboardRecruitmentTableIds(env);
+  const [zhipeiRecords, yanglaoRecords] = await Promise.all([
+    bitableListRecords(env, tableIds.zhipei),
+    bitableListRecords(env, tableIds.yanglao),
+  ]);
+  const records: FeishuBoardSourceRecord[] = [
+    ...zhipeiRecords.map((record: any) => ({ record_id: String(record.record_id || record.id || ''), fields: record.fields || {}, table: 'zhipei' as const })),
+    ...yanglaoRecords.map((record: any) => ({ record_id: String(record.record_id || record.id || ''), fields: record.fields || {}, table: 'yanglao' as const })),
+  ];
+  return records.map(normalizeFeishuPositionRecord).filter((position): position is FeishuPositionMetric => Boolean(position));
+}
+
+function filterV3OverlayForOwner(overlay: D1DashboardOverlay, positions: FeishuPositionMetric[], owner: string | null): D1DashboardOverlay {
+  if (!owner) return overlay;
+  const allowedIds = new Set(positions.filter((position) => position.hrbps.includes(owner)).map((position) => position.feishu_record_id));
+  return {
+    ...overlay,
+    byPosition: Object.fromEntries(Object.entries(overlay.byPosition).filter(([positionId]) => allowedIds.has(positionId))),
+    d1OnlyPositions: overlay.d1OnlyPositions.filter((position) => position.hrbps.includes(owner)),
+  };
+}
+
+async function readLatestV3Snapshot(db: D1Database): Promise<DashboardV3Board | null> {
+  const rows = await db.prepare('SELECT payload_json FROM dashboard_snapshots ORDER BY snapshot_date DESC LIMIT 10').all();
+  for (const row of rows.results || []) {
+    try {
+      const payload = JSON.parse(String((row as any).payload_json || '{}')) as DashboardV3Board;
+      if (payload.schema_version === 'dashboard-v3') return payload;
+    } catch { /* ignore malformed legacy snapshots */ }
+  }
+  return null;
+}
+
+async function loadLiveDashboardV3(db: D1Database, env: Env, owner: string | null): Promise<DashboardV3Board> {
+  const allPositions = await loadFeishuDashboardPositions(env);
+  const positions = owner ? allPositions.filter((position) => position.hrbps.includes(owner)) : allPositions;
+  const overlay = filterV3OverlayForOwner(await loadD1DashboardOverlay(db, positions), positions, owner);
+  return buildDashboardV3({
+    feishuPositions: positions,
+    d1Overlay: overlay,
+    baseline: await readLatestV3Snapshot(db),
+    dataMode: 'live',
+    updatedAt: now(),
+  });
+}
+
+async function readDashboardV3Snapshot(db: D1Database, snapshotDate: string): Promise<DashboardV3Board | null> {
+  const row = await db.prepare('SELECT payload_json FROM dashboard_snapshots WHERE snapshot_date = ?').bind(snapshotDate).first<{ payload_json: string }>();
+  if (!row) return null;
+  try {
+    const payload = JSON.parse(row.payload_json) as DashboardV3Board;
+    return payload.schema_version === 'dashboard-v3' ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function filterDashboardV3Owner(board: DashboardV3Board, owner: string | null): DashboardV3Board {
+  return scopeDashboardV3Board(board, owner);
+}
+
+app.get('/api/dashboard/recruiting-board-v3', authMiddleware, async (c) => {
+  const mode = c.req.query('mode') || 'live';
+  if (mode !== 'live' && mode !== 'snapshot') return c.json({ detail: 'Invalid dashboard data mode' }, 400);
+  const owner = getDashboardOwner(c);
+  try {
+    if (mode === 'snapshot') {
+      const snapshotDate = c.req.query('snapshot_date');
+      if (!snapshotDate) return c.json({ detail: 'snapshot_date is required' }, 400);
+      const board = await readDashboardV3Snapshot(c.env.DB, snapshotDate);
+      if (!board) return c.json({ detail: 'Dashboard v3 snapshot not found' }, 404);
+      return c.json(filterDashboardV3Owner(board, owner));
+    }
+    return c.json(await loadLiveDashboardV3(c.env.DB, c.env, owner));
+  } catch (error: any) {
+    console.error('[DashboardV3] load failed:', error);
+    return c.json({ detail: '仪表盘 v3 数据加载失败', code: 'DASHBOARD_V3_SOURCE_ERROR' }, 502);
+  }
+});
+
+app.get('/api/dashboard/recruiting-board-v3/reconciliation', authMiddleware, requireRole(['admin']), async (c) => {
+  try {
+    const positions = await loadFeishuDashboardPositions(c.env);
+    const overlay = await loadD1DashboardOverlay(c.env.DB, positions);
+    return c.json(buildDashboardReconciliation(positions, overlay, now()));
+  } catch (error) {
+    console.error('[DashboardV3] reconciliation failed:', error);
+    return c.json({ detail: '仪表盘对账数据加载失败', code: 'DASHBOARD_V3_RECONCILIATION_ERROR' }, 502);
+  }
+});
+
 app.get('/api/dashboard/snapshots', authMiddleware, async (c) => {
   const result = await c.env.DB.prepare(
     'SELECT id, snapshot_date, generated_at FROM dashboard_snapshots ORDER BY snapshot_date DESC',
@@ -2103,6 +2238,25 @@ app.post('/api/dashboard/snapshots', authMiddleware, requireRole(['admin']), asy
   }
 });
 
+app.post('/api/dashboard/snapshots-v3', authMiddleware, requireRole(['admin']), async (c) => {
+  const generatedAt = now();
+  const snapshotDate = toShanghaiSnapshotDate(new Date(generatedAt));
+  const user = c.get('user') as any;
+  try {
+    const snapshot = await createDashboardV3Snapshot(
+      c.env.DB,
+      snapshotDate,
+      await loadLiveDashboardV3(c.env.DB, c.env, null),
+      user.email,
+      generatedAt,
+    );
+    return c.json({ id: snapshot.id, snapshot_date: snapshot.snapshot_date, generated_at: snapshot.generated_at, schema_version: 'dashboard-v3' }, 201);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'snapshot already exists') return c.json({ detail: error.message }, 409);
+    return c.json({ detail: 'Dashboard v3 snapshot creation failed' }, 500);
+  }
+});
+
 type SharedBoardResult = { status: 200; body: Record<string, unknown> } | { status: 404; body: null };
 
 const PUBLIC_BOARD_KPI_FIELDS = [
@@ -2114,10 +2268,74 @@ const PUBLIC_BOARD_KPI_FIELDS = [
   'hired',
 ] as const;
 const HR_OWNER_SCOPE_PREFIX = '__owner__:';
-type PublicShareScope = { owner: string | null; divisions: string[] };
+const DASHBOARD_VERSION_SCOPE_PREFIX = '__dashboard_version__:';
+type PublicShareScope = { owner: string | null; divisions: string[]; dashboardVersion: 'v2' | 'v3' };
 
 function toPublicRecruitingBoard(board: Record<string, any>, scope: PublicShareScope): Record<string, unknown> {
   if (board.version === 'v2') return toPublicRecruitingBoardV2(board as RecruitingBoard, scope) as unknown as Record<string, unknown>;
+  if (board.schema_version === 'dashboard-v3') {
+    const scopedPositions = (board.positions || []).filter((position: any) =>
+      (!scope.owner || (position.hrbps || []).includes(scope.owner))
+      && (!scope.divisions.length || scope.divisions.includes(position.department)),
+    );
+    const scopedDepartments = new Set(scopedPositions.map((position: any) => position.department));
+    const publicPosition = (position: any) => ({
+      position_id: position.position_id,
+      department: position.department,
+      position_name: position.position_name,
+      display_name: position.display_name,
+      city: position.city,
+      hrbps: position.hrbps,
+      priority: position.priority,
+      status: position.status,
+      headcount: position.headcount,
+      resume_push: position.resume_push,
+      first_scheduled: position.first_scheduled,
+      first_pass: position.first_pass,
+      second_pass: position.second_pass,
+      final_pass: position.final_pass,
+      offers: position.offers,
+      hired: position.hired,
+      elapsed_days: position.elapsed_days,
+      weekly_target: position.weekly_target,
+      notes: position.notes,
+      data_sources: position.data_sources,
+      unmatched: position.unmatched,
+    });
+    const divisions = (board.divisions || [])
+      .filter((division: any) => scopedDepartments.has(division.department))
+      .map((division: any) => ({
+        department: division.department,
+        hrbps: division.hrbps,
+        totals: division.totals,
+        funnel: division.funnel,
+        p0_position_count: division.p0_position_count,
+        p1_position_count: division.p1_position_count,
+        completed_position_count: division.completed_position_count,
+        in_progress_position_count: division.in_progress_position_count,
+        in_progress_average_elapsed_days: division.in_progress_average_elapsed_days,
+        positions: division.positions.filter((position: any) => scopedPositions.some((item: any) => item.position_id === position.position_id)).map(publicPosition),
+      }));
+    const hrbps = (board.hrbps || []).filter((hrbp: any) => !scope.owner || hrbp.name === scope.owner);
+    return {
+      schema_version: 'dashboard-v3',
+      data_mode: board.data_mode,
+      snapshot_date: board.snapshot_date || null,
+      updated_at: board.updated_at,
+      kpis: board.kpis,
+      funnel: board.funnel,
+      totals: board.totals,
+      insights: board.insights,
+      weekly_dynamic: board.weekly_dynamic,
+      divisions,
+      hrbps,
+      positions: scopedPositions.map(publicPosition),
+      p2_positions: (board.p2_positions || []).filter((position: any) =>
+        (!scope.owner || (position.hrbps || []).includes(scope.owner))
+        && (!scope.divisions.length || scope.divisions.includes(position.department)),
+      ).map(publicPosition),
+    };
+  }
   const scopedRows = scope.divisions.length
     ? (board.rows || []).filter((row: any) => scope.divisions.includes(row.division))
     : (board.rows || []);
@@ -2180,9 +2398,13 @@ function parsePublicShareScope(link: any): PublicShareScope {
     ? parsedValues.filter((value: unknown): value is string => typeof value === 'string')
     : [];
   const ownerValue = values.find((value) => value.startsWith(HR_OWNER_SCOPE_PREFIX));
+  const dashboardVersionValue = values.find((value) => value.startsWith(DASHBOARD_VERSION_SCOPE_PREFIX));
   return {
     owner: ownerValue ? ownerValue.slice(HR_OWNER_SCOPE_PREFIX.length) || null : null,
-    divisions: link.scope_type === 'divisions' ? values.filter((value) => !value.startsWith(HR_OWNER_SCOPE_PREFIX)) : [],
+    divisions: link.scope_type === 'divisions'
+      ? values.filter((value) => !value.startsWith(HR_OWNER_SCOPE_PREFIX) && !value.startsWith(DASHBOARD_VERSION_SCOPE_PREFIX))
+      : [],
+    dashboardVersion: dashboardVersionValue?.slice(DASHBOARD_VERSION_SCOPE_PREFIX.length) === 'v3' ? 'v3' : 'v2',
   };
 }
 
@@ -2213,6 +2435,8 @@ export async function getSharedBoard(
   if (!board) return { status: 404, body: null };
   if (board.version === 'v2' && scope.owner) {
     board = applyRecruitingBoardOwnerScope(board as RecruitingBoard, scope.owner);
+  } else if (board.schema_version === 'dashboard-v3' && scope.owner) {
+    board = scopeDashboardV3Board(board as DashboardV3Board, scope.owner);
   }
   return { status: 200, body: toPublicRecruitingBoard(board, scope) };
 }
@@ -2254,9 +2478,11 @@ app.post('/api/dashboard/share-links', authMiddleware, requireRole(['admin', 'hr
   const user = c.get('user') as any;
   const isAdmin = user.role === 'admin';
   const scopeType = isAdmin && body.scope_type === 'divisions' ? 'divisions' : 'all';
-  const scopeIds = isAdmin
+  const dashboardVersion = body.dashboard_version === 'v3' ? 'v3' : 'v2';
+  const baseScopeIds = isAdmin
     ? (Array.isArray(body.scope_ids) ? body.scope_ids.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0) : [])
     : (user.full_name ? [`${HR_OWNER_SCOPE_PREFIX}${user.full_name}`] : []);
+  const scopeIds = [...baseScopeIds, `${DASHBOARD_VERSION_SCOPE_PREFIX}${dashboardVersion}`];
   if (!isAdmin && scopeIds.length === 0) return c.json({ detail: 'HR profile must include a full name before sharing' }, 400);
   if (scopeType === 'divisions' && scopeIds.length === 0) return c.json({ detail: 'Division scope requires at least one division' }, 400);
 
@@ -2296,7 +2522,9 @@ app.get('/api/shared/dashboard/:token', async (c) => {
     c.env.DB,
     c.req.param('token'),
     new Date(),
-    async (scope) => loadLiveRecruitingBoard(c.env.DB, scope.owner),
+    async (scope) => scope.dashboardVersion === 'v3'
+      ? loadLiveDashboardV3(c.env.DB, c.env, scope.owner)
+      : loadLiveRecruitingBoard(c.env.DB, scope.owner),
   );
   return result.status === 404 ? c.notFound() : c.json(result.body);
 });
@@ -4974,8 +5202,14 @@ app.post('/api/resumes', authMiddleware, async (c) => {
 
     const recordId = crypto.randomUUID();
 
-    // 文件哈希去重（mail_sync.py 等外部调用方传入 file_sha256）
-    const fileSha256 = (formData.get('file_sha256') as string) || '';
+    // 文件哈希去重（外部调用方可传 file_sha256；本地上传缺失时由 Worker 计算）
+    let fileSha256 = ((formData.get('file_sha256') as string) || '').trim().toLowerCase();
+    if (!fileSha256) fileSha256 = await sha256Hex(fileBuffer);
+    const ingestion = buildResumeIngestionIdentity({
+      source: 'local_upload',
+      receivedAt: now(),
+      fileSha256,
+    });
     if (fileSha256) {
       try {
         const existingByHash = await c.env.DB.prepare(
@@ -5024,7 +5258,7 @@ app.post('/api/resumes', authMiddleware, async (c) => {
     if (ocrPending && !extractedText) {
       try {
         await c.env.DB.prepare(
-          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, ocr_status, file_sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, ocr_status, file_sha256, resume_received_at, resume_source, resume_source_record_id, resume_ingest_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         ).bind(
           recordId,
           displayName,
@@ -5035,6 +5269,10 @@ app.post('/api/resumes', authMiddleware, async (c) => {
           'ocr_processing',
           'ocr_processing',
           fileSha256 || null,
+          ingestion.receivedAt,
+          ingestion.source,
+          ingestion.sourceRecordId,
+          ingestion.ingestKey,
           now()
         ).run();
       } catch (dbErr: any) {
@@ -5100,12 +5338,12 @@ app.post('/api/resumes', authMiddleware, async (c) => {
       const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ?').bind(recordId).first();
       if (existing) {
         await c.env.DB.prepare(
-          'UPDATE resumes SET candidate_name=?, position_applied=?, mapped_position=?, raw_text=?, parse_status=?, updated_at=? WHERE id=?'
-        ).bind(displayName, mappedPos, mappedPos, extractedText?.substring(0, 200000) || '', 'pending_screening', now(), recordId).run();
+          'UPDATE resumes SET candidate_name=?, position_applied=?, mapped_position=?, raw_text=?, parse_status=?, resume_received_at=COALESCE(NULLIF(resume_received_at, \'\'), ?), resume_source=COALESCE(NULLIF(resume_source, \'\'), ?), resume_source_record_id=COALESCE(NULLIF(resume_source_record_id, \'\'), ?), resume_ingest_key=COALESCE(NULLIF(resume_ingest_key, \'\'), ?), updated_at=? WHERE id=?'
+        ).bind(displayName, mappedPos, mappedPos, extractedText?.substring(0, 200000) || '', 'pending_screening', ingestion.receivedAt, ingestion.source, ingestion.sourceRecordId, ingestion.ingestKey, now(), recordId).run();
       } else {
         await c.env.DB.prepare(
-          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, file_sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(recordId, displayName, mappedPos, mappedPos, JSON.stringify({ name: displayName }), extractedText?.substring(0, 200000) || '', 'pending_screening', fileSha256 || null, now()).run();
+          'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, parse_status, file_sha256, resume_received_at, resume_source, resume_source_record_id, resume_ingest_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(recordId, displayName, mappedPos, mappedPos, JSON.stringify({ name: displayName }), extractedText?.substring(0, 200000) || '', 'pending_screening', fileSha256 || null, ingestion.receivedAt, ingestion.source, ingestion.sourceRecordId, ingestion.ingestKey, now()).run();
       }
     } catch (dbErr: any) {
       logResumeProcessingError('upload.legacy.db_error', dbErr, { resumeId: recordId });
@@ -5214,6 +5452,7 @@ app.post('/api/resumes/external', async (c) => {
     const candidateName = (formData.get('candidate_name') as string) || '';
     const rawText = (formData.get('raw_text') as string) || '';
     const source = (formData.get('source') as string) || 'external';
+    const sourceRecordId = (formData.get('source_record_id') as string) || '';
 
     if (!file || !file.name) {
       return c.json({ detail: '请上传简历文件（file 字段）' }, 400);
@@ -5224,6 +5463,25 @@ app.post('/api/resumes/external', async (c) => {
 
     const fileBuffer = await file.arrayBuffer();
     const recordId = crypto.randomUUID();
+    const fileSha256 = ((formData.get('file_sha256') as string) || '').trim().toLowerCase() || await sha256Hex(fileBuffer);
+    const ingestion = buildResumeIngestionIdentity({
+      source: 'external_api',
+      sourceRecordId,
+      fileSha256,
+      receivedAt: now(),
+    });
+
+    const existingByIngestion = await c.env.DB.prepare(
+      'SELECT id, candidate_name FROM resumes WHERE file_sha256 = ? OR resume_ingest_key = ? LIMIT 1'
+    ).bind(fileSha256, ingestion.ingestKey).first<any>().catch(() => null);
+    if (existingByIngestion) {
+      return c.json({
+        id: existingByIngestion.id,
+        candidate_name: existingByIngestion.candidate_name,
+        dedup: true,
+        detail: '简历已接收，返回已有记录',
+      }, 200);
+    }
 
     // 从文件名解析姓名和岗位（与手动上传一致）
     let parsedPositionName = '';
@@ -5300,7 +5558,7 @@ app.post('/api/resumes/external', async (c) => {
     }
     try {
       await c.env.DB.prepare(
-        'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, ocr_markdown, parse_status, ocr_status, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO resumes (id, candidate_name, position_applied, mapped_position, parsed_data, raw_text, ocr_markdown, parse_status, ocr_status, status, file_sha256, resume_received_at, resume_source, resume_source_record_id, resume_ingest_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).bind(
         recordId,
         displayName,
@@ -5312,6 +5570,11 @@ app.post('/api/resumes/external', async (c) => {
         (hasRawText || ocrMarkdown) ? 'pending_screening' : 'ocr_processing',
         (hasRawText || ocrMarkdown) ? 'none' : 'ocr_processing',
         'pending_screening',
+        fileSha256,
+        ingestion.receivedAt,
+        ingestion.source,
+        ingestion.sourceRecordId,
+        ingestion.ingestKey,
         now(),
         now()
       ).run();
@@ -5866,7 +6129,7 @@ app.get('/api/resumes', authMiddleware, async (c) => {
     }
     // 纯 D1 驱动：直接从 resumes 表读取，不依赖飞书
     const d1Rows = await c.env.DB.prepare(
-      'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, hr_disposition, business_screening_status, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY created_at DESC, updated_at DESC'
+      'SELECT id, candidate_name, email, contact, position_applied, mapped_position, status, stage, match_score, ai_review, ai_evaluation, screening_result, parsed_data, parse_status, raw_text, resume_markdown, ocr_markdown, ocr_status, hr_review, hr_disposition, business_screening_status, gender, birthday, education, work_experience, certifications, self_evaluation, hard_requirement_result, capability_scores, three_layer_match, feishu_file_token, mineru_task_id, mineru_status, file_sha256, resume_received_at, resume_source, resume_source_record_id, resume_ingest_key, datetime(created_at) as created_at, datetime(updated_at) as updated_at FROM resumes ORDER BY created_at DESC, updated_at DESC'
     ).all();
     let items = (d1Rows.results || []).map((r: any) => serializeResumeCardRow(r));
 
@@ -6334,6 +6597,11 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
       const positionName = resolveMappedPosition(posMap, item.mapped_position || item.position_applied || '');
       const mappedPos = positionName || item.mapped_position || item.position_applied || '';
       const id = item.id; // = 飞书 record_id，保证幂等
+      const ingestion = buildResumeIngestionIdentity({
+        source: 'feishu',
+        sourceRecordId: String(item.feishu_record_id || id || ''),
+        receivedAt: item.created_at || now(),
+      });
       const existing = await c.env.DB.prepare('SELECT id FROM resumes WHERE id = ? LIMIT 1').bind(id).first();
 
       // 合并 parsed_data：AI 解析字段（学校/专业/技能等）+ 飞书元数据（保持兼容）
@@ -6371,24 +6639,32 @@ app.post('/api/resumes/sync-from-feishu', authMiddleware, async (c) => {
 
       if (existing) {
         await c.env.DB.prepare(
-          `UPDATE resumes SET candidate_name=?, email=?, position_applied=?, mapped_position=?, match_score=?, screening_result=?, ai_review=?, hr_review=?, status=?, stage=?, parsed_data=?, parse_status=? WHERE id=?`
+          `UPDATE resumes SET candidate_name=?, email=?, position_applied=?, mapped_position=?, match_score=?, screening_result=?, ai_review=?, hr_review=?, status=?, stage=?, parsed_data=?, parse_status=?, resume_received_at=COALESCE(NULLIF(resume_received_at, ''), ?), resume_source=COALESCE(NULLIF(resume_source, ''), ?), resume_source_record_id=COALESCE(NULLIF(resume_source_record_id, ''), ?), resume_ingest_key=COALESCE(NULLIF(resume_ingest_key, ''), ?) WHERE id=?`
         ).bind(
           item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos,
           item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
           JSON.stringify(mergedParsedData),
           parseStatus,
+          ingestion.receivedAt,
+          ingestion.source,
+          ingestion.sourceRecordId,
+          ingestion.ingestKey,
           id
         ).run();
         updated++;
       } else {
         await c.env.DB.prepare(
-          `INSERT INTO resumes (id, candidate_name, email, position_applied, mapped_position, match_score, screening_result, ai_review, hr_review, status, stage, parsed_data, parse_status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?, ?)`
+          `INSERT INTO resumes (id, candidate_name, email, position_applied, mapped_position, match_score, screening_result, ai_review, hr_review, status, stage, parsed_data, parse_status, resume_received_at, resume_source, resume_source_record_id, resume_ingest_key, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           id, item.candidate_name || '', item.email || '', item.position_applied || '', mappedPos, item.match_score ?? null,
           screening, item.ai_evaluation || '', hr, status, stage,
           JSON.stringify(mergedParsedData),
           parseStatus,
+          ingestion.receivedAt,
+          ingestion.source,
+          ingestion.sourceRecordId,
+          ingestion.ingestKey,
           now()
         ).run();
         created++;
@@ -13034,8 +13310,7 @@ export default {
     if (event.cron === '55 15 * * *') {
       ctx.waitUntil((async () => {
         const at = new Date(event.scheduledTime);
-        const board = await loadLiveRecruitingBoard(env.DB, null);
-        try { await createDashboardSnapshot(env.DB, toShanghaiSnapshotDate(at), board, 'cron', at.toISOString()); }
+        try { await createDashboardV3Snapshot(env.DB, toShanghaiSnapshotDate(at), await loadLiveDashboardV3(env.DB, env, null), 'cron', at.toISOString()); }
         catch (error) { if (!(error instanceof Error && error.message === 'snapshot already exists')) throw error; }
       })());
       return;

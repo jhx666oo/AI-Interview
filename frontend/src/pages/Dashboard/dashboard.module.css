@@ -793,3 +793,36 @@
     height: 300px;
   }
 }
+
+/* Dashboard v3: the Miaoda-style view keeps the hierarchy readable on laptop
+   screens while allowing cards to collapse instead of forcing a wide table. */
+.v3Dashboard { display: grid; gap: 24px; color: #172033; }
+.v3Hero, .v3SectionTitle { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
+.v3Hero { padding: 8px 4px 0; }
+.v3Hero :global(.ant-typography), .v3SectionTitle :global(.ant-typography), .v3CardHeading :global(.ant-typography) { margin: 4px 0; }
+.v3Hero :global(.ant-typography-title), .v3SectionTitle :global(.ant-typography-title) { font-weight: 760; letter-spacing: -0.03em; }
+.v3HeroBadge { color: #68758c; font-size: 13px; white-space: nowrap; }
+.v3Eyebrow { display: inline-flex; padding: 4px 10px; border-radius: 999px; background: #eef2ff; color: #4f46e5; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+.v3KpiGrid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px; }
+.v3Metric { min-width: 0; padding: 14px 15px; border: 1px solid #e4e9f2; border-radius: 12px; background: #fff; display: grid; gap: 5px; }
+.v3Metric span, .v3Metric small { color: #7a879b; font-size: 12px; }
+.v3Metric strong { font-size: clamp(20px, 2vw, 28px); line-height: 1.1; color: #172033; }
+.v3MetricBlue strong { color: #347cf3; }.v3MetricGreen strong { color: #2b9c63; }.v3MetricOrange strong { color: #d8871a; }.v3MetricRed strong { color: #d94b5c; }
+.v3FunnelCard, .v3DivisionCard, .v3HrbpCard, .v3InsightCard, .v3P2Card { border: 1px solid #e0e7f0; border-radius: 18px; box-shadow: 0 8px 26px rgba(37, 58, 92, .06); }
+.v3CardHeading { display: flex; justify-content: space-between; align-items: flex-start; color: #4f46e5; }
+.v3CardHeading > :global(.anticon) { font-size: 24px; }
+.v3FunnelRows { display: grid; gap: 13px; margin-top: 22px; }
+.v3FunnelRow { display: grid; grid-template-columns: 100px minmax(80px, 1fr) 72px 72px; gap: 10px; align-items: center; }
+.v3FunnelLabel, .v3FunnelRow small { color: #65748d; font-size: 13px; }.v3FunnelRow strong { text-align: right; }.v3FunnelRow small { text-align: right; }
+.v3FunnelBar { height: 18px; overflow: hidden; border-radius: 999px; background: #edf1f7; }.v3FunnelBar span { display: block; height: 100%; border-radius: inherit; transition: width .25s ease; }
+.v3Section { display: grid; gap: 15px; }.v3DivisionGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.v3DivisionTitle, .v3HrbpHeading { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }.v3DivisionTitle :global(.ant-typography), .v3HrbpHeading :global(.ant-typography) { margin: 0; }
+.v3MetricsGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 18px; }.v3MetricsGrid .v3Metric { padding: 10px; border-radius: 10px; background: #f8fafc; border: 0; }.v3MetricsGrid .v3Metric strong { font-size: 20px; }
+.v3MiniFunnel { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); padding: 18px 0 10px; margin-top: 14px; border-top: 1px solid #edf0f5; }.v3MiniFunnel div { display: grid; gap: 2px; text-align: center; border-right: 1px solid #edf0f5; }.v3MiniFunnel div:last-child { border: 0; }.v3MiniFunnel span, .v3MiniFunnel small { color: #8894a8; font-size: 11px; }.v3MiniFunnel strong { font-size: 17px; }
+.v3ExpandButton, .v3P2Toggle { width: 100%; border: 0; background: transparent; color: #347cf3; cursor: pointer; text-align: left; padding: 10px 0 0; font-size: 13px; }.v3P2Toggle { display: flex; align-items: center; justify-content: space-between; }.v3P2Toggle :global(.ant-typography) { margin: 4px 0; }
+.v3PositionList { display: grid; gap: 8px; margin-top: 10px; }.v3PositionRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid #edf0f5; border-radius: 10px; background: #fbfcfe; }.v3PositionRow > div { min-width: 0; display: grid; gap: 3px; }.v3PositionRow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.v3PositionRow span { color: #7a879b; font-size: 12px; }
+.v3HrbpGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }.v3HrbpHeading { justify-content: flex-start; color: #347cf3; }.v3HrbpHeading > :global(.anticon) { font-size: 22px; }.v3HrbpMetrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 16px 0; }.v3HrbpMetrics .v3Metric { padding: 8px; border: 0; background: #f8fafc; }.v3HrbpMetrics .v3Metric strong { font-size: 18px; }.v3ConversionLine { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; color: #65748d; font-size: 12px; }.v3ConversionLine b { display: block; color: #2b9c63; font-size: 11px; }
+.v3InsightCard { background: #f7f9fc; }.v3InsightCard :global(.ant-typography) { margin-bottom: 8px; }.v3P2Card { background: #fbfcff; }
+@media (max-width: 1300px) { .v3KpiGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }.v3HrbpGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 860px) { .v3Hero, .v3SectionTitle { align-items: flex-start; flex-direction: column; }.v3DivisionGrid, .v3HrbpGrid { grid-template-columns: 1fr; }.v3KpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.v3FunnelRow { grid-template-columns: 82px minmax(60px, 1fr) 48px 52px; gap: 6px; }.v3FunnelRow small { font-size: 11px; }.v3MiniFunnel { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 0; }.v3MiniFunnel div:nth-child(3n) { border-right: 0; } }
+@media (max-width: 520px) { .v3MetricsGrid, .v3HrbpMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.v3PositionRow { align-items: flex-start; flex-direction: column; }.v3FunnelRow { grid-template-columns: 70px minmax(50px, 1fr) 40px; }.v3FunnelRow small { display: none; } }
