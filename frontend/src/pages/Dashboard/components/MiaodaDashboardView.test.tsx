@@ -72,6 +72,28 @@ describe('MiaodaDashboardView', () => {
     }).length).toBeGreaterThan(0);
   });
 
+  it('scales funnel shapes by stage count with the reference 8% minimum', () => {
+    const view = render(<MiaodaDashboardView board={{ ...board, funnel: [
+      { key: 'resume_push', label: '简历推送', count: 100, conversion_rate: null },
+      { key: 'first_scheduled', label: '安排1面', count: 20, conversion_rate: 20 },
+      { key: 'first_pass', label: '1面通过', count: 1, conversion_rate: 5 },
+    ] }} />);
+
+    const widths = view.getAllByRole('img')
+      .map((shape) => (shape.firstElementChild as HTMLElement | null)?.style.width ?? '')
+      .filter(Boolean);
+    expect(widths).toEqual(['100%', '20%', '8%']);
+  });
+
+  it('renders each funnel stage as an inverted trapezoid', () => {
+    const view = render(<MiaodaDashboardView board={board} />);
+    const shape = view.getAllByRole('img')
+      .map((item) => item.firstElementChild as HTMLElement | null)
+      .find((item) => item?.style.width === '100%');
+
+    expect(shape?.style.clipPath).toBe('polygon(0% 0%, 100% 0%, 93% 100%, 7% 100%)');
+  });
+
   it('provides a weekly dynamic refresh control', async () => {
     let refreshCount = 0;
     const view = render(<MiaodaDashboardView board={board} onRefresh={async () => { refreshCount += 1; }} />);

@@ -14,6 +14,7 @@ const number = (value: number | null | undefined) => value == null ? '—' : val
 const percent = (value: number | null | undefined) => value == null ? 'N/A' : `${value.toFixed(1)}%`;
 const rate = (numerator: number, denominator: number) => denominator > 0 ? (numerator / denominator) * 100 : null;
 const funnelColors = ['#f2f3f5', '#e8eaef', '#dfe2e8', '#d5d9e1', '#c8cdd7', '#bcc2cc', '#afb5c0'];
+const funnelShapeClipPath = 'polygon(0% 0%, 100% 0%, 93% 100%, 7% 100%)';
 
 function SectionHeading({ eyebrow, title, description, meta }: { eyebrow?: string; title: string; description?: string; meta?: string }) {
   return <div className={styles.miaodaSectionHeading}>
@@ -77,7 +78,9 @@ function Funnel({ stages }: { stages: DashboardV3FunnelStage[] }) {
       {stages.map((stage, index) => {
         const conversion = index === 0 ? 100 : stage.conversion_rate;
         const overallRate = entry > 0 ? (stage.count / entry) * 100 : null;
-        const width = `${Math.max(stage.count > 0 ? 18 : 8, stage.count / max * 100)}%`;
+        // Match the reference funnel's 8% minimum while preserving the
+        // relative width of stages whose counts are large enough to show it.
+        const width = `${Math.max(8, stage.count / max * 100)}%`;
         const accessibleName = `${stage.label}：${number(stage.count)}人，相对上一层${percent(conversion)}，相对总入口${percent(overallRate)}`;
         return <div className={styles.miaodaFunnelRow} key={stage.key}>
           <Tooltip
@@ -92,7 +95,7 @@ function Funnel({ stages }: { stages: DashboardV3FunnelStage[] }) {
             styles={{ container: { color: '#354052', boxShadow: '0 8px 24px rgb(31 41 55 / 16%)' } }}
           >
             <div className={styles.miaodaFunnelShapeWrap} role="img" aria-label={accessibleName} tabIndex={0}>
-              <div className={styles.miaodaFunnelShape} style={{ width, opacity: stage.count === 0 ? 0.72 : 1, background: funnelColors[index % funnelColors.length] }} />
+              <div className={styles.miaodaFunnelShape} style={{ width, clipPath: funnelShapeClipPath, opacity: stage.count === 0 ? 0.72 : 1, background: funnelColors[index % funnelColors.length] }} />
             </div>
           </Tooltip>
           <span className={styles.miaodaFunnelConnector} aria-hidden="true" />
