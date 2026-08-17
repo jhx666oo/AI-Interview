@@ -50,6 +50,9 @@ function buildHarness(options?: {
         business_screening_dispatch_group_id: '',
         education: '本科',
         work_experience: '5年',
+        ocr_markdown: '# 候选人甲\n临床护理工作 5 年，持有护士资格证。',
+        match_score: 88,
+        ai_review: '{"summary":"临床经验丰富","recommendation":"recommend"}',
       },
     ]).map((resume) => [resume.id, { ...resume }]),
   );
@@ -123,6 +126,14 @@ function buildHarness(options?: {
           business_screening_status: resume?.business_screening_status || null,
           business_screening_remark: resume?.business_screening_remark || null,
           business_screened_at: resume?.business_screened_at || null,
+          ocr_markdown: resume?.ocr_markdown || null,
+          raw_text: resume?.raw_text || null,
+          resume_markdown: resume?.resume_markdown || null,
+          ai_review: resume?.ai_review || null,
+          ai_evaluation: resume?.ai_evaluation || null,
+          match_score: resume?.match_score ?? null,
+          capability_scores: resume?.capability_scores || null,
+          hard_requirement_result: resume?.hard_requirement_result || null,
         });
       }
     },
@@ -681,7 +692,11 @@ describe('business screening routes', () => {
       }),
     ]);
     expect(body.resumes[0].email).toBeUndefined();
-    expect(body.resumes[0].contact).toBeUndefined();
+    // 电话透出给面试官（业务筛选决策需要联系候选人）
+    expect(body.resumes[0].contact).toBe('13800000000');
+    // 简历原文与 AI 评估字段透出（用于业务筛选页展示）
+    expect(typeof body.resumes[0].resumeText).toBe('string');
+    expect(body.resumes[0].matchScore).toBeDefined();
   });
 
   it('blocks expired or revoked public links', async () => {

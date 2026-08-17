@@ -43,6 +43,13 @@ export interface BusinessScreeningResume {
   status: BusinessScreeningResumeStatus;
   remark?: string;
   processedAt?: string;
+  contact?: string;
+  resumeText?: string;
+  aiReview?: string;
+  aiEvaluation?: string;
+  matchScore?: number;
+  capabilityScores?: string;
+  hardRequirementResult?: string;
 }
 
 export interface BusinessScreeningBatch {

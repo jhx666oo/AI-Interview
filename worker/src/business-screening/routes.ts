@@ -54,6 +54,15 @@ export interface BusinessScreeningBatchItemView {
   business_screening_remark?: string | null;
   business_screened_at?: string | null;
   dispatch_group_id?: string | null;
+  // 简历原文与 AI 评估（业务筛选公开页展示用）
+  ocr_markdown?: string | null;
+  raw_text?: string | null;
+  resume_markdown?: string | null;
+  ai_review?: string | null;
+  ai_evaluation?: string | null;
+  match_score?: number | null;
+  capability_scores?: string | null;
+  hard_requirement_result?: string | null;
 }
 
 // 业务筛选公开页透出的结构化档案（与简历详情页 Descriptions 字段一致，不含联系方式与简历原文）
@@ -216,7 +225,11 @@ function isBatchAccessible(batch: ResumePushBatchRow, nowIso: string): { ok: tru
   return { ok: true };
 }
 
+// 业务筛选公开页透出的候选人信息：结构化档案 + 简历原文（截断）+ AI 评估字段
+const PUBLIC_RESUME_TEXT_LIMIT = 100000;
+
 function sanitizePublicItem(item: BusinessScreeningBatchItemView) {
+  const rawText = text(item.ocr_markdown) || text(item.raw_text) || text(item.resume_markdown);
   return {
     id: item.resume_id,
     candidateName: text(item.candidate_name) || '候选人',
@@ -226,7 +239,16 @@ function sanitizePublicItem(item: BusinessScreeningBatchItemView) {
     status: item.status,
     remark: item.remark || undefined,
     processedAt: item.processed_at || undefined,
-    // 结构化档案：parsed_data 中的非敏感字段（不含 phone/email/contact 与简历原文）
+    contact: text(item.contact) || undefined,
+    // 简历原文：MinerU OCR / 原始文本 / Markdown，取第一个非空，截断到安全长度
+    resumeText: rawText ? rawText.slice(0, PUBLIC_RESUME_TEXT_LIMIT) : undefined,
+    // AI 初筛评估字段（透传给公开页展示，与简历详情页一致）
+    aiReview: item.ai_review || undefined,
+    aiEvaluation: item.ai_evaluation || undefined,
+    matchScore: item.match_score === null || item.match_score === undefined ? undefined : Number(item.match_score),
+    capabilityScores: item.capability_scores || undefined,
+    hardRequirementResult: item.hard_requirement_result || undefined,
+    // 结构化档案：parsed_data 中的字段（不含 email）
     profile: buildPublicProfile(item.parsed_data),
   };
 }
@@ -722,7 +744,8 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         db,
         `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
                 r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience, r.parsed_data,
-                r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at
+                r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at,
+                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
           WHERE i.batch_id = ?
@@ -734,7 +757,8 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
       return await db.prepare(
         `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
                 r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience, r.parsed_data,
-                r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at
+                r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at,
+                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
           WHERE i.batch_id = ? AND i.resume_id = ?
