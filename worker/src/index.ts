@@ -5662,15 +5662,54 @@ function tokenizeCondition(condition: string): string[] {
   return [...tokens];
 }
 
-// 组装简历全文（沿用 ocr_markdown → raw_text → resume_markdown 优先级 + parsed_data JSON）
+// 把 AI 解析的结构化字段转成标签化可读文本（简历详情页 Descriptions 同源信息）。
+// 相比 raw JSON，清晰标注的「证书/资质」「工作经历」等让自定义筛选 AI 打分更易命中资格证据。
+function buildStructuredResumeText(p: any): string {
+  if (!p || typeof p !== 'object') return '';
+  const lines: string[] = [];
+  const scalar = (label: string, v: unknown) => {
+    const s = String(v ?? '').trim();
+    if (s && s !== 'null' && s !== 'undefined') lines.push(`${label}：${s}`);
+  };
+  const list = (label: string, v: unknown, fmt: (item: any) => string) => {
+    const arr = Array.isArray(v) ? v : (typeof v === 'string' && v.trim() ? [v] : []);
+    const items = arr.map(fmt).filter((s) => String(s).trim());
+    if (items.length) lines.push(`${label}：${items.join('；')}`);
+  };
+  scalar('学历', p.highest_degree);
+  scalar('毕业院校', p.school);
+  scalar('专业', p.major);
+  scalar('工作年限', p.years_of_experience);
+  scalar('最近公司', p.recent_company);
+  scalar('性别', p.gender);
+  scalar('出生年月', p.birthday);
+  scalar('当前职位', p.current_position);
+  scalar('电话', p.phone);
+  scalar('自我评价', p.self_evaluation);
+  list('技能', p.skills, (i) => String(i).trim());
+  list('证书/资质', p.certifications, (i) => String(i).trim());
+  list('工作经历', p.work_experience, (w) => {
+    const head = [w?.company, w?.title, w?.duration || (w?.start && w?.end ? `${w.start}~${w.end}` : '')]
+      .filter((s) => String(s || '').trim()).join('·');
+    const desc = String(w?.description || '').trim();
+    return head + (desc ? `：${desc}` : '');
+  });
+  list('教育经历', p.education, (e) => [e?.school, e?.degree, e?.major, e?.start && e?.end ? `${e.start}~${e.end}` : '']
+    .filter((s) => String(s || '').trim()).join('·'));
+  return lines.join('\n');
+}
+
+// 组装简历全文：AI 解析摘要（结构化，最前，信息最可靠）+ 原始文本。
 function buildResumeFullText(r: any): string {
-  const parts = [r.ocr_markdown, r.raw_text, r.resume_markdown].filter(Boolean);
+  let summary = '';
   if (r.parsed_data) {
     try {
-      const extra = typeof r.parsed_data === 'string' ? r.parsed_data : JSON.stringify(r.parsed_data);
-      if (extra) parts.push(extra);
+      const parsed = typeof r.parsed_data === 'string' ? JSON.parse(r.parsed_data) : r.parsed_data;
+      const structured = buildStructuredResumeText(parsed);
+      if (structured) summary = `【AI 解析摘要】\n${structured}`;
     } catch {}
   }
+  const parts = [summary, r.ocr_markdown, r.raw_text, r.resume_markdown].filter(Boolean);
   return parts.join('\n');
 }
 
