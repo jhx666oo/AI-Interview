@@ -64,7 +64,7 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs =
 }
 
 /** 获取 tenant_access_token（带 D1 缓存），逻辑与 index.ts getFeishuToken 保持一致 */
-async function getTenantAccessToken(env: FeishuLinkEnv): Promise<string> {
+async function getTenantAccessToken(env: FeishuLinkEnv, fallbackAppId?: string): Promise<string> {
   try {
     const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('feishu_token').first();
     if (row && row.value) {
@@ -73,10 +73,10 @@ async function getTenantAccessToken(env: FeishuLinkEnv): Promise<string> {
     }
   } catch { /* 缓存读取失败则重新获取 */ }
 
-  const appId = env.FEISHU_APP_ID || '';
+  const appId = env.FEISHU_APP_ID || fallbackAppId || '';
   const appSecret = env.FEISHU_APP_SECRET || '';
   if (!appId || !appSecret) {
-    throw new Error('未配置 FEISHU_APP_ID / FEISHU_APP_SECRET');
+    throw new Error(`飞书凭证未配置（缺少 ${!appId ? 'FEISHU_APP_ID' : 'FEISHU_APP_SECRET'}${!appId && !appSecret ? ' / FEISHU_APP_SECRET' : ''}）`);
   }
   const resp = await fetchWithTimeout('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
     method: 'POST',
@@ -96,8 +96,8 @@ async function getTenantAccessToken(env: FeishuLinkEnv): Promise<string> {
   return data.tenant_access_token;
 }
 
-async function feishuGet(env: FeishuLinkEnv, url: string): Promise<any> {
-  const token = await getTenantAccessToken(env);
+async function feishuGet(env: FeishuLinkEnv, url: string, fallbackAppId?: string): Promise<any> {
+  const token = await getTenantAccessToken(env, fallbackAppId);
   const resp = await fetchWithTimeout(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -109,23 +109,23 @@ async function feishuGet(env: FeishuLinkEnv, url: string): Promise<any> {
 }
 
 /** 读取飞书文档纯文本（docx raw_content） */
-async function fetchDocxContent(env: FeishuLinkEnv, token: string): Promise<string> {
-  const data = await feishuGet(env, `https://open.feishu.cn/open-apis/docx/v1/documents/${token}/raw_content`);
+async function fetchDocxContent(env: FeishuLinkEnv, token: string, fallbackAppId?: string): Promise<string> {
+  const data = await feishuGet(env, `https://open.feishu.cn/open-apis/docx/v1/documents/${token}/raw_content`, fallbackAppId);
   const content: string = data?.data?.content || '';
   if (!content.trim()) throw new Error('文档内容为空');
   return content.trim();
 }
 
 /** 读取多维表格前 20 条记录，拼接为「字段名: 值」文本 */
-async function fetchBitableContent(env: FeishuLinkEnv, appToken: string, tableId: string | null): Promise<string> {
+async function fetchBitableContent(env: FeishuLinkEnv, appToken: string, tableId: string | null, fallbackAppId?: string): Promise<string> {
   let targetTableId = tableId;
   if (!targetTableId) {
-    const tablesData = await feishuGet(env, `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables?page_size=100`);
+    const tablesData = await feishuGet(env, `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables?page_size=100`, fallbackAppId);
     const tables = tablesData?.data?.items || [];
     if (!tables.length) throw new Error('多维表格中无数据表');
     targetTableId = tables[0].table_id;
   }
-  const recordsData = await feishuGet(env, `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${targetTableId}/records?page_size=20`);
+  const recordsData = await feishuGet(env, `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${targetTableId}/records?page_size=20`, fallbackAppId);
   const records = recordsData?.data?.items || [];
   if (!records.length) throw new Error('多维表格中无记录');
   const lines: string[] = [];
@@ -149,12 +149,12 @@ async function fetchBitableContent(env: FeishuLinkEnv, appToken: string, tableId
 }
 
 /** 读取电子表格（第一个工作表，最多 10 行 x 8 列） */
-async function fetchSheetContent(env: FeishuLinkEnv, spreadsheetToken: string): Promise<string> {
-  const sheetsData = await feishuGet(env, `https://open.feishu.cn/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/sheets/query`);
+async function fetchSheetContent(env: FeishuLinkEnv, spreadsheetToken: string, fallbackAppId?: string): Promise<string> {
+  const sheetsData = await feishuGet(env, `https://open.feishu.cn/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/sheets/query`, fallbackAppId);
   const sheets = sheetsData?.data?.sheets || [];
   if (!sheets.length) throw new Error('电子表格中无工作表');
   const sheetId = sheets[0].sheet_id;
-  const valuesData = await feishuGet(env, `https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${sheetId}!A1:H10`);
+  const valuesData = await feishuGet(env, `https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${sheetId}!A1:H10`, fallbackAppId);
   const rows: unknown[][] = valuesData?.data?.valueRange?.values || [];
   if (!rows.length) throw new Error('电子表格内容为空');
   const lines = rows
@@ -163,24 +163,24 @@ async function fetchSheetContent(env: FeishuLinkEnv, spreadsheetToken: string): 
   return lines.join('\n');
 }
 
-/** 根据飞书链接抓取可读文本内容 */
-export async function fetchFeishuLinkContent(env: FeishuLinkEnv, rawUrl: string): Promise<string> {
+/** 根据飞书链接抓取可读文本内容。fallbackAppId 用于 env.FEISHU_APP_ID 缺失时的兜底（与 index.ts FEISHU_CONFIG.appId 保持一致） */
+export async function fetchFeishuLinkContent(env: FeishuLinkEnv, rawUrl: string, fallbackAppId?: string): Promise<string> {
   const info = parseFeishuLink(rawUrl);
   switch (info.type) {
     case 'docx':
-      return fetchDocxContent(env, info.token);
+      return fetchDocxContent(env, info.token, fallbackAppId);
     case 'base':
-      return fetchBitableContent(env, info.appToken, info.tableId);
+      return fetchBitableContent(env, info.appToken, info.tableId, fallbackAppId);
     case 'wiki': {
-      const nodeData = await feishuGet(env, `https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node?token=${info.token}`);
+      const nodeData = await feishuGet(env, `https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node?token=${info.token}`, fallbackAppId);
       const node = nodeData?.data?.node;
       if (!node?.obj_token) throw new Error('知识库节点解析失败');
-      if (node.obj_type === 'docx') return fetchDocxContent(env, node.obj_token);
-      if (node.obj_type === 'bitable') return fetchBitableContent(env, node.obj_token, null);
+      if (node.obj_type === 'docx') return fetchDocxContent(env, node.obj_token, fallbackAppId);
+      if (node.obj_type === 'bitable') return fetchBitableContent(env, node.obj_token, null, fallbackAppId);
       throw new Error(`暂不支持的知识库节点类型: ${node.obj_type}`);
     }
     case 'sheet':
-      return fetchSheetContent(env, info.token);
+      return fetchSheetContent(env, info.token, fallbackAppId);
     default:
       throw new Error('无法识别的飞书链接，请粘贴飞书文档/多维表格/知识库/电子表格链接');
   }

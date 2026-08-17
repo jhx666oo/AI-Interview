@@ -8395,7 +8395,7 @@ app.post('/api/positions/generate-capability-dimensions', authMiddleware, async 
   let material = '';
   if (source_link && String(source_link).trim()) {
     try {
-      material = await fetchFeishuLinkContent(c.env, String(source_link).trim());
+      material = await fetchFeishuLinkContent(c.env, String(source_link).trim(), c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId);
     } catch (err: any) {
       return c.json({ detail: `飞书链接内容读取失败：${err.message}。请确认链接格式正确且当前飞书应用可访问，或改用「岗位要求文本」粘贴内容。` }, 422);
     }
