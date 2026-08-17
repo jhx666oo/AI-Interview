@@ -97,7 +97,7 @@ const SystemSettingsPage: React.FC = () => {
     try {
       const res = (await request.get('/settings/system')) as SystemSettings;
       setMeta(res);
-      const rawSlots = Array.isArray(res.llm_slots) ? res.llm_slots : null;
+      const rawSlots = Array.isArray(res.llm_slots) && res.llm_slots.length > 0 ? res.llm_slots : null;
       const initSlots: LLMSlot[] = rawSlots || [
         { baseUrl: res.llm_base_url, model: res.llm_model || 'qwen3.5-plus', apiKeySet: !!res.llm_api_key_set, apiKeyLast4: res.llm_api_key_last4 },
         ...(res.llm2_api_key_set ? [{ baseUrl: res.llm2_base_url, model: res.llm2_model, apiKeySet: true, apiKeyLast4: res.llm2_api_key_last4 }] : []),
