@@ -153,7 +153,11 @@ export function buildD1DashboardOverlay(input: D1OverlayInput, feishuPositions: 
   const resolveTarget = (row: D1ResumeOverlayRow): string | null => {
     const direct = row.position_id ? d1KeyById.get(row.position_id) : null;
     if (direct && feishuByKey.has(direct)) return feishuByKey.get(direct)!.feishu_record_id;
-    const candidate = key(row.mapped_position || row.position_applied, row.city);
+    // Older production D1 schemas do not have resumes.city. When the resume
+    // is linked to a local position, use that position's location so the
+    // D1 overlay can still match the Feishu/static position by name + city.
+    const resumeCity = row.city || (row.position_id ? d1PositionById.get(row.position_id)?.location : null);
+    const candidate = key(row.mapped_position || row.position_applied, resumeCity);
     if (feishuByKey.has(candidate)) return feishuByKey.get(candidate)!.feishu_record_id;
     if (row.position_id && d1PositionById.has(row.position_id)) return `d1:${row.position_id}`;
     return null;
@@ -207,8 +211,20 @@ export async function loadD1DashboardOverlay(
   feishuPositions: FeishuPositionMetric[],
   _at: Date = new Date(),
 ): Promise<D1DashboardOverlay> {
+  const loadResumeRows = async () => {
+    try {
+      return await db.prepare('SELECT id, position_id, position_applied, mapped_position, city, resume_source, resume_source_record_id, resume_ingest_key FROM resumes').all();
+    } catch (error) {
+      // Production databases created before the dashboard overlay migration
+      // may not have resumes.city. Keep the dashboard available and derive
+      // the city from positions.location when position_id is present.
+      if (!/no such column:\s*city/i.test(String((error as any)?.message || error))) throw error;
+      console.warn('[DashboardV3] resumes.city is unavailable; using position location fallback');
+      return db.prepare('SELECT id, position_id, position_applied, mapped_position, resume_source, resume_source_record_id, resume_ingest_key FROM resumes').all();
+    }
+  };
   const [resumes, positions, scheduled, firstPass, secondPass, thirdPass, offers, hired] = await Promise.all([
-    db.prepare('SELECT id, position_id, position_applied, mapped_position, city, resume_source, resume_source_record_id, resume_ingest_key FROM resumes').all(),
+    loadResumeRows(),
     db.prepare('SELECT id, title, location, department, urgency, status, headcount, responsible_person FROM positions').all(),
     db.prepare('SELECT position_id, COUNT(*) AS count FROM interviews WHERE round = 1 GROUP BY position_id').all(),
     db.prepare("SELECT position_id, COUNT(*) AS count FROM interviews WHERE (round = 1 AND (result IN ('pass', 'passed') OR status2 = 'passed')) GROUP BY position_id").all(),

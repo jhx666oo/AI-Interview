@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildD1DashboardOverlay, type D1OverlayInput } from '../src/recruiting-operations/d1-dashboard-overlay';
+import { buildD1DashboardOverlay, loadD1DashboardOverlay, type D1OverlayInput } from '../src/recruiting-operations/d1-dashboard-overlay';
 import type { FeishuPositionMetric } from '../src/recruiting-operations/feishu-board-source';
 
 const feishuPosition: FeishuPositionMetric = {
@@ -47,5 +47,33 @@ describe('D1 dashboard overlay', () => {
     const overlay = buildD1DashboardOverlay({ ...baseInput, resumes: [{ id: 'orphan', position_id: '', position_applied: '不存在', mapped_position: '', city: '', resume_source: 'unknown', resume_source_record_id: '', resume_ingest_key: 'unknown:orphan' }] }, [feishuPosition]);
     expect(overlay.unmatchedResumeCount).toBe(1);
     expect(Object.values(overlay.byPosition).every((row) => row.resume_push_increment === 0)).toBe(true);
+  });
+
+  it('falls back when production D1 resumes table has no city column', async () => {
+    const queryResults: Record<string, unknown[]> = {
+      resumes: [{ id: 'local-1', position_id: 'pos-local', position_applied: '招聘专员', mapped_position: '招聘专员', resume_source: 'local_upload', resume_source_record_id: '', resume_ingest_key: 'file:local-1' }],
+      positions: baseInput.positions,
+      scheduled: [], first_pass: [], second_pass: [], third_pass: [], offers: [], hired: [],
+    };
+    const db = {
+      prepare(sql: string) {
+        return {
+          all: async () => {
+            if (sql.includes('city, resume_source')) throw new Error('D1_ERROR: no such column: city at offset 59');
+            const key = sql.includes('FROM resumes') ? 'resumes'
+              : sql.includes('FROM positions') ? 'positions'
+              : sql.includes('FROM interviews') && sql.includes('round = 1') && sql.includes('result IN') ? 'first_pass'
+              : sql.includes('FROM interviews') && sql.includes('round = 1') ? 'scheduled'
+              : sql.includes('FROM interviews') && sql.includes('round = 2') ? 'second_pass'
+              : sql.includes('FROM interviews') && sql.includes('round = 3') ? 'third_pass'
+              : sql.includes('FROM offers') ? 'offers' : 'hired';
+            return { results: queryResults[key] };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const overlay = await loadD1DashboardOverlay(db, [feishuPosition]);
+    expect(overlay.byPosition['rec-feishu-1']?.resume_push_increment).toBe(1);
   });
 });
