@@ -8411,6 +8411,17 @@ app.post('/api/positions/generate-capability-dimensions', authMiddleware, async 
   }
   const extra = [String(job_description || '').trim(), String(job_requirements || '').trim()].filter(Boolean).join('\n');
 
+  // 参考来源元信息：让前端能核对 AI 实际依据了哪些内容，保证生成可追溯、可验证
+  const trimmedLink = source_link ? String(source_link).trim() : '';
+  const reference = {
+    from_link: !!trimmedLink,
+    source_link: trimmedLink,
+    material_chars: material.length,
+    material_preview: material.slice(0, 150),
+    job_description_chars: String(job_description || '').trim().length,
+    job_requirements_chars: String(job_requirements || '').trim().length,
+  };
+
   const prompt = await getAIPrompt(c.env, 'generate_capability_dimensions', DEFAULT_CAPABILITY_DIMENSIONS_PROMPT);
   // user 模板支持变量插值：{position_title} / {material} / {job_extra}；未配置自定义模板时用默认
   const userTemplate = (prompt.user && String(prompt.user).trim()) ? String(prompt.user) : DEFAULT_CAPABILITY_DIMENSIONS_PROMPT.user;
@@ -8426,7 +8437,7 @@ app.post('/api/positions/generate-capability-dimensions', authMiddleware, async 
     }
     const dimensions = normalizeCapabilityDimensionsForStorage(parsed);
     if (!dimensions.length) return c.json({ detail: 'AI 未能生成有效评分维度，请重试或调整输入内容' }, 502);
-    return c.json({ dimensions });
+    return c.json({ dimensions, reference });
   } catch (err: any) {
     return c.json({ detail: 'AI 生成失败', error: err.message }, 500);
   }

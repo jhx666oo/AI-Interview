@@ -45,6 +45,7 @@ const GenerateCapabilityDimensionsModal: React.FC<GenerateCapabilityDimensionsMo
   const [generating, setGenerating] = useState(false);
   const [generated, setGenerated] = useState(false);
   const [dimensions, setDimensions] = useState<GeneratedDimension[]>([]);
+  const [reference, setReference] = useState<any>(null);
   const [error, setError] = useState('');
   const [form] = Form.useForm();
 
@@ -58,6 +59,7 @@ const GenerateCapabilityDimensionsModal: React.FC<GenerateCapabilityDimensionsMo
       setSourceMode('text');
       setGenerated(false);
       setDimensions([]);
+      setReference(null);
       setError('');
       form.resetFields();
     }
@@ -102,6 +104,7 @@ const GenerateCapabilityDimensionsModal: React.FC<GenerateCapabilityDimensionsMo
         throw new Error('AI 未返回有效维度');
       }
       setDimensions(dims);
+      setReference(data?.reference || null);
       // 回填预览表单
       form.setFieldsValue({
         dimensions: dims.map((d) => ({
@@ -149,6 +152,20 @@ const GenerateCapabilityDimensionsModal: React.FC<GenerateCapabilityDimensionsMo
     setGenerated(false);
     setError('');
     onCancel();
+  };
+
+  // 构建参考来源说明，让用户核对 AI 实际依据了哪些内容
+  const buildReferenceText = (): string => {
+    if (!reference) return '';
+    const parts: string[] = [];
+    if (reference.from_link) {
+      parts.push(`飞书链接抓取内容（${reference.material_chars || 0} 字）`);
+    } else if ((reference.material_chars || 0) > 0) {
+      parts.push(`粘贴的岗位要求文本（${reference.material_chars} 字）`);
+    }
+    if ((reference.job_description_chars || 0) > 0) parts.push(`表单岗位职责（${reference.job_description_chars} 字）`);
+    if ((reference.job_requirements_chars || 0) > 0) parts.push(`表单任职要求（${reference.job_requirements_chars} 字）`);
+    return parts.join(' + ');
   };
 
   return (
@@ -220,6 +237,28 @@ const GenerateCapabilityDimensionsModal: React.FC<GenerateCapabilityDimensionsMo
               <Text type="secondary">AI 正在根据岗位要求设计评分维度，请稍候...</Text>
             </Space>
           </Card>
+        )}
+
+        {generated && reference && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="AI 本次参考的内容来源"
+            description={
+              <div>
+                <div style={{ fontWeight: 500 }}>{buildReferenceText() || '无'}</div>
+                {reference.from_link && reference.material_preview ? (
+                  <div style={{ marginTop: 6, color: '#595959', fontSize: 12, lineHeight: 1.6 }}>
+                    飞书内容预览：{reference.material_preview}…
+                  </div>
+                ) : null}
+                <div style={{ marginTop: 6, color: '#8c8c8c', fontSize: 12 }}>
+                  生成结果基于以上内容摘录，如发现遗漏或抓取不全，请改用「岗位要求文本」粘贴完整内容。
+                </div>
+              </div>
+            }
+          />
         )}
 
         {generated && (
