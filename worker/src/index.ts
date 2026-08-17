@@ -8731,10 +8731,12 @@ app.get('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
       };
     });
     result.llm_slots = persistSlots.map((s: any) => ({
-      ...s,
+      id: s.id,
+      baseUrl: s.baseUrl,
+      model: s.model,
+      apiKey: '', // 安全：绝不回填完整 API Key，仅提供是否已设置与末4位
       apiKeySet: !!(s.apiKey && String(s.apiKey).trim()),
       apiKeyLast4: s.apiKey && String(s.apiKey).trim().length >= 4 ? String(s.apiKey).trim().slice(-4) : null,
-      ...(s.apiKey ? {} : { apiKey: '' }),
     }));
     if (needPersist && row.id) {
       try {

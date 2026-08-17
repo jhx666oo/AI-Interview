@@ -20,6 +20,18 @@ function normalizeBaseUrl(raw: string): string {
   return u.replace(/\/+$/, '');
 }
 
+/** 把 DB 读取结果（可能是 JSON 字符串或数组）规范化为槽位对象数组 */
+function toSlotArray(v: unknown): any[] {
+  if (Array.isArray(v)) return v.filter((s) => s && typeof s === 'object');
+  if (typeof v === 'string') {
+    try {
+      const parsed = JSON.parse(v);
+      if (Array.isArray(parsed)) return parsed.filter((s) => s && typeof s === 'object');
+    } catch { /* 忽略非法 JSON */ }
+  }
+  return [];
+}
+
 /**
  * 合并 llm_slots 保存请求：
  * 1. 未重填 key 的已存槽位（按 id 匹配，兼容按保存顺序回退）沿用原 key，避免整体覆盖丢失；
@@ -31,11 +43,11 @@ export function mergeLlmSlots(
   incomingSlots: unknown,
   newId: () => string = () => crypto.randomUUID(),
 ): LLMSlot[] {
-  const existing = Array.isArray(existingSlots) ? existingSlots.filter((s) => s && typeof s === 'object') : [];
+  const existing = toSlotArray(existingSlots);
   const existingById = new Map<string, any>();
   existing.forEach((s: any) => { if (s.id) existingById.set(String(s.id), s); });
 
-  const incoming = Array.isArray(incomingSlots) ? incomingSlots.filter((s) => s && typeof s === 'object') : [];
+  const incoming = toSlotArray(incomingSlots);
   const seen = new Set<string>();
   const result: LLMSlot[] = [];
   let idxFallback = 0;

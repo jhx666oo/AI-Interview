@@ -74,4 +74,18 @@ describe('mergeLlmSlots', () => {
     expect(mergeLlmSlots([], [{ baseUrl: 'https://x.cn', model: '', apiKey: '' }], fixedId)).toEqual([]);
     expect(mergeLlmSlots([], [], fixedId)).toEqual([]);
   });
+
+  it('handles existing slots stored as a JSON string (D1 TEXT column)', () => {
+    const existingJson = JSON.stringify([
+      { baseUrl: 'https://api.deepseek.com', model: 'm1', apiKey: 'sk-from-db' },
+    ]);
+    const incoming = [
+      { baseUrl: 'https://api.deepseek.com', model: 'm1', apiKey: '' }, // 未重填 key，按位置沿用
+      { baseUrl: 'https://x.cn/v1', model: 'm2', apiKey: 'sk-new' },
+    ];
+    const result = mergeLlmSlots(existingJson, incoming, fixedId);
+    expect(result).toHaveLength(2);
+    expect(result[0].apiKey).toBe('sk-from-db');
+    expect(result[1].apiKey).toBe('sk-new');
+  });
 });
