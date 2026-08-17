@@ -102,7 +102,16 @@ export interface DashboardV3Board {
   positions: DashboardV3Position[];
   totals: DashboardV3Totals;
   insights: { summary: string; bottlenecks: string[]; recommendations: string[] };
-  weekly_dynamic: { resume_push: number; first_scheduled: number; offers: number; hired: number; baseline_date: string | null };
+  weekly_dynamic: {
+    resume_push: number;
+    first_scheduled: number;
+    first_pass?: number;
+    second_pass?: number;
+    final_pass?: number;
+    offers: number;
+    hired: number;
+    baseline_date: string | null;
+  };
 }
 
 export function isDashboardV3Board(value: unknown): value is DashboardV3Board {

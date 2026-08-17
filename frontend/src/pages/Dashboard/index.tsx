@@ -15,8 +15,10 @@ import {
 } from 'antd';
 import {
   AppstoreOutlined,
+  BookOutlined,
   DownloadOutlined,
   ClearOutlined,
+  HistoryOutlined,
   LinkOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -193,6 +195,7 @@ const Dashboard: React.FC = () => {
   const [snapshotDate, setSnapshotDate] = useState<string>();
   const [v3Source, setV3Source] = useState<DashboardV3Source>('static');
   const [snapshots, setSnapshots] = useState<DashboardSnapshotMeta[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [creatingSnapshot, setCreatingSnapshot] = useState(false);
   const [syncingV3, setSyncingV3] = useState(false);
   const [division, setDivision] = useState<string>();
@@ -262,6 +265,7 @@ const Dashboard: React.FC = () => {
       setSnapshotDate(snapshot.snapshot_date);
       setDataMode('snapshot');
       message.success('今日快照已保存');
+      setHistoryOpen(false);
     } catch (error) {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 409) message.warning('今日快照已存在');
@@ -383,6 +387,10 @@ const Dashboard: React.FC = () => {
     setKeyword('');
   };
 
+  const scrollToFieldGlossary = () => {
+    document.getElementById('dashboard-field-definitions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
 
   const handleExportExcel = () => {
     if (!board) return;
@@ -429,6 +437,13 @@ const Dashboard: React.FC = () => {
     message.success("导出成功");
   };
 
+  const dashboardMonth = useMemo(() => {
+    const rawDate = boardV3?.snapshot_date || boardV3?.updated_at || board?.updated_at;
+    if (!rawDate) return '';
+    const date = new Date(rawDate);
+    return Number.isNaN(date.getTime()) ? '' : ` - ${date.getFullYear()}年${date.getMonth() + 1}月`;
+  }, [board?.updated_at, boardV3?.snapshot_date, boardV3?.updated_at]);
+
   if (loading) {
     return <div style={{ height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spin size="large" description="加载招聘看板..." /></div>;
   }
@@ -443,15 +458,21 @@ const Dashboard: React.FC = () => {
         <div>
           <div className={styles.pageTitleRow}>
             <span className={styles.pageTitleIcon}><AppstoreOutlined /></span>
-            <h1 id="recruiting-dashboard-title">招聘运营看板</h1>
+            <h1 id="recruiting-dashboard-title">五大事业部招聘看板{dashboardMonth}</h1>
           </div>
           <p>
-            数据更新时间：{(boardV3?.updated_at || board?.updated_at) ? new Date((boardV3?.updated_at || board?.updated_at) as string).toLocaleString('zh-CN') : '—'}
+            数据截止：{boardV3?.snapshot_date || (boardV3?.updated_at ? new Date(boardV3.updated_at).toLocaleDateString('zh-CN') : '—')} · 每周五 18:00 自动更新
             {boardV3?.data_source === 'static_excel' && ' · Excel 静态快照'}
             {boardV3?.data_source === 'feishu' && ' · 飞书实时数据'}
           </p>
         </div>
-        <div className={styles.pageActions}>
+        <div className={`${styles.pageActions} ${styles.miaodaPageActions}`}>
+          <Button icon={<DownloadOutlined />} onClick={handleExportExcel}>导出 Excel</Button>
+          <Button icon={<HistoryOutlined />} onClick={async () => { setHistoryOpen(true); await loadSnapshots(); }}>历史 Excel 存档</Button>
+          <Button icon={<BookOutlined />} onClick={scrollToFieldGlossary}>字段口径说明</Button>
+          {user?.role === 'admin' && (
+            <Button type="primary" danger icon={<SyncOutlined />} loading={syncingV3} onClick={syncFromFeishu}>手动同步</Button>
+          )}
           <Select
             aria-label="看板数据版本"
             value={dataMode === 'live' ? 'live' : snapshotDate}
@@ -466,18 +487,11 @@ const Dashboard: React.FC = () => {
             }}
             style={{ width: 180 }}
             options={[
-              { value: 'live', label: '最新实时数据' },
+              { value: 'live', label: '最新数据' },
               ...snapshots.map((item) => ({ value: item.snapshot_date, label: item.snapshot_date })),
             ]}
           />
-          {user?.role === 'admin' && (
-            <Button icon={<SyncOutlined />} loading={syncingV3} onClick={syncFromFeishu}>从飞书同步</Button>
-          )}
-          {user?.role === 'admin' && (
-            <Button disabled={dataMode !== 'live'} loading={creatingSnapshot} onClick={createMissingSnapshot}>保存今日快照</Button>
-          )}
           <Button icon={<LinkOutlined />} onClick={openShareModal}>分享看板</Button>
-          <Button icon={<DownloadOutlined />} onClick={handleExportExcel}>导出 Excel</Button>
           <Button icon={<ReloadOutlined />} loading={refreshing} onClick={() => fetchBoard(false)}>刷新当前数据</Button>
         </div>
       </section>
@@ -502,17 +516,27 @@ const Dashboard: React.FC = () => {
       </Card>
 
       {v3Error && <Alert type="warning" showIcon message="新版双源仪表盘暂不可用" description="当前暂时展示兼容版看板，飞书或 D1 数据源恢复后点击刷新即可切换。" />}
-      {!v3Error && boardV3?.data_source === 'static_excel' && (
-        <Alert
-          type="info"
-          showIcon
-          message="当前使用 Excel 静态快照"
-          description="数据截止 2026-08-16；Excel 未包含优先级字段，已按看板快照单独标记 P2，其余暂按 P1 展示。招聘表权限恢复后，管理员可点击“从飞书同步”补齐最新字段。"
-          closable
-        />
-      )}
-
       {filteredBoardV3 ? <MiaodaDashboardView board={filteredBoardV3} /> : <RecruitingBoardView board={filteredBoard} />}
+
+      <ResponsiveModal title="历史 Excel 存档" open={historyOpen} onCancel={() => setHistoryOpen(false)} footer={null} destroyOnHidden>
+        <div className={styles.snapshotModalToolbar}>
+          <Typography.Text type="secondary">选择历史快照后，仪表盘将按该日期的数据口径展示。</Typography.Text>
+          {user?.role === 'admin' && (
+            <Button type="primary" disabled={dataMode !== 'live'} loading={creatingSnapshot} onClick={createMissingSnapshot}>保存今日快照</Button>
+          )}
+        </div>
+        <List
+          size="small"
+          bordered
+          dataSource={snapshots}
+          locale={{ emptyText: '暂无历史快照' }}
+          renderItem={(snapshot) => (
+            <List.Item actions={[<Button key="view" type="link" onClick={() => { setSnapshotDate(snapshot.snapshot_date); setDataMode('snapshot'); setHistoryOpen(false); }}>查看</Button>]}>
+              <span>{snapshot.snapshot_date} · 生成于 {new Date(snapshot.generated_at).toLocaleString('zh-CN')}</span>
+            </List.Item>
+          )}
+        />
+      </ResponsiveModal>
 
       <ResponsiveModal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
         <Typography.Paragraph type="secondary">公开链接仅展示聚合招聘数据，不包含候选人或 AI 评估信息。</Typography.Paragraph>

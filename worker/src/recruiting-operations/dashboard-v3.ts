@@ -219,6 +219,9 @@ export function buildDashboardV3(input: {
     weekly_dynamic: {
       resume_push: dynamicValue(totals.resume_push, baselineTotals?.resume_push),
       first_scheduled: dynamicValue(totals.first_scheduled, baselineTotals?.first_scheduled),
+      first_pass: dynamicValue(totals.first_pass, baselineTotals?.first_pass),
+      second_pass: dynamicValue(totals.second_pass, baselineTotals?.second_pass),
+      final_pass: dynamicValue(totals.final_pass, baselineTotals?.final_pass),
       offers: dynamicValue(totals.offers, baselineTotals?.offers),
       hired: dynamicValue(totals.hired, baselineTotals?.hired),
       baseline_date: input.baseline?.snapshot_date || null,

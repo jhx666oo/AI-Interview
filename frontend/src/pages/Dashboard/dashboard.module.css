@@ -826,3 +826,114 @@
 @media (max-width: 1300px) { .v3KpiGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }.v3HrbpGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 860px) { .v3Hero, .v3SectionTitle { align-items: flex-start; flex-direction: column; }.v3DivisionGrid, .v3HrbpGrid { grid-template-columns: 1fr; }.v3KpiGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.v3FunnelRow { grid-template-columns: 82px minmax(60px, 1fr) 48px 52px; gap: 6px; }.v3FunnelRow small { font-size: 11px; }.v3MiniFunnel { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 0; }.v3MiniFunnel div:nth-child(3n) { border-right: 0; } }
 @media (max-width: 520px) { .v3MetricsGrid, .v3HrbpMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.v3PositionRow { align-items: flex-start; flex-direction: column; }.v3FunnelRow { grid-template-columns: 70px minmax(50px, 1fr) 40px; }.v3FunnelRow small { display: none; } }
+
+/* Miaoda parity view: the visual contract for the dashboard reference page. */
+.miaodaDashboard {
+  --miaoda-bg: #f1f2f5;
+  --miaoda-ink: #182235;
+  --miaoda-muted: #77849a;
+  --miaoda-border: #dfe3e9;
+  --miaoda-red: #d92920;
+  --miaoda-blue: #3f83f8;
+  --miaoda-green: #4b9b45;
+  --miaoda-orange: #d7821b;
+  display: grid;
+  gap: 30px;
+  min-width: 0;
+  color: var(--miaoda-ink);
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.miaodaDataMeta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; color: #8792a3; font-size: 12px; }
+.miaodaSection { display: grid; min-width: 0; gap: 14px; }
+.miaodaSectionHeading { display: flex; min-width: 0; align-items: flex-end; justify-content: space-between; gap: 18px; }
+.miaodaSectionTitleGroup { display: flex; min-width: 0; align-items: flex-start; gap: 12px; }
+.miaodaSectionMarker { width: 6px; min-height: 28px; flex: 0 0 auto; margin-top: 3px; border-radius: 99px; background: var(--miaoda-red); }
+.miaodaSectionHeading h2 { margin: 0; color: var(--miaoda-ink); font-size: 22px; font-weight: 760; line-height: 1.25; letter-spacing: -0.02em; }
+.miaodaSectionHeading p { margin: 7px 0 0; color: var(--miaoda-muted); font-size: 13px; }
+.miaodaSectionMeta { flex: 0 0 auto; color: #8994a6; font-size: 12px; white-space: nowrap; }
+.miaodaEyebrow { display: inline-flex; margin-bottom: 6px; padding: 3px 9px; color: #4f46e5; border-radius: 999px; background: #eaf0ff; font-size: 10px; font-weight: 800; letter-spacing: .11em; }
+.miaodaScopeNote { padding: 10px 13px; color: #778293; border: 1px solid #e0e3e8; border-radius: 7px; background: #f8f9fb; font-size: 12px; line-height: 1.65; }
+.miaodaScopeNote strong { color: #535e70; }
+.miaodaMetricGrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 14px; }
+.miaodaMetricCard { display: grid; min-width: 0; min-height: 104px; align-content: start; gap: 8px; padding: 17px 18px 14px; border: 1px solid var(--miaoda-border); border-top: 4px solid #b9c1cd; border-radius: 10px; background: #fff; box-shadow: 0 2px 6px rgb(34 45 65 / 3%); }
+.miaodaMetricLabel { overflow: hidden; color: #737e91; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.miaodaMetricCard strong { overflow: hidden; color: var(--miaoda-ink); font-size: clamp(22px, 2vw, 32px); font-weight: 780; line-height: 1.05; text-overflow: ellipsis; white-space: nowrap; }
+.miaodaMetricCard small { overflow: hidden; color: #a0a9b7; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.miaodaMetricRed { border-top-color: var(--miaoda-red); }.miaodaMetricRed strong { color: var(--miaoda-red); }
+.miaodaMetricGreen { border-top-color: var(--miaoda-green); }.miaodaMetricGreen strong { color: var(--miaoda-green); }
+.miaodaMetricOrange { border-top-color: var(--miaoda-orange); }.miaodaMetricOrange strong { color: var(--miaoda-orange); }
+.miaodaMetricBlue { border-top-color: var(--miaoda-blue); }.miaodaMetricBlue strong { color: var(--miaoda-blue); }
+.miaodaInProgressNote, .miaodaInProgressMini, .miaodaHrbpInProgress { padding: 8px 13px; color: #b36a1d; border: 1px solid #f4dba5; border-radius: 7px; background: #fff8e8; font-size: 12px; }
+.miaodaInProgressNote strong { color: #a8580d; }
+
+.miaodaDiagnostic { padding: 19px 23px; border: 1px solid #d9dce3; border-left: 5px solid var(--miaoda-red); border-radius: 9px; background: #e8e9ee; }
+.miaodaDiagnosticTitle { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; color: #3e4a60; font-size: 16px; }
+.miaodaDiagnosticTitle span { color: #6d7c95; font-size: 25px; line-height: 1; }
+.miaodaDiagnostic ol { display: grid; gap: 7px; margin: 0; padding-left: 22px; color: #3e4a60; font-size: 13px; line-height: 1.7; }
+
+.miaodaFunnelCard { display: grid; gap: 0; padding: 27px 14%; border: 1px solid var(--miaoda-border); border-radius: 10px; background: #fff; box-shadow: 0 2px 6px rgb(34 45 65 / 3%); }
+.miaodaFunnelRow { display: grid; grid-template-columns: minmax(270px, 1fr) minmax(310px, .9fr); min-height: 62px; align-items: center; gap: 18px; }
+.miaodaFunnelShapeWrap { display: flex; justify-content: center; height: 42px; }
+.miaodaFunnelShape { height: 42px; clip-path: polygon(7% 0, 93% 0, 100% 100%, 0 100%); background: linear-gradient(90deg, #e8e9ed, #aeb5c1); transition: width .25s ease; }
+.miaodaFunnelText { display: grid; grid-template-columns: auto auto 1fr; align-items: baseline; gap: 11px; white-space: nowrap; }
+.miaodaFunnelText strong { color: #354052; font-size: 14px; }.miaodaFunnelText span { color: #354052; font-size: 15px; font-weight: 700; }.miaodaFunnelText small { color: #707b8e; font-size: 12px; }.miaodaFunnelScale { color: #a4adba; font-size: 11px; text-align: right; }
+
+.miaodaWeeklyPanel { display: grid; gap: 14px; padding: 20px 22px 17px; border-radius: 10px; background: #e7e8ed; }
+.miaodaWeeklyHeading .miaodaSectionHeading { align-items: center; }.miaodaWeeklyPanel .miaodaSectionMarker { background: var(--miaoda-red); }.miaodaWeeklyPanel .miaodaSectionHeading h2 { font-size: 20px; }
+.miaodaWeeklyHero { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }.miaodaWeeklyHero .miaodaMetricCard { min-height: 104px; align-items: center; text-align: center; }.miaodaWeeklyHero .miaodaMetricLabel, .miaodaWeeklyHero .miaodaMetricCard small { width: 100%; text-align: center; }
+.miaodaWeeklyGrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; }.miaodaWeeklyGrid .miaodaMetricCard { min-height: 82px; align-items: center; padding: 13px 8px; text-align: center; }.miaodaWeeklyGrid .miaodaMetricLabel, .miaodaWeeklyGrid .miaodaMetricCard strong { width: 100%; text-align: center; }.miaodaWeeklyGrid .miaodaMetricCard strong { font-size: 23px; }
+.miaodaWeeklyHint { margin: 0; color: #7a8494; font-size: 11px; }
+
+.miaodaDivisionGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.miaodaDivisionCard, .miaodaHrbpCard { min-width: 0; padding: 19px; border: 1px solid var(--miaoda-border); border-radius: 10px; background: #fff; box-shadow: 0 2px 6px rgb(34 45 65 / 3%); }
+.miaodaDivisionHeader, .miaodaHrbpHeader { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.miaodaDivisionHeader h3, .miaodaHrbpHeader h3 { margin: 0; color: var(--miaoda-ink); font-size: 17px; font-weight: 760; }.miaodaDivisionHeader p { margin: 6px 0 0; color: #737e91; font-size: 12px; }.miaodaDivisionBadge { padding: 3px 8px; color: #fff; border-radius: 4px; background: var(--miaoda-red); font-size: 11px; white-space: nowrap; }
+.miaodaDivisionMetrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 16px; }.miaodaDivisionMetrics .miaodaMetricCard { min-height: 65px; padding: 10px 8px; align-items: center; border: 1px solid #e0e4ea; border-radius: 7px; background: #fafbfc; text-align: center; }.miaodaDivisionMetrics .miaodaMetricLabel, .miaodaDivisionMetrics .miaodaMetricCard strong { width: 100%; text-align: center; }.miaodaDivisionMetrics .miaodaMetricLabel { font-size: 10px; }.miaodaDivisionMetrics .miaodaMetricCard strong { font-size: 18px; }.miaodaInProgressMini { margin-top: 10px; padding: 6px 9px; font-size: 10px; }
+.miaodaMiniFunnel { margin-top: 14px; }.miaodaMiniFunnel h4 { margin: 0 0 10px; color: #3e4a60; font-size: 13px; }.miaodaMiniFunnelRows { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }.miaodaMiniFunnelItem { display: grid; min-width: 0; gap: 3px; text-align: center; }.miaodaMiniFunnelItem strong { font-size: 17px; }.miaodaMiniFunnelItem > span, .miaodaMiniFunnelItem small { overflow: hidden; color: #7d8797; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.miaodaMiniFunnelItem small { font-size: 9px; }.miaodaMiniBar { height: 15px; overflow: hidden; border-radius: 2px; background: #eef0f3; }.miaodaMiniBar span { display: block; height: 100%; background: #c7cbd3; }
+
+.miaodaHrbpGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }.miaodaHrbpHeader h3 { font-size: 16px; }.miaodaHrbpHeader span { color: #8a95a5; font-size: 11px; }.miaodaAiLabel { color: #9aa4b4 !important; white-space: nowrap; }.miaodaHrbpMetrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin: 15px 0 9px; }.miaodaHrbpMetrics .miaodaMetricCard { min-height: 67px; padding: 9px 5px; align-items: center; border: 1px solid #e0e4ea; border-radius: 6px; background: #fafbfc; text-align: center; }.miaodaHrbpMetrics .miaodaMetricLabel, .miaodaHrbpMetrics .miaodaMetricCard strong { width: 100%; text-align: center; }.miaodaHrbpMetrics .miaodaMetricLabel { font-size: 9px; white-space: normal; }.miaodaHrbpMetrics .miaodaMetricCard strong { font-size: 17px; }.miaodaHrbpInProgress { padding: 6px 8px; font-size: 10px; }.miaodaHrbpPipeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-top: 13px; }.miaodaHrbpNode { position: relative; display: grid; min-width: 0; gap: 2px; text-align: center; }.miaodaHrbpNode strong { font-size: 16px; }.miaodaHrbpNode span { color: #6f7b8f; font-size: 10px; }.miaodaHrbpNode small { font-size: 10px; }.miaodaHrbpNode i { position: absolute; top: 17px; right: -7px; color: #c4cad3; font-size: 13px; font-style: normal; }.miaodaRateGood { color: var(--miaoda-green); }.miaodaRateWarn { color: var(--miaoda-orange); }.miaodaRateBad { color: var(--miaoda-red); }.miaodaRateNeutral { color: #9ba4b2; }
+
+.miaodaFieldDefinitions { padding: 19px 22px; border: 1px solid var(--miaoda-border); border-radius: 10px; background: #fff; }.miaodaFieldDefinitions ol { display: grid; gap: 5px; margin: 8px 0 0; padding-left: 23px; color: #5d697c; font-size: 12px; line-height: 1.7; }
+.miaodaDetailSection { display: grid; min-width: 0; gap: 12px; }.miaodaDetailHeading { display: flex; min-width: 0; align-items: center; gap: 10px; }.miaodaDetailHeading .miaodaSectionMarker { height: 24px; min-height: 24px; margin-top: 0; }.miaodaDetailHeading h3 { margin: 0; color: var(--miaoda-ink); font-size: 17px; font-weight: 760; }.miaodaDetailHeading > span:last-child { color: #9aa3b1; font-size: 11px; }.miaodaDetailHeadingBlue .miaodaSectionMarker { background: #347cf3; }.miaodaDetailHeadingGreen .miaodaSectionMarker { background: var(--miaoda-green); }.miaodaDetailTableCard { overflow: hidden; border: 1px solid var(--miaoda-border); border-radius: 10px; background: #fff; }.miaodaDesktopTableWrap { overflow-x: auto; }.miaodaDetailTable { width: 100%; min-width: 1280px; border-collapse: collapse; font-size: 11px; }.miaodaDetailTable th { padding: 11px 10px; color: #59667a; border-bottom: 2px solid var(--miaoda-red); background: #f6f7f9; font-weight: 700; text-align: left; white-space: nowrap; }.miaodaDetailTable td { padding: 10px; color: #49566a; border-bottom: 1px solid #e7e9ed; white-space: nowrap; }.miaodaDetailTable tbody tr:not(.miaodaDepartmentRow):hover { background: #fafbfd; }.miaodaDetailTable .ant-tag { margin: 0; font-size: 10px; }.miaodaPriorityTag { color: #7b8595; border: 0; background: #f1f3f6; }.miaodaDepartmentRow td { padding: 9px 10px; color: #2f3b4e; background: #eef0f3; font-weight: 700; }.miaodaDepartmentRow button { display: inline-flex; align-items: center; gap: 5px; padding: 0; color: var(--miaoda-ink); border: 0; background: transparent; font: inherit; cursor: pointer; }.miaodaDepartmentRow button span { margin-left: 4px; color: #9aa3b1; font-size: 10px; font-weight: 400; }.miaodaGrandTotalRow td { padding: 11px 10px; color: #263247; border-top: 2px solid #d4d8df; background: #eef0f3; font-weight: 760; }.miaodaTableRate { display: inline-flex; min-width: 72px; align-items: center; gap: 4px; color: #8791a1; }.miaodaTableRate i { display: inline-block; width: 30px; height: 6px; border-radius: 99px; background: #cdd2da; }.miaodaNoteCell { max-width: 210px; overflow: hidden; text-overflow: ellipsis; }.miaodaDetailBlue .miaodaSectionMarker { background: #347cf3; }.miaodaDetailGreen .miaodaSectionMarker { background: var(--miaoda-green); }.miaodaMobileRows { display: none; }.miaodaMobileRow { display: grid; gap: 8px; padding: 13px; border: 1px solid #e2e6ec; border-radius: 8px; background: #fff; }.miaodaMobileRowHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; }.miaodaMobileRow p { margin: 0; color: #7d8797; font-size: 11px; }.miaodaMobileMetrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; color: #5a6679; font-size: 11px; }
+
+@media (max-width: 1250px) { .miaodaMetricGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }.miaodaWeeklyGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 1180px) { .miaodaDivisionGrid { grid-template-columns: 1fr; }.miaodaHrbpGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaFunnelCard { padding-inline: 6%; } }
+@media (max-width: 860px) { .miaodaMetricGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaWeeklyHero, .miaodaWeeklyGrid, .miaodaHrbpGrid { grid-template-columns: 1fr; }.miaodaWeeklyGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaDivisionMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaHrbpMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }.miaodaFunnelCard { padding: 18px 8px; }.miaodaFunnelRow { grid-template-columns: minmax(85px, 1fr) minmax(155px, 1.5fr); gap: 6px; }.miaodaFunnelText { grid-template-columns: auto auto; gap: 5px; }.miaodaFunnelText small { grid-column: 1 / -1; }.miaodaMiniFunnelRows { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; }.miaodaDesktopTableWrap { display: none; }.miaodaMobileRows { display: grid; gap: 8px; padding: 10px; background: #f7f8fa; } }
+@media (max-width: 520px) { .miaodaDataMeta { flex-direction: column; }.miaodaSectionHeading { align-items: flex-start; flex-direction: column; gap: 7px; }.miaodaSectionHeading h2 { font-size: 19px; }.miaodaSectionMeta { white-space: normal; }.miaodaMetricGrid, .miaodaWeeklyGrid { grid-template-columns: 1fr 1fr; }.miaodaMetricCard { padding-inline: 11px; }.miaodaMetricLabel { font-size: 11px; }.miaodaMetricCard strong { font-size: 23px; }.miaodaDivisionCard, .miaodaHrbpCard { padding: 13px; }.miaodaHrbpMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.miaodaHrbpPipeline { gap: 1px; }.miaodaHrbpNode i { right: -5px; }.miaodaFunnelRow { grid-template-columns: 16px minmax(62px, 1fr) minmax(130px, 1.6fr); }.miaodaFunnelShapeWrap, .miaodaFunnelShape { height: 32px; }.miaodaFunnelText strong { font-size: 12px; }.miaodaFunnelText span { font-size: 13px; }.miaodaMobileMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Match the reference dashboard shell while keeping the shared app header intact. */
+.dashboardPage .pageHeader {
+  margin: 0 -24px 22px;
+  padding: 25px 30px 28px;
+  border-color: #e0e3e8;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  background: #f4f5f7;
+  box-shadow: none;
+}
+.dashboardPage .pageHeader::before { display: none; }
+.dashboardPage .pageTitleRow { align-items: flex-start; gap: 0; }
+.dashboardPage .pageTitleIcon { display: none; }
+.dashboardPage .pageHeader h1 { font-size: 27px; letter-spacing: -.02em; }
+.dashboardPage .pageHeader p { margin-left: 0; color: #7a8494; font-size: 13px; }
+.dashboardPage .miaodaPageActions { align-items: center; gap: 9px; }
+.dashboardPage .miaodaPageActions :global(.ant-btn) { height: 36px; padding-inline: 14px; border-color: #d8dce4; border-radius: 7px; color: #273246; background: #fff; box-shadow: 0 1px 2px rgb(35 49 76 / 3%); }
+.dashboardPage .miaodaPageActions :global(.ant-btn-primary) { color: #fff; border-color: var(--miaoda-red, #d92920); background: var(--miaoda-red, #d92920); }
+.dashboardPage .miaodaPageActions :global(.ant-select-selector) { min-height: 36px; border-color: #cfd5df !important; border-radius: 7px !important; }
+.dashboardPage .filterCard { margin-bottom: 23px; border-color: #e0e3e8; border-radius: 10px; background: #fff; box-shadow: 0 2px 7px rgb(34 45 65 / 3%); }
+.dashboardPage .filterCard :global(.ant-card-body) { padding: 13px 15px; }
+.snapshotModalToolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+
+@media (max-width: 1180px) {
+  .dashboardPage .pageHeader { margin-inline: -16px; padding-inline: 20px; }
+  .dashboardPage .miaodaPageActions { justify-content: flex-start; }
+}
+
+@media (max-width: 760px) {
+  .dashboardPage .pageHeader { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .dashboardPage .pageHeader h1 { font-size: 23px; }
+  .dashboardPage .miaodaPageActions { width: 100%; justify-content: flex-start; }
+  .dashboardPage .miaodaPageActions :global(.ant-btn), .dashboardPage .miaodaPageActions :global(.ant-select) { flex: 1 1 auto; }
+  .snapshotModalToolbar { align-items: flex-start; flex-direction: column; }
+}

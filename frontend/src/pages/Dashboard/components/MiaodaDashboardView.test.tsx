@@ -1,0 +1,74 @@
+// @vitest-environment jsdom
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import { MiaodaDashboardView } from './MiaodaDashboardView';
+import type { DashboardV3Board } from '../v3-types';
+
+const board: DashboardV3Board = {
+  schema_version: 'dashboard-v3',
+  data_mode: 'live',
+  snapshot_date: '2026-08-16',
+  updated_at: '2026-08-17T08:00:00.000Z',
+  data_source: 'static_excel',
+  kpis: {},
+  funnel: [
+    { key: 'resume_push', label: '简历推送', count: 10, conversion_rate: null },
+    { key: 'first_scheduled', label: '安排1面', count: 5, conversion_rate: 50 },
+    { key: 'first_pass', label: '1面通过', count: 2, conversion_rate: 40 },
+    { key: 'second_pass', label: '2面通过', count: 1, conversion_rate: 50 },
+    { key: 'final_pass', label: '终面通过', count: 1, conversion_rate: 100 },
+    { key: 'offers', label: '发放Offer', count: 1, conversion_rate: 100 },
+    { key: 'hired', label: '已入职', count: 1, conversion_rate: 100 },
+  ],
+  totals: {
+    active_positions: 1, headcount: 2, resume_push: 10, first_scheduled: 5, first_pass: 2,
+    second_pass: 1, final_pass: 1, offers: 1, hired: 1, interview_pass_rate: 20,
+    offer_conversion_rate: 100, hire_conversion_rate: 100, average_completed_cycle_days: 8.5,
+    in_progress_position_count: 1, in_progress_average_elapsed_days: 12,
+  },
+  divisions: [{
+    department: '职培事业部', hrbps: ['王凯月'], positions: [], p0_position_count: 1, p1_position_count: 0,
+    completed_position_count: 0, in_progress_position_count: 1, in_progress_average_elapsed_days: 12,
+    totals: {
+      active_positions: 1, headcount: 2, resume_push: 10, first_scheduled: 5, first_pass: 2,
+      second_pass: 1, final_pass: 1, offers: 1, hired: 1, interview_pass_rate: 20,
+      offer_conversion_rate: 100, hire_conversion_rate: 100, average_completed_cycle_days: null,
+      in_progress_position_count: 1, in_progress_average_elapsed_days: 12,
+    },
+    funnel: [],
+  }],
+  hrbps: [],
+  positions: [],
+  p2_positions: [],
+  insights: { summary: '当前有 1 个统计岗位。', bottlenecks: ['安排1面转化率为 50%'], recommendations: ['优先复盘筛选环节。'] },
+  weekly_dynamic: { resume_push: 2, first_scheduled: 1, first_pass: 1, second_pass: 0, final_pass: 0, offers: 0, hired: 0, baseline_date: '2026-08-09' },
+};
+
+describe('MiaodaDashboardView', () => {
+  it('renders the reference dashboard sections and live values', () => {
+    render(<MiaodaDashboardView board={board} />);
+    expect(screen.getByText('总体概览')).toBeTruthy();
+    expect(screen.getByText('招聘漏斗（全事业部汇总 · 岗位累计口径）')).toBeTruthy();
+    expect(screen.getByText('周招聘动态')).toBeTruthy();
+    expect(screen.getByText('职培事业部')).toBeTruthy();
+    expect(screen.getAllByText('简历推送').length).toBeGreaterThan(0);
+    expect(screen.getByText('当前有 1 个统计岗位。')).toBeTruthy();
+  });
+
+  it('renders the grouped detail table with a collapsed department control', () => {
+    const detailPosition = {
+      position_id: 'position-1', department: '职培事业部', position_name: '招聘销售', display_name: '招聘销售-杭州',
+      city: '杭州', hrbps: ['王凯月'], priority: 'P1' as const, status: '初筛中', headcount: 1,
+      resume_push: 2, first_scheduled: 1, first_pass: 0, second_pass: 0, third_pass: 0, final_pass: 0,
+      offers: 0, hired: 0, elapsed_days: 4, weekly_target: 0, notes: '待跟进', data_sources: ['static_excel'],
+    };
+    render(<MiaodaDashboardView board={{ ...board, positions: [detailPosition], divisions: [] }} />);
+    expect(screen.getAllByText('招聘销售-杭州').length).toBeGreaterThan(0);
+    expect(screen.getByText('合计')).toBeTruthy();
+    const toggle = screen.getByRole('button', { name: /职培事业部/ });
+    fireEvent.click(toggle);
+    expect(screen.queryAllByText('招聘销售-杭州')).toHaveLength(0);
+    fireEvent.click(toggle);
+    expect(screen.getAllByText('招聘销售-杭州').length).toBeGreaterThan(0);
+  });
+});

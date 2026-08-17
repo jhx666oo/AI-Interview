@@ -136,6 +136,9 @@ export interface DashboardV3Board {
   weekly_dynamic: {
     resume_push: number;
     first_scheduled: number;
+    first_pass?: number;
+    second_pass?: number;
+    final_pass?: number;
     offers: number;
     hired: number;
     baseline_date: string | null;
