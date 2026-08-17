@@ -182,15 +182,15 @@ const SystemSettingsPage: React.FC = () => {
 
   const handleSave = async () => {
     try {
-      // 已保存的槽位（带 id 且未重填 key）必须随请求一起提交，后端会沿用原 key；
-      // 只保留「本次填了 key」或「已有 id」的槽位，避免空配置把已有模型覆盖掉
+      // 已保存的槽位（apiKeySet=true 或带 id，未重填 key）必须随请求一起提交，后端会沿用原 key；
+      // 只剔除「既未保存过、也没填 key」的空配置，避免已有模型被覆盖掉
       const slotsPayload = slots.map(s => ({
         id: s.id || undefined,
         baseUrl: (s.baseUrl || '').trim() || null,
         model: (s.model || '').trim() || null,
         apiKey: (s.apiKey || '').trim(),
       }));
-      const keep = slotsPayload.filter(s => s.apiKey || s.id);
+      const keep = slotsPayload.filter((s, i) => s.apiKey || s.id || !!slots[i]?.apiKeySet);
 
       // 前端去重提示：相同的 baseUrl+model+key 视为重复（后端同样会去重）
       const seen = new Set<string>();

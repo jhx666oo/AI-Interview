@@ -8719,12 +8719,29 @@ app.get('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
   }
   // 将 llm_slots JSON 列解包为扁平字段（兼容前端旧版本读取）；若列为 null/空则保留旧列的 _set/_last4 标记
   if (result.llm_slots && Array.isArray(result.llm_slots)) {
-    result.llm_slots = result.llm_slots.map((s: any) => ({
+    // 存量数据补齐稳定 id（一次性修复：无 id 的旧槽位在前端保存时可能被过滤丢失）
+    let needPersist = false;
+    const persistSlots = result.llm_slots.map((s: any) => {
+      if (!s.id) needPersist = true;
+      return {
+        id: s.id || uuid(),
+        baseUrl: String(s.baseUrl || s.base_url || '').trim(),
+        model: String(s.model || '').trim(),
+        apiKey: String(s.apiKey || s.api_key || '').trim(),
+      };
+    });
+    result.llm_slots = persistSlots.map((s: any) => ({
       ...s,
       apiKeySet: !!(s.apiKey && String(s.apiKey).trim()),
       apiKeyLast4: s.apiKey && String(s.apiKey).trim().length >= 4 ? String(s.apiKey).trim().slice(-4) : null,
       ...(s.apiKey ? {} : { apiKey: '' }),
     }));
+    if (needPersist && row.id) {
+      try {
+        await c.env.DB.prepare('UPDATE system_configs SET llm_slots = ?, updated_at = ? WHERE id = ?')
+          .bind(JSON.stringify(persistSlots), now(), row.id).run();
+      } catch { /* 补齐失败不影响本次读取 */ }
+    }
   }
   return c.json(result);
 });
