@@ -11,6 +11,7 @@ const { Text } = Typography;
 const LLM_SLOT_MAX = 20;
 
 type LLMSlot = {
+  id?: string;
   baseUrl?: string | null;
   model?: string | null;
   apiKey?: string | null;
@@ -181,17 +182,32 @@ const SystemSettingsPage: React.FC = () => {
 
   const handleSave = async () => {
     try {
+      // 已保存的槽位（带 id 且未重填 key）必须随请求一起提交，后端会沿用原 key；
+      // 只保留「本次填了 key」或「已有 id」的槽位，避免空配置把已有模型覆盖掉
       const slotsPayload = slots.map(s => ({
+        id: s.id || undefined,
         baseUrl: (s.baseUrl || '').trim() || null,
         model: (s.model || '').trim() || null,
         apiKey: (s.apiKey || '').trim(),
       }));
-      const payload: any = { llm_slots: slotsPayload.filter(s => s.apiKey) };
+      const keep = slotsPayload.filter(s => s.apiKey || s.id);
+
+      // 前端去重提示：相同的 baseUrl+model+key 视为重复（后端同样会去重）
+      const seen = new Set<string>();
+      let dupCount = 0;
+      for (const s of keep) {
+        if (!s.apiKey) continue;
+        const dedupeKey = `${s.baseUrl || ''}\u0000${s.model || ''}\u0000${s.apiKey}`;
+        if (seen.has(dedupeKey)) dupCount++;
+        seen.add(dedupeKey);
+      }
+
+      const payload: any = { llm_slots: keep };
       setSaving(true);
       await request.put('/settings/system', payload);
       setDirty(false);
       await fetchSettings();
-      message.success('模型配置已保存');
+      message.success(dupCount > 0 ? `模型配置已保存（已自动去重 ${dupCount} 条重复配置）` : '模型配置已保存');
     } catch (e) {
       const status = (e as any)?.response?.status;
       if (status === 403) message.error('无权限保存');

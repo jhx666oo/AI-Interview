@@ -22,6 +22,7 @@ import type { ReprocessScope, ResumeProcessingQueueMessage } from './resume-proc
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { buildCapabilityDimensionsFullText, normalizeCapabilityDimensionsForStorage } from './position-capability-sync';
 import { fetchFeishuLinkContent } from './feishu-link';
+import { mergeLlmSlots } from './llm-slots';
 import { aiScreeningResultFromScore, normalizeAiScreeningResult } from './ai-screening-result';
 import { buildScreeningQueuePersistence } from './resume-processing/screening-queue-evaluation';
 import { buildFeishuScreeningMirror } from './resume-processing/screening-mirror';
@@ -8732,61 +8733,48 @@ app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
   const body = await c.req.json();
   const existing = await c.env.DB.prepare('SELECT id FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
 
-  // 自动迁移：如果 llm_slots 为空，从旧列迁移数据
-  let migrateSlots = false;
-  if (existing) {
+  // 其余字段按通用规则持久化（llm_slots 单独处理，避免空数组被跳过或覆盖已有数据）
+  const otherBody = { ...body };
+  delete otherBody.llm_slots;
+
+  // 1) llm_slots 处理：
+  //    - 请求携带 llm_slots 时：合并保存（未重填 key 的已存槽位沿用原 key + 精确去重）
+  //    - 请求未携带且旧列为空时：从旧 4 槽位（llm*/llm2*/llm3*/llm4*）自动迁移
+  let llmSlotsJson: string | null = null;
+  const hasBodySlots = Object.prototype.hasOwnProperty.call(body, 'llm_slots');
+  if (hasBodySlots) {
+    const curRow = existing
+      ? await c.env.DB.prepare('SELECT llm_slots FROM system_configs WHERE id = ?').bind(existing.id).first().catch(() => null) as any
+      : null;
+    llmSlotsJson = JSON.stringify(mergeLlmSlots(curRow?.llm_slots, body.llm_slots));
+  } else if (existing) {
     try {
       const row = await c.env.DB.prepare('SELECT llm_slots FROM system_configs WHERE id = ?').bind(existing.id).first() as any;
       if (!row?.llm_slots || row.llm_slots === 'null' || row.llm_slots === '') {
-        migrateSlots = true;
+        const oldRow = await c.env.DB.prepare(
+          'SELECT llm_api_key, llm_base_url, llm_model, llm2_api_key, llm2_base_url, llm2_model, llm3_api_key, llm3_base_url, llm3_model, llm4_api_key, llm4_base_url, llm4_model FROM system_configs WHERE id = ?'
+        ).bind(existing.id).first() as any;
+        if (oldRow) {
+          const oldSlots = [
+            { apiKey: oldRow.llm_api_key, baseUrl: oldRow.llm_base_url, model: oldRow.llm_model },
+            { apiKey: oldRow.llm2_api_key, baseUrl: oldRow.llm2_base_url, model: oldRow.llm2_model },
+            { apiKey: oldRow.llm3_api_key, baseUrl: oldRow.llm3_base_url, model: oldRow.llm3_model },
+            { apiKey: oldRow.llm4_api_key, baseUrl: oldRow.llm4_base_url, model: oldRow.llm4_model },
+          ].filter((s: any) => s.apiKey && String(s.apiKey).trim());
+          if (oldSlots.length > 0) {
+            llmSlotsJson = JSON.stringify(oldSlots.map((s: any) => ({ id: uuid(), ...s })));
+          }
+        }
       }
     } catch {}
   }
 
-  if (migrateSlots && existing) {
-    // 从旧列读取数据并迁移到 llm_slots
-    const oldRow = await c.env.DB.prepare(
-      'SELECT llm_api_key, llm_base_url, llm_model, llm2_api_key, llm2_base_url, llm2_model, llm3_api_key, llm3_base_url, llm3_model, llm4_api_key, llm4_base_url, llm4_model FROM system_configs WHERE id = ?'
-    ).bind(existing.id).first() as any;
-
-    if (oldRow) {
-      const oldSlots = [
-        { apiKey: oldRow.llm_api_key, baseUrl: oldRow.llm_base_url, model: oldRow.llm_model },
-        { apiKey: oldRow.llm2_api_key, baseUrl: oldRow.llm2_base_url, model: oldRow.llm2_model },
-        { apiKey: oldRow.llm3_api_key, baseUrl: oldRow.llm3_base_url, model: oldRow.llm3_model },
-        { apiKey: oldRow.llm4_api_key, baseUrl: oldRow.llm4_base_url, model: oldRow.llm4_model },
-      ].filter((s: any) => s.apiKey && String(s.apiKey).trim());
-
-      if (oldSlots.length > 0) {
-        // 先写入 llm_slots
-        await c.env.DB.prepare('UPDATE system_configs SET llm_slots = ?, updated_at = ? WHERE id = ?')
-          .bind(JSON.stringify(oldSlots), now(), existing.id).run();
-        // 然后处理其他字段（跳过 llm_slots，避免被空数组覆盖）
-        const otherBody = { ...body };
-        delete otherBody.llm_slots;
-        if (Object.keys(otherBody).length > 0) {
-          const cols = ['updated_at'];
-          const vals: any[] = [now()];
-          for (const [k, v] of Object.entries(otherBody)) {
-            if (shouldPersistSystemConfigField(k, v)) {
-              cols.push(k);
-              vals.push(prepareValue(v));
-            }
-          }
-          const setClause = cols.map(k => `${k} = ?`).join(', ');
-          await c.env.DB.prepare(`UPDATE system_configs SET ${setClause} WHERE id = ?`).bind(...vals, existing.id).run();
-        }
-        // 迁移完成，直接返回，不走下面的通用 PUT（否则空数组会覆盖刚迁移的数据）
-        const row = await c.env.DB.prepare('SELECT * FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
-        return c.json(transformRow(row));
-      }
-    }
-  }
-
+  // 2) 写入其他字段 + llm_slots
   if (existing) {
     const cols: string[] = [];
     const vals: any[] = [];
-    for (const [k, v] of Object.entries(body)) {
+    if (llmSlotsJson !== null) { cols.push('llm_slots'); vals.push(llmSlotsJson); }
+    for (const [k, v] of Object.entries(otherBody)) {
       if (shouldPersistSystemConfigField(k, v)) {
         cols.push(k);
         vals.push(prepareValue(v));
@@ -8799,7 +8787,8 @@ app.put('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
     const id = uuid();
     const cols = ['id', 'updated_at'];
     const vals: any[] = [id, now()];
-    for (const [k, v] of Object.entries(body)) {
+    if (llmSlotsJson !== null) { cols.push('llm_slots'); vals.push(llmSlotsJson); }
+    for (const [k, v] of Object.entries(otherBody)) {
       if (shouldPersistSystemConfigField(k, v)) {
         cols.push(k);
         vals.push(prepareValue(v));
