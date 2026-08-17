@@ -5727,6 +5727,32 @@ function buildAIResumeExcerpt(combined: string, tokens: string[], maxLen = 1200)
   return parts.join('\n');
 }
 
+// 送 AI 的简历文本：默认全量（用户要求全量匹配，防止资格信息在简历后部被漏看）。
+// 仅当单份简历异常长、或一批简历累计字符超模型上下文预算时，才对超长简历降级为
+// 「开头 + 关键词证据窗口」，避免整批请求超上下文报错导致整批空分。
+const AI_RESUME_FULL_LIMIT = 6000; // 单份全文超过此长度才降级摘录
+const AI_BATCH_CHAR_BUDGET = 30000; // 每批累计文本预算（约 2 万 token 中文），超过则摘录最长简历
+function buildAIResumeBlocks(
+  batch: Array<{ row: any; combined: string }>,
+  tokens: string[],
+): string[] {
+  const blocks = batch.map(({ row, combined }) => ({
+    id: row.id,
+    text: combined.length > AI_RESUME_FULL_LIMIT ? buildAIResumeExcerpt(combined, tokens, AI_RESUME_FULL_LIMIT) : combined,
+  }));
+  let total = blocks.reduce((sum, b) => sum + b.text.length, 0);
+  if (total > AI_BATCH_CHAR_BUDGET) {
+    for (const b of [...blocks].sort((a, b) => b.text.length - a.text.length)) {
+      if (total <= AI_BATCH_CHAR_BUDGET) break;
+      if (b.text.length > AI_RESUME_FULL_LIMIT) continue; // 已是最长档摘录，不再压缩
+      const short = buildAIResumeExcerpt(b.text, tokens);
+      total -= b.text.length - short.length;
+      b.text = short;
+    }
+  }
+  return blocks.map((b) => `#id:${b.id}\n${b.text}`);
+}
+
 app.get('/api/resumes', authMiddleware, async (c) => {
   try {
     // Feature Flag: 开启 SQL 分页查询时走优化路径，不 select 长文本列
@@ -5976,7 +6002,7 @@ async function aiScoreCustomScreenPool(
     config?: { apiKey: string; baseUrl: string; model: string },
   ): Promise<Map<string, { id: string; score: number; reason: string }>> {
     const prompt = await getAIPrompt(env, 'resume_custom_screen', DEFAULT_CUSTOM_SCREEN_PROMPT);
-    const resumeBlock = batch.map(({ row, combined }) => `#id:${row.id}\n${buildAIResumeExcerpt(combined, tokens)}`).join('\n\n');
+    const resumeBlock = buildAIResumeBlocks(batch, tokens).join('\n\n');
     const userText = prompt.user
       .replace('{position}', position)
       .replace('{condition}', condition)

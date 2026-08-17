@@ -401,9 +401,9 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(body.scores[0]).toMatchObject({ id: 'res-1', score: 92 });
   });
 
-  it('sends the evidence window to AI, not just the first 400 chars', async () => {
-    // 护士证/执业证信息在简历中后部（工作经历/证书栏）：AI 必须能看到，否则误判低分被阈值过滤漏人
-    const longPrefix = '多年临床护理经历，负责病房日常护理与患者照护。'.repeat(20); // ~400+ 字符，不含护士证
+  it('sends the full resume text to AI, so certifications later in the resume stay visible', async () => {
+    // 全文送达（非截前 400 字符）：护士证/执业证在简历中后部时 AI 也必须看得到，否则误判低分被阈值过滤漏人
+    const longPrefix = '多年临床护理经历，负责病房日常护理与患者照护。'.repeat(20); // ~460 字符，不含护士证
     const longResume = {
       id: 'res-9',
       candidate_name: '美云',
@@ -424,9 +424,39 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     const db = makeDb({ resumes: [longResume] });
     const res = await postScores(makeEnv(db), { position: '护士', condition: '有护士证' });
     expect(res.status).toBe(200);
-    // 摘录必须包含中后部的资格证据，AI 才判断得出「有护士证」
+    // 全量文本送达：中后部的资格证据与工作经历 AI 一定看得到
     expect(sentText).toContain('护士执业证书');
     expect(sentText).toContain('护士资格证');
+    expect(sentText).toContain('养老院');
+    expect(sentText).toContain(longPrefix.slice(0, 50)); // 简历开头也在
+  });
+
+  it('degrades only abnormally long resumes to stay within the AI context budget', async () => {
+    // 单份全文 9000+ 字符：超过单份上限 → 降级为「开头 + 关键词证据窗口」，
+    // 末尾的资格信息仍通过证据窗口送达 AI，且不会把 9000+ 字符全塞进 prompt 爆上下文
+    const filler = '从事临床护理工作，负责患者日常照护与护理记录。'.repeat(400); // ~9600 字符
+    const longResume = {
+      id: 'res-10',
+      candidate_name: '刘彩华',
+      mapped_position: '护士',
+      position_applied: '护士',
+      status: 'pending_interview',
+      ocr_markdown: `${filler}最后一段：持有护士执业证书。`,
+    };
+    let sentText = '';
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      sentText = String(init.body ?? '');
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '[{"id":"res-10","score":85,"reason":"持有护士执业证书"}]' } }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as any;
+
+    const db = makeDb({ resumes: [longResume] });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '有护士证' });
+    expect(res.status).toBe(200);
+    expect(sentText).toContain('护士执业证书'); // 证据窗口保留资格信息
+    expect(sentText.length).toBeLessThan(7000); // 降级后单份文本受控，不把 9600+ 字符全塞进 prompt
   });
 
   it('admins bypass owner isolation', async () => {
