@@ -5865,7 +5865,7 @@ async function buildCustomScreenPool(
   // 靠多模型分片并发提速）。之前预筛按条件开头通用词截断候选池，导致持护士资格证/执业证的人被排除。
   // LIMIT 仅防极端大岗位（cap 与 AI 全量打分上限一致），命中/匹配由 JS 侧对全文精确计数。
   const rows = await env.DB.prepare(
-    `SELECT id, candidate_name, contact, position_applied, mapped_position, status, screening_result, business_screening_status, hr_disposition, gender, birthday, education, hard_requirement_result, capability_scores, parsed_data, raw_text, resume_markdown, ocr_markdown, datetime(created_at) as created_at, datetime(updated_at) as updated_at
+    `SELECT id, candidate_name, contact, position_applied, mapped_position, status, screening_result, business_screening_status, hr_disposition, gender, birthday, education, hard_requirement_result, capability_scores, match_score, ai_review, ai_evaluation, parsed_data, raw_text, resume_markdown, ocr_markdown, datetime(created_at) as created_at, datetime(updated_at) as updated_at
      FROM resumes
      WHERE (mapped_position IN (${placeholders}) OR position_applied IN (${placeholders}))
        AND (ocr_markdown IS NOT NULL OR raw_text IS NOT NULL OR resume_markdown IS NOT NULL OR parsed_data IS NOT NULL)
