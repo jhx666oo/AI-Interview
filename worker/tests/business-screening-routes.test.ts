@@ -324,6 +324,9 @@ function buildHarness(options?: {
       createdTokens.push(next);
       return next;
     },
+    getResumeFileBytes: async (_env, resumeId) => {
+      return { bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), fileName: `${resumeId}.pdf` }; // mock PDF 字节
+    },
     store,
   };
 
@@ -697,6 +700,28 @@ describe('business screening routes', () => {
     // 简历原文与 AI 评估字段透出（用于业务筛选页展示）
     expect(typeof body.resumes[0].resumeText).toBe('string');
     expect(body.resumes[0].matchScore).toBeDefined();
+  });
+
+  it('downloads a resume source file with the public token and batch ownership check', async () => {
+    const { request, createdTokens } = buildHarness();
+    await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    const [firstToken] = createdTokens;
+
+    // 批次内简历：200 + PDF 字节 + attachment 文件名
+    const ok = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${firstToken.token}/resumes/resume-1/file`);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('Content-Type')).toContain('application/pdf');
+    expect(ok.headers.get('Content-Disposition')).toContain('attachment');
+    const bytes = await ok.arrayBuffer();
+    expect(new Uint8Array(bytes).slice(0, 4)).toEqual(new Uint8Array([0x25, 0x50, 0x44, 0x46]));
+
+    // 非批次内简历：404
+    const missing = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${firstToken.token}/resumes/resume-999/file`);
+    expect(missing.status).toBe(404);
   });
 
   it('blocks expired or revoked public links', async () => {

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Tag, Typography } from 'antd';
+import { Card, Tag, Typography, message } from 'antd';
 import request from '../../utils/request';
 import {
   applyBusinessScreeningDecision,
@@ -312,6 +312,7 @@ const BusinessScreeningPage: React.FC = () => {
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<'approve' | 'reject' | null>(null);
   const [actionError, setActionError] = useState<string>('');
+  const [downloading, setDownloading] = useState(false);
 
   const fetchData = async () => {
     if (!token) {
@@ -339,6 +340,43 @@ const BusinessScreeningPage: React.FC = () => {
       setData(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 批量下载本批次全部候选人的简历源文件（逐个触发，避免浏览器拦截多个下载）
+  const handleBatchDownload = async () => {
+    if (!token || !data?.resumes?.length) return;
+    setDownloading(true);
+    let ok = 0;
+    const failedIds: string[] = [];
+    for (const resume of data.resumes) {
+      try {
+        const res = await fetch(`/api/public/business-screening/${token}/resumes/${resume.id}/file`);
+        if (!res.ok) {
+          failedIds.push(resume.candidateName || resume.id);
+          continue;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${resume.candidateName || resume.id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        ok++;
+      } catch {
+        failedIds.push(resume.candidateName || resume.id);
+      }
+      // 间隔触发下载，避免浏览器把连续多个下载当作恶意行为拦截
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    setDownloading(false);
+    if (ok > 0) {
+      message.success(`已开始下载 ${ok} 份简历源文件${failedIds.length ? `，${failedIds.length} 份无缓存文件未下载` : ''}`);
+    } else if (failedIds.length > 0) {
+      message.warning('未找到可下载的简历源文件（可能未缓存），请重新上传 PDF');
     }
   };
 
@@ -427,7 +465,7 @@ const BusinessScreeningPage: React.FC = () => {
           <div style={{ marginBottom: 20 }}>
             <h1 style={{ margin: 0, fontSize: 32 }}>业务筛选</h1>
             <p style={{ margin: '8px 0 12px', color: '#64748b' }}>请查看候选人信息并完成入库 / 不入库决策。</p>
-            <div className="business-screening-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className="business-screening-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', fontSize: 14 }}>
                 {data?.batch.interviewer || '待分配'}
               </span>
@@ -437,6 +475,23 @@ const BusinessScreeningPage: React.FC = () => {
               <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>
                 链接到期 {formatTime(data?.batch.expiresAt)}
               </span>
+              <button
+                type="button"
+                onClick={handleBatchDownload}
+                disabled={downloading || !data?.resumes?.length}
+                style={{
+                  borderRadius: 999,
+                  border: '1px solid #2563eb',
+                  background: downloading ? '#dbeafe' : '#2563eb',
+                  color: downloading ? '#1d4ed8' : '#fff',
+                  padding: '6px 14px',
+                  fontSize: 14,
+                  cursor: downloading ? 'default' : 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                {downloading ? '下载中...' : `批量下载简历源文件（${data?.resumes.length || 0}）`}
+              </button>
             </div>
           </div>
 

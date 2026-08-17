@@ -242,7 +242,7 @@ async function storeResumeFile(
   ).bind(id, key, fileName, fileSize, b64).run();
 }
 
-async function getResumeFileBytes(
+export async function getResumeFileBytes(
   env: Env,
   id: string,
 ): Promise<{ bytes: Uint8Array | null; fileName: string }> {
@@ -1547,6 +1547,7 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
   now,
   uuid,
   createPublicToken,
+  getResumeFileBytes,
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
 });
 app.route('/', businessScreeningRoutes);

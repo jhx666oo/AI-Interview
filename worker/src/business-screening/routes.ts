@@ -186,6 +186,7 @@ export interface BusinessScreeningRouteStore {
   setBatchStatus(db: D1Database, batchId: string, status: 'active' | 'completed' | 'revoked' | 'expired'): Promise<void>;
   setBatchLastSentAt(db: D1Database, batchId: string, sentAt: string): Promise<void>;
   countPendingBatchItems(db: D1Database, batchId: string): Promise<number>;
+  getResumeFileBytes(env: any, resumeId: string): Promise<{ bytes: Uint8Array | null; fileName: string }>;
 }
 
 type HrUser = { id?: string; email?: string; role?: string; full_name?: string };
@@ -566,6 +567,38 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
   app.post('/api/public/business-screening/:token/resumes/:resumeId/reject', async (c) => (
     handlePublicDecision(c, 'rejected')
   ));
+
+  // 免登录下载批次内某份简历的源文件（PDF）：校验公开 token 有效 + 简历属于该批次
+  app.get('/api/public/business-screening/:token/resumes/:resumeId/file', async (c) => {
+    const tokenHash = await hashPublicToken(c.req.param('token'));
+    const resumeId = c.req.param('resumeId');
+    const db = c.env.DB as D1Database;
+    const batch = await deps.store.loadBatchByTokenHash(db, tokenHash);
+    if (!batch) return c.json({ detail: 'Not found' }, 404);
+
+    const access = isBatchAccessible(batch, deps.now());
+    if (!access.ok) {
+      if (access.nextStatus) await deps.store.setBatchStatus(db, batch.id, access.nextStatus);
+      return c.json({ detail: 'Link unavailable' }, access.status);
+    }
+
+    const item = await deps.store.loadBatchItem(db, batch.id, resumeId);
+    if (!item) return c.json({ detail: 'Not found' }, 404);
+
+    const file = await deps.getResumeFileBytes(c.env, resumeId);
+    if (!file.bytes) {
+      return c.json({ detail: '该简历源文件未本地缓存，无法下载。请重新上传 PDF 或联系管理员', not_cached: true }, 404);
+    }
+    const safeName = (item.candidate_name || 'resume').replace(/[\\/:*?"<>|]/g, '_');
+    return new Response(file.bytes, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(safeName)}.pdf"`,
+        'Cache-Control': 'private, max-age=300',
+      },
+    });
+  });
 
   app.post('/api/resumes/business-screening/batches/:batchId/resend', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     const batchId = c.req.param('batchId');
