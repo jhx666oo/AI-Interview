@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Tag, Tooltip, Typography, message } from 'antd';
+import { Card, Modal, Tag, Tooltip, message } from 'antd';
+import { FileTextOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import {
   applyBusinessScreeningDecision,
@@ -18,8 +19,6 @@ import {
   getScreeningGateRows,
   normalizeResumeEvaluation,
 } from '../../utils/resumeEvaluation';
-
-const { Text } = Typography;
 
 const STATUS_LABELS: Record<BusinessScreeningResume['status'], string> = {
   pending: '待处理',
@@ -159,13 +158,6 @@ const cardBodyStyle: React.CSSProperties = {
   marginTop: 16,
 };
 
-const cardTitleStyle: React.CSSProperties = {
-  fontSize: 16,
-  color: '#6366F1',
-  fontWeight: 700,
-  marginBottom: 12,
-};
-
 /**
  * AI 初筛评估（与简历管理列表页简历卡片 ant-card-body 内评估区一致）：
  * AI 评估符合度、加权分、维度合计、各维度标签（悬浮显示评分理由）、初筛结论。
@@ -269,23 +261,6 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
   );
 }
 
-/** 简历源文件预览（PDF iframe，免登录内嵌） */
-function ResumePreviewCard({ token, resume }: { token: string; resume: BusinessScreeningResume }) {
-  return (
-    <Card bordered={false} style={cardBodyStyle}>
-      <Text strong style={cardTitleStyle}>
-        简历预览
-        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12, fontWeight: 400 }}>PDF 源文件</Text>
-      </Text>
-      <iframe
-        title="简历预览"
-        src={`/api/public/business-screening/${token}/resumes/${resume.id}/file?preview=1`}
-        style={{ width: '100%', height: 640, border: '1px solid #E2E8F0', borderRadius: 8, background: '#fff' }}
-      />
-    </Card>
-  );
-}
-
 const BusinessScreeningPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [loading, setLoading] = useState(true);
@@ -296,6 +271,7 @@ const BusinessScreeningPage: React.FC = () => {
   const [submitting, setSubmitting] = useState<'approve' | 'reject' | null>(null);
   const [actionError, setActionError] = useState<string>('');
   const [downloading, setDownloading] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(false);
 
   const fetchData = async () => {
     if (!token) {
@@ -535,8 +511,30 @@ const BusinessScreeningPage: React.FC = () => {
                           {activeResume.workExperience ? <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>{activeResume.workExperience}</span> : null}
                         </div>
                       </div>
-                      <div style={{ color: activeResume.status === 'passed' ? '#15803d' : activeResume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontWeight: 600 }}>
-                        {STATUS_LABELS[activeResume.status]}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewVisible(true)}
+                          title="预览简历源文件"
+                          style={{
+                            borderRadius: 8,
+                            border: '1px solid #d1d5db',
+                            background: '#fff',
+                            padding: '6px 10px',
+                            fontSize: 13,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            color: '#334155',
+                          }}
+                        >
+                          <FileTextOutlined style={{ color: '#6366F1' }} />
+                          预览简历
+                        </button>
+                        <span style={{ color: activeResume.status === 'passed' ? '#15803d' : activeResume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontWeight: 600 }}>
+                          {STATUS_LABELS[activeResume.status]}
+                        </span>
                       </div>
                     </div>
 
@@ -563,9 +561,6 @@ const BusinessScreeningPage: React.FC = () => {
                     <AiEvaluationCard resume={activeResume} />
 
                     {activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}
-
-                    {/* 简历源文件预览（PDF） */}
-                    <ResumePreviewCard token={token || ''} resume={activeResume} />
 
                     <div style={{ marginTop: 20 }}>
                       <label htmlFor="business-screening-remark" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
@@ -719,6 +714,24 @@ const BusinessScreeningPage: React.FC = () => {
           }
         }
       `}</style>
+
+      {/* 简历源文件预览弹窗 */}
+      <Modal
+        open={previewVisible}
+        onCancel={() => setPreviewVisible(false)}
+        footer={null}
+        width="80%"
+        title={activeResume ? `简历预览 - ${activeResume.candidateName}` : '简历预览'}
+        destroyOnHidden
+      >
+        {activeResume && (
+          <iframe
+            title="简历预览"
+            src={`/api/public/business-screening/${token}/resumes/${activeResume.id}/file?preview=1`}
+            style={{ width: '100%', height: '70vh', border: 'none', borderRadius: 8, background: '#fff' }}
+          />
+        )}
+      </Modal>
     </div>
   );
 };
