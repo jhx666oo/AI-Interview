@@ -348,19 +348,43 @@ function normalizeBaseUrl(raw: string | undefined | null): string {
   return u.replace(/\/+$/, '');
 }
 
-// 获取 LLM 配置列表（最多 4 组，按优先级从高到低排列）。
-// 优先读取 system_configs 表（网站「AI 模型配置」页所存：llm_* / llm2_* / llm3_* / llm4_*），
-// 第 1 组缺失时回退 Worker 环境变量。仅返回已填写 API Key 的配置。
+// 兼容旧版固定 4 槽位格式：llm*/llm2*/llm3*/llm4* 列名
+function validLLMSlotKey(k: string): boolean {
+  return /^llm\d*_base_url$/i.test(k) || /^llm\d*_model$/i.test(k) || /^llm\d*_api_key$/i.test(k);
+}
+
+// 从 system_configs 行中读取动态 LLM 配置（llm_slots JSON 列）；
+// 若列不存在或为空，则回退到旧 4 槽位列（llm*/llm2*/llm3*/llm4*）以兼容老数据。
+// 第 1 槽支持环境变量兜底（本地 dev），其余槽必须显式配置 API Key。
+// 仅返回已填写 API Key 的配置，按保存顺序排列。
 async function getLLMConfigs(env: Env): Promise<Array<{ apiKey: string; baseUrl: string; model: string }>> {
   let cfg: any = {};
   try {
     const row = await env.DB.prepare(
-      'SELECT llm_api_key, llm_base_url, llm_model, llm2_api_key, llm2_base_url, llm2_model, llm3_api_key, llm3_base_url, llm3_model, llm4_api_key, llm4_base_url, llm4_model FROM system_configs ORDER BY updated_at DESC LIMIT 1'
+      'SELECT llm_slots, llm_api_key, llm_base_url, llm_model, llm2_api_key, llm2_base_url, llm2_model, llm3_api_key, llm3_base_url, llm3_model, llm4_api_key, llm4_base_url, llm4_model FROM system_configs ORDER BY updated_at DESC LIMIT 1'
     ).first() as any;
     if (row) cfg = row;
   } catch (e) {
     console.error('[AI] getLLMConfigs read failed:', e);
   }
+  // 优先读新列：JSON 数组 [{baseUrl, model, apiKey}, ...]
+  const rawSlots: any = cfg.llm_slots;
+  const slots = Array.isArray(rawSlots)
+    ? rawSlots.filter((s: any) => s && typeof s === 'object')
+    : [];
+  if (slots.length > 0) {
+    const configs: Array<{ apiKey: string; baseUrl: string; model: string }> = [];
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      const apiKey = String(s.apiKey || s.api_key || '').trim();
+      const baseUrl = normalizeBaseUrl(String(s.baseUrl || s.base_url || ''));
+      const model = String(s.model || '').trim();
+      if (!apiKey) continue;
+      configs.push({ apiKey, baseUrl: baseUrl || 'https://api.deepseek.com', model: model || 'deepseek-chat' });
+    }
+    return configs;
+  }
+  // 回退：旧 4 槽位列
   const groups = [
     { apiKey: cfg.llm_api_key, baseUrl: cfg.llm_base_url, model: cfg.llm_model },
     { apiKey: cfg.llm2_api_key, baseUrl: cfg.llm2_base_url, model: cfg.llm2_model },
@@ -370,7 +394,6 @@ async function getLLMConfigs(env: Env): Promise<Array<{ apiKey: string; baseUrl:
   const configs: Array<{ apiKey: string; baseUrl: string; model: string }> = [];
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
-    // 第 1 组支持环境变量兜底（本地 dev），其余组必须显式配置
     const apiKey = (g.apiKey && String(g.apiKey).trim()) || (i === 0 ? (env.AI_API_KEY && String(env.AI_API_KEY).trim()) || '' : '');
     const baseUrl = normalizeBaseUrl(g.baseUrl) || (i === 0 ? (env.AI_BASE_URL || 'https://api.deepseek.com') : 'https://api.deepseek.com');
     const model = (g.model && String(g.model).trim()) || (i === 0 ? (env.AI_MODEL || 'deepseek-v4-flash') : '');
@@ -453,6 +476,9 @@ export type AICallOptions = {
 };
 
 const AI_RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+// 动态 AI 模型槽位上限，超出部分前端隐藏「添加」按钮；旧列 llm2*/llm3*/llm4* 仍兼容读取
+export const LLM_SLOT_MAX = 20;
+
 export const AI_REQUEST_TIMEOUT_MS = 90_000;
 
 function isRetryableHttpStatus(status: number): boolean {
@@ -1248,6 +1274,10 @@ function shouldPersistSystemConfigField(k: string, v: unknown): boolean {
   if (!validCol(k)) return false;
   if (['id', 'updated_at'].includes(k)) return false;
   if (k.endsWith('_set') || k.endsWith('_last4')) return false;
+  // 新格式：llm_slots 列直接存 JSON 数组
+  if (k === 'llm_slots') return v !== undefined && v !== null;
+  // 旧格式兼容：llmN_* 列仍允许写入（不影响新字段读取）
+  if (validLLMSlotKey(k)) return true;
   if (/^llm\d*_api_key$/.test(k) && (!v || !String(v).trim())) return false;
   return true;
 }
@@ -8291,13 +8321,22 @@ app.get('/api/settings/system', authMiddleware, requireRole(['admin']), async (c
   const row = await c.env.DB.prepare('SELECT * FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
   if (!row) return c.json({});
   const result = transformRow(row);
-  // 安全处理：不返回完整 API Key，仅返回是否已设置及末4位（llm_* ~ llm4_* 共 4 组）
+  // 安全处理：不返回完整 API Key，仅返回是否已设置及末4位（兼容旧 llm*_api_key 列）
   for (const suffix of ['', '2', '3', '4']) {
     const key = `llm${suffix}_api_key`;
     const rawKey = String(row[key] || '').trim();
     result[`llm${suffix}_api_key_set`] = rawKey.length > 0;
     result[`llm${suffix}_api_key_last4`] = rawKey.length >= 4 ? rawKey.slice(-4) : null;
     delete result[key];
+  }
+  // 将 llm_slots JSON 列解包为扁平字段（兼容前端旧版本读取）；若列为 null/空则保留旧列的 _set/_last4 标记
+  if (result.llm_slots && Array.isArray(result.llm_slots)) {
+    result.llm_slots = result.llm_slots.map((s: any) => ({
+      ...s,
+      apiKeySet: !!(s.apiKey && String(s.apiKey).trim()),
+      apiKeyLast4: s.apiKey && String(s.apiKey).trim().length >= 4 ? String(s.apiKey).trim().slice(-4) : null,
+      ...(s.apiKey ? {} : { apiKey: '' }),
+    }));
   }
   return c.json(result);
 });
@@ -8385,14 +8424,25 @@ app.post('/api/settings/system/test', authMiddleware, requireRole(['admin']), as
   let apiKey = String(body.api_key || '').trim();
 
   if (!apiKey && body.index !== undefined) {
-    const prefix = ['llm', 'llm2', 'llm3', 'llm4'][Number(body.index)] || 'llm';
-    const row = await c.env.DB.prepare(
-      `SELECT ${prefix}_base_url, ${prefix}_model, ${prefix}_api_key FROM system_configs ORDER BY updated_at DESC LIMIT 1`
-    ).first() as any;
-    if (row?.[`${prefix}_api_key`]) {
-      apiKey = String(row[`${prefix}_api_key`]).trim();
-      baseUrl = normalizeBaseUrl(row[`${prefix}_base_url`]) || baseUrl;
-      model = String(row[`${prefix}_model`] || '').trim() || model;
+    // 优先读新格式：llm_slots[index]
+    const row = await c.env.DB.prepare('SELECT llm_slots FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+    const slots = Array.isArray(row?.llm_slots) ? row.llm_slots : [];
+    const slot = slots[Number(body.index)];
+    if (slot?.apiKey) {
+      apiKey = String(slot.apiKey).trim();
+      baseUrl = normalizeBaseUrl(slot.baseUrl) || baseUrl;
+      model = String(slot.model || '').trim() || model;
+    } else {
+      // 回退旧 4 槽位列
+      const prefix = ['llm', 'llm2', 'llm3', 'llm4'][Number(body.index)] || 'llm';
+      const r2 = await c.env.DB.prepare(
+        `SELECT ${prefix}_base_url, ${prefix}_model, ${prefix}_api_key FROM system_configs ORDER BY updated_at DESC LIMIT 1`
+      ).first() as any;
+      if (r2?.[`${prefix}_api_key`]) {
+        apiKey = String(r2[`${prefix}_api_key`]).trim();
+        baseUrl = normalizeBaseUrl(r2[`${prefix}_base_url`]) || baseUrl;
+        model = String(r2[`${prefix}_model`] || '').trim() || model;
+      }
     }
   }
 
