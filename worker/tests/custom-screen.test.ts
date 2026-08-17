@@ -281,6 +281,47 @@ describe('POST /api/resumes/custom-screen/scores（第二层：AI 语义分后�
     expect(body.scores.map((s: any) => s.id).sort()).toEqual(['res-1', 'res-4']);
   });
 
+  it('bounds per-config AI batch concurrency to avoid rate limiting', async () => {
+    // 20 份简历 → BATCH=8 → 3 批；若全部批次同时打同一 API 会限流全挂，这里断言并发峰值 ≤ 3
+    const resumes = Array.from({ length: 20 }, (_, i) => ({
+      id: `res-${i + 1}`,
+      candidate_name: `候选人${i + 1}`,
+      mapped_position: '护士',
+      position_applied: '护士',
+      status: 'pending_interview',
+      ocr_markdown: `第${i + 1}份简历，本人持有护士资格证和护士执业证，临床工作多年。`,
+    }));
+    let active = 0, peak = 0;
+    const calls: string[][] = [];
+    globalThis.fetch = (async (_url: unknown, init: any) => {
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        const body = init.body as string;
+        const ids = [...body.matchAll(/#id:([A-Za-z0-9_-]+)/g)].map((m) => m[1]);
+        calls.push(ids);
+        await new Promise(r => setTimeout(r, 20));
+        const content = ids.map((id) => JSON.stringify({ id, score: 80, reason: '符合' }));
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: `[${content.join(',')}]` } }] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      } finally {
+        active--;
+      }
+    }) as any;
+
+    const db = makeDb({ resumes });
+    const res = await postScores(makeEnv(db), { position: '护士', condition: '持有护士证' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(peak).toBeLessThanOrEqual(3); // 并发受限，不打爆 API
+    expect(calls.length).toBe(3); // 20 份 / BATCH 8 → 8+8+4 三批
+    expect(body.scores).toHaveLength(20); // 全部简历都拿到语义分，无整批失败
+    const gotIds = new Set(body.scores.map((s: any) => s.id));
+    expect(gotIds).toEqual(new Set(Array.from({ length: 20 }, (_, i) => `res-${i + 1}`)));
+  });
+
   it('keeps keyword scores when the AI call fails (returns empty scores)', async () => {
     globalThis.fetch = (async () => new Response('bad request', { status: 400 })) as any;
 

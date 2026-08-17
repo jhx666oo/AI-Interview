@@ -5990,14 +5990,30 @@ async function aiScoreCustomScreenPool(
     groups.push({ batches: chunk(eligible) });
   }
 
+  // 每个配置内的并发批数上限：简历多时若把全部批次同时打同一个 API，会触发限流导致整批失败，
+  // 全部批次失败前端就报 CUSTOM_SCREEN_AI_TIMEOUT。限并发后其余批排队，避免限流全挂。
+  const CONCURRENCY = Math.max(1, Number(env.CUSTOM_SCREEN_MAX_CONCURRENCY) || 3);
+  const mapLimit = async <T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> => {
+    const out: R[] = new Array(items.length);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < items.length) {
+        const idx = cursor++;
+        out[idx] = await fn(items[idx]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+    return out;
+  };
+
   let firstError: string | null = null;
   const perGroup = await Promise.all(groups.map(({ config, batches }) =>
-    Promise.all(batches.map((b) => scoreBatch(b, config).catch((e) => {
+    mapLimit(batches, CONCURRENCY, (b) => scoreBatch(b, config).catch((e) => {
       const msg = String((e as Error)?.message || e).slice(0, 300);
       firstError = firstError || msg;
       console.warn(`[custom-screen] AI 打分批次失败，回退关键词：${msg}`);
       return new Map<string, { id: string; score: number; reason: string }>();
-    })))
+    }))
   ));
   const scores = new Map<string, { id: string; score: number; reason: string }>();
   for (const group of perGroup) for (const m of group) for (const [id, v] of m) scores.set(id, v);
