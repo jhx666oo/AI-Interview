@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Typography } from 'antd';
+import { Card, Tag, Typography } from 'antd';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import request from '../../utils/request';
@@ -14,6 +14,12 @@ import {
   type BusinessScreeningResume,
   type BusinessScreeningView,
 } from './businessScreeningLogic';
+import {
+  asDisplayTextList,
+  formatWeightedScore,
+  getScreeningGateRows,
+  normalizeResumeEvaluation,
+} from '../../utils/resumeEvaluation';
 
 const { Text } = Typography;
 
@@ -148,32 +154,137 @@ function ProfileDescriptions({ profile }: { profile: BusinessScreeningProfile })
   );
 }
 
-const sectionCardStyle: React.CSSProperties = {
-  ...cardStyle,
-  marginTop: 20,
-  padding: 16,
+const cardBodyStyle: React.CSSProperties = {
+  borderRadius: 16,
+  boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+  border: '1px solid #E2E8F0',
+  marginTop: 16,
 };
 
-const sectionTitleStyle: React.CSSProperties = {
-  margin: '0 0 12px',
+const cardTitleStyle: React.CSSProperties = {
   fontSize: 16,
+  color: '#6366F1',
   fontWeight: 700,
-  color: '#0f172a',
+  marginBottom: 12,
 };
 
-/** 简历原文（MinerU OCR / 原始文本） */
+/** AI 初筛评估（antd Card / ant-card-body 样式，与简历管理详情页一致） */
+function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
+  const evaluation = normalizeResumeEvaluation({
+    ai_evaluation: resume.aiEvaluation,
+    ai_review: resume.aiReview,
+    match_score: resume.matchScore,
+  });
+  const hasAny = !!(resume.aiReview || resume.aiEvaluation || evaluation.overallScore != null || evaluation.screeningReason);
+  if (!hasAny) return null;
+
+  const gateRows = getScreeningGateRows(evaluation);
+  const summary = evaluation.summary;
+  const recommendation = String(evaluation.source?.recommendation || '');
+  const strengths = asDisplayTextList(evaluation.source?.strengths);
+  const risks = asDisplayTextList(evaluation.source?.risks);
+  const matchedSkills = asDisplayTextList(evaluation.source?.skill_match?.matched_skills ?? evaluation.source?.matched_skills);
+  const skillGaps = asDisplayTextList(evaluation.source?.skill_match?.skill_gaps ?? evaluation.source?.skill_gaps);
+  const suggestedQuestions = asDisplayTextList(evaluation.source?.suggested_questions);
+  const recommendationText =
+    recommendation === 'strongly_recommend' ? '强烈推荐'
+      : recommendation === 'recommend' ? '推荐'
+        : recommendation === 'neutral' ? '中立'
+          : recommendation === 'not_recommend' ? '不推荐'
+            : recommendation === 'strongly_not_recommend' ? '强烈不推荐'
+              : recommendation;
+
+  return (
+    <Card bordered={false} style={cardBodyStyle}>
+      <Text strong style={cardTitleStyle}>AI 初筛评估</Text>
+      <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+        {evaluation.overallScore != null && (
+          <Tag color={evaluation.overallScore >= 4 ? 'green' : evaluation.overallScore >= 3 ? 'blue' : 'orange'} style={{ margin: 0 }}>
+            加权分 {formatWeightedScore(evaluation.overallScore)}
+          </Tag>
+        )}
+        {gateRows.map((gate) => (
+          <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
+            {gate.passed ? `${gate.label}已通过` : gate.reason}
+          </Tag>
+        ))}
+        {recommendationText && (
+          <Tag color={recommendation.includes('recommend') && !recommendation.includes('not') ? 'blue' : recommendation.includes('not') ? 'red' : 'gold'} style={{ margin: 0 }}>
+            {recommendationText}
+          </Tag>
+        )}
+      </div>
+      {evaluation.dimensions.length > 0 && (
+        <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {evaluation.dimensions.map((dimension) => (
+            <Tag key={dimension.name} color={dimension.score >= 4 ? 'green' : dimension.score >= 3 ? 'blue' : dimension.score >= 2 ? 'orange' : 'red'} style={{ margin: 0 }}>
+              {dimension.name} {dimension.score}/5
+            </Tag>
+          ))}
+        </div>
+      )}
+      {evaluation.screeningReason && <Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>初筛结论：{evaluation.screeningReason}</Text>}
+      {summary && (
+        <div style={{ marginBottom: 12, padding: '12px 16px', background: '#EEF2FF', borderRadius: 8, borderLeft: '4px solid #6366F1' }}>
+          <Text strong style={{ color: '#4338CA' }}>总体评价：</Text>
+          <Text style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{summary}</Text>
+        </div>
+      )}
+      {strengths.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <Text strong style={{ color: '#10B981', display: 'block', marginBottom: 6 }}>核心优势</Text>
+          <div>{strengths.map((s, i) => <Tag key={i} color="green" style={{ marginBottom: 4, whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>)}</div>
+        </div>
+      )}
+      {risks.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <Text strong style={{ color: '#EF4444', display: 'block', marginBottom: 6 }}>潜在风险</Text>
+          <div>{risks.map((r, i) => <Tag key={i} color="red" style={{ marginBottom: 4, whiteSpace: 'normal', wordBreak: 'break-word' }}>{r}</Tag>)}</div>
+        </div>
+      )}
+      {(matchedSkills.length > 0 || skillGaps.length > 0) && (
+        <div style={{ marginBottom: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+          {matchedSkills.length > 0 && (
+            <div>
+              <Text strong style={{ color: '#3B82F6', display: 'block', marginBottom: 6 }}>匹配技能</Text>
+              <div>{matchedSkills.map((s, i) => <Tag key={i} color="blue" style={{ marginBottom: 4, whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>)}</div>
+            </div>
+          )}
+          {skillGaps.length > 0 && (
+            <div>
+              <Text strong style={{ color: '#F59E0B', display: 'block', marginBottom: 6 }}>技能差距</Text>
+              <div>{skillGaps.map((s, i) => <Tag key={i} color="orange" style={{ marginBottom: 4, whiteSpace: 'normal', wordBreak: 'break-word' }}>{s}</Tag>)}</div>
+            </div>
+          )}
+        </div>
+      )}
+      {suggestedQuestions.length > 0 && (
+        <div>
+          <Text strong style={{ display: 'block', marginBottom: 6, color: '#7C3AED' }}>建议面试问题</Text>
+          {suggestedQuestions.map((q, i) => (
+            <div key={i} style={{ padding: '8px 12px', marginBottom: 4, background: '#FDF4FF', borderRadius: 6, borderLeft: '3px solid #7C3AED', fontSize: 14 }}>
+              {i + 1}. {q}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** 简历原文（MinerU OCR / 原始文本，antd Card / ant-card-body 样式，与简历管理详情页一致） */
 function ResumeTextCard({ resumeText }: { resumeText?: string }) {
   if (!resumeText) return null;
   return (
-    <div style={sectionCardStyle}>
-      <h3 style={sectionTitleStyle}>
-        简历原文
-        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12, fontWeight: 400 }}>OCR 结构化文本</Text>
-      </h3>
+    <Card bordered={false} style={cardBodyStyle}>
+      <Text strong style={cardTitleStyle}>
+        简历文本识别
+        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12, fontWeight: 400 }}>MinerU OCR 结构化文本</Text>
+      </Text>
       <div style={{ background: '#F8FAFC', padding: '20px', borderRadius: 12, border: '1px solid #E2E8F0', maxHeight: 600, overflow: 'auto' }}>
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{resumeText}</ReactMarkdown>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -397,7 +508,10 @@ const BusinessScreeningPage: React.FC = () => {
 
                     {activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}
 
-                    {/* 原始简历（OCR 结构化文本） */}
+                    {/* AI 初筛评估（ant-card-body 卡片，与简历管理模块一致） */}
+                    <AiEvaluationCard resume={activeResume} />
+
+                    {/* 简历原文（OCR 结构化文本，ant-card-body 卡片，与简历管理模块一致） */}
                     <ResumeTextCard resumeText={activeResume.resumeText} />
 
                     <div style={{ marginTop: 20 }}>
