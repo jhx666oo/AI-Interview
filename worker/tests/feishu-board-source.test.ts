@@ -75,6 +75,22 @@ describe('Feishu dashboard source adapter', () => {
     expect(position?.hrbps).toEqual(['未分配']);
   });
 
+  it('accepts the Excel snapshot aliases for final pass and weekly target', () => {
+    const position = normalizeFeishuPositionRecord({
+      record_id: 'rec-excel',
+      table: 'zhipei',
+      fields: {
+        岗位名称: 'Excel岗位',
+        招聘状态: '复试中',
+        终面通过: 3,
+        本周需完结: 2,
+      },
+    });
+
+    expect(position?.third_pass).toBe(3);
+    expect(position?.weekly_target).toBe(2);
+  });
+
   it('keeps cancelled rows out of main stats but allows completed cycle stats', () => {
     const cancelled = normalizeFeishuPositionRecord({
       record_id: 'rec-cancelled',

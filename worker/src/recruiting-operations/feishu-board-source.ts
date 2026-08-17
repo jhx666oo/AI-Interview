@@ -32,7 +32,7 @@ const FIELD_NAMES = {
   position_name: ['岗位名称'],
   city: ['城市'],
   department: ['所属部门', '所属事业部', '事业部'],
-  hrbps: ['负责HRBP', '负责 HRBP', '负责'],
+  hrbps: ['负责HRBP', '负责 HRBP', 'HRBP', '负责'],
   priority: ['优先级', '优先'],
   status: ['招聘状态', '状态'],
   headcount: ['在招人数', '招聘人数'],
@@ -40,11 +40,11 @@ const FIELD_NAMES = {
   first_scheduled: ['安排1面', '安排 1 面', '1面人数', '1 面人数'],
   first_pass: ['1面通过', '1 面通过'],
   second_pass: ['2面通过', '2 面通过'],
-  third_pass: ['3面通过', '3 面通过'],
+  third_pass: ['3面通过', '3 面通过', '终面通过'],
   offers: ['发放Offer数', '发放 Offer数', '发放Offer', 'Offer'],
   hired: ['入职数', '入职'],
   elapsed_days: ['已耗时天数', '耗时', '天数'],
-  weekly_target: ['本周需完结数'],
+  weekly_target: ['本周需完结数', '本周需完结'],
   notes: ['备注'],
 } as const;
 
@@ -118,8 +118,10 @@ function names(value: unknown): string[] {
 
 function inferPriority(value: unknown, notes: string, status: string): DashboardPriority {
   const raw = text(value).toUpperCase();
-  if (raw.includes('P2') || notes.toUpperCase().includes('P2') || notes.includes('储备') || status.includes('储备')) return 'P2';
+  if (raw.includes('P2')) return 'P2';
   if (raw.includes('P0') || raw.includes('紧急')) return 'P0';
+  if (raw.includes('P1') || raw.includes('正常')) return 'P1';
+  if (notes.toUpperCase().includes('P2') || notes.includes('储备') || status.includes('储备')) return 'P2';
   return 'P1';
 }
 

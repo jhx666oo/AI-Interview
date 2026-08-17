@@ -1,6 +1,7 @@
 import type { DashboardDataMode } from './share-links';
 
 export type DashboardPriority = 'P0' | 'P1' | 'P2';
+export type DashboardDataSource = 'static_excel' | 'feishu' | 'merged';
 
 export type DashboardFunnelMetric =
   | 'resume_push'
@@ -123,6 +124,7 @@ export interface DashboardV3Board {
   data_mode: DashboardDataMode;
   snapshot_date: string | null;
   updated_at: string;
+  data_source?: DashboardDataSource;
   kpis: Record<string, { value: number | null; available: boolean; caption?: string }>;
   funnel: DashboardFunnelStage[];
   divisions: DashboardV3Division[];

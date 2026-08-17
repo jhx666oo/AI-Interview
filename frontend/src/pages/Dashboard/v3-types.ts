@@ -1,4 +1,5 @@
 export type DashboardV3Priority = 'P0' | 'P1' | 'P2';
+export type DashboardV3DataSource = 'static_excel' | 'feishu' | 'merged';
 
 export interface DashboardV3Position {
   position_id: string;
@@ -92,6 +93,7 @@ export interface DashboardV3Board {
   data_mode: 'live' | 'snapshot';
   snapshot_date: string | null;
   updated_at: string;
+  data_source?: DashboardV3DataSource;
   kpis: Record<string, { value: number | null; available: boolean; caption?: string }>;
   funnel: DashboardV3FunnelStage[];
   divisions: DashboardV3Division[];

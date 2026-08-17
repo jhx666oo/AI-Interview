@@ -2,15 +2,22 @@ import request from '../../utils/request';
 import type { DashboardV3Board } from './v3-types';
 import type { DashboardDataMode, DashboardSnapshotMeta, RecruitingBoard } from './types';
 
+export type DashboardV3Source = 'static' | 'feishu';
+
 export async function fetchDashboardV3(
   mode: DashboardDataMode,
   snapshotDate?: string,
   responsiblePerson?: string,
+  source: DashboardV3Source = 'static',
 ): Promise<DashboardV3Board> {
   const params = mode === 'snapshot'
-    ? { mode, snapshot_date: snapshotDate, ...(responsiblePerson ? { responsible_person: responsiblePerson } : {}) }
-    : { mode, ...(responsiblePerson ? { responsible_person: responsiblePerson } : {}) };
+    ? { mode, snapshot_date: snapshotDate, source, ...(responsiblePerson ? { responsible_person: responsiblePerson } : {}) }
+    : { mode, source, ...(responsiblePerson ? { responsible_person: responsiblePerson } : {}) };
   return request.get('/dashboard/recruiting-board-v3', { params }) as Promise<DashboardV3Board>;
+}
+
+export async function syncDashboardV3(): Promise<DashboardV3Board> {
+  return request.post('/dashboard/recruiting-board-v3/sync', {}) as Promise<DashboardV3Board>;
 }
 
 export async function fetchDashboardLegacy(

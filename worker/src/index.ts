@@ -66,6 +66,7 @@ import { loadD1DashboardOverlay, type D1DashboardOverlay } from './recruiting-op
 import { buildDashboardV3, scopeDashboardV3Board } from './recruiting-operations/dashboard-v3';
 import { buildDashboardReconciliation } from './recruiting-operations/dashboard-reconciliation';
 import { normalizeFeishuPositionRecord, type FeishuBoardSourceRecord, type FeishuPositionMetric } from './recruiting-operations/feishu-board-source';
+import { loadStaticDashboardPositions, STATIC_DASHBOARD_SNAPSHOT_DATE, STATIC_DASHBOARD_UPDATED_AT } from './recruiting-operations/dashboard-static-source';
 import type { DashboardV3Board } from './recruiting-operations/dashboard-v3-types';
 import {
   buildRecruitingBoard,
@@ -2187,7 +2188,22 @@ async function loadLiveDashboardV3(db: D1Database, env: Env, owner: string | nul
     d1Overlay: overlay,
     baseline: await readLatestV3Snapshot(db),
     dataMode: 'live',
+    dataSource: 'feishu',
     updatedAt: now(),
+  });
+}
+
+async function loadStaticDashboardV3(db: D1Database, owner: string | null): Promise<DashboardV3Board> {
+  const allPositions = loadStaticDashboardPositions();
+  const positions = owner ? allPositions.filter((position) => position.hrbps.includes(owner)) : allPositions;
+  const overlay = filterV3OverlayForOwner(await loadD1DashboardOverlay(db, positions), positions, owner);
+  return buildDashboardV3({
+    feishuPositions: positions,
+    d1Overlay: overlay,
+    dataMode: 'live',
+    dataSource: 'static_excel',
+    snapshotDate: STATIC_DASHBOARD_SNAPSHOT_DATE,
+    updatedAt: STATIC_DASHBOARD_UPDATED_AT,
   });
 }
 
@@ -2209,6 +2225,8 @@ function filterDashboardV3Owner(board: DashboardV3Board, owner: string | null): 
 app.get('/api/dashboard/recruiting-board-v3', authMiddleware, async (c) => {
   const mode = c.req.query('mode') || 'live';
   if (mode !== 'live' && mode !== 'snapshot') return c.json({ detail: 'Invalid dashboard data mode' }, 400);
+  const source = c.req.query('source') || 'static';
+  if (source !== 'static' && source !== 'feishu') return c.json({ detail: 'Invalid dashboard data source' }, 400);
   const owner = getDashboardOwner(c);
   try {
     if (mode === 'snapshot') {
@@ -2218,10 +2236,21 @@ app.get('/api/dashboard/recruiting-board-v3', authMiddleware, async (c) => {
       if (!board) return c.json({ detail: 'Dashboard v3 snapshot not found' }, 404);
       return c.json(filterDashboardV3Owner(board, owner));
     }
-    return c.json(await loadLiveDashboardV3(c.env.DB, c.env, owner));
+    return c.json(source === 'static'
+      ? await loadStaticDashboardV3(c.env.DB, owner)
+      : await loadLiveDashboardV3(c.env.DB, c.env, owner));
   } catch (error: any) {
     console.error('[DashboardV3] load failed:', error);
     return c.json({ detail: '仪表盘 v3 数据加载失败', code: 'DASHBOARD_V3_SOURCE_ERROR' }, 502);
+  }
+});
+
+app.post('/api/dashboard/recruiting-board-v3/sync', authMiddleware, requireRole(['admin']), async (c) => {
+  try {
+    return c.json(await loadLiveDashboardV3(c.env.DB, c.env, null));
+  } catch (error) {
+    console.error('[DashboardV3] manual Feishu sync failed:', error);
+    return c.json({ detail: '飞书数据同步失败，请确认招聘表权限后重试', code: 'DASHBOARD_V3_SYNC_ERROR' }, 502);
   }
 });
 

@@ -70,8 +70,11 @@ export function MiaodaDashboardView({ board }: { board: DashboardV3Board }) {
   const cards = useMemo(() => [
     ['在招岗位', number(totals.active_positions), 'blue'], ['在招人数', number(totals.headcount), 'default'], ['简历推送', number(totals.resume_push), 'blue'], ['安排1面', number(totals.first_scheduled), 'default'], ['终面通过', number(totals.final_pass), 'green'], ['发放Offer', number(totals.offers), 'orange'], ['已入职', number(totals.hired), 'green'], ['面试通过率', percent(totals.interview_pass_rate), 'default'],
   ] as const, [totals]);
+  const sourceDescription = board.data_source === 'static_excel'
+    ? '当前为 Excel 静态快照，叠加系统简历入库与流程数据'
+    : '以飞书招聘数据为主，叠加系统简历入库与流程数据';
   return <div className={styles.v3Dashboard}>
-    <section className={styles.v3Hero}><div><span className={styles.v3Eyebrow}>RECRUITING OPERATIONS</span><Typography.Title>全局招聘漏斗</Typography.Title><Typography.Paragraph>以飞书招聘数据为主，叠加系统简历入库与流程数据 · {board.data_mode === 'snapshot' ? `快照 ${board.snapshot_date || ''}` : '最新实时数据'}</Typography.Paragraph></div><div className={styles.v3HeroBadge}><ClockCircleOutlined /> 更新于 {new Date(board.updated_at).toLocaleString('zh-CN')}</div></section>
+    <section className={styles.v3Hero}><div><span className={styles.v3Eyebrow}>RECRUITING OPERATIONS</span><Typography.Title>全局招聘漏斗</Typography.Title><Typography.Paragraph>{sourceDescription} · {board.data_mode === 'snapshot' ? `快照 ${board.snapshot_date || ''}` : '最新实时数据'}</Typography.Paragraph></div><div className={styles.v3HeroBadge}><ClockCircleOutlined /> 更新于 {new Date(board.updated_at).toLocaleString('zh-CN')}</div></section>
     <section className={styles.v3KpiGrid}>{cards.map(([label, value, tone]) => <Metric key={label} label={label} value={value} tone={tone} />)}</section>
     <Funnel board={board} />
     <section className={styles.v3Section}><div className={styles.v3SectionTitle}><div><span className={styles.v3Eyebrow}>DIVISIONS</span><Typography.Title level={2}>事业部分部看板</Typography.Title><Typography.Text type="secondary">对比各事业部的需求规模与关键转化</Typography.Text></div></div><div className={styles.v3DivisionGrid}>{board.divisions.map((division) => <DivisionCard key={division.department} division={division} />)}</div></section>

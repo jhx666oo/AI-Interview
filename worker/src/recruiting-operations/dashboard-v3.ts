@@ -11,6 +11,7 @@ import {
   type DashboardV3Position,
   type DashboardV3Totals,
 } from './dashboard-v3-types';
+import type { DashboardDataSource } from './dashboard-v3-types';
 import type { D1DashboardOverlay } from './d1-dashboard-overlay';
 import { finalPass, isCycleEligiblePosition, isP2Position, isStatisticalPosition, type FeishuPositionMetric } from './feishu-board-source';
 import { buildRecruitingBoard, type RecruitingBoard, type RecruitingBoardPositionRow } from './dashboard';
@@ -180,6 +181,7 @@ export function buildDashboardV3(input: {
   dataMode: DashboardDataMode;
   snapshotDate?: string | null;
   updatedAt: string;
+  dataSource?: DashboardDataSource;
 }): DashboardV3Board {
   const merged = input.feishuPositions.map((position) => mergePosition(position, input.d1Overlay.byPosition[position.feishu_record_id]));
   const d1Only = input.d1Overlay.d1OnlyPositions;
@@ -193,6 +195,7 @@ export function buildDashboardV3(input: {
     data_mode: input.dataMode,
     snapshot_date: input.snapshotDate || null,
     updated_at: input.updatedAt,
+    ...(input.dataSource ? { data_source: input.dataSource } : {}),
     kpis: {
       active_positions: { value: totals.active_positions, available: true },
       headcount: { value: totals.headcount, available: true },

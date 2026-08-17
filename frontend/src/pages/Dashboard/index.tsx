@@ -20,6 +20,7 @@ import {
   LinkOutlined,
   ReloadOutlined,
   SearchOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { downloadExcel } from '../../utils/exportExcel';
@@ -41,7 +42,7 @@ import type {
 } from './types';
 import { filterDashboardV3Board, type DashboardV3Board } from './v3-types';
 import styles from './dashboard.module.css';
-import { createDashboardV3Snapshot, fetchDashboardLegacy, fetchDashboardV3 } from './api';
+import { createDashboardV3Snapshot, fetchDashboardLegacy, fetchDashboardV3, syncDashboardV3, type DashboardV3Source } from './api';
 
 type Priority = BoardPosition['priority'];
 type ShareExpiry = '1d' | '7d' | '30d' | 'permanent';
@@ -190,8 +191,10 @@ const Dashboard: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [dataMode, setDataMode] = useState<DashboardDataMode>('live');
   const [snapshotDate, setSnapshotDate] = useState<string>();
+  const [v3Source, setV3Source] = useState<DashboardV3Source>('static');
   const [snapshots, setSnapshots] = useState<DashboardSnapshotMeta[]>([]);
   const [creatingSnapshot, setCreatingSnapshot] = useState(false);
+  const [syncingV3, setSyncingV3] = useState(false);
   const [division, setDivision] = useState<string>();
   const [hrbp, setHrbp] = useState<string>();
   const [priority, setPriority] = useState<Priority>();
@@ -214,7 +217,7 @@ const Dashboard: React.FC = () => {
     try {
       const [legacyResult, v3Result] = await Promise.allSettled([
         fetchDashboardLegacy(dataMode, snapshotDate, selectedOwner),
-        fetchDashboardV3(dataMode, snapshotDate, selectedOwner),
+        fetchDashboardV3(dataMode, snapshotDate, selectedOwner, v3Source),
       ]);
       if (legacyResult.status === 'fulfilled') setBoard(legacyResult.value as RecruitingBoard);
       if (v3Result.status === 'fulfilled') {
@@ -232,7 +235,7 @@ const Dashboard: React.FC = () => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [dataMode, selectedOwner, snapshotDate]);
+  }, [dataMode, selectedOwner, snapshotDate, v3Source]);
 
   useEffect(() => {
     void fetchBoard();
@@ -265,6 +268,20 @@ const Dashboard: React.FC = () => {
       else message.error('今日快照保存失败');
     } finally {
       setCreatingSnapshot(false);
+    }
+  };
+
+  const syncFromFeishu = async () => {
+    setSyncingV3(true);
+    try {
+      const syncedBoard = await syncDashboardV3();
+      setBoardV3(syncedBoard);
+      setV3Source('feishu');
+      message.success('已从飞书同步最新招聘数据');
+    } catch {
+      message.error('飞书数据同步失败，请确认招聘表权限后重试');
+    } finally {
+      setSyncingV3(false);
     }
   };
 
@@ -428,7 +445,11 @@ const Dashboard: React.FC = () => {
             <span className={styles.pageTitleIcon}><AppstoreOutlined /></span>
             <h1 id="recruiting-dashboard-title">招聘运营看板</h1>
           </div>
-          <p>数据更新时间：{(boardV3?.updated_at || board?.updated_at) ? new Date((boardV3?.updated_at || board?.updated_at) as string).toLocaleString('zh-CN') : '—'}</p>
+          <p>
+            数据更新时间：{(boardV3?.updated_at || board?.updated_at) ? new Date((boardV3?.updated_at || board?.updated_at) as string).toLocaleString('zh-CN') : '—'}
+            {boardV3?.data_source === 'static_excel' && ' · Excel 静态快照'}
+            {boardV3?.data_source === 'feishu' && ' · 飞书实时数据'}
+          </p>
         </div>
         <div className={styles.pageActions}>
           <Select
@@ -449,6 +470,9 @@ const Dashboard: React.FC = () => {
               ...snapshots.map((item) => ({ value: item.snapshot_date, label: item.snapshot_date })),
             ]}
           />
+          {user?.role === 'admin' && (
+            <Button icon={<SyncOutlined />} loading={syncingV3} onClick={syncFromFeishu}>从飞书同步</Button>
+          )}
           {user?.role === 'admin' && (
             <Button disabled={dataMode !== 'live'} loading={creatingSnapshot} onClick={createMissingSnapshot}>保存今日快照</Button>
           )}
@@ -478,6 +502,15 @@ const Dashboard: React.FC = () => {
       </Card>
 
       {v3Error && <Alert type="warning" showIcon message="新版双源仪表盘暂不可用" description="当前暂时展示兼容版看板，飞书或 D1 数据源恢复后点击刷新即可切换。" />}
+      {!v3Error && boardV3?.data_source === 'static_excel' && (
+        <Alert
+          type="info"
+          showIcon
+          message="当前使用 Excel 静态快照"
+          description="数据截止 2026-08-16；Excel 未包含优先级字段，已按看板快照单独标记 P2，其余暂按 P1 展示。招聘表权限恢复后，管理员可点击“从飞书同步”补齐最新字段。"
+          closable
+        />
+      )}
 
       {filteredBoardV3 ? <MiaodaDashboardView board={filteredBoardV3} /> : <RecruitingBoardView board={filteredBoard} />}
 
