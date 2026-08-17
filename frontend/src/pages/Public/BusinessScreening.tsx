@@ -15,6 +15,7 @@ import {
 import {
   formatWeightedScore,
   getDimensionScoreTotal,
+  getScreeningGateRows,
   normalizeResumeEvaluation,
 } from '../../utils/resumeEvaluation';
 
@@ -203,14 +204,28 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
   const scoreTotal = getDimensionScoreTotal(scoreDetails);
   const matchCount = scoreDetails.filter((d) => d.score >= 3).length;
   const totalDims = scoreDetails.length;
+  const gateRows = getScreeningGateRows(evaluation);
   const hasAny = !!(resume.aiReview || resume.aiEvaluation || resume.screeningResult
-    || evaluation.overallScore != null || evaluation.screeningReason || scoreDetails.length > 0);
+    || evaluation.overallScore != null || evaluation.screeningReason || scoreDetails.length > 0 || gateRows.length > 0);
   if (!hasAny) return null;
 
+  const screeningLabel = resume.screeningResult === '通过' || resume.screeningResult === '不通过' ? `AI${resume.screeningResult}` : '';
+  const screeningColor = resume.screeningResult === '通过' ? 'green' : resume.screeningResult === '不通过' ? 'red' : 'gold';
+
   return (
-    <Card bordered={false} style={cardBodyStyle}>
-      <Text strong style={cardTitleStyle}>AI 初筛评估</Text>
-      {scoreDetails.length > 0 || evaluation.overallScore != null || resume.screeningResult ? (
+    <Card bordered={false} style={{ ...cardBodyStyle, padding: '12px 16px' }}>
+      {/* 状态标签行：岗位 + AI 初筛结果 + 关键词匹配/避坑雷区门槛 */}
+      <div className="resume-card__status" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        {resume.position ? <Tag style={{ margin: 0 }}>{resume.position}</Tag> : null}
+        {screeningLabel ? <Tag color={screeningColor} style={{ margin: 0 }}>{screeningLabel}</Tag> : null}
+        {gateRows.map((gate) => (
+          <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
+            {gate.passed ? `${gate.label}已通过` : gate.reason}
+          </Tag>
+        ))}
+      </div>
+      {/* 评估摘要：AI 评估符合度 + 加权分 + 维度合计 */}
+      {scoreDetails.length > 0 || evaluation.overallScore != null ? (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 8 }}>
           {scoreDetails.length > 0 && (
             <span style={{ fontSize: 12, color: '#1677ff', fontWeight: 600, background: '#f0f5ff', padding: '1px 8px', borderRadius: 4 }}>
@@ -223,15 +238,11 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
           {scoreDetails.length > 0 && (
             <span style={{ fontSize: 12, color: '#8c8c8c' }}>维度合计：{scoreTotal.total}/{scoreTotal.maximum}</span>
           )}
-          {resume.screeningResult && (
-            <Tag color={resume.screeningResult === '通过' ? 'green' : resume.screeningResult === '不通过' ? 'red' : 'gold'} style={{ margin: 0 }}>
-              AI 初筛：{resume.screeningResult}
-            </Tag>
-          )}
         </div>
       ) : null}
+      {/* 维度标签：悬浮显示评分理由 */}
       {scoreDetails.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div className="resume-card__dimensions" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {scoreDetails.map((d, i) => (
             <Tooltip key={i} title={d.reason || d.name}>
               <Tag
@@ -244,11 +255,12 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
           ))}
         </div>
       )}
+      {/* 初筛结论 */}
       {evaluation.screeningReason ? (
         <div style={{ marginTop: 8 }}>
           <span style={{ color: '#8c8c8c', fontSize: 12 }}>初筛结论：{evaluation.screeningReason}</span>
         </div>
-      ) : scoreDetails.length === 0 && evaluation.overallScore == null ? (
+      ) : scoreDetails.length === 0 && evaluation.overallScore == null && gateRows.length === 0 ? (
         <div style={{ marginTop: 8 }}>
           <span style={{ color: '#bfbfbf', fontSize: 12 }}>暂无 AI 评估</span>
         </div>
