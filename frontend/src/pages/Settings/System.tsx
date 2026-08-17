@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Button, Card, Form, Input, InputNumber, Space, Typography, message, Tag, Tabs, Tooltip, Collapse } from 'antd';
-import { SaveOutlined, ReloadOutlined, ApiOutlined, PlusOutlined, DeleteOutlined, ArrowDownOutlined, ArrowUpOutlined } from '@ant-design/icons';
+import React, { useEffect, useState } from 'react';
+import { Button, Card, Form, Input, InputNumber, Space, Typography, message, Tag, Tabs, Tooltip } from 'antd';
+import { SaveOutlined, ReloadOutlined, ApiOutlined, PlusOutlined, DeleteOutlined, CaretRightOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { PageHeader, ResponsiveToolbar } from '../../components/Responsive';
@@ -77,6 +77,8 @@ const SystemSettingsPage: React.FC = () => {
   const [dirty, setDirty] = useState(false);
   const [testing, setTesting] = useState<number | null>(null);
   const [slots, setSlots] = useState<LLMSlot[]>([]);
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [dragging, setDragging] = useState<number | null>(null);
   const [editing, setEditing] = useState<Record<number, boolean>>({});
   const [screeningRules, setScreeningRules] = useState<ScreeningRules>({ ...DEFAULT_SCREENING_RULES });
   const [screeningRulesLoading, setScreeningRulesLoading] = useState(false);
@@ -170,6 +172,7 @@ const SystemSettingsPage: React.FC = () => {
     setDirty(true);
   };
   const toggleEdit = (idx: number) => { setEditing(prev => ({ ...prev, [idx]: !prev[idx] })); };
+  const toggleExpand = (idx: number) => setExpanded(prev => ({ ...prev, [idx]: !prev[idx] }));
   const handleSlotChange = (idx: number, field: keyof LLMSlot, value: any) => {
     setSlots(prev => prev.map((s, i) => i === idx ? { ...s, [field]: value } : s));
     setDirty(true);
@@ -292,53 +295,62 @@ const SystemSettingsPage: React.FC = () => {
           <span />
         </ResponsiveToolbar>
         <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-          最多可配置 {LLM_SLOT_MAX} 组模型，调用时按优先级从上到下依次尝试，上一组失败（超时 / 格式错误 / 空响应）后自动降级到下一组。使用 ↑↓ 箭头调整优先级，保存后立即生效。
+          最多可配置 {LLM_SLOT_MAX} 组模型，调用时按优先级从上到下依次尝试，上一组失败（超时 / 格式错误 / 空响应）后自动降级到下一组。拖拽左侧手柄调整优先级，保存后立即生效。
         </Text>
         <Button type="dashed" icon={<PlusOutlined />} onClick={addSlot} disabled={slots.length >= LLM_SLOT_MAX} style={{ width: '100%', marginBottom: 16 }}>
           添加模型配置（当前 {slots.length} / {LLM_SLOT_MAX}）
         </Button>
-        <Collapse
-          ghost
-          activeKey={[]}
-          onChange={() => {}}
-          items={slots.map((slot, idx) => {
-            const isEditing = !!editing[idx];
-            const keySet = !!slot.apiKeySet;
-            const keyLast4 = slot.apiKeyLast4;
-            return {
-              key: `slot-${idx}`,
-              label: (
-                <Space style={{ width: '100%', justifyContent: 'space-between' }} align="center">
-                  <Space>
-                    <ArrowDownOutlined style={{ color: '#bbb' }} />
-                    <Text strong>
-                      配置 {idx + 1}
-                      {idx === 0 ? '（首选）' : '（备用）'}
-                    </Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {idx === 0 ? '调用 AI 时优先使用' : '上一组失败后自动降级到此配置'}
-                    </Text>
-                    {slot.model && <Tag color="blue" style={{ marginLeft: 4 }}>{slot.model}</Tag>}
-                    {slot.baseUrl && <Tag color="default" style={{ marginLeft: 4 }}>{String(slot.baseUrl).replace(/^https?:\/\//, '').split('/')[0]}</Tag>}
-                  </Space>
-                  <Space>
-                    <ArrowUpOutlined
-                      style={{ cursor: idx === 0 ? 'not-allowed' : 'pointer', color: idx === 0 ? '#d9d9d9' : '#1890ff' }}
-                      onClick={(e) => { e.stopPropagation(); if (idx > 0) moveSlot(idx, idx - 1); }}
-                    />
-                    <ArrowDownOutlined
-                      style={{ cursor: idx === slots.length - 1 ? 'not-allowed' : 'pointer', color: idx === slots.length - 1 ? '#d9d9d9' : '#1890ff' }}
-                      onClick={(e) => { e.stopPropagation(); if (idx < slots.length - 1) moveSlot(idx, idx + 1); }}
-                    />
-                    <Button type="text" size="small" icon={<DeleteOutlined />} danger disabled={slots.length <= 1}
-                      onClick={(e) => { e.stopPropagation(); removeSlot(idx); }} title="删除此配置" />
-                  </Space>
+        {slots.map((slot, idx) => {
+          const isEditing = !!editing[idx];
+          const keySet = !!slot.apiKeySet;
+          const keyLast4 = slot.apiKeyLast4;
+          const isExpanded = !!expanded[idx];
+          return (
+            <div
+              key={`slot-${idx}`}
+              draggable
+              onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)); setDragging(idx); }}
+              onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+              onDragEnd={() => setDragging(null)}
+              onDrop={e => {
+                e.preventDefault();
+                const from = parseInt(e.dataTransfer.getData('text/plain'));
+                const to = idx;
+                if (!isNaN(from) && from !== to) moveSlot(from, to);
+                setDragging(null);
+              }}
+              style={{
+                border: '1px solid #d9d9d9',
+                borderRadius: 8,
+                marginBottom: 8,
+                backgroundColor: dragging === idx ? '#e6f4ff' : '#fafafa',
+                transition: 'background-color 0.2s',
+                boxShadow: dragging === idx ? '0 2px 8px rgba(0,0,0,0.15)' : 'none',
+              }}
+            >
+              {/* 标题栏 */}
+              <div
+                onClick={() => toggleExpand(idx)}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', cursor: 'pointer', borderBottom: isExpanded ? '1px solid #f0f0f0' : 'none' }}
+              >
+                <Space>
+                  <span style={{ fontSize: 16, color: '#999', cursor: 'grab', userSelect: 'none', lineHeight: 1 }}>⠿</span>
+                  <CaretRightOutlined style={{ fontSize: 10, color: '#bbb', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} />
+                  <Text strong>配置 {idx + 1} {idx === 0 ? '（首选）' : '（备用）'}</Text>
+                  {slot.model && <Tag color="blue">{slot.model}</Tag>}
+                  {slot.baseUrl && <Tag color="default">{String(slot.baseUrl).replace(/^https?:\/\//, '').split('/')[0]}</Tag>}
                 </Space>
-              ),
-              children: (
-                <div style={{ padding: '8px 0' }}>
-                  {keyLast4 && <div style={{ marginBottom: 8 }}><Text type="secondary" style={{ fontSize: 12 }}>末 4 位：{keyLast4}</Text></div>}
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <Space>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{idx === 0 ? '调用 AI 时优先使用' : '上一组失败后自动降级'}</Text>
+                  <Button type="text" size="small" icon={<DeleteOutlined />} danger disabled={slots.length <= 1}
+                    onClick={e => { e.stopPropagation(); removeSlot(idx); }} title="删除此配置" />
+                </Space>
+              </div>
+              {/* 内容区 */}
+              {isExpanded && (
+                <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {keyLast4 && <Text type="secondary" style={{ fontSize: 12 }}>末 4 位：{keyLast4}</Text>}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <div style={{ flex: '1 1 300px' }}>
                       <Text strong style={{ fontSize: 12 }}>Base URL</Text>
                       <Input value={slot.baseUrl || ''} placeholder="https://api.deepseek.com/v1" autoComplete="off"
@@ -350,7 +362,7 @@ const SystemSettingsPage: React.FC = () => {
                         onChange={e => handleSlotChange(idx, 'model', e.target.value)} style={{ marginTop: 4 }} />
                     </div>
                   </div>
-                  <div style={{ marginTop: 8 }}>
+                  <div>
                     <Text strong style={{ fontSize: 12 }}>API Key</Text>
                     <Input.Password value={slot.apiKey || ''}
                       placeholder={keySet && !isEditing ? '已设置（不会回显）' : '输入后会覆盖当前 Key'}
@@ -362,16 +374,12 @@ const SystemSettingsPage: React.FC = () => {
                     )}
                     {isEditing && !slot.apiKey?.trim() && <Text type="danger" style={{ fontSize: 12 }}>请输入新的 API Key</Text>}
                   </div>
-                  <div style={{ marginTop: 12 }}>
-                    <Space>
-                      <Button onClick={() => handleTest(idx)} loading={testing === idx} icon={<ApiOutlined />} size="small">测试连通性</Button>
-                    </Space>
-                  </div>
+                  <Button onClick={() => handleTest(idx)} loading={testing === idx} icon={<ApiOutlined />} size="small">测试连通性</Button>
                 </div>
-              ),
-            };
-          })}
-        />
+              )}
+            </div>
+          );
+        })}
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 8 }}>
           {dirty && <Text type="warning">有未保存的修改，请点保存</Text>}
           <Button icon={<ReloadOutlined />} onClick={fetchSettings}>放弃修改</Button>
