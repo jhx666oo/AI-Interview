@@ -61,6 +61,7 @@ export interface ResumePushBatchRow {
   dispatch_group_id: string | null;
   batch_title?: string | null;
   batch_subtitle?: string | null;
+  scope_key?: string | null;
 }
 
 export interface ResumePushBatchItemRow {
@@ -89,6 +90,7 @@ export interface CreateResumePushBatchInput {
   dispatchGroupId: string;
   batchTitle?: string | null;
   batchSubtitle?: string | null;
+  scopeKey?: string | null;
 }
 
 export interface CreateResumePushBatchItemInput {

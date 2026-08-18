@@ -3,13 +3,14 @@ import {
   createResumePushBatch,
   ensureBusinessScreeningSchema,
   insertResumePushBatchItems,
+  insertResumePushBatchItemsIfAbsent,
   loadResumePushBatchByTokenHash,
   markResumesPushed,
   recordBusinessScreeningDecision,
   revokeActiveBusinessScreeningBatchesForResume,
 } from './repository';
 import { groupEligibleResumesForPush, isEligibleForPush } from './service';
-import { createPublicToken, hashPublicToken } from './token';
+import { createPublicToken, createScopePublicToken, hashPublicToken } from './token';
 import type {
   BusinessScreeningResume,
   CreateResumePushBatchItemInput,
@@ -210,6 +211,12 @@ export interface BusinessScreeningRouteStore {
   markResumesPushed(db: D1Database, resumeIds: string[], batchId: string, dispatchGroupId: string): Promise<void>;
   loadBatchByTokenHash(db: D1Database, tokenHash: string): Promise<ResumePushBatchRow | null>;
   loadBatchById(db: D1Database, batchId: string): Promise<ResumePushBatchRow | null>;
+  // 查找业务范围（岗位+面试官）当前仍有效（未过期且未撤销）的批次；completed 也返回（可复用并重置 active）
+  loadBatchByScope(db: D1Database, scopeKey: string, nowIso: string): Promise<ResumePushBatchRow | null>;
+  // 把已处理完的批次重新激活（追加新简历时复用链接）
+  resetBatchActive(db: D1Database, batchId: string): Promise<void>;
+  // 向批次追加简历条目（重复（batch,resume）自动忽略）
+  appendBatchItemsIfAbsent(db: D1Database, items: CreateResumePushBatchItemInput[]): Promise<void>;
   listBatchItems(db: D1Database, batchId: string): Promise<BusinessScreeningBatchItemView[]>;
   loadBatchItem(db: D1Database, batchId: string, resumeId: string): Promise<BusinessScreeningBatchItemView | null>;
   recordDecision(
@@ -259,6 +266,7 @@ export interface BusinessScreeningRouteDeps {
   now: () => string;
   uuid: () => string;
   createPublicToken: typeof createPublicToken;
+  createScopePublicToken: typeof createScopePublicToken;
   store: BusinessScreeningRouteStore;
   // API Key 身份的飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（未配置则无法发飞书，链接仍生成）
   resolveApiKeyOwnerEmail?: (env: any) => Promise<string | null>;
@@ -278,11 +286,11 @@ function plusDays(iso: string, days: number): string {
   return at.toISOString();
 }
 
-// 链接有效期解析：不传/非法 → 默认 7 天；0 或负数 → 永久（expires_at 为 null，永不过期）；正数 → 按天
+// 链接有效期解析：不传/非法 → 默认 30 天；0 或负数 → 永久（expires_at 为 null，永不过期）；正数 → 按天
 function resolveExpiresAt(nowIso: string, raw: unknown): string | null {
-  if (raw === undefined || raw === null) return plusDays(nowIso, 7);
+  if (raw === undefined || raw === null) return plusDays(nowIso, 30);
   const days = Number(raw);
-  if (!Number.isFinite(days)) return plusDays(nowIso, 7);
+  if (!Number.isFinite(days)) return plusDays(nowIso, 30);
   if (days <= 0) return null;
   return plusDays(nowIso, Math.floor(days));
 }
@@ -594,68 +602,96 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const dispatchGroupId = deps.uuid();
 
     for (const group of grouped.values()) {
-      const issued = await deps.createPublicToken();
-      const batchId = deps.uuid();
-      const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
-      const itemCreatedAt = deps.now();
-      const items: CreateResumePushBatchItemInput[] = group.resumes.map((resume) => ({
-        id: deps.uuid(),
-        batchId,
-        resumeId: resume.id,
-        positionId: resume.position_id || positionsByTitle.get(text(resume.mapped_position) || text(resume.position_applied))?.id || null,
-        createdAt: itemCreatedAt,
-        dispatchGroupId,
-      }));
-      const expiresAt = resolveExpiresAt(nowIso, body.expires_in_days);
-      const batchTitle = text(body.title) || null;
-      const batchSubtitle = text(body.subtitle) || null;
-
-      await deps.store.createBatch(db, {
-        id: batchId,
-        interviewerId: group.interviewer.userId || null,
-        interviewerName: group.interviewer.name,
-        interviewerOpenId: group.interviewer.openId,
-        tokenHash: issued.tokenHash,
-        expiresAt,
-        createdBy: user.email || 'system',
-        createdAt: nowIso,
-        lastSentAt: null,
-        dispatchGroupId,
-        batchTitle,
-        batchSubtitle,
-      }, items);
-      await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId, dispatchGroupId);
-
-      batches.push({
-        batchId,
-        interviewer: group.interviewer.name,
-        url,
-        itemCount: items.length,
-        expiresAt,
-        title: batchTitle || undefined,
-        subtitle: batchSubtitle || undefined,
-      });
-
-      if (!currentUserToken) {
-        failed.push({
-          interviewer: group.interviewer.name,
-          reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
-        });
-        continue;
+      // 同一业务范围（岗位 + 面试官组合）固定唯一链接：按标准岗位拆分为 scope，
+      // 复用该 scope 当前有效批次（追加新简历），不生成新链接；批次过期后才新建（新周期新链接）
+      const resumesByPosition = new Map<string, BusinessScreeningResumeRecord[]>();
+      for (const resume of group.resumes) {
+        const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
+        const positionTitle = resolveStandardTitle(rawTitle) || '未分配岗位';
+        const list = resumesByPosition.get(positionTitle) || [];
+        list.push(resume);
+        resumesByPosition.set(positionTitle, list);
       }
 
-      try {
-        await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
-          positionTitle: group.positionTitles.join('、'),
-          itemCount: items.length,
-          url,
+      for (const [positionTitle, scopeResumes] of resumesByPosition) {
+        const scopeKey = `${positionTitle}::${group.interviewer.openId}`;
+        const issued = await deps.createScopePublicToken(scopeKey, nowIso);
+        const existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+        const itemCreatedAt = deps.now();
+        const expiresAt = existing ? existing.expires_at : resolveExpiresAt(nowIso, body.expires_in_days);
+        const batchTitle = text(body.title) || null;
+        const batchSubtitle = text(body.subtitle) || null;
+
+        let batchId: string;
+        if (existing) {
+          batchId = existing.id;
+          // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
+          await deps.store.resetBatchActive(db, batchId);
+        } else {
+          batchId = deps.uuid();
+        }
+        const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
+        const items: CreateResumePushBatchItemInput[] = scopeResumes.map((resume) => ({
+          id: deps.uuid(),
+          batchId,
+          resumeId: resume.id,
+          positionId: resume.position_id || positionsByTitle.get(text(resume.mapped_position) || text(resume.position_applied))?.id || null,
+          createdAt: itemCreatedAt,
+          dispatchGroupId,
         }));
-        await deps.store.setBatchLastSentAt(db, batchId, deps.now());
-      } catch (error) {
-        failed.push({
+
+        if (existing) {
+          await deps.store.appendBatchItemsIfAbsent(db, items);
+        } else {
+          await deps.store.createBatch(db, {
+            id: batchId,
+            interviewerId: group.interviewer.userId || null,
+            interviewerName: group.interviewer.name,
+            interviewerOpenId: group.interviewer.openId,
+            tokenHash: issued.tokenHash,
+            expiresAt,
+            createdBy: user.email || 'system',
+            createdAt: nowIso,
+            lastSentAt: null,
+            dispatchGroupId,
+            batchTitle,
+            batchSubtitle,
+            scopeKey,
+          }, items);
+        }
+        await deps.store.markResumesPushed(db, scopeResumes.map((resume) => resume.id), batchId, dispatchGroupId);
+
+        batches.push({
+          batchId,
           interviewer: group.interviewer.name,
-          reason: error instanceof Error ? error.message : '业务筛选链接发送失败',
+          url,
+          itemCount: items.length,
+          expiresAt,
+          title: batchTitle || undefined,
+          subtitle: batchSubtitle || undefined,
         });
+
+        if (!currentUserToken) {
+          failed.push({
+            interviewer: group.interviewer.name,
+            reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
+          });
+          continue;
+        }
+
+        try {
+          await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
+            positionTitle,
+            itemCount: items.length,
+            url,
+          }));
+          await deps.store.setBatchLastSentAt(db, batchId, deps.now());
+        } catch (error) {
+          failed.push({
+            interviewer: group.interviewer.name,
+            reason: error instanceof Error ? error.message : '业务筛选链接发送失败',
+          });
+        }
       }
     }
 
@@ -858,44 +894,87 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
     const sender = await resolveSenderEmail(c, user, deps);
     const currentUserToken = sender.email ? await deps.getCurrentUserToken(c.env, sender.email) : null;
-    const issued = await deps.createPublicToken();
-    const nextBatchId = deps.uuid();
     const dispatchGroupId = deps.uuid();
     const nowIso = deps.now();
-    const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
-    const nextItems = pendingItems.map((item) => ({
-      id: deps.uuid(),
-      batchId: nextBatchId,
-      resumeId: item.resume_id,
-      positionId: item.position_id,
-      createdAt: nowIso,
-      dispatchGroupId,
-    }));
 
-    await deps.store.createBatch(db, {
-      id: nextBatchId,
-      interviewerId: batch.interviewer_id,
-      interviewerName: batch.interviewer_name,
-      interviewerOpenId: batch.interviewer_open_id,
-      tokenHash: issued.tokenHash,
-      expiresAt: resolveExpiresAt(nowIso, body.expires_in_days),
-      createdBy: user.email || 'system',
-      createdAt: nowIso,
-      lastSentAt: null,
-      dispatchGroupId,
-      // 重发默认沿用原批次标题/说明，也可在请求体里覆盖
-      batchTitle: text(body.title) || batch.batch_title || null,
-      batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
-    }, nextItems);
-    await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
-    await deps.store.setBatchStatus(db, batchId, 'revoked');
+    // 固定业务范围链接规则：有 scope_key 的批次重发时复用同一业务范围链接，
+    // 把待处理简历追加回该 scope 当前批次；批次已过期则新建（同链接的下一周期）。
+    // 无 scope_key 的历史批次回退旧行为：生成新链接并撤销原批次。
+    let nextBatchId: string;
+    let url: string;
+    const scopeKey = batch.scope_key?.trim();
+    if (scopeKey) {
+      const issued = await deps.createScopePublicToken(scopeKey, nowIso);
+      url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
+      const current = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+      const nextItems = pendingItems.map((item) => ({
+        id: deps.uuid(),
+        batchId: current ? current.id : deps.uuid(),
+        resumeId: item.resume_id,
+        positionId: item.position_id,
+        createdAt: nowIso,
+        dispatchGroupId,
+      }));
+      if (current) {
+        nextBatchId = current.id;
+        await deps.store.appendBatchItemsIfAbsent(db, nextItems);
+        await deps.store.resetBatchActive(db, nextBatchId);
+      } else {
+        nextBatchId = deps.uuid();
+        await deps.store.createBatch(db, {
+          id: nextBatchId,
+          interviewerId: batch.interviewer_id,
+          interviewerName: batch.interviewer_name,
+          interviewerOpenId: batch.interviewer_open_id,
+          tokenHash: issued.tokenHash,
+          expiresAt: resolveExpiresAt(nowIso, body.expires_in_days),
+          createdBy: user.email || 'system',
+          createdAt: nowIso,
+          lastSentAt: null,
+          dispatchGroupId,
+          batchTitle: text(body.title) || batch.batch_title || null,
+          batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
+          scopeKey,
+        }, nextItems.map((item) => ({ ...item, batchId: nextBatchId })));
+      }
+      await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
+    } else {
+      const issued = await deps.createPublicToken();
+      nextBatchId = deps.uuid();
+      url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
+      const nextItems = pendingItems.map((item) => ({
+        id: deps.uuid(),
+        batchId: nextBatchId,
+        resumeId: item.resume_id,
+        positionId: item.position_id,
+        createdAt: nowIso,
+        dispatchGroupId,
+      }));
+      await deps.store.createBatch(db, {
+        id: nextBatchId,
+        interviewerId: batch.interviewer_id,
+        interviewerName: batch.interviewer_name,
+        interviewerOpenId: batch.interviewer_open_id,
+        tokenHash: issued.tokenHash,
+        expiresAt: resolveExpiresAt(nowIso, body.expires_in_days),
+        createdBy: user.email || 'system',
+        createdAt: nowIso,
+        lastSentAt: null,
+        dispatchGroupId,
+        // 重发默认沿用原批次标题/说明，也可在请求体里覆盖
+        batchTitle: text(body.title) || batch.batch_title || null,
+        batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
+      }, nextItems);
+      await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
+      await deps.store.setBatchStatus(db, batchId, 'revoked');
+    }
 
     if (!currentUserToken) {
       return c.json({
         ok: false,
         resentFromBatchId: batchId,
         batchId: nextBatchId,
-        itemCount: nextItems.length,
+        itemCount: pendingItems.length,
         url,
         detail: '当前账号未授权飞书身份，无法发送业务筛选链接',
       }, 400);
@@ -908,7 +987,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     try {
       await deps.sendFeishuMessageToUser(currentUserToken, batch.interviewer_open_id, buildFeishuCard({
         positionTitle,
-        itemCount: nextItems.length,
+        itemCount: pendingItems.length,
         url,
       }));
       await deps.store.setBatchLastSentAt(db, nextBatchId, deps.now());
@@ -917,7 +996,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         ok: false,
         resentFromBatchId: batchId,
         batchId: nextBatchId,
-        itemCount: nextItems.length,
+        itemCount: pendingItems.length,
         url,
         detail: error instanceof Error ? error.message : '业务筛选链接发送失败',
       }, 500);
@@ -927,7 +1006,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       ok: true,
       resentFromBatchId: batchId,
       batchId: nextBatchId,
-      itemCount: nextItems.length,
+      itemCount: pendingItems.length,
       url,
     });
   });
@@ -1035,11 +1114,30 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     },
     async loadBatchById(db, batchId) {
       return await db.prepare(
-        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle
+        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle, scope_key
            FROM resume_push_batches
           WHERE id = ?
           LIMIT 1`,
       ).bind(batchId).first<ResumePushBatchRow>();
+    },
+    async loadBatchByScope(db, scopeKey, nowIso) {
+      return await db.prepare(
+        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle, scope_key
+           FROM resume_push_batches
+          WHERE scope_key = ?
+            AND status IN ('active', 'completed')
+            AND (expires_at IS NULL OR expires_at > ?)
+          ORDER BY created_at DESC
+          LIMIT 1`,
+      ).bind(scopeKey, nowIso).first<ResumePushBatchRow>();
+    },
+    async resetBatchActive(db, batchId) {
+      await db.prepare("UPDATE resume_push_batches SET status = 'active' WHERE id = ?")
+        .bind(batchId)
+        .run();
+    },
+    async appendBatchItemsIfAbsent(db, items) {
+      await insertResumePushBatchItemsIfAbsent(db, items);
     },
     async listBatchItems(db, batchId) {
       return queryAll<BusinessScreeningBatchItemView>(
