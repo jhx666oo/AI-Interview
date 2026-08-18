@@ -453,14 +453,10 @@ function buildFeishuCard(input: {
           {
             tag: 'button',
             type: 'primary',
-            text: { tag: 'plain_text', content: '打开筛选链接' },
+            text: { tag: 'plain_text', content: '点此查阅简历' },
             url: input.url,
           },
         ],
-      },
-      {
-        tag: 'note',
-        elements: [{ tag: 'plain_text', content: '点此查阅简历' }],
       },
       {
         tag: 'note',
