@@ -450,11 +450,11 @@ const BusinessScreeningPage: React.FC = () => {
 
   return (
     <div className="business-screening-page" style={shellStyle}>
-      <div className="business-screening-container" style={{ maxWidth: 1160, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ ...cardStyle, padding: 20, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
-          <div style={{ marginBottom: 20, flexShrink: 0 }}>
-            <h1 style={{ margin: 0, fontSize: 32 }}>{data?.batch.title || '业务筛选'}</h1>
-            <p style={{ margin: '8px 0 12px', color: '#64748b' }}>{data?.batch.subtitle || '请查看候选人信息并完成入库 / 不入库决策。'}</p>
+      <div className="business-screening-container" style={{ maxWidth: 1000, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...cardStyle, padding: 16, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ marginBottom: 14, flexShrink: 0 }}>
+            <h1 style={{ margin: 0, fontSize: 26 }}>{data?.batch.title || '业务筛选'}</h1>
+            <p style={{ margin: '6px 0 10px', color: '#64748b' }}>{data?.batch.subtitle || '请查看候选人信息并完成入库 / 不入库决策。'}</p>
             <div className="business-screening-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', fontSize: 14 }}>
                 {data?.batch.interviewer || '待分配'}
@@ -490,15 +490,15 @@ const BusinessScreeningPage: React.FC = () => {
               className="business-screening-grid"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'minmax(0, 360px) minmax(0, 1fr)',
+                gridTemplateColumns: 'minmax(0, 280px) minmax(0, 1fr)',
                 gap: 16,
                 flex: 1,
                 minHeight: 0,
                 overflow: 'hidden',
               }}
             >
-              <section className="business-screening-candidates" style={{ ...cardStyle, padding: 12, minWidth: 0, overflowY: 'auto' }}>
-                <h2 style={{ margin: '4px 4px 12px', fontSize: 18 }}>候选人列表</h2>
+              <section className="business-screening-candidates" style={{ ...cardStyle, padding: 10, minWidth: 0, overflowY: 'auto' }}>
+                <h2 style={{ margin: '2px 4px 10px', fontSize: 16 }}>候选人列表</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {data.resumes.map((resume) => {
                     const selected = resume.id === activeResumeId;
@@ -513,7 +513,7 @@ const BusinessScreeningPage: React.FC = () => {
                           border: selected ? '1px solid #2563eb' : '1px solid #e2e8f0',
                           background: selected ? '#eff6ff' : '#fff',
                           borderRadius: 14,
-                          padding: 14,
+                          padding: 12,
                           cursor: 'pointer',
                         }}
                       >
