@@ -2,12 +2,25 @@ name = "ai-interview-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
+# 仪表盘 v3 的两张独立招聘数据源（表 ID 非敏感；用户身份仍通过 OAuth token 读取）
+[vars]
+FEISHU_DASHBOARD_ZHIPEI_APP_TOKEN = "QivHbbd6JaAV0fs0LDqcZEc3n4g"
+FEISHU_DASHBOARD_ZHIPEI_TABLE_ID = "tbl0yOiT0XarJwf9"
+FEISHU_DASHBOARD_ZHIPEI_VIEW_ID = "vewJbFx1TY"
+FEISHU_DASHBOARD_YANGLAO_APP_TOKEN = "Z0X7bzVHoaE4essOK1tc7Xcencb"
+FEISHU_DASHBOARD_YANGLAO_TABLE_ID = "tbl4UKBczcKlKgtk"
+FEISHU_DASHBOARD_YANGLAO_VIEW_ID = "vew33IcH5s"
+
 # ⚠️ 敏感配置请通过 `npx wrangler secret put` 设置，不要直接写在文件里
 # 已通过 wrangler secret 或 Dashboard 环境变量设置的配置：
 #   SECRET_KEY, FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_BITABLE_APP_TOKEN
 #   FEISHU_REQUISITION_TABLE_ID, FEISHU_POSITION_TABLE_ID
 #   FEISHU_ZHIPEI_RECRUITMENT_TABLE_ID, FEISHU_YANGLAO_RECRUITMENT_TABLE_ID
 #     （仪表盘 v3 的两张招聘明细表；未设置时兼容回退到上面两个旧变量）
+#   FEISHU_DASHBOARD_USER_EMAIL（系统 users.email，例如 admin@example.com；不是飞书资料邮箱）
+#   FEISHU_DASHBOARD_ZHIPEI_APP_TOKEN, FEISHU_DASHBOARD_ZHIPEI_TABLE_ID, FEISHU_DASHBOARD_ZHIPEI_VIEW_ID
+#   FEISHU_DASHBOARD_YANGLAO_APP_TOKEN, FEISHU_DASHBOARD_YANGLAO_TABLE_ID, FEISHU_DASHBOARD_YANGLAO_VIEW_ID
+#     （仪表盘独立用户 OAuth 数据源；配置后仅仪表盘使用 user_access_token 读取这两张表）
 
 # AI 配置（通过 `npx wrangler secret put` 设置）
 #   AI_API_KEY — DeepSeek / 兼容 OpenAI API 的密钥

@@ -67,6 +67,11 @@ import { loadD1DashboardOverlay, type D1DashboardOverlay } from './recruiting-op
 import { buildDashboardV3, scopeDashboardV3Board } from './recruiting-operations/dashboard-v3';
 import { buildDashboardReconciliation } from './recruiting-operations/dashboard-reconciliation';
 import { normalizeFeishuPositionRecord, type FeishuBoardSourceRecord, type FeishuPositionMetric } from './recruiting-operations/feishu-board-source';
+import {
+  buildDashboardFeishuSources,
+  listDashboardBitableRecords,
+  type DashboardFeishuSourceEnv,
+} from './recruiting-operations/dashboard-feishu-user-source';
 import { loadStaticDashboardPositions, STATIC_DASHBOARD_SNAPSHOT_DATE, STATIC_DASHBOARD_UPDATED_AT } from './recruiting-operations/dashboard-static-source';
 import type { DashboardV3Board } from './recruiting-operations/dashboard-v3-types';
 import {
@@ -85,7 +90,7 @@ export {
 } from './recruiting-operations/dashboard';
 export type { RecruitingBoard, RecruitingBoardDivisionRow, RecruitingBoardPositionRow } from './recruiting-operations/dashboard';
 
-interface Env {
+interface Env extends DashboardFeishuSourceEnv {
   DB: D1Database;
   SECRET_KEY: string;
   AI_API_KEY: string;
@@ -102,6 +107,14 @@ interface Env {
   FEISHU_TALENT_TABLE_ID?: string;
   FEISHU_ZHIPEI_RECRUITMENT_TABLE_ID?: string;
   FEISHU_YANGLAO_RECRUITMENT_TABLE_ID?: string;
+  // 仪表盘专用：使用已 OAuth 授权用户读取两张有权限的多维表
+  FEISHU_DASHBOARD_USER_EMAIL?: string;
+  FEISHU_DASHBOARD_ZHIPEI_APP_TOKEN?: string;
+  FEISHU_DASHBOARD_ZHIPEI_TABLE_ID?: string;
+  FEISHU_DASHBOARD_ZHIPEI_VIEW_ID?: string;
+  FEISHU_DASHBOARD_YANGLAO_APP_TOKEN?: string;
+  FEISHU_DASHBOARD_YANGLAO_TABLE_ID?: string;
+  FEISHU_DASHBOARD_YANGLAO_VIEW_ID?: string;
   FEISHU_RECRUITMENT_GROUP_CHAT_ID?: string;
   FEISHU_OAUTH_REDIRECT_URI?: string;
   RESUMES_KV?: KVNamespace;
@@ -1709,7 +1722,7 @@ app.get('/api/auth/feishu-oauth-url', authMiddleware, async (c) => {
   const token = await createJwt(c.env.SECRET_KEY, user.email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const scope = 'im:message im:message.send_as_user contact:user.base:readonly offline_access';
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly bitable:app:readonly offline_access';
   const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl });
 });
@@ -1722,7 +1735,7 @@ app.post('/api/auth/feishu-oauth-url', authMiddleware, requireRole(['admin']), a
   const token = await createJwt(c.env.SECRET_KEY, email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const scope = 'im:message im:message.send_as_user contact:user.base:readonly offline_access';
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly bitable:app:readonly offline_access';
   const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl, email });
 });
@@ -2209,15 +2222,41 @@ function dashboardRecruitmentTableIds(env: Env): { zhipei: string; yanglao: stri
   };
 }
 
-async function loadFeishuDashboardPositions(env: Env): Promise<FeishuPositionMetric[]> {
-  const tableIds = dashboardRecruitmentTableIds(env);
-  const [zhipeiRecords, yanglaoRecords] = await Promise.all([
-    bitableListRecords(env, tableIds.zhipei),
-    bitableListRecords(env, tableIds.yanglao),
-  ]);
+async function loadFeishuDashboardPositions(env: Env, userEmail?: string): Promise<FeishuPositionMetric[]> {
+  const dedicatedSources = buildDashboardFeishuSources(env);
+  let sourceRecords: Array<{ table: 'zhipei' | 'yanglao'; records: any[] }>;
+
+  if (dedicatedSources) {
+    const email = env.FEISHU_DASHBOARD_USER_EMAIL?.trim() || userEmail?.trim();
+    if (!email) {
+      throw new Error('Dashboard Feishu user email is not configured');
+    }
+    const accessToken = await getValidUserAccessToken(env, email);
+    if (!accessToken) {
+      throw new Error(`Dashboard Feishu user token is not authorized for ${email}`);
+    }
+    sourceRecords = await Promise.all(dedicatedSources.map(async (source) => ({
+      table: source.key,
+      records: await listDashboardBitableRecords(accessToken, source),
+    })));
+  } else {
+    const tableIds = dashboardRecruitmentTableIds(env);
+    const [zhipeiRecords, yanglaoRecords] = await Promise.all([
+      bitableListRecords(env, tableIds.zhipei),
+      bitableListRecords(env, tableIds.yanglao),
+    ]);
+    sourceRecords = [
+      { table: 'zhipei', records: zhipeiRecords },
+      { table: 'yanglao', records: yanglaoRecords },
+    ];
+  }
+
   const records: FeishuBoardSourceRecord[] = [
-    ...zhipeiRecords.map((record: any) => ({ record_id: String(record.record_id || record.id || ''), fields: record.fields || {}, table: 'zhipei' as const })),
-    ...yanglaoRecords.map((record: any) => ({ record_id: String(record.record_id || record.id || ''), fields: record.fields || {}, table: 'yanglao' as const })),
+    ...sourceRecords.flatMap(({ table, records: rows }) => rows.map((record: any) => ({
+      record_id: String(record.record_id || record.id || ''),
+      fields: record.fields || {},
+      table,
+    }))),
   ];
   return records.map(normalizeFeishuPositionRecord).filter((position): position is FeishuPositionMetric => Boolean(position));
 }
@@ -2243,8 +2282,8 @@ async function readLatestV3Snapshot(db: D1Database): Promise<DashboardV3Board | 
   return null;
 }
 
-async function loadLiveDashboardV3(db: D1Database, env: Env, owner: string | null): Promise<DashboardV3Board> {
-  const allPositions = await loadFeishuDashboardPositions(env);
+async function loadLiveDashboardV3(db: D1Database, env: Env, owner: string | null, userEmail?: string): Promise<DashboardV3Board> {
+  const allPositions = await loadFeishuDashboardPositions(env, userEmail);
   const positions = owner ? allPositions.filter((position) => position.hrbps.includes(owner)) : allPositions;
   const overlay = filterV3OverlayForOwner(await loadD1DashboardOverlay(db, positions), positions, owner);
   return buildDashboardV3({
@@ -2292,6 +2331,7 @@ app.get('/api/dashboard/recruiting-board-v3', authMiddleware, async (c) => {
   const source = c.req.query('source') || 'static';
   if (source !== 'static' && source !== 'feishu') return c.json({ detail: 'Invalid dashboard data source' }, 400);
   const owner = getDashboardOwner(c);
+  const dashboardUserEmail = (c as any).get('user')?.email as string | undefined;
   try {
     if (mode === 'snapshot') {
       const snapshotDate = c.req.query('snapshot_date');
@@ -2302,7 +2342,7 @@ app.get('/api/dashboard/recruiting-board-v3', authMiddleware, async (c) => {
     }
     return c.json(source === 'static'
       ? await loadStaticDashboardV3(c.env.DB, owner)
-      : await loadLiveDashboardV3(c.env.DB, c.env, owner));
+      : await loadLiveDashboardV3(c.env.DB, c.env, owner, dashboardUserEmail));
   } catch (error: any) {
     console.error('[DashboardV3] load failed:', error);
     return c.json({ detail: '仪表盘 v3 数据加载失败', code: 'DASHBOARD_V3_SOURCE_ERROR' }, 502);
@@ -2311,7 +2351,8 @@ app.get('/api/dashboard/recruiting-board-v3', authMiddleware, async (c) => {
 
 app.post('/api/dashboard/recruiting-board-v3/sync', authMiddleware, requireRole(['admin']), async (c) => {
   try {
-    return c.json(await loadLiveDashboardV3(c.env.DB, c.env, null));
+    const dashboardUserEmail = (c as any).get('user')?.email as string | undefined;
+    return c.json(await loadLiveDashboardV3(c.env.DB, c.env, null, dashboardUserEmail));
   } catch (error) {
     console.error('[DashboardV3] manual Feishu sync failed:', error);
     return c.json({ detail: '飞书数据同步失败，请确认招聘表权限后重试', code: 'DASHBOARD_V3_SYNC_ERROR' }, 502);
@@ -2320,7 +2361,8 @@ app.post('/api/dashboard/recruiting-board-v3/sync', authMiddleware, requireRole(
 
 app.get('/api/dashboard/recruiting-board-v3/reconciliation', authMiddleware, requireRole(['admin']), async (c) => {
   try {
-    const positions = await loadFeishuDashboardPositions(c.env);
+    const dashboardUserEmail = (c as any).get('user')?.email as string | undefined;
+    const positions = await loadFeishuDashboardPositions(c.env, dashboardUserEmail);
     const overlay = await loadD1DashboardOverlay(c.env.DB, positions);
     return c.json(buildDashboardReconciliation(positions, overlay, now()));
   } catch (error) {
