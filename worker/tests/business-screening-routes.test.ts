@@ -74,7 +74,7 @@ function buildHarness(options?: {
   const batchItems = (options?.initialItems || []).map((item) => ({ ...item }));
   const sentMessages: Array<{ token: string; openId: string; card: unknown }> = [];
   const createdTokens: Array<{ token: string; tokenHash: string }> = [];
-  const scopeTokens = new Map<string, { token: string; tokenHash: string; periodIndex: number }>();
+  const scopeTokens = new Map<string, { token: string; tokenHash: string }>();
   let tokenCounter = 0;
 
   const store: BusinessScreeningRouteStore = {
@@ -428,18 +428,18 @@ function buildHarness(options?: {
       createdTokens.push(next);
       return next;
     },
-    // 固定业务范围 token：同 scope 记忆化，保证同一业务范围复用同一链接
-    createScopePublicToken: async (scopeKey: string) => {
-      const existing = scopeTokens.get(scopeKey);
+    // 固定业务范围 token：同 scope+批次 记忆化，保证同一业务范围复用同一链接
+    createScopePublicToken: async (scopeKey: string, batchId: string) => {
+      const memoKey = `${scopeKey}::${batchId}`;
+      const existing = scopeTokens.get(memoKey);
       if (existing) return existing;
       tokenCounter += 1;
       const token = `scope-token-${tokenCounter}`;
       const next = {
         token,
         tokenHash: await hashPublicToken(token),
-        periodIndex: 1,
       };
-      scopeTokens.set(scopeKey, next);
+      scopeTokens.set(memoKey, next);
       createdTokens.push({ token: next.token, tokenHash: next.tokenHash });
       return next;
     },
