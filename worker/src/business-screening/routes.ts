@@ -23,6 +23,11 @@ export interface BusinessScreeningResumeRecord extends BusinessScreeningResume {
   contact?: string | null;
   education?: string | null;
   work_experience?: string | null;
+  parsed_data?: string | null;
+  gender?: string | null;
+  birthday?: string | null;
+  certifications?: string | null;
+  self_evaluation?: string | null;
   business_screening_remark?: string | null;
   business_screened_at?: string | null;
   business_screened_by?: string | null;
@@ -167,6 +172,25 @@ export interface BusinessScreeningRouteStore {
   listPositionsByTitles(db: D1Database, titles: string[]): Promise<Array<{ id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null; responsible_person?: string | null }>>;
   listPositionMappings(db: D1Database, rawNames: string[]): Promise<Array<{ raw_name: string; mapped_name: string }>>;
   listInterviewerDirectory(db: D1Database, names: string[]): Promise<Array<{ name: string; openId?: string | null; userId?: string | null }>>;
+  // 按候选人姓名查所有简历的档案字段（同名兜底：公开页缺档案时借用系统内有解析数据的同名简历）
+  findSameNameProfiles(
+    db: D1Database,
+    names: string[],
+    excludeResumeId?: string,
+  ): Promise<Array<{
+    id: string;
+    candidate_name?: string | null;
+    screening_result?: string | null;
+    mapped_position?: string | null;
+    position_applied?: string | null;
+    parsed_data?: string | null;
+    education?: string | null;
+    work_experience?: string | null;
+    gender?: string | null;
+    birthday?: string | null;
+    certifications?: string | null;
+    self_evaluation?: string | null;
+  }>>;
   createBatch(
     db: D1Database,
     batch: {
@@ -309,6 +333,93 @@ function sanitizePublicItem(item: BusinessScreeningBatchItemView) {
   };
 }
 
+// 同名档案兜底：候选人自身缺结构化档案（仅完成 AI 初筛/未做字段解析）时，
+// 从系统内同名的其他简历（有 parsed_data 或简历列数据）借用档案，保证业务侧能看到候选人信息。
+// 同名多条时选可构建字段最多的那条；同名都缺数据时保持原样。
+type SameNameProfileRow = {
+  id: string;
+  candidate_name?: string | null;
+  screening_result?: string | null;
+  mapped_position?: string | null;
+  position_applied?: string | null;
+  parsed_data?: string | null;
+  education?: string | null;
+  work_experience?: string | null;
+  gender?: string | null;
+  birthday?: string | null;
+  certifications?: string | null;
+  self_evaluation?: string | null;
+};
+
+/** 简历是否有结构化档案（parsed_data 或任一简历列非空） */
+function hasResumeProfile(resume: {
+  parsed_data?: unknown;
+  education?: unknown;
+  work_experience?: unknown;
+  gender?: unknown;
+  birthday?: unknown;
+  certifications?: unknown;
+  self_evaluation?: unknown;
+}): boolean {
+  return [resume.parsed_data, resume.education, resume.work_experience, resume.gender, resume.birthday, resume.certifications, resume.self_evaluation]
+    .some((value) => value !== null && value !== undefined && String(value).trim() !== '');
+}
+
+/** 在同名简历行里选档案字段最全的一条（须有可构建的非空档案） */
+function pickBestSameNameProfile(rows: SameNameProfileRow[]): SameNameProfileRow | null {
+  let best: SameNameProfileRow | null = null;
+  let bestScore = 0;
+  for (const row of rows) {
+    const profile = buildPublicProfile(row.parsed_data, {
+      education: row.education,
+      workExperience: row.work_experience,
+      gender: row.gender,
+      birthday: row.birthday,
+      certifications: row.certifications,
+      selfEvaluation: row.self_evaluation,
+    });
+    if (!profile) continue;
+    const score = Object.values(profile).filter((value) => value !== undefined).length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = row;
+    }
+  }
+  return best;
+}
+
+function attachSameNameProfileFallback(
+  sanitized: Array<ReturnType<typeof sanitizePublicItem>>,
+  rows: SameNameProfileRow[],
+): void {
+  if (sanitized.length === 0 || rows.length === 0) return;
+  const byName = new Map<string, SameNameProfileRow[]>();
+  for (const row of rows) {
+    const name = text(row.candidate_name);
+    if (!name) continue;
+    const list = byName.get(name) || [];
+    list.push(row);
+    byName.set(name, list);
+  }
+  for (const resume of sanitized) {
+    if (resume.profile) continue;
+    const name = text(resume.candidateName);
+    if (!name || name === '候选人') continue;
+    const candidates = byName.get(name) || [];
+    const best = pickBestSameNameProfile(candidates);
+    if (best) {
+      resume.profile = buildPublicProfile(best.parsed_data, {
+        education: best.education,
+        workExperience: best.work_experience,
+        gender: best.gender,
+        birthday: best.birthday,
+        certifications: best.certifications,
+        selfEvaluation: best.self_evaluation,
+      });
+    }
+  }
+}
+
 function buildFeishuCard(input: {
   positionTitle: string;
   itemCount: number;
@@ -382,6 +493,51 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     return next();
   });
 
+  // 档案优选：仅完成 AI 初筛、缺结构化档案的简历（重复上传场景），
+  // 自动替换为同名、AI 初筛通过、同标准岗位且档案最全的另一条简历，
+  // 保证业务筛选链接推送的是有候选人档案的那条；替换后按 id 去重防重复。
+  async function optimizeResumesForProfile(
+    db: D1Database,
+    resumes: BusinessScreeningResumeRecord[],
+    resolveStandardTitle: (rawTitle: string) => string,
+  ): Promise<BusinessScreeningResumeRecord[]> {
+    const profileMissing = resumes.filter((resume) => !hasResumeProfile(resume));
+    if (profileMissing.length === 0) return resumes;
+    const names = uniqueStrings(profileMissing.map((resume) => text(resume.candidate_name)));
+    if (names.length === 0) return resumes;
+    const sameNameRows = await deps.store.findSameNameProfiles(db, names);
+    const replacementByOriginal = new Map<string, string>();
+    const replacementIds = new Set<string>();
+    for (const resume of profileMissing) {
+      const name = text(resume.candidate_name);
+      if (!name) continue;
+      const candidates = sameNameRows
+        .filter((row) => row.id !== resume.id && text(row.candidate_name) === name)
+        .filter((row) => text(row.screening_result) === '通过');
+      const best = pickBestSameNameProfile(candidates);
+      if (!best) continue;
+      // 必须是同一标准岗位（保证责任人一致），避免同名不同岗张冠李戴
+      const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
+      const bestTitle = text(best.mapped_position) || text(best.position_applied);
+      if (resolveStandardTitle(rawTitle) !== resolveStandardTitle(bestTitle)) continue;
+      replacementByOriginal.set(resume.id, best.id);
+      replacementIds.add(best.id);
+    }
+    if (replacementIds.size === 0) return resumes;
+    const replacementRows = await deps.store.listResumesByIds(db, [...replacementIds]);
+    const replacementById = new Map(replacementRows.map((row) => [row.id, row]));
+    const seen = new Set<string>();
+    const optimized: BusinessScreeningResumeRecord[] = [];
+    for (const resume of resumes) {
+      const replacementId = replacementByOriginal.get(resume.id);
+      const chosen = replacementId ? (replacementById.get(replacementId) || resume) : resume;
+      if (seen.has(chosen.id)) continue;
+      seen.add(chosen.id);
+      optimized.push(chosen);
+    }
+    return optimized;
+  }
+
   app.post('/api/resumes/business-screening/push', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const ids = uniqueStrings(Array.isArray(body?.ids) ? body.ids : []);
@@ -427,7 +583,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       eligibleResumes.push(resume);
     }
 
-    const grouped = groupEligibleResumesForPush(eligibleResumes, positions, interviewerDirectoryRows, resolveStandardTitle);
+    const eligible = await optimizeResumesForProfile(db, eligibleResumes, resolveStandardTitle);
+    const grouped = groupEligibleResumesForPush(eligible, positions, interviewerDirectoryRows, resolveStandardTitle);
     const sender = await resolveSenderEmail(c, user, deps);
     const currentUserToken = sender.email ? await deps.getCurrentUserToken(c.env, sender.email) : null;
     const keyNoSenderReason = user.id === 'api-key' && !sender.email ? sender.reason : null;
@@ -574,6 +731,17 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     }
 
     const items = await deps.store.listBatchItems(db, batch.id);
+    const sanitized = items.map(sanitizePublicItem);
+    // 同名档案兜底：缺档案的候选人从系统内同名简历借用完整档案（重复上传/仅初筛未解析的场景）
+    const missingNames = [...new Set(
+      sanitized
+        .filter((resume) => !resume.profile && resume.candidateName && resume.candidateName !== '候选人')
+        .map((resume) => resume.candidateName as string),
+    )];
+    if (missingNames.length > 0) {
+      const sameNameRows = await deps.store.findSameNameProfiles(db, missingNames);
+      attachSameNameProfileFallback(sanitized, sameNameRows);
+    }
     return c.json({
       batch: {
         id: batch.id,
@@ -584,7 +752,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         title: batch.batch_title || undefined,
         subtitle: batch.batch_subtitle || undefined,
       },
-      resumes: items.map(sanitizePublicItem),
+      resumes: sanitized,
     });
   });
 
@@ -827,6 +995,22 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         });
       }
       return result;
+    },
+    async findSameNameProfiles(db, names, excludeResumeId) {
+      if (names.length === 0) return [];
+      const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+      if (uniqueNames.length === 0) return [];
+      let sql = `SELECT id, candidate_name, screening_result, mapped_position, position_applied, parsed_data, education, work_experience, gender, birthday, certifications, self_evaluation
+                   FROM resumes
+                  WHERE candidate_name IN (${placeholders(uniqueNames.length)})
+                    AND (parsed_data IS NOT NULL OR education IS NOT NULL OR work_experience IS NOT NULL
+                         OR gender IS NOT NULL OR birthday IS NOT NULL OR certifications IS NOT NULL OR self_evaluation IS NOT NULL)`;
+      const values: unknown[] = [...uniqueNames];
+      if (excludeResumeId) {
+        sql += ' AND id != ?';
+        values.push(excludeResumeId);
+      }
+      return queryAll<SameNameProfileRow>(db, sql, values);
     },
     async createBatch(db, batch, items) {
       await createResumePushBatch(db, {

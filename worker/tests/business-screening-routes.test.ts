@@ -90,6 +90,27 @@ function buildHarness(options?: {
         .map((name) => interviewerDirectory.get(name))
         .filter(Boolean) as Array<{ name: string; openId?: string | null; userId?: string | null }>;
     },
+    async findSameNameProfiles(_db, names, excludeResumeId) {
+      const allowed = new Set(names);
+      const rows = [...resumes.values()]
+        .filter((resume) => allowed.has(resume.candidate_name))
+        .filter((resume) => resume.id !== excludeResumeId)
+        .map((resume) => ({
+          id: resume.id,
+          candidate_name: resume.candidate_name || null,
+          screening_result: resume.screening_result || null,
+          mapped_position: resume.mapped_position || null,
+          position_applied: resume.position_applied || null,
+          parsed_data: resume.parsed_data || null,
+          education: resume.education || null,
+          work_experience: resume.work_experience || null,
+          gender: resume.gender || null,
+          birthday: resume.birthday || null,
+          certifications: resume.certifications || null,
+          self_evaluation: resume.self_evaluation || null,
+        }));
+      return rows;
+    },
     async createBatch(_db, batch, items) {
       batches.set(batch.id, {
         id: batch.id,
@@ -137,6 +158,12 @@ function buildHarness(options?: {
           match_score: resume?.match_score ?? null,
           capability_scores: resume?.capability_scores || null,
           hard_requirement_result: resume?.hard_requirement_result || null,
+          screening_result: resume?.screening_result || null,
+          parsed_data: resume?.parsed_data || null,
+          gender: resume?.gender || null,
+          birthday: resume?.birthday || null,
+          certifications: resume?.certifications || null,
+          self_evaluation: resume?.self_evaluation || null,
         });
       }
     },
@@ -1874,5 +1901,117 @@ describe('business screening routes', () => {
       stage: 'talent_pool',
       business_screening_remark: '重发后入库',
     });
+  });
+
+  it('picks the same-name resume with a profile when pushing a profile-missing candidate', async () => {
+    const { request, batches, createdTokens } = buildHarness({
+      resumes: [
+        {
+          id: 'resume-meina-no-profile',
+          candidate_name: '王美娜',
+          email: 'meina@example.com',
+          contact: '13800000000',
+          screening_result: '通过',
+          status: 'pending_review',
+          stage: 'screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+          business_screening_batch_id: '',
+          business_screening_dispatch_group_id: '',
+          ocr_markdown: '# 王美娜 简历原文内容',
+          ai_review: '{"match_score":3.6}',
+          // 无 parsed_data / education / work_experience —— 模拟仅初筛未解析
+        },
+        {
+          id: 'resume-meina-with-profile',
+          candidate_name: '王美娜',
+          email: 'meina2@example.com',
+          contact: '13811111111',
+          screening_result: '通过',
+          status: 'pending_review',
+          stage: 'screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+          business_screening_batch_id: '',
+          business_screening_dispatch_group_id: '',
+          parsed_data: JSON.stringify({
+            highest_degree: '本科',
+            school: '长沙大学',
+            major: '信息管理',
+            years_of_experience: 10,
+            recent_company: '小米科技',
+            current_position: '高级产品经理',
+            gender: '女',
+            skills: ['Axure', 'RAG'],
+          }),
+        },
+      ],
+    });
+
+    const pushResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['resume-meina-no-profile'] }),
+    });
+    expect(pushResp.status).toBe(200);
+    const pushBody = await pushResp.json() as any;
+    // 推送结果应指向有档案的那条（resume-meina-with-profile），且批次成员为有档案记录
+    expect(pushBody.pushed).toEqual(['resume-meina-with-profile']);
+
+    const publicResp = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}`, {
+      method: 'GET',
+    });
+    expect(publicResp.status).toBe(200);
+    const publicBody = await publicResp.json() as any;
+    expect(publicBody.resumes).toHaveLength(1);
+    expect(publicBody.resumes[0].id).toBe('resume-meina-with-profile');
+    expect(publicBody.resumes[0].profile).toMatchObject({
+      highestDegree: '本科',
+      school: '长沙大学',
+      gender: '女',
+    });
+  });
+
+  it('keeps profile-missing candidate when no same-name profile exists', async () => {
+    const { request, createdTokens } = buildHarness({
+      resumes: [
+        {
+          id: 'resume-solo-no-profile',
+          candidate_name: '李四',
+          email: 'li@example.com',
+          contact: '13900000000',
+          screening_result: '通过',
+          status: 'pending_review',
+          stage: 'screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+          business_screening_batch_id: '',
+          business_screening_dispatch_group_id: '',
+          ocr_markdown: '# 李四 简历原文',
+          ai_review: '{"match_score":4.0}',
+        },
+      ],
+    });
+
+    const pushResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['resume-solo-no-profile'] }),
+    });
+    expect(pushResp.status).toBe(200);
+    const pushBody = await pushResp.json() as any;
+    expect(pushBody.pushed).toEqual(['resume-solo-no-profile']);
+
+    const publicResp = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}`, {
+      method: 'GET',
+    });
+    const publicBody = await publicResp.json() as any;
+    expect(publicBody.resumes[0].profile).toBeUndefined();
   });
 });
