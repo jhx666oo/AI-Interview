@@ -221,6 +221,17 @@ function buildHarness(options?: {
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
         .map((batch) => ({ ...batch }))[0] || null;
     },
+    async listActiveBatchesByInterviewer(_db, interviewerName, nowIso) {
+      const result: BatchRow[] = [];
+      for (const batch of batches.values()) {
+        if (
+          batch.interviewer_name === interviewerName
+          && (batch.status === 'active' || batch.status === 'completed')
+          && (batch.expires_at === null || batch.expires_at === undefined || batch.expires_at > nowIso)
+        ) result.push({ ...batch });
+      }
+      return result;
+    },
     async resetBatchActive(_db, batchId) {
       const batch = batches.get(batchId);
       if (batch) batch.status = 'active';
@@ -549,6 +560,99 @@ describe('business screening routes', () => {
     expect(response.status).toBe(401);
   });
 
+  it('temp_link mode lets AI-rejected resumes into a temporary link while normal push skips them', async () => {
+    const { request, batches } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      resumes: [{
+        id: 'resume-ai-no',
+        candidate_name: '候选人丙',
+        screening_result: '不通过',
+        status: 'pending_screening',
+        hr_disposition: 'pending',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'not_ready',
+      }],
+    });
+    const headers = { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' };
+
+    // 普通推送：AI 初筛未通过 → 跳过
+    const normalResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: ['resume-ai-no'] }),
+    });
+    expect(normalResp.status).toBe(200);
+    await expect(normalResp.json()).resolves.toMatchObject({
+      pushed: [],
+      skipped: [{ id: 'resume-ai-no', reason: 'AI初筛未通过' }],
+    });
+
+    // 临时链接模式：允许进入，生成批次（模式 B 自定义范围）
+    const tempResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: ['resume-ai-no'], temp_link: true, title: 'AI 未通过临时审核' }),
+    });
+    expect(tempResp.status).toBe(200);
+    await expect(tempResp.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: ['resume-ai-no'],
+      skipped: [],
+      batches: [{ interviewer: '张三', itemCount: 1 }],
+    });
+    expect(batches.size).toBe(1);
+  });
+
+  it('lists an interviewer active batches with URLs for scope batches and flags legacy ones', async () => {
+    const { request } = buildHarness({
+      initialBatches: [
+        {
+          id: 'batch-scope-1',
+          interviewer_id: 'user-zhang',
+          interviewer_name: '张三',
+          interviewer_open_id: 'ou_zhang',
+          token_hash: 'hash-scope-1',
+          expires_at: '2026-09-01T00:00:00.000Z',
+          status: 'active',
+          created_by: 'hr@example.com',
+          created_at: '2026-08-12T00:00:00.000Z',
+          last_sent_at: null,
+          dispatch_group_id: 'dg-1',
+          scope_key: '标准运营::ou_zhang',
+        },
+        {
+          id: 'batch-legacy-1',
+          interviewer_id: 'user-zhang',
+          interviewer_name: '张三',
+          interviewer_open_id: 'ou_zhang',
+          token_hash: 'hash-legacy-1',
+          expires_at: '2026-09-01T00:00:00.000Z',
+          status: 'active',
+          created_by: 'hr@example.com',
+          created_at: '2026-08-01T00:00:00.000Z',
+          last_sent_at: null,
+          dispatch_group_id: 'dg-2',
+          scope_key: null,
+        },
+      ],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches?interviewer=%E5%BC%A0%E4%B8%89', {
+      method: 'GET',
+      headers: { 'x-api-key': 'test-api-key' },
+    });
+    expect(response.status).toBe(200);
+    const json = await response.json() as any;
+    expect(json.total).toBe(2);
+    const scopeBatch = json.batches.find((b: any) => b.batchId === 'batch-scope-1');
+    expect(scopeBatch.url).toContain('/business-screening/');
+    expect(scopeBatch.needsResend).toBe(false);
+    const legacyBatch = json.batches.find((b: any) => b.batchId === 'batch-legacy-1');
+    expect(legacyBatch.url).toBeNull();
+    expect(legacyBatch.needsResend).toBe(true);
+  });
+
   it('accepts a valid long-lived API key for push and rejects a wrong key', async () => {
     const { request, createdTokens } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
 
@@ -590,6 +694,44 @@ describe('business screening routes', () => {
     expect(sentMessages).toHaveLength(1);
     expect(sentMessages[0].openId).toBe('ou_zhang');
     await expect(okResp.json()).resolves.toMatchObject({ ok: true, failed: [] });
+  });
+
+  it('silent push generates the link without sending any Feishu card', async () => {
+    const { request, sentMessages } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+    });
+
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], silent: true, title: '静默生成' }),
+    });
+    expect(okResp.status).toBe(200);
+    // 静默：不发飞书卡片、failed 为空、链接照常生成
+    expect(sentMessages).toHaveLength(0);
+    await expect(okResp.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: ['resume-1'],
+      failed: [],
+      batches: [{ interviewer: '张三', itemCount: 1 }],
+    });
+  });
+
+  it('silent push works without a Feishu-bound sender', async () => {
+    const { request, sentMessages } = buildHarness();
+
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], silent: true }),
+    });
+    expect(okResp.status).toBe(200);
+    expect(sentMessages).toHaveLength(0);
+    await expect(okResp.json()).resolves.toMatchObject({
+      ok: true,
+      failed: [],
+      batches: [{ interviewer: '张三', itemCount: 1 }],
+    });
   });
 
   it('reports the missing-owner reason when the API key has no Feishu owner configured', async () => {
