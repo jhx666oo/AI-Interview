@@ -45,6 +45,7 @@ import type {
 } from './types';
 import { filterDashboardV3Board, type DashboardV3Board } from './v3-types';
 import { buildMiaodaExportRows, buildMiaodaWorkbookBase64, MIAODA_EXPORT_COLUMN_WIDTHS } from './exportDashboardExcel';
+import { readDashboardV3Source, writeDashboardV3Source } from './sourcePersistence';
 import styles from './dashboard.module.css';
 import { createDashboardExcelArchive, fetchDashboardLegacy, fetchDashboardV3, syncDashboardV3, type DashboardV3Source } from './api';
 
@@ -195,7 +196,7 @@ const Dashboard: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [dataMode, setDataMode] = useState<DashboardDataMode>('live');
   const [snapshotDate, setSnapshotDate] = useState<string>();
-  const [v3Source, setV3Source] = useState<DashboardV3Source>('static');
+  const [v3Source, setV3Source] = useState<DashboardV3Source>(() => readDashboardV3Source());
   const [snapshots, setSnapshots] = useState<DashboardSnapshotMeta[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [glossaryOpen, setGlossaryOpen] = useState(false);
@@ -306,6 +307,7 @@ const Dashboard: React.FC = () => {
       const syncedBoard = await syncDashboardV3();
       setBoardV3(syncedBoard);
       setV3Source('feishu');
+      writeDashboardV3Source('feishu');
       message.success('已从飞书同步最新招聘数据');
     } catch {
       message.error('飞书数据同步失败，请确认招聘表权限后重试');

@@ -6,7 +6,7 @@
 
 | 仪表盘数据源 | 飞书链接 | app_token | table_id | view_id |
 | --- | --- | --- | --- | --- |
-| 职培事业部（`zhipei`） | [职培表](https://ywwlaii6ga7.feishu.cn/base/QivHbbd6JaAV0fs0LDqcZEc3n4g?table=tbl0yOiT0XarJwf9&view=vewJbFx1TY) | `QivHbbd6JaAV0fs0LDqcZEc3n4g` | `tbl0yOiT0XarJwf9` | `vewJbFx1TY` |
+| 职培事业部（`zhipei`） | [职培表](https://ywwlaii6ga7.feishu.cn/base/QivHbbd6JaAV0fs0LDqcZEc3n4g?table=tbl0yOiT0XarJwf9&view=vew2ViJain) | `QivHbbd6JaAV0fs0LDqcZEc3n4g` | `tbl0yOiT0XarJwf9` | `vew2ViJain` |
 | 养老/商业、AI创新、雏渐肥（`yanglao`） | [月度招聘报表](https://ywwlaii6ga7.feishu.cn/wiki/Xancwb9kfiYciSknoricU95hnoc?table=tbl4UKBczcKlKgtk&view=vew33IcH5s) | `Z0X7bzVHoaE4essOK1tc7Xcencb` | `tbl4UKBczcKlKgtk` | `vew33IcH5s` |
 
 注意：月度招聘报表链接中的 `Xancwb9kfiYciSknoricU95hnoc` 是 Wiki 节点 token，不是 Bitable `app_token`；通过 Wiki 节点解析后得到上表中的 `Z0X7...`。
@@ -20,7 +20,7 @@ FEISHU_DASHBOARD_USER_EMAIL=admin@example.com
 
 FEISHU_DASHBOARD_ZHIPEI_APP_TOKEN=QivHbbd6JaAV0fs0LDqcZEc3n4g
 FEISHU_DASHBOARD_ZHIPEI_TABLE_ID=tbl0yOiT0XarJwf9
-FEISHU_DASHBOARD_ZHIPEI_VIEW_ID=vewJbFx1TY
+FEISHU_DASHBOARD_ZHIPEI_VIEW_ID=vew2ViJain
 
 FEISHU_DASHBOARD_YANGLAO_APP_TOKEN=Z0X7bzVHoaE4essOK1tc7Xcencb
 FEISHU_DASHBOARD_YANGLAO_TABLE_ID=tbl4UKBczcKlKgtk
