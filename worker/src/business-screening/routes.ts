@@ -9,6 +9,10 @@ import {
   recordBusinessScreeningDecision,
   revokeActiveBusinessScreeningBatchesForResume,
 } from './repository';
+import {
+  DEFAULT_BUSINESS_SCREENING_TITLE,
+  normalizeBusinessScreeningTitle,
+} from './display-title';
 import { groupEligibleResumesForPush, isEligibleForPush } from './service';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './token';
 import type {
@@ -205,6 +209,9 @@ export interface BusinessScreeningRouteStore {
       createdAt: string;
       lastSentAt?: string | null;
       dispatchGroupId: string;
+      batchTitle?: string | null;
+      batchSubtitle?: string | null;
+      scopeKey?: string | null;
     },
     items: CreateResumePushBatchItemInput[],
   ): Promise<void>;
@@ -215,6 +222,11 @@ export interface BusinessScreeningRouteStore {
   loadBatchByScope(db: D1Database, scopeKey: string, nowIso: string): Promise<ResumePushBatchRow | null>;
   // 把已处理完的批次重新激活（追加新简历时复用链接）
   resetBatchActive(db: D1Database, batchId: string): Promise<void>;
+  updateBatchPresentation(
+    db: D1Database,
+    batchId: string,
+    presentation: { title?: string | null; subtitle?: string | null },
+  ): Promise<void>;
   // 向批次追加简历条目（重复（batch,resume）自动忽略）
   appendBatchItemsIfAbsent(db: D1Database, items: CreateResumePushBatchItemInput[]): Promise<void>;
   listBatchItems(db: D1Database, batchId: string): Promise<BusinessScreeningBatchItemView[]>;
@@ -548,6 +560,16 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     if (ids.length === 0) {
       return c.json({ detail: 'ids must contain at least one resume id' }, 400);
     }
+    const hasTitle = body !== null
+      && typeof body === 'object'
+      && Object.prototype.hasOwnProperty.call(body, 'title');
+    const requestedTitle = hasTitle
+      ? normalizeBusinessScreeningTitle(body.title) || DEFAULT_BUSINESS_SCREENING_TITLE
+      : undefined;
+    const hasSubtitle = body !== null
+      && typeof body === 'object'
+      && Object.prototype.hasOwnProperty.call(body, 'subtitle');
+    const requestedSubtitle = hasSubtitle ? text(body.subtitle) || null : undefined;
 
     const db = c.env.DB as D1Database;
     const nowIso = deps.now();
@@ -611,21 +633,26 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
       for (const [positionTitle, scopeResumes] of resumesByPosition) {
         const scopeKey = `${positionTitle}::${group.interviewer.openId}`;
-        const issued = await deps.createScopePublicToken(scopeKey, nowIso);
         const existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
         const itemCreatedAt = deps.now();
         const expiresAt = existing ? existing.expires_at : resolveExpiresAt(nowIso, body.expires_in_days);
-        const batchTitle = text(body.title) || null;
-        const batchSubtitle = text(body.subtitle) || null;
+        const batchTitle = requestedTitle ?? existing?.batch_title ?? null;
+        const batchSubtitle = requestedSubtitle ?? existing?.batch_subtitle ?? null;
 
         let batchId: string;
         if (existing) {
           batchId = existing.id;
           // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
           await deps.store.resetBatchActive(db, batchId);
+          await deps.store.updateBatchPresentation(db, batchId, {
+            title: requestedTitle,
+            subtitle: requestedSubtitle,
+          });
         } else {
           batchId = deps.uuid();
         }
+        // 链接由 scope + batchId 确定：有效期内复用同一批次 → 同一链接；过期新建批次 → 新链接
+        const issued = await deps.createScopePublicToken(scopeKey, batchId);
         const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
         const items: CreateResumePushBatchItemInput[] = scopeResumes.map((resume) => ({
           id: deps.uuid(),
@@ -879,6 +906,16 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const db = c.env.DB as D1Database;
     const user = ((c as any).get('user') || {}) as HrUser;
     const body = await c.req.json().catch(() => ({}));
+    const hasTitle = body !== null
+      && typeof body === 'object'
+      && Object.prototype.hasOwnProperty.call(body, 'title');
+    const requestedTitle = hasTitle
+      ? normalizeBusinessScreeningTitle(body.title) || DEFAULT_BUSINESS_SCREENING_TITLE
+      : undefined;
+    const hasSubtitle = body !== null
+      && typeof body === 'object'
+      && Object.prototype.hasOwnProperty.call(body, 'subtitle');
+    const requestedSubtitle = hasSubtitle ? text(body.subtitle) || null : undefined;
     const batch = await deps.store.loadBatchById(db, batchId);
     if (!batch) return c.json({ detail: 'Batch not found' }, 404);
 
@@ -900,23 +937,27 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     let url: string;
     const scopeKey = batch.scope_key?.trim();
     if (scopeKey) {
-      const issued = await deps.createScopePublicToken(scopeKey, nowIso);
-      url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
       const current = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+      nextBatchId = current ? current.id : deps.uuid();
+      // 链接由 scope + batchId 确定：复用当前批次 → 同一链接；批次过期 → 新建批次新链接
+      const issued = await deps.createScopePublicToken(scopeKey, nextBatchId);
+      url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
       const nextItems = pendingItems.map((item) => ({
         id: deps.uuid(),
-        batchId: current ? current.id : deps.uuid(),
+        batchId: nextBatchId,
         resumeId: item.resume_id,
         positionId: item.position_id,
         createdAt: nowIso,
         dispatchGroupId,
       }));
       if (current) {
-        nextBatchId = current.id;
         await deps.store.appendBatchItemsIfAbsent(db, nextItems);
         await deps.store.resetBatchActive(db, nextBatchId);
+        await deps.store.updateBatchPresentation(db, nextBatchId, {
+          title: requestedTitle,
+          subtitle: requestedSubtitle,
+        });
       } else {
-        nextBatchId = deps.uuid();
         await deps.store.createBatch(db, {
           id: nextBatchId,
           interviewerId: batch.interviewer_id,
@@ -928,10 +969,10 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
           createdAt: nowIso,
           lastSentAt: null,
           dispatchGroupId,
-          batchTitle: text(body.title) || batch.batch_title || null,
-          batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
+          batchTitle: requestedTitle ?? batch.batch_title ?? null,
+          batchSubtitle: requestedSubtitle ?? batch.batch_subtitle ?? null,
           scopeKey,
-        }, nextItems.map((item) => ({ ...item, batchId: nextBatchId })));
+        }, nextItems);
       }
       await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
     } else {
@@ -958,8 +999,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         lastSentAt: null,
         dispatchGroupId,
         // 重发默认沿用原批次标题/说明，也可在请求体里覆盖
-        batchTitle: text(body.title) || batch.batch_title || null,
-        batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
+        batchTitle: requestedTitle ?? batch.batch_title ?? null,
+        batchSubtitle: requestedSubtitle ?? batch.batch_subtitle ?? null,
       }, nextItems);
       await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
       await deps.store.setBatchStatus(db, batchId, 'revoked');
@@ -1099,6 +1140,9 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         createdAt: batch.createdAt,
         lastSentAt: batch.lastSentAt || null,
         dispatchGroupId: batch.dispatchGroupId,
+        batchTitle: batch.batchTitle || null,
+        batchSubtitle: batch.batchSubtitle || null,
+        scopeKey: batch.scopeKey || null,
       });
       await insertResumePushBatchItems(db, items);
     },
@@ -1131,6 +1175,18 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
       await db.prepare("UPDATE resume_push_batches SET status = 'active' WHERE id = ?")
         .bind(batchId)
         .run();
+    },
+    async updateBatchPresentation(db, batchId, presentation) {
+      await db.prepare(
+        `UPDATE resume_push_batches
+            SET batch_title = COALESCE(?, batch_title),
+                batch_subtitle = COALESCE(?, batch_subtitle)
+          WHERE id = ?`,
+      ).bind(
+        presentation.title ?? null,
+        presentation.subtitle ?? null,
+        batchId,
+      ).run();
     },
     async appendBatchItemsIfAbsent(db, items) {
       await insertResumePushBatchItemsIfAbsent(db, items);

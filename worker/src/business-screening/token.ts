@@ -25,31 +25,17 @@ export async function createPublicToken(): Promise<{ token: string; tokenHash: s
   };
 }
 
-// 固定业务范围链接的周期长度：30 天
-export const SCOPE_TOKEN_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
-
-/** 计算当前所在链接周期序号：同一周期内链接保持唯一稳定，跨周期自然生成新链接 */
-export function scopeTokenPeriodIndex(nowMs: number): number {
-  return Math.floor(nowMs / SCOPE_TOKEN_PERIOD_MS);
-}
-
-/**
- * 生成"岗位+面试官"业务范围的确定性链接 token。
- * token = SHA-256(scopeKey + '::' + periodIndex)，同一周期内同 scope 的 token 恒定，
- * 因此同一业务范围（如魏秋柠筛某岗位）的链接固定唯一、可复用于多次推送；
- * 30 天周期结束后 periodIndex 变化 → token 变化 → 生成新链接。
- */
+// 固定业务范围链接：同一 scope（岗位+面试官）的批次在 30 天有效期内复用同一个 batchId，
+// token = SHA-256(scopeKey + '::' + batchId)，因此有效期内链接恒定唯一；
+// 批次过期后新建批次（新 batchId）→ 生成新链接（新 30 天周期）。
 export async function createScopePublicToken(
   scopeKey: string,
-  nowIso: string,
-): Promise<{ token: string; tokenHash: string; periodIndex: number }> {
-  const periodIndex = scopeTokenPeriodIndex(Date.parse(nowIso));
-  const material = `${scopeKey}::${periodIndex}`;
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  batchId: string,
+): Promise<{ token: string; tokenHash: string }> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${scopeKey}::${batchId}`));
   const token = `bs-${toBase64Url(new Uint8Array(digest)).slice(0, 28)}`;
   return {
     token,
     tokenHash: await hashPublicToken(token),
-    periodIndex,
   };
 }
