@@ -1518,6 +1518,32 @@ const authMiddleware = async (c: any, next: any) => {
   await next();
 };
 
+// 业务筛选路由组鉴权：JWT 优先，长期 API Key 兜底（x-api-key 视为 admin/hr 权限）。
+// API Key 支持让 skill/第三方环境持长期凭证即可随时生成 7 天单开链接，无需每月换 JWT。
+const businessScreeningAuthMiddleware = async (c: any, next: any) => {
+  const auth = c.req.header('Authorization') || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  if (match) {
+    const payload = await verifyJwt(c.env.SECRET_KEY, match[1]);
+    if (payload) {
+      const user = await getUser(c.env.DB, payload.sub);
+      if (user && user.is_active) {
+        c.set('user', user);
+        await next();
+        return;
+      }
+    }
+    return c.json({ detail: 'Not authenticated' }, 401);
+  }
+  const apiKey = c.req.header('x-api-key') || '';
+  if (apiKey && c.env.RESUME_UPLOAD_API_KEY && apiKey === c.env.RESUME_UPLOAD_API_KEY) {
+    c.set('user', { id: 'api-key', email: 'api-key@system', role: 'admin', full_name: 'API Key' });
+    await next();
+    return;
+  }
+  return c.json({ detail: 'Not authenticated' }, 401);
+};
+
 function serializeUser(user: any) {
   const { hashed_password, plain_password, feishu_token, feishu_refresh_token, feishu_token_expires_at, feishu_token_failed_at, ...rest } = user;
   return {
@@ -1539,7 +1565,7 @@ function requireRole(roles: string[]) {
 }
 
 const businessScreeningRoutes = createBusinessScreeningRoutes({
-  authMiddleware,
+  authMiddleware: businessScreeningAuthMiddleware,
   requireRole,
   getCurrentUserToken: (env, email) => getValidUserAccessToken(env, email),
   sendFeishuMessageToUser,
@@ -1548,9 +1574,35 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
   uuid,
   createPublicToken,
   getResumeFileBytes,
+  resolveApiKeyOwnerEmail: async (env) => {
+    const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).first() as any;
+    return typeof row?.value === 'string' && row.value.trim() ? row.value.trim() : null;
+  },
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
 });
 app.route('/', businessScreeningRoutes);
+
+// API Key 飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（管理员配置）
+const BUSINESS_SCREENING_KEY_OWNER_SETTING = 'business_screening_key_owner';
+
+app.get('/api/settings/business-screening-key-owner', authMiddleware, requireRole(['admin']), async (c) => {
+  const row = await c.env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).first() as any;
+  return c.json({ owner_email: row?.value || null });
+});
+
+app.put('/api/settings/business-screening-key-owner', authMiddleware, requireRole(['admin']), async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const ownerEmail = typeof body.owner_email === 'string' ? body.owner_email.trim() : '';
+  if (!ownerEmail) {
+    await c.env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).run();
+    return c.json({ ok: true, owner_email: null });
+  }
+  const nowIso = new Date().toISOString();
+  await c.env.DB.prepare(
+    'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?'
+  ).bind(BUSINESS_SCREENING_KEY_OWNER_SETTING, ownerEmail, nowIso, ownerEmail, nowIso).run();
+  return c.json({ ok: true, owner_email: ownerEmail });
+});
 
 // 全面公开只读查询 API（2026-08-14）：两档鉴权（无 key 公开脱敏 / x-api-key 完整），
 // 姓名容错（编辑距离 ≤ 1）。person/:name/resumes 由既有路由处理，不在此重复注册。

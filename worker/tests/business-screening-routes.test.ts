@@ -31,6 +31,7 @@ function buildHarness(options?: {
   sendFailuresByOpenId?: Record<string, string>;
   initialBatches?: BatchRow[];
   initialItems?: BusinessScreeningBatchItemView[];
+  apiKeyOwnerEmail?: string | null;
 }) {
   const resumes = new Map(
     (options?.resumes || [
@@ -102,6 +103,8 @@ function buildHarness(options?: {
         created_at: batch.createdAt,
         last_sent_at: batch.lastSentAt || null,
         dispatch_group_id: batch.dispatchGroupId,
+        batch_title: batch.batchTitle || null,
+        batch_subtitle: batch.batchSubtitle || null,
       });
       for (const item of items) {
         const resume = resumes.get(item.resumeId);
@@ -292,6 +295,12 @@ function buildHarness(options?: {
         await next();
         return;
       }
+      // 模拟线上 hybrid 鉴权：长期 API Key 兜底（视为 admin 权限）
+      if (c.req.header('x-api-key') === 'test-api-key') {
+        c.set('user', { id: 'api-key', email: 'api-key@system', role: 'admin', full_name: 'API Key' });
+        await next();
+        return;
+      }
       return c.json({ detail: 'Not authenticated' }, 401);
     },
     requireRole: (roles) => async (c, next) => {
@@ -327,6 +336,9 @@ function buildHarness(options?: {
     getResumeFileBytes: async (_env, resumeId) => {
       return { bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), fileName: `${resumeId}.pdf` }; // mock PDF 字节
     },
+    resolveApiKeyOwnerEmail: options?.apiKeyOwnerEmail === undefined
+      ? undefined
+      : async () => options.apiKeyOwnerEmail as string | null,
     store,
   };
 
@@ -398,6 +410,121 @@ describe('business screening routes', () => {
     expect(response.status).toBe(401);
   });
 
+  it('accepts a valid long-lived API key for push and rejects a wrong key', async () => {
+    const { request, createdTokens } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
+
+    // 错误 key → 401
+    const wrongKeyResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'wrong-key' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(wrongKeyResp.status).toBe(401);
+
+    // 正确 key → 生成链接成功（与 JWT 同权）
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], expires_in_days: 7 }),
+    });
+    expect(okResp.status).toBe(200);
+    expect(createdTokens).toHaveLength(1);
+    await expect(okResp.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: ['resume-1'],
+      batches: [{ interviewer: '张三', itemCount: 1, expiresAt: '2026-08-19T12:00:00.000Z' }],
+    });
+  });
+
+  it('sends the Feishu card via the configured API-key owner user', async () => {
+    const { request, sentMessages } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+    });
+
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(okResp.status).toBe(200);
+    // 归属用户已配 → 卡片成功发送给责任人，failed 为空
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0].openId).toBe('ou_zhang');
+    await expect(okResp.json()).resolves.toMatchObject({ ok: true, failed: [] });
+  });
+
+  it('reports the missing-owner reason when the API key has no Feishu owner configured', async () => {
+    const { request, sentMessages } = buildHarness({
+      apiKeyOwnerEmail: null,
+    });
+
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(okResp.status).toBe(200);
+    expect(sentMessages).toHaveLength(0);
+    await expect(okResp.json()).resolves.toMatchObject({
+      failed: [{ interviewer: '张三', reason: expect.stringContaining('未配置飞书归属用户') }],
+    });
+  });
+
+  it('allows a long-lived API key to resend a batch as permanent', async () => {
+    const { request, batches } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      initialBatches: [{
+        id: 'batch-key-resend',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-key-resend',
+        expires_at: '2026-08-19T12:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T12:00:00.000Z',
+        last_sent_at: null,
+        rawToken: 'key-resend-token',
+      }],
+      initialItems: [{
+        id: 'item-key-resend',
+        batch_id: 'batch-key-resend',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T12:00:00.000Z',
+        candidate_name: '候选人甲',
+        mapped_position: '标准运营',
+      }],
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches/batch-key-resend/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ expires_in_days: 0 }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      itemCount: 1,
+    });
+    // 新批次为永久（expires_at null），旧批次被 revoke
+    const newBatch = [...batches.values()].find((batch) => batch.id !== 'batch-key-resend');
+    expect(newBatch?.expires_at).toBeNull();
+    expect(batches.get('batch-key-resend')?.status).toBe('revoked');
+  });
+
   it('defaults batch expiry to 7 days and supports permanent links via expires_in_days=0', async () => {
     const { request, batches } = buildHarness({
       resumes: [
@@ -462,6 +589,114 @@ describe('business screening routes', () => {
     expect(batch.expires_at).toBe('2026-09-11T12:00:00.000Z');
     await expect(response.json()).resolves.toMatchObject({
       batches: [{ expiresAt: '2026-09-11T12:00:00.000Z' }],
+    });
+  });
+
+  it('stores and returns a custom page title/subtitle on push and exposes it on the public link', async () => {
+    const { request, batches, createdTokens } = buildHarness();
+
+    const pushResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['resume-1'],
+        title: 'IoT产品经理候选人审核',
+        subtitle: '请查看 AI 初筛通过的候选人并给出入库建议',
+      }),
+    });
+    expect(pushResp.status).toBe(200);
+    const batch = [...batches.values()][0];
+    expect(batch.batch_title).toBe('IoT产品经理候选人审核');
+    expect(batch.batch_subtitle).toBe('请查看 AI 初筛通过的候选人并给出入库建议');
+    await expect(pushResp.json()).resolves.toMatchObject({
+      batches: [{ title: 'IoT产品经理候选人审核', subtitle: '请查看 AI 初筛通过的候选人并给出入库建议' }],
+    });
+
+    // 公开链接响应带出标题/说明
+    const publicResp = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}`, {
+      method: 'GET',
+    });
+    expect(publicResp.status).toBe(200);
+    await expect(publicResp.json()).resolves.toMatchObject({
+      batch: { title: 'IoT产品经理候选人审核', subtitle: '请查看 AI 初筛通过的候选人并给出入库建议' },
+    });
+  });
+
+  it('defaults to no custom title when push omits it', async () => {
+    const { request, batches } = buildHarness();
+
+    const pushResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(pushResp.status).toBe(200);
+    const batch = [...batches.values()][0];
+    expect(batch.batch_title).toBeNull();
+    expect(batch.batch_subtitle).toBeNull();
+    const json = await pushResp.json() as any;
+    expect(json.batches[0]).not.toHaveProperty('title');
+    expect(json.batches[0]).not.toHaveProperty('subtitle');
+  });
+
+  it('inherits the original batch title/subtitle on resend', async () => {
+    const { request, batches, createdTokens } = buildHarness({
+      initialBatches: [{
+        id: 'batch-title-inherit',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-title-inherit',
+        expires_at: '2026-08-19T12:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T12:00:00.000Z',
+        last_sent_at: null,
+        rawToken: 'title-inherit-token',
+        batch_title: '原批次标题',
+        batch_subtitle: '原批次说明',
+      }],
+      initialItems: [{
+        id: 'item-title-inherit',
+        batch_id: 'batch-title-inherit',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T12:00:00.000Z',
+        candidate_name: '候选人甲',
+        mapped_position: '标准运营',
+      }],
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+      }],
+    });
+
+    // 重发：默认沿用原批次标题/说明
+    const resendResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches/batch-title-inherit/resend', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(resendResp.status).toBe(200);
+    const resentBatch = [...batches.values()].find((batch) => batch.id !== 'batch-title-inherit');
+    expect(resentBatch?.batch_title).toBe('原批次标题');
+    expect(resentBatch?.batch_subtitle).toBe('原批次说明');
+
+    // 公开链接沿用标题
+    const publicResp = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}`, {
+      method: 'GET',
+    });
+    expect(publicResp.status).toBe(200);
+    await expect(publicResp.json()).resolves.toMatchObject({
+      batch: { title: '原批次标题', subtitle: '原批次说明' },
     });
   });
 
