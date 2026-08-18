@@ -27,6 +27,14 @@ describe('public business screening page contract', () => {
     expect(source).toContain('候选人列表');
   });
 
+  it('renders a multi-position filter for a unified interviewer workbench', () => {
+    expect(source).toContain('business-screening-position-filter');
+    expect(source).toContain('岗位筛选');
+    expect(source).toContain('togglePosition');
+    expect(source).toContain('待处理 {counts.pending} / 共 {counts.total}');
+    expect(source).toContain('filterBusinessScreeningResumes');
+  });
+
   it('renders the structured candidate profile (parsed_data fields, no source file)', () => {
     expect(source).toContain('ProfileDescriptions');
     expect(source).toContain('候选人档案');

@@ -78,6 +78,18 @@ export function pickActiveBusinessScreeningResumeId(
   return resumes[0]?.id || null;
 }
 
+export function getBusinessScreeningPositions(resumes: BusinessScreeningResume[]): string[] {
+  return [...new Set(resumes.map((resume) => resume.position.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+}
+
+export function filterBusinessScreeningResumes(
+  resumes: BusinessScreeningResume[],
+  selectedPositions: ReadonlySet<string>,
+): BusinessScreeningResume[] {
+  if (selectedPositions.size === 0) return resumes;
+  return resumes.filter((resume) => selectedPositions.has(resume.position));
+}
+
 export function classifyBusinessScreeningLoadError(error: any): BusinessScreeningLoadState {
   return error?.response?.status === 410 ? 'expired' : 'error';
 }

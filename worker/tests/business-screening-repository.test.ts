@@ -11,8 +11,10 @@ import {
   ensureBusinessScreeningSchema,
   insertResumePushBatchItems,
   loadResumePushBatchByTokenHash,
+  loadLatestResumePushBatchByInterviewer,
   markResumesPushed,
   recordBusinessScreeningDecision,
+  refreshResumePushBatchExpiry,
   revokeActiveBusinessScreeningBatchesForResume,
 } from '../src/business-screening/repository';
 
@@ -73,6 +75,37 @@ describe('business screening schema compatibility', () => {
 });
 
 describe('business screening repository writes', () => {
+  it('loads the latest reusable interviewer batch and refreshes its expiry', async () => {
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            calls.push({ sql, values });
+            return {
+              async first() {
+                return sql.includes('ORDER BY created_at DESC')
+                  ? { id: 'batch-canonical', interviewer_open_id: 'ou_123', scope_key: 'ou_123', status: 'expired' }
+                  : null;
+              },
+              async run() { return { meta: { changes: 1 } }; },
+            };
+          },
+        };
+      },
+    };
+
+    await expect(loadLatestResumePushBatchByInterviewer(db as never, 'ou_123')).resolves.toMatchObject({
+      id: 'batch-canonical',
+      status: 'expired',
+    });
+    await expect(refreshResumePushBatchExpiry(db as never, 'batch-canonical', '2026-09-11T12:00:00.000Z')).resolves.toBeUndefined();
+    expect(calls).toEqual([
+      { sql: expect.stringContaining('interviewer_open_id = ?'), values: ['ou_123'] },
+      { sql: expect.stringContaining('SET expires_at = ?'), values: ['2026-09-11T12:00:00.000Z', 'batch-canonical'] },
+    ]);
+  });
+
   it('persists batches, batch items, and resume push marks with the expected SQL contract', async () => {
     const calls: Array<{ sql: string; values: unknown[] }> = [];
     const db = {
