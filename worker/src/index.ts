@@ -2335,6 +2335,121 @@ app.get('/api/dashboard/snapshots', authMiddleware, async (c) => {
   return c.json({ snapshots: result.results || [] });
 });
 
+const DASHBOARD_EXCEL_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const MAX_DASHBOARD_EXCEL_BASE64_LENGTH = 4_000_000;
+
+type DashboardExcelArchiveRow = {
+  id: string;
+  snapshot_date: string;
+  file_type?: string;
+  file_name: string;
+  content_type: string;
+  file_size: number;
+  content_base64?: string;
+  generated_at: string;
+};
+
+function dashboardExcelArchiveMetadata(row: DashboardExcelArchiveRow) {
+  return {
+    id: row.id,
+    snapshot_date: row.snapshot_date,
+    file_type: row.file_type || 'dashboard',
+    file_name: row.file_name,
+    content_type: row.content_type || DASHBOARD_EXCEL_CONTENT_TYPE,
+    file_size: Number(row.file_size || 0),
+    generated_at: row.generated_at,
+  };
+}
+
+function dashboardExcelByteLength(contentBase64: string): number | null {
+  const normalized = contentBase64.replace(/\s+/g, '');
+  if (!normalized || normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return null;
+  const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor(normalized.length * 3 / 4) - padding);
+}
+
+function decodeDashboardExcel(contentBase64: string): Uint8Array | null {
+  const normalized = contentBase64.replace(/\s+/g, '');
+  if (dashboardExcelByteLength(normalized) === null) return null;
+  try {
+    const binary = atob(normalized);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+app.get('/api/dashboard/excel-archives', authMiddleware, async (c) => {
+  const result = await c.env.DB.prepare(
+    'SELECT id, snapshot_date, file_type, file_name, content_type, file_size, generated_at FROM dashboard_excel_archives ORDER BY snapshot_date DESC, generated_at DESC',
+  ).all<DashboardExcelArchiveRow>();
+  return c.json({ archives: (result.results || []).map(dashboardExcelArchiveMetadata) });
+});
+
+app.get('/api/dashboard/excel-archives/:id/download', authMiddleware, async (c) => {
+  const id = c.req.param('id');
+  const row = await c.env.DB.prepare(
+    'SELECT id, snapshot_date, file_type, file_name, content_type, file_size, content_base64, generated_at FROM dashboard_excel_archives WHERE id = ?',
+  ).bind(id).first<DashboardExcelArchiveRow>();
+  if (!row || !row.content_base64) return c.json({ detail: 'Excel archive not found' }, 404);
+  const bytes = decodeDashboardExcel(row.content_base64);
+  if (!bytes) return c.json({ detail: 'Excel archive content is invalid' }, 500);
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      'Content-Type': row.content_type || DASHBOARD_EXCEL_CONTENT_TYPE,
+      'Content-Length': String(bytes.byteLength),
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(row.file_name)}`,
+      'Cache-Control': 'private, no-store',
+    },
+  });
+});
+
+app.post('/api/dashboard/excel-archives', authMiddleware, requireRole(['admin']), async (c) => {
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  const snapshotDate = typeof body?.snapshot_date === 'string' ? body.snapshot_date.trim() : '';
+  const fileType = typeof body?.file_type === 'string' && /^[a-z0-9_-]{1,32}$/i.test(body.file_type.trim())
+    ? body.file_type.trim()
+    : 'dashboard';
+  const fileName = typeof body?.file_name === 'string' ? body.file_name.trim() : '';
+  const contentBase64 = typeof body?.content_base64 === 'string' ? body.content_base64.trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshotDate)) return c.json({ detail: 'snapshot_date must use YYYY-MM-DD' }, 400);
+  if (!fileName || !/\.xlsx$/i.test(fileName)) return c.json({ detail: 'file_name must be an .xlsx file' }, 400);
+  if (!contentBase64 || contentBase64.length > MAX_DASHBOARD_EXCEL_BASE64_LENGTH) {
+    return c.json({ detail: 'Excel archive is empty or too large' }, 413);
+  }
+  const fileSize = dashboardExcelByteLength(contentBase64);
+  if (!fileSize) return c.json({ detail: 'content_base64 is invalid' }, 400);
+
+  const generatedAt = now();
+  const user = (c as any).get('user') as any;
+  const generatedBy = String(user?.email || 'unknown');
+  const existing = await c.env.DB.prepare(
+    'SELECT id FROM dashboard_excel_archives WHERE snapshot_date = ? AND file_type = ?',
+  ).bind(snapshotDate, fileType).first<{ id: string }>();
+  const id = existing?.id || uuid();
+
+  if (existing) {
+    await c.env.DB.prepare(
+      'UPDATE dashboard_excel_archives SET file_name = ?, content_type = ?, file_size = ?, content_base64 = ?, generated_at = ?, generated_by = ? WHERE id = ?',
+    ).bind(fileName, DASHBOARD_EXCEL_CONTENT_TYPE, fileSize, contentBase64, generatedAt, generatedBy, id).run();
+  } else {
+    await c.env.DB.prepare(
+      'INSERT INTO dashboard_excel_archives (id, snapshot_date, file_type, file_name, content_type, file_size, content_base64, generated_at, generated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).bind(id, snapshotDate, fileType, fileName, DASHBOARD_EXCEL_CONTENT_TYPE, fileSize, contentBase64, generatedAt, generatedBy, generatedAt).run();
+  }
+
+  return c.json(dashboardExcelArchiveMetadata({
+    id,
+    snapshot_date: snapshotDate,
+    file_type: fileType,
+    file_name: fileName,
+    content_type: DASHBOARD_EXCEL_CONTENT_TYPE,
+    file_size: fileSize,
+    generated_at: generatedAt,
+  }), existing ? 200 : 201);
+});
+
 app.post('/api/dashboard/snapshots', authMiddleware, requireRole(['admin']), async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const hasSuppliedDate = body !== null && typeof body === 'object'

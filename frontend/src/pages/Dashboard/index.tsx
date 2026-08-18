@@ -15,7 +15,6 @@ import {
 } from 'antd';
 import {
   AppstoreOutlined,
-  BookOutlined,
   DownloadOutlined,
   ClearOutlined,
   HistoryOutlined,
@@ -30,6 +29,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
 import { RecruitingBoardView } from './components/RecruitingBoardView';
 import { MiaodaDashboardView } from './components/MiaodaDashboardView';
+import { ExcelArchiveModal } from './components/ExcelArchiveModal';
+import { FieldGlossaryButton, FieldGlossaryModal } from './components/FieldGlossaryModal';
 import { ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
 import type {
   BoardPosition,
@@ -43,9 +44,9 @@ import type {
   RecruitingBoard,
 } from './types';
 import { filterDashboardV3Board, type DashboardV3Board } from './v3-types';
-import { buildMiaodaExportRows, MIAODA_EXPORT_COLUMN_WIDTHS } from './exportDashboardExcel';
+import { buildMiaodaExportRows, buildMiaodaWorkbookBase64, MIAODA_EXPORT_COLUMN_WIDTHS } from './exportDashboardExcel';
 import styles from './dashboard.module.css';
-import { createDashboardV3Snapshot, fetchDashboardLegacy, fetchDashboardV3, syncDashboardV3, type DashboardV3Source } from './api';
+import { createDashboardExcelArchive, fetchDashboardLegacy, fetchDashboardV3, syncDashboardV3, type DashboardV3Source } from './api';
 
 type Priority = BoardPosition['priority'];
 type ShareExpiry = '1d' | '7d' | '30d' | 'permanent';
@@ -197,7 +198,7 @@ const Dashboard: React.FC = () => {
   const [v3Source, setV3Source] = useState<DashboardV3Source>('static');
   const [snapshots, setSnapshots] = useState<DashboardSnapshotMeta[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [creatingSnapshot, setCreatingSnapshot] = useState(false);
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [syncingV3, setSyncingV3] = useState(false);
   const [division, setDivision] = useState<string>();
   const [hrbp, setHrbp] = useState<string>();
@@ -258,21 +259,44 @@ const Dashboard: React.FC = () => {
     void loadSnapshots();
   }, []);
 
-  const createMissingSnapshot = async () => {
-    setCreatingSnapshot(true);
+  const createTodayExcelArchive = async () => {
+    if (!boardV3) {
+      message.warning('当前没有可保存的看板数据');
+      return;
+    }
+    if (dataMode !== 'live') {
+      message.warning('历史数据版本请先切换到最新数据后再保存 Excel');
+      return;
+    }
+    const snapshotDate = boardV3.snapshot_date || boardV3.updated_at.slice(0, 10);
+    const allPositions = [...boardV3.positions, ...boardV3.p2_positions];
+    const zhipeiPositions = allPositions.filter((position) => position.department === '职培事业部');
+    const yanglaoPositions = allPositions.filter((position) => position.department !== '职培事业部');
+    const archives = [
+      {
+        fileType: 'zhipei',
+        fileName: `职培招聘数据_${snapshotDate}.xlsx`,
+        positions: zhipeiPositions,
+      },
+      {
+        fileType: 'yanglao',
+        fileName: `养老招聘数据_${snapshotDate}.xlsx`,
+        positions: yanglaoPositions,
+      },
+    ];
     try {
-      const snapshot = await createDashboardV3Snapshot();
-      await loadSnapshots();
-      setSnapshotDate(snapshot.snapshot_date);
-      setDataMode('snapshot');
-      message.success('今日快照已保存');
-      setHistoryOpen(false);
+      await Promise.all(archives.map((archive) => createDashboardExcelArchive({
+        snapshotDate,
+        fileType: archive.fileType,
+        fileName: archive.fileName,
+        contentBase64: buildMiaodaWorkbookBase64(boardV3, archive.positions),
+      })));
+      message.success('今日职培、养老 Excel 存档已保存');
     } catch (error) {
       const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status === 409) message.warning('今日快照已存在');
-      else message.error('今日快照保存失败');
-    } finally {
-      setCreatingSnapshot(false);
+      if (status === 409) message.warning('今日 Excel 存档已存在');
+      else message.error('今日 Excel 存档保存失败');
+      throw error;
     }
   };
 
@@ -388,11 +412,6 @@ const Dashboard: React.FC = () => {
     setKeyword('');
   };
 
-  const scrollToFieldGlossary = () => {
-    document.getElementById('dashboard-field-definitions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
-
   const handleExportExcel = () => {
     if (filteredBoardV3) {
       const rows = buildMiaodaExportRows(filteredBoardV3);
@@ -477,8 +496,8 @@ const Dashboard: React.FC = () => {
         </div>
         <div className={`${styles.pageActions} ${styles.miaodaPageActions}`}>
           <Button icon={<DownloadOutlined />} onClick={handleExportExcel}>导出 Excel</Button>
-          <Button icon={<HistoryOutlined />} onClick={async () => { setHistoryOpen(true); await loadSnapshots(); }}>历史 Excel 存档</Button>
-          <Button icon={<BookOutlined />} onClick={scrollToFieldGlossary}>字段口径说明</Button>
+          <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>历史 Excel 存档</Button>
+          <FieldGlossaryButton onClick={() => setGlossaryOpen(true)} />
           {user?.role === 'admin' && (
             <Button type="primary" danger icon={<SyncOutlined />} loading={syncingV3} onClick={syncFromFeishu}>手动同步</Button>
           )}
@@ -527,25 +546,13 @@ const Dashboard: React.FC = () => {
       {v3Error && <Alert type="warning" showIcon message="新版双源仪表盘暂不可用" description="当前暂时展示兼容版看板，飞书或 D1 数据源恢复后点击刷新即可切换。" />}
       {filteredBoardV3 ? <MiaodaDashboardView board={filteredBoardV3} onRefresh={() => fetchBoard(false)} /> : <RecruitingBoardView board={filteredBoard} />}
 
-      <ResponsiveModal title="历史 Excel 存档" open={historyOpen} onCancel={() => setHistoryOpen(false)} footer={null} destroyOnHidden>
-        <div className={styles.snapshotModalToolbar}>
-          <Typography.Text type="secondary">选择历史快照后，仪表盘将按该日期的数据口径展示。</Typography.Text>
-          {user?.role === 'admin' && (
-            <Button type="primary" disabled={dataMode !== 'live'} loading={creatingSnapshot} onClick={createMissingSnapshot}>保存今日快照</Button>
-          )}
-        </div>
-        <List
-          size="small"
-          bordered
-          dataSource={snapshots}
-          locale={{ emptyText: '暂无历史快照' }}
-          renderItem={(snapshot) => (
-            <List.Item actions={[<Button key="view" type="link" onClick={() => { setSnapshotDate(snapshot.snapshot_date); setDataMode('snapshot'); setHistoryOpen(false); }}>查看</Button>]}>
-              <span>{snapshot.snapshot_date} · 生成于 {new Date(snapshot.generated_at).toLocaleString('zh-CN')}</span>
-            </List.Item>
-          )}
-        />
-      </ResponsiveModal>
+      <ExcelArchiveModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onCreate={user?.role === 'admin' ? createTodayExcelArchive : undefined}
+      />
+
+      <FieldGlossaryModal open={glossaryOpen} onClose={() => setGlossaryOpen(false)} />
 
       <ResponsiveModal title="分享招聘看板" open={shareOpen} onCancel={() => setShareOpen(false)} footer={null} destroyOnHidden>
         <Typography.Paragraph type="secondary">公开链接仅展示聚合招聘数据，不包含候选人或 AI 评估信息。</Typography.Paragraph>

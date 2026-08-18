@@ -1,4 +1,5 @@
 import type { DashboardV3Board, DashboardV3Position } from './v3-types';
+import { buildExcelBase64 } from '../../utils/exportExcel';
 
 export const MIAODA_EXPORT_HEADERS = [
   '事业部',
@@ -47,6 +48,11 @@ function exportPosition(position: DashboardV3Position): MiaodaExportRow {
   };
 }
 
-export function buildMiaodaExportRows(board: DashboardV3Board): MiaodaExportRow[] {
-  return [...board.positions, ...board.p2_positions].map(exportPosition);
+export function buildMiaodaExportRows(board: DashboardV3Board, positions?: DashboardV3Position[]): MiaodaExportRow[] {
+  return (positions ?? [...board.positions, ...board.p2_positions]).map(exportPosition);
+}
+
+export function buildMiaodaWorkbookBase64(board: DashboardV3Board, positions?: DashboardV3Position[]): string {
+  const rows = buildMiaodaExportRows(board, positions);
+  return buildExcelBase64(rows, '招聘数据', MIAODA_EXPORT_COLUMN_WIDTHS);
 }
