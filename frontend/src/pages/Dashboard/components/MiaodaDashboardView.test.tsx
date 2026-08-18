@@ -117,4 +117,15 @@ describe('MiaodaDashboardView', () => {
     fireEvent.click(toggle);
     expect(screen.getAllByText('招聘销售-杭州').length).toBeGreaterThan(0);
   });
+
+  it('uses the blue tone for the OFFER中 status tag', () => {
+    const offerPosition = {
+      position_id: 'position-offer', department: '职培事业部', position_name: '招聘销售', display_name: '招聘销售-杭州',
+      city: '杭州', hrbps: ['王凯月'], priority: 'P1' as const, status: 'OFFER中', headcount: 1,
+      resume_push: 2, first_scheduled: 1, first_pass: 1, second_pass: 1, third_pass: 0, final_pass: 1,
+      offers: 0, hired: 0, elapsed_days: 4, weekly_target: 0, notes: '待发放', data_sources: ['static_excel'],
+    };
+    render(<MiaodaDashboardView board={{ ...board, positions: [offerPosition], divisions: [] }} />);
+    expect(screen.getAllByText('OFFER中').every((element) => element.className.includes('miaodaStatusBlue'))).toBe(true);
+  });
 });

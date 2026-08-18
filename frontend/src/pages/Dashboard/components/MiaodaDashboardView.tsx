@@ -304,7 +304,7 @@ function rateTone(value: number | null): 'good' | 'warn' | 'bad' | 'neutral' {
 function statusTone(status: string): 'green' | 'orange' | 'red' | 'blue' | 'neutral' {
   if (/完成|入职/.test(status)) return 'green';
   if (/初筛/.test(status)) return 'orange';
-  if (/拟|待发布/.test(status)) return 'blue';
+  if (/拟|待发布|OFFER中/i.test(status)) return 'blue';
   if (/OFFER|复试|面试|招聘中/i.test(status)) return 'red';
   return 'neutral';
 }
