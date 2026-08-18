@@ -89,4 +89,12 @@ describe('buildMiaodaExportRows', () => {
     expect(rows).toHaveLength(2);
     expect(rows[1].招聘状态).toBe('OFFER中');
   });
+
+  it('can build a source-specific archive without mixing departments', () => {
+    const yanglao = { ...board.positions[0], position_id: 'yanglao', department: '养老及商业事业部' };
+    const rows = buildMiaodaExportRows({ ...board, positions: [board.positions[0], yanglao] }, [yanglao]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].事业部).toBe('养老及商业事业部');
+  });
 });

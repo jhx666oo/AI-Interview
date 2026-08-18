@@ -552,16 +552,16 @@ const InterviewsList: React.FC = () => {
   // == 表格列 ==
   const columns = [
     {
-      title: '候选人', key: 'candidate', width: 130,
+      title: '候选人', key: 'candidate', width: 110,
       render: (_: any, r: MergedRow) => (
-        <Space>
+        <Space size={2}>
           <UserOutlined style={{ color: '#1677ff' }} />
           <Text strong>{r.candidate_name}</Text>
         </Space>
       ),
     },
     {
-      title: '标准岗位', key: 'position', width: 150,
+      title: '标准岗位', key: 'position', width: 130,
       render: (_: any, r: MergedRow) => {
         if (r.position) {
           return (
@@ -573,18 +573,18 @@ const InterviewsList: React.FC = () => {
         return <span style={{ color: '#999' }}>{r.standard_position || r.position_applied || '-'}</span>;
       }
     },
-    { title: '学历', dataIndex: 'education', key: 'education', width: 80,
+    { title: '学历', dataIndex: 'education', key: 'education', width: 64,
       render: (v: string) => v || '-' },
-    { title: '城市', dataIndex: 'city', key: 'city', width: 80 },
+    { title: '城市', dataIndex: 'city', key: 'city', width: 64 },
     {
-      title: '候选人状态', key: 'talent_status', width: 130,
+      title: '候选人状态', key: 'talent_status', width: 100,
       render: (_: any, r: MergedRow) => {
         const cfg = talentStatusConfig[r.talent_status] || { color: 'default', text: r.talent_status || '待初筛' };
         return <Tag color={cfg.color}>{cfg.text}</Tag>;
       }
     },
     {
-      title: '面试状态', key: 'interview_status', width: 100,
+      title: '面试状态', key: 'interview_status', width: 88,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id) return <Tag>未安排</Tag>;
         // 动态计算状态
@@ -611,11 +611,11 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '面试时间', key: 'interview_time', width: 150,
+      title: '面试时间', key: 'interview_time', width: 130,
       render: (_: any, r: MergedRow) => r.interview_time || '-',
     },
     {
-      title: '一面面试官', dataIndex: 'primary_interviewer', key: 'primary_interviewer', width: 100, ellipsis: { showTitle: false },
+      title: '一面面试官', dataIndex: 'primary_interviewer', key: 'primary_interviewer', width: 84, ellipsis: { showTitle: false },
       render: (v: string) => (
         <Tooltip title={v || ''}>
           <span>{v || '-'}</span>
@@ -623,7 +623,7 @@ const InterviewsList: React.FC = () => {
       ),
     },
     {
-      title: '二面面试官', dataIndex: 'secondary_interviewer', key: 'secondary_interviewer', width: 100, ellipsis: { showTitle: false },
+      title: '二面面试官', dataIndex: 'secondary_interviewer', key: 'secondary_interviewer', width: 84, ellipsis: { showTitle: false },
       render: (v: string) => (
         <Tooltip title={v || ''}>
           <span>{v || '-'}</span>
@@ -631,7 +631,7 @@ const InterviewsList: React.FC = () => {
       ),
     },
     {
-      title: '一面结果', key: 'result1', width: 90,
+      title: '一面结果', key: 'result1', width: 70,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id || !r.result || r.result === 'pending') return <Tag>待评价</Tag>;
         const cfg = resultLabels[r.result];
@@ -639,7 +639,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '二面结果', key: 'result2', width: 90,
+      title: '二面结果', key: 'result2', width: 70,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id || !r.result2 || r.result2 === 'pending') return <Tag>待评价</Tag>;
         const cfg = resultLabels[r.result2];
@@ -647,7 +647,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 500,
+      title: '操作', align: 'center' as const, key: 'action', width: 380,
       render: (_: any, r: MergedRow) => {
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
         // 未评过 → 提醒一面 + 一面评价 同时出现
@@ -671,30 +671,36 @@ const InterviewsList: React.FC = () => {
         const iv2 = r.secondary_interviewer || r.interviewer;
 
         return (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
-            {canSchedule && (
-              <Button type="primary" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
-            )}
-            {canRemind1 && (
-              <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
-            )}
-            {canEval1 && (
-              <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
-            )}
-            {canRemind2 && (
-              <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
-            )}
-            {canEval2 && (
-              <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
-            )}
-            {canSendToOnboarding && (
-              <Button type="primary" icon={<HomeOutlined />} loading={onboardingLoading === r.id} onClick={() => handleSendToOnboarding(r)}>发起入职</Button>
-            )}
-            {canView && (
-              <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
-            )}
-            <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
-            <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            {/* 左侧：流程操作（安排/提醒/评价/入职） */}
+            <Space size={2} wrap style={{ justifyContent: 'flex-start' }}>
+              {canSchedule && (
+                <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
+              )}
+              {canRemind1 && (
+                <Button type="primary" size="small" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
+              )}
+              {canEval1 && (
+                <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
+              )}
+              {canRemind2 && (
+                <Button type="primary" size="small" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
+              )}
+              {canEval2 && (
+                <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
+              )}
+              {canSendToOnboarding && (
+                <Button type="primary" size="small" icon={<HomeOutlined />} loading={onboardingLoading === r.id} onClick={() => handleSendToOnboarding(r)}>发起入职</Button>
+              )}
+            </Space>
+            {/* 右侧：工具操作（查看/下载/编辑） */}
+            <Space size={2} wrap style={{ marginLeft: 'auto', justifyContent: 'flex-end' }}>
+              {canView && (
+                <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
+              )}
+              <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
+              <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
+            </Space>
           </div>
         );
       }
@@ -750,7 +756,6 @@ const InterviewsList: React.FC = () => {
           columns={columns}
           rowKey="id"
           loading={loading}
-          scroll={{ x: 'max-content' }}
           pagination={false}
           rowSelection={{
             selectedRowKeys,

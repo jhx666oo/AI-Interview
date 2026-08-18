@@ -937,6 +937,18 @@
 .dashboardPage .filterCard :global(.responsive-toolbar__fields > *) { flex: 0 0 auto; }
 .dashboardPage .filterCard :global(.responsive-toolbar__actions) { flex: 0 0 auto; }
 .snapshotModalToolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.excelArchiveDescription { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
+.excelArchiveSummary { margin-bottom: 12px !important; }
+.excelArchiveLoading { display: grid; min-height: 120px; place-items: center; }
+.excelArchiveGroups { display: grid; gap: 14px; max-height: min(60vh, 620px); overflow: auto; padding-right: 2px; }
+.excelArchiveGroup { padding: 12px 14px; border: 1px solid #e0e3e8; border-radius: 8px; background: #fafbfc; }
+.excelArchiveGroupHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.glossaryDescription { margin-bottom: 12px !important; }
+.glossaryCategories { display: flex; margin-bottom: 14px; }
+.glossaryList { display: grid; max-height: min(65vh, 680px); gap: 10px; overflow: auto; padding: 2px; }
+.glossaryItem { padding: 12px 14px; border: 1px solid #e0e3e8; border-radius: 8px; background: #fafbfc; }
+.glossaryItemHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+.glossaryItem :global(.ant-typography) { margin-bottom: 0; line-height: 1.65; }
 
 @media (max-width: 1180px) {
   .dashboardPage .pageHeader { margin-inline: -16px; padding-inline: 20px; }
@@ -952,6 +964,7 @@
   .dashboardPage .miaodaPageActions { width: 100%; justify-content: flex-start; }
   .dashboardPage .miaodaPageActions :global(.ant-btn), .dashboardPage .miaodaPageActions :global(.ant-select) { flex: 1 1 auto; }
   .snapshotModalToolbar { align-items: flex-start; flex-direction: column; }
+  .excelArchiveDescription, .excelArchiveGroupHeader { align-items: flex-start; flex-direction: column; }
 }
 
 /* Weekly recruitment dynamics: match the reference card actions and semantic colors. */
