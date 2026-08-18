@@ -18,6 +18,8 @@ describe('normalizeBusinessScreeningTitle', () => {
   it('rejects empty or action-only text', () => {
     expect(normalizeBusinessScreeningTitle('')).toBeNull();
     expect(normalizeBusinessScreeningTitle('给我链接')).toBeNull();
+    expect(normalizeBusinessScreeningTitle('请给我链接')).toBeNull();
+    expect(normalizeBusinessScreeningTitle('麻烦发链接')).toBeNull();
     expect(DEFAULT_BUSINESS_SCREENING_TITLE).toBe('业务筛选');
   });
 });
