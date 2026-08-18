@@ -1518,6 +1518,32 @@ const authMiddleware = async (c: any, next: any) => {
   await next();
 };
 
+// 业务筛选路由组鉴权：JWT 优先，长期 API Key 兜底（x-api-key 视为 admin/hr 权限）。
+// API Key 支持让 skill/第三方环境持长期凭证即可随时生成 7 天单开链接，无需每月换 JWT。
+const businessScreeningAuthMiddleware = async (c: any, next: any) => {
+  const auth = c.req.header('Authorization') || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  if (match) {
+    const payload = await verifyJwt(c.env.SECRET_KEY, match[1]);
+    if (payload) {
+      const user = await getUser(c.env.DB, payload.sub);
+      if (user && user.is_active) {
+        c.set('user', user);
+        await next();
+        return;
+      }
+    }
+    return c.json({ detail: 'Not authenticated' }, 401);
+  }
+  const apiKey = c.req.header('x-api-key') || '';
+  if (apiKey && c.env.RESUME_UPLOAD_API_KEY && apiKey === c.env.RESUME_UPLOAD_API_KEY) {
+    c.set('user', { id: 'api-key', email: 'api-key@system', role: 'admin', full_name: 'API Key' });
+    await next();
+    return;
+  }
+  return c.json({ detail: 'Not authenticated' }, 401);
+};
+
 function serializeUser(user: any) {
   const { hashed_password, plain_password, feishu_token, feishu_refresh_token, feishu_token_expires_at, feishu_token_failed_at, ...rest } = user;
   return {
@@ -1539,7 +1565,7 @@ function requireRole(roles: string[]) {
 }
 
 const businessScreeningRoutes = createBusinessScreeningRoutes({
-  authMiddleware,
+  authMiddleware: businessScreeningAuthMiddleware,
   requireRole,
   getCurrentUserToken: (env, email) => getValidUserAccessToken(env, email),
   sendFeishuMessageToUser,
