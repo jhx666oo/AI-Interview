@@ -222,6 +222,8 @@ export interface BusinessScreeningRouteStore {
   loadBatchByScope(db: D1Database, scopeKey: string, nowIso: string): Promise<ResumePushBatchRow | null>;
   // 兼容旧版“岗位+面试官” scope：切换为面试官 scope 后，优先复用该面试官已有的稳定批次链接
   loadBatchByInterviewer(db: D1Database, interviewerOpenId: string, nowIso: string): Promise<ResumePushBatchRow | null>;
+  // 列出某面试官当前有效（active/completed 且未过期）的全部批次（供 skill 模式 A 取回现有链接）
+  listActiveBatchesByInterviewer(db: D1Database, interviewerName: string, nowIso: string): Promise<ResumePushBatchRow[]>;
   // 把已处理完的批次重新激活（追加新简历时复用链接）
   resetBatchActive(db: D1Database, batchId: string): Promise<void>;
   updateBatchPresentation(
@@ -556,6 +558,44 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     }
     return optimized;
   }
+
+  // 按面试官列出当前有效批次及其链接（供 skill 模式 A 取回已有链接交付）：
+  // scope 批次可重算确定性 token 得到 url；无 scope_key 的旧批次无法反推，标记 needs_resend。
+  app.get('/api/resumes/business-screening/batches', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
+    try {
+      const interviewer = String(c.req.query('interviewer') || '').trim();
+      if (!interviewer) return c.json({ detail: 'interviewer 参数必填（面试官姓名）' }, 400);
+      const db = c.env.DB as D1Database;
+      const nowIso = deps.now();
+      const rows = await deps.store.listActiveBatchesByInterviewer(db, interviewer, nowIso);
+      const origin = new URL(c.req.url).origin;
+      const batches = [];
+      for (const row of rows) {
+        let url: string | null = null;
+        let needsResend = false;
+        if (row.scope_key && row.id) {
+          const issued = await deps.createScopePublicToken(row.scope_key, row.id);
+          url = `${origin}/business-screening/${issued.token}`;
+        } else {
+          needsResend = true;
+        }
+        batches.push({
+          batchId: row.id,
+          interviewer: row.interviewer_name,
+          status: row.status,
+          expiresAt: row.expires_at,
+          title: row.batch_title || undefined,
+          subtitle: row.batch_subtitle || undefined,
+          url,
+          needsResend,
+        });
+      }
+      return c.json({ interviewer, total: batches.length, batches });
+    } catch (e: any) {
+      console.error(`[business-screening] 批次查询失败: ${e.message}`);
+      return c.json({ detail: '批次查询失败: ' + e.message }, 500);
+    }
+  });
 
   app.post('/api/resumes/business-screening/push', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     const body = await c.req.json().catch(() => ({}));
@@ -1269,6 +1309,18 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
           ORDER BY created_at DESC
           LIMIT 1`,
       ).bind(interviewerOpenId, nowIso).first<ResumePushBatchRow>();
+    },
+    async listActiveBatchesByInterviewer(db, interviewerName, nowIso) {
+      return queryAll<ResumePushBatchRow>(
+        db,
+        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle, scope_key
+           FROM resume_push_batches
+          WHERE interviewer_name = ?
+            AND status IN ('active', 'completed')
+            AND (expires_at IS NULL OR expires_at > ?)
+          ORDER BY created_at DESC`,
+        [interviewerName, nowIso],
+      );
     },
     async resetBatchActive(db, batchId) {
       await db.prepare("UPDATE resume_push_batches SET status = 'active' WHERE id = ?")

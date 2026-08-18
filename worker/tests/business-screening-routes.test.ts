@@ -213,6 +213,17 @@ function buildHarness(options?: {
       }
       return null;
     },
+    async listActiveBatchesByInterviewer(_db, interviewerName, nowIso) {
+      const result: BatchRow[] = [];
+      for (const batch of batches.values()) {
+        if (
+          batch.interviewer_name === interviewerName
+          && (batch.status === 'active' || batch.status === 'completed')
+          && (batch.expires_at === null || batch.expires_at === undefined || batch.expires_at > nowIso)
+        ) result.push({ ...batch });
+      }
+      return result;
+    },
     async resetBatchActive(_db, batchId) {
       const batch = batches.get(batchId);
       if (batch) batch.status = 'active';
@@ -573,6 +584,55 @@ describe('business screening routes', () => {
       batches: [{ interviewer: '张三', itemCount: 1 }],
     });
     expect(batches.size).toBe(1);
+  });
+
+  it('lists an interviewer active batches with URLs for scope batches and flags legacy ones', async () => {
+    const { request } = buildHarness({
+      initialBatches: [
+        {
+          id: 'batch-scope-1',
+          interviewer_id: 'user-zhang',
+          interviewer_name: '张三',
+          interviewer_open_id: 'ou_zhang',
+          token_hash: 'hash-scope-1',
+          expires_at: '2026-09-01T00:00:00.000Z',
+          status: 'active',
+          created_by: 'hr@example.com',
+          created_at: '2026-08-12T00:00:00.000Z',
+          last_sent_at: null,
+          dispatch_group_id: 'dg-1',
+          scope_key: '标准运营::ou_zhang',
+        },
+        {
+          id: 'batch-legacy-1',
+          interviewer_id: 'user-zhang',
+          interviewer_name: '张三',
+          interviewer_open_id: 'ou_zhang',
+          token_hash: 'hash-legacy-1',
+          expires_at: '2026-09-01T00:00:00.000Z',
+          status: 'active',
+          created_by: 'hr@example.com',
+          created_at: '2026-08-01T00:00:00.000Z',
+          last_sent_at: null,
+          dispatch_group_id: 'dg-2',
+          scope_key: null,
+        },
+      ],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches?interviewer=%E5%BC%A0%E4%B8%89', {
+      method: 'GET',
+      headers: { 'x-api-key': 'test-api-key' },
+    });
+    expect(response.status).toBe(200);
+    const json = await response.json() as any;
+    expect(json.total).toBe(2);
+    const scopeBatch = json.batches.find((b: any) => b.batchId === 'batch-scope-1');
+    expect(scopeBatch.url).toContain('/business-screening/');
+    expect(scopeBatch.needsResend).toBe(false);
+    const legacyBatch = json.batches.find((b: any) => b.batchId === 'batch-legacy-1');
+    expect(legacyBatch.url).toBeNull();
+    expect(legacyBatch.needsResend).toBe(true);
   });
 
   it('accepts a valid long-lived API key for push and rejects a wrong key', async () => {
