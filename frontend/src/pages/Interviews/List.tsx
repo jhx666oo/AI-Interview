@@ -647,7 +647,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 500,
+      title: '操作', align: 'center' as const, key: 'action', width: 460,
       render: (_: any, r: MergedRow) => {
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
         // 未评过 → 提醒一面 + 一面评价 同时出现
@@ -671,30 +671,36 @@ const InterviewsList: React.FC = () => {
         const iv2 = r.secondary_interviewer || r.interviewer;
 
         return (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
-            {canSchedule && (
-              <Button type="primary" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
-            )}
-            {canRemind1 && (
-              <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
-            )}
-            {canEval1 && (
-              <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
-            )}
-            {canRemind2 && (
-              <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
-            )}
-            {canEval2 && (
-              <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
-            )}
-            {canSendToOnboarding && (
-              <Button type="primary" icon={<HomeOutlined />} loading={onboardingLoading === r.id} onClick={() => handleSendToOnboarding(r)}>发起入职</Button>
-            )}
-            {canView && (
-              <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
-            )}
-            <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
-            <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            {/* 左侧：流程操作（安排/提醒/评价/入职） */}
+            <Space size={4} wrap style={{ justifyContent: 'flex-start' }}>
+              {canSchedule && (
+                <Button type="primary" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
+              )}
+              {canRemind1 && (
+                <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
+              )}
+              {canEval1 && (
+                <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
+              )}
+              {canRemind2 && (
+                <Button type="primary" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
+              )}
+              {canEval2 && (
+                <Button type="primary" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
+              )}
+              {canSendToOnboarding && (
+                <Button type="primary" icon={<HomeOutlined />} loading={onboardingLoading === r.id} onClick={() => handleSendToOnboarding(r)}>发起入职</Button>
+              )}
+            </Space>
+            {/* 右侧：工具操作（查看/下载/编辑） */}
+            <Space size={4} wrap style={{ marginLeft: 'auto', justifyContent: 'flex-end' }}>
+              {canView && (
+                <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
+              )}
+              <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
+              <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
+            </Space>
           </div>
         );
       }
