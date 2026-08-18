@@ -22,6 +22,8 @@ export const BUSINESS_SCREENING_RESUME_MIGRATIONS = [
 export const BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS = [
   'ALTER TABLE resume_push_batches ADD COLUMN dispatch_group_id TEXT DEFAULT NULL',
   'ALTER TABLE resume_push_batch_items ADD COLUMN dispatch_group_id TEXT DEFAULT NULL',
+  'ALTER TABLE resume_push_batches ADD COLUMN batch_title TEXT DEFAULT NULL',
+  'ALTER TABLE resume_push_batches ADD COLUMN batch_subtitle TEXT DEFAULT NULL',
 ] as const;
 
 export const BUSINESS_SCREENING_SCHEMA_STATEMENTS = [
@@ -97,8 +99,8 @@ export async function createResumePushBatch(
   const status: ResumePushBatchStatus = input.status || 'active';
   await db.prepare(
     `INSERT INTO resume_push_batches
-      (id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     input.id,
     input.interviewerId || null,
@@ -111,6 +113,8 @@ export async function createResumePushBatch(
     createdAt,
     input.lastSentAt || null,
     input.dispatchGroupId,
+    input.batchTitle || null,
+    input.batchSubtitle || null,
   ).run();
 }
 
@@ -162,7 +166,7 @@ export async function loadResumePushBatchByTokenHash(
   tokenHash: string,
 ): Promise<ResumePushBatchRow | null> {
   return await db.prepare(
-    `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id
+    `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle
        FROM resume_push_batches
       WHERE token_hash = ?
       LIMIT 1`,

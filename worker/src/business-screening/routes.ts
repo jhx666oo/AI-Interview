@@ -64,6 +64,10 @@ export interface BusinessScreeningBatchItemView {
   capability_scores?: string | null;
   hard_requirement_result?: string | null;
   screening_result?: string | null;
+  gender?: string | null;
+  birthday?: string | null;
+  certifications?: string | null;
+  self_evaluation?: string | null;
 }
 
 // 业务筛选公开页透出的结构化档案（与简历详情页 Descriptions 字段一致，不含联系方式与简历原文）
@@ -103,28 +107,42 @@ function toHistoryOrUndefined<T>(value: unknown, map: (record: Record<string, un
   return mapped.length ? mapped : undefined;
 }
 
-export function buildPublicProfile(parsedData: unknown): BusinessScreeningPublicProfile | undefined {
+export function buildPublicProfile(
+  parsedData: unknown,
+  fallback?: {
+    education?: unknown;
+    workExperience?: unknown;
+    gender?: unknown;
+    birthday?: unknown;
+    certifications?: unknown;
+    selfEvaluation?: unknown;
+  },
+): BusinessScreeningPublicProfile | undefined {
   let parsed: Record<string, unknown> | null = null;
   if (typeof parsedData === 'string') {
     try { parsed = JSON.parse(parsedData); } catch { parsed = null; }
   } else if (typeof parsedData === 'object' && parsedData !== null) {
     parsed = parsedData as Record<string, unknown>;
   }
-  if (!parsed) return undefined;
+  // parsed_data 缺失/为空时，用简历表直接列兜底，保证公开页也有档案可看
+  const pick = (parsedKey: string, fallbackValue?: unknown): unknown => {
+    const v = parsed?.[parsedKey];
+    return v !== undefined && v !== null && v !== '' ? v : fallbackValue;
+  };
 
   const profile: BusinessScreeningPublicProfile = {
-    highestDegree: toStringOrUndefined(parsed.highest_degree),
-    school: toStringOrUndefined(parsed.school),
-    major: toStringOrUndefined(parsed.major),
-    yearsOfExperience: toStringOrUndefined(parsed.years_of_experience),
-    recentCompany: toStringOrUndefined(parsed.recent_company),
-    currentTitle: toStringOrUndefined(parsed.current_position),
-    gender: toStringOrUndefined(parsed.gender),
-    birthday: toStringOrUndefined(parsed.birthday),
-    skills: toStringArrayOrUndefined(parsed.skills),
-    certifications: toStringArrayOrUndefined(parsed.certifications),
-    selfEvaluation: toStringOrUndefined(parsed.self_evaluation),
-    workExperience: toHistoryOrUndefined(parsed.work_experience, (w) => ({
+    highestDegree: toStringOrUndefined(pick('highest_degree', fallback?.education)),
+    school: toStringOrUndefined(pick('school')),
+    major: toStringOrUndefined(pick('major')),
+    yearsOfExperience: toStringOrUndefined(pick('years_of_experience', fallback?.workExperience)),
+    recentCompany: toStringOrUndefined(pick('recent_company')),
+    currentTitle: toStringOrUndefined(pick('current_position')),
+    gender: toStringOrUndefined(pick('gender', fallback?.gender)),
+    birthday: toStringOrUndefined(pick('birthday', fallback?.birthday)),
+    skills: toStringArrayOrUndefined(pick('skills')),
+    certifications: toStringArrayOrUndefined(pick('certifications', fallback?.certifications)),
+    selfEvaluation: toStringOrUndefined(pick('self_evaluation', fallback?.selfEvaluation)),
+    workExperience: toHistoryOrUndefined(parsed?.work_experience, (w) => ({
       company: toStringOrUndefined(w.company),
       title: toStringOrUndefined(w.title),
       duration: toStringOrUndefined(w.duration),
@@ -132,7 +150,7 @@ export function buildPublicProfile(parsedData: unknown): BusinessScreeningPublic
       end: toStringOrUndefined(w.end),
       description: toStringOrUndefined(w.description),
     })),
-    educationHistory: toHistoryOrUndefined(parsed.education, (e) => ({
+    educationHistory: toHistoryOrUndefined(parsed?.education, (e) => ({
       school: toStringOrUndefined(e.school),
       degree: toStringOrUndefined(e.degree),
       major: toStringOrUndefined(e.major),
@@ -260,8 +278,15 @@ function sanitizePublicItem(item: BusinessScreeningBatchItemView) {
     capabilityScores: item.capability_scores || undefined,
     hardRequirementResult: item.hard_requirement_result || undefined,
     screeningResult: text(item.screening_result) || undefined,
-    // 结构化档案：parsed_data 中的字段（不含 email）
-    profile: buildPublicProfile(item.parsed_data),
+    // 结构化档案：parsed_data 优先，缺失时用简历表直接列兜底（gender/birthday/certifications/self_evaluation 等）
+    profile: buildPublicProfile(item.parsed_data, {
+      education: item.education,
+      workExperience: item.work_experience,
+      gender: item.gender,
+      birthday: item.birthday,
+      certifications: item.certifications,
+      selfEvaluation: item.self_evaluation,
+    }),
   };
 }
 
@@ -379,7 +404,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const currentUserToken = user.email ? await deps.getCurrentUserToken(c.env, user.email) : null;
     const pushedResumeIds = uniqueStrings([...grouped.values()].flatMap((group) => group.resumes.map((resume) => resume.id)));
     const failed: Array<{ interviewer: string; reason: string }> = [];
-    const batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number; expiresAt: string | null }> = [];
+    const batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number; expiresAt: string | null; title?: string; subtitle?: string }> = [];
     const dispatchGroupId = deps.uuid();
 
     for (const group of grouped.values()) {
@@ -396,6 +421,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         dispatchGroupId,
       }));
       const expiresAt = resolveExpiresAt(nowIso, body.expires_in_days);
+      const batchTitle = text(body.title) || null;
+      const batchSubtitle = text(body.subtitle) || null;
 
       await deps.store.createBatch(db, {
         id: batchId,
@@ -408,6 +435,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         createdAt: nowIso,
         lastSentAt: null,
         dispatchGroupId,
+        batchTitle,
+        batchSubtitle,
       }, items);
       await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId, dispatchGroupId);
 
@@ -417,6 +446,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         url,
         itemCount: items.length,
         expiresAt,
+        title: batchTitle || undefined,
+        subtitle: batchSubtitle || undefined,
       });
 
       if (!currentUserToken) {
@@ -521,6 +552,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         status: batch.status,
         expiresAt: batch.expires_at,
         lastSentAt: batch.last_sent_at,
+        title: batch.batch_title || undefined,
+        subtitle: batch.batch_subtitle || undefined,
       },
       resumes: items.map(sanitizePublicItem),
     });
@@ -652,6 +685,9 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       createdAt: nowIso,
       lastSentAt: null,
       dispatchGroupId,
+      // 重发默认沿用原批次标题/说明，也可在请求体里覆盖
+      batchTitle: text(body.title) || batch.batch_title || null,
+      batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
     }, nextItems);
     await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
     await deps.store.setBatchStatus(db, batchId, 'revoked');
@@ -781,7 +817,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     },
     async loadBatchById(db, batchId) {
       return await db.prepare(
-        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id
+        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle
            FROM resume_push_batches
           WHERE id = ?
           LIMIT 1`,
@@ -793,7 +829,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
                 r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience, r.parsed_data,
                 r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at,
-                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result, r.screening_result
+                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result, r.screening_result, r.gender, r.birthday, r.certifications, r.self_evaluation
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
           WHERE i.batch_id = ?
@@ -806,7 +842,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
         `SELECT i.id, i.batch_id, i.resume_id, i.position_id, i.status, i.remark, i.processed_at, i.created_at, i.dispatch_group_id,
                 r.candidate_name, r.mapped_position, r.position_applied, r.email, r.contact, r.education, r.work_experience, r.parsed_data,
                 r.hr_disposition, r.business_screening_status, r.business_screening_remark, r.business_screened_at,
-                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result, r.screening_result
+                r.ocr_markdown, r.raw_text, r.resume_markdown, r.ai_review, r.ai_evaluation, r.match_score, r.capability_scores, r.hard_requirement_result, r.screening_result, r.gender, r.birthday, r.certifications, r.self_evaluation
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
           WHERE i.batch_id = ? AND i.resume_id = ?

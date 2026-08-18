@@ -391,6 +391,18 @@ const BusinessScreeningPage: React.FC = () => {
           processedAt: new Date().toISOString(),
         }),
       } : current);
+
+      // 决策成功后自动切换到下一份候选人：优先当前之后的待处理项，否则回绕到第一份待处理
+      const resumes = data?.resumes || [];
+      const idx = resumes.findIndex((r) => r.id === activeResume.id);
+      const after = resumes.slice(idx + 1);
+      const next = after.find((r) => r.status === 'pending')
+        || (after.length ? after[0] : undefined)
+        || resumes.find((r) => r.status === 'pending');
+      if (next) {
+        setActiveResumeId(next.id);
+        setActionError('');
+      }
     } catch (error: any) {
       setActionError(mapBusinessScreeningDecisionError(error));
     } finally {
@@ -440,8 +452,8 @@ const BusinessScreeningPage: React.FC = () => {
       <div className="business-screening-container" style={{ maxWidth: 1160, margin: '0 auto' }}>
         <div style={{ ...cardStyle, padding: 20 }}>
           <div style={{ marginBottom: 20 }}>
-            <h1 style={{ margin: 0, fontSize: 32 }}>业务筛选</h1>
-            <p style={{ margin: '8px 0 12px', color: '#64748b' }}>请查看候选人信息并完成入库 / 不入库决策。</p>
+            <h1 style={{ margin: 0, fontSize: 32 }}>{data?.batch.title || '业务筛选'}</h1>
+            <p style={{ margin: '8px 0 12px', color: '#64748b' }}>{data?.batch.subtitle || '请查看候选人信息并完成入库 / 不入库决策。'}</p>
             <div className="business-screening-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', fontSize: 14 }}>
                 {data?.batch.interviewer || '待分配'}

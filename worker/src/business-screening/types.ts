@@ -59,6 +59,8 @@ export interface ResumePushBatchRow {
   created_at: string;
   last_sent_at: string | null;
   dispatch_group_id: string | null;
+  batch_title?: string | null;
+  batch_subtitle?: string | null;
 }
 
 export interface ResumePushBatchItemRow {
@@ -85,6 +87,8 @@ export interface CreateResumePushBatchInput {
   createdAt?: string;
   lastSentAt?: string | null;
   dispatchGroupId: string;
+  batchTitle?: string | null;
+  batchSubtitle?: string | null;
 }
 
 export interface CreateResumePushBatchItemInput {

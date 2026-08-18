@@ -102,6 +102,8 @@ function buildHarness(options?: {
         created_at: batch.createdAt,
         last_sent_at: batch.lastSentAt || null,
         dispatch_group_id: batch.dispatchGroupId,
+        batch_title: batch.batchTitle || null,
+        batch_subtitle: batch.batchSubtitle || null,
       });
       for (const item of items) {
         const resume = resumes.get(item.resumeId);
@@ -548,6 +550,114 @@ describe('business screening routes', () => {
     expect(batch.expires_at).toBe('2026-09-11T12:00:00.000Z');
     await expect(response.json()).resolves.toMatchObject({
       batches: [{ expiresAt: '2026-09-11T12:00:00.000Z' }],
+    });
+  });
+
+  it('stores and returns a custom page title/subtitle on push and exposes it on the public link', async () => {
+    const { request, batches, createdTokens } = buildHarness();
+
+    const pushResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: ['resume-1'],
+        title: 'IoT产品经理候选人审核',
+        subtitle: '请查看 AI 初筛通过的候选人并给出入库建议',
+      }),
+    });
+    expect(pushResp.status).toBe(200);
+    const batch = [...batches.values()][0];
+    expect(batch.batch_title).toBe('IoT产品经理候选人审核');
+    expect(batch.batch_subtitle).toBe('请查看 AI 初筛通过的候选人并给出入库建议');
+    await expect(pushResp.json()).resolves.toMatchObject({
+      batches: [{ title: 'IoT产品经理候选人审核', subtitle: '请查看 AI 初筛通过的候选人并给出入库建议' }],
+    });
+
+    // 公开链接响应带出标题/说明
+    const publicResp = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}`, {
+      method: 'GET',
+    });
+    expect(publicResp.status).toBe(200);
+    await expect(publicResp.json()).resolves.toMatchObject({
+      batch: { title: 'IoT产品经理候选人审核', subtitle: '请查看 AI 初筛通过的候选人并给出入库建议' },
+    });
+  });
+
+  it('defaults to no custom title when push omits it', async () => {
+    const { request, batches } = buildHarness();
+
+    const pushResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(pushResp.status).toBe(200);
+    const batch = [...batches.values()][0];
+    expect(batch.batch_title).toBeNull();
+    expect(batch.batch_subtitle).toBeNull();
+    const json = await pushResp.json() as any;
+    expect(json.batches[0]).not.toHaveProperty('title');
+    expect(json.batches[0]).not.toHaveProperty('subtitle');
+  });
+
+  it('inherits the original batch title/subtitle on resend', async () => {
+    const { request, batches, createdTokens } = buildHarness({
+      initialBatches: [{
+        id: 'batch-title-inherit',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-title-inherit',
+        expires_at: '2026-08-19T12:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T12:00:00.000Z',
+        last_sent_at: null,
+        rawToken: 'title-inherit-token',
+        batch_title: '原批次标题',
+        batch_subtitle: '原批次说明',
+      }],
+      initialItems: [{
+        id: 'item-title-inherit',
+        batch_id: 'batch-title-inherit',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T12:00:00.000Z',
+        candidate_name: '候选人甲',
+        mapped_position: '标准运营',
+      }],
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+      }],
+    });
+
+    // 重发：默认沿用原批次标题/说明
+    const resendResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches/batch-title-inherit/resend', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(resendResp.status).toBe(200);
+    const resentBatch = [...batches.values()].find((batch) => batch.id !== 'batch-title-inherit');
+    expect(resentBatch?.batch_title).toBe('原批次标题');
+    expect(resentBatch?.batch_subtitle).toBe('原批次说明');
+
+    // 公开链接沿用标题
+    const publicResp = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${createdTokens[0].token}`, {
+      method: 'GET',
+    });
+    expect(publicResp.status).toBe(200);
+    await expect(publicResp.json()).resolves.toMatchObject({
+      batch: { title: '原批次标题', subtitle: '原批次说明' },
     });
   });
 

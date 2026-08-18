@@ -36,4 +36,9 @@ describe('public business screening page contract', () => {
     expect(source).toContain('profile.skills?.length ? profile.skills.join(\'、\')');
     expect(source).toContain('{activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}');
   });
+
+  it('renders the dynamic page title/subtitle from the batch with fallbacks', () => {
+    expect(source).toContain('{data?.batch.title || \'业务筛选\'}');
+    expect(source).toContain('{data?.batch.subtitle || \'请查看候选人信息并完成入库 / 不入库决策。\'}');
+  });
 });

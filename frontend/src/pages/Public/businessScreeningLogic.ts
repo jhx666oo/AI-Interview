@@ -59,6 +59,8 @@ export interface BusinessScreeningBatch {
   status: string;
   expiresAt?: string;
   lastSentAt?: string;
+  title?: string;
+  subtitle?: string;
 }
 
 export interface BusinessScreeningView {
