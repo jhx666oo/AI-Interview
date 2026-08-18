@@ -600,17 +600,17 @@ const BusinessScreeningPage: React.FC = () => {
               className="business-screening-grid"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'minmax(0, 200px) minmax(0, 1fr)',
-                gap: 16,
+                gridTemplateColumns: 'minmax(0, 236px) minmax(0, 1fr)',
+                gap: 12,
                 flex: 1,
                 minHeight: 0,
                 overflow: 'hidden',
               }}
             >
               <section className="business-screening-candidates" style={{ ...cardStyle, padding: 6, minWidth: 0, overflowY: 'auto' }}>
-                <div className="business-screening-candidate-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '2px 4px 8px' }}>
-                  <h2 style={{ margin: 0, fontSize: 14 }}>候选人列表</h2>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, color: '#475569', cursor: pendingCount ? 'pointer' : 'default' }}>
+                <div className="business-screening-candidate-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '2px 4px 8px', gap: 8 }}>
+                  <h2 style={{ margin: 0, fontSize: 13, flexShrink: 0 }}>候选人列表</h2>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#475569', cursor: pendingCount ? 'pointer' : 'default', whiteSpace: 'nowrap', flexShrink: 0 }}>
                     <Checkbox
                       checked={allSelected}
                       indeterminate={pendingCount > 0 && selectedCount > 0 && !allSelected}
@@ -631,13 +631,13 @@ const BusinessScreeningPage: React.FC = () => {
                         className="business-screening-candidate"
                         style={{
                           display: 'flex',
-                          gap: 6,
+                          gap: 5,
                           alignItems: 'flex-start',
                           textAlign: 'left',
                           border: selected ? '1px solid #2563eb' : '1px solid #e2e8f0',
                           background: selected ? '#eff6ff' : '#fff',
-                          borderRadius: 14,
-                          padding: 8,
+                          borderRadius: 10,
+                          padding: 6,
                           cursor: 'pointer',
                         }}
                       >
@@ -647,18 +647,20 @@ const BusinessScreeningPage: React.FC = () => {
                           onClick={(event) => event.stopPropagation()}
                           onChange={() => toggleSelect(resume.id)}
                           aria-label={`选择 ${resume.candidateName}`}
-                          style={{ marginTop: 2, flexShrink: 0 }}
+                          style={{ marginTop: 1, flexShrink: 0 }}
                         />
                         <div style={{ minWidth: 0, flex: 1 }}>
-                          <div className="business-screening-candidate-summary" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
-                            <strong>{resume.candidateName}</strong>
-                            <span style={{ color: resume.status === 'passed' ? '#15803d' : resume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontSize: 13 }}>
+                          <div className="business-screening-candidate-summary" style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                            <strong style={{ fontSize: 13, fontWeight: 600, minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {resume.candidateName}
+                            </strong>
+                            <span style={{ flexShrink: 0, color: resume.status === 'passed' ? '#15803d' : resume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontSize: 12 }}>
                               {STATUS_LABELS[resume.status]}
                             </span>
                           </div>
-                          <div className="business-screening-position" style={{ marginTop: 6, color: '#475569', overflowWrap: 'anywhere' }}>{resume.position}</div>
+                          <div className="business-screening-position" style={{ marginTop: 4, color: '#475569', fontSize: 12, overflowWrap: 'anywhere' }}>{resume.position}</div>
                           {resume.remark ? (
-                            <div style={{ marginTop: 6, color: '#64748b', fontSize: 13 }}>{resume.remark}</div>
+                            <div style={{ marginTop: 4, color: '#64748b', fontSize: 12 }}>{resume.remark}</div>
                           ) : null}
                         </div>
                       </div>
