@@ -938,7 +938,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const scopeKey = batch.scope_key?.trim();
     if (scopeKey) {
       const current = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
-      const nextBatchId = current ? current.id : deps.uuid();
+      nextBatchId = current ? current.id : deps.uuid();
       // 链接由 scope + batchId 确定：复用当前批次 → 同一链接；批次过期 → 新建批次新链接
       const issued = await deps.createScopePublicToken(scopeKey, nextBatchId);
       url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
