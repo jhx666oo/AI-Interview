@@ -15,7 +15,7 @@ describe('dedicated dashboard Feishu user source', () => {
     const sources = buildDashboardFeishuSources({
       FEISHU_DASHBOARD_ZHIPEI_APP_TOKEN: 'QivHbbd6JaAV0fs0LDqcZEc3n4g',
       FEISHU_DASHBOARD_ZHIPEI_TABLE_ID: 'tbl0yOiT0XarJwf9',
-      FEISHU_DASHBOARD_ZHIPEI_VIEW_ID: 'vewJbFx1TY',
+      FEISHU_DASHBOARD_ZHIPEI_VIEW_ID: 'vew2ViJain',
       // wiki 链接中的 Xanc... 是 wiki node token，实际 Bitable app_token
       // 由 node-get 解析为 Z0X...。
       FEISHU_DASHBOARD_YANGLAO_APP_TOKEN: 'Z0X7bzVHoaE4essOK1tc7Xcencb',
@@ -28,7 +28,7 @@ describe('dedicated dashboard Feishu user source', () => {
         key: 'zhipei',
         appToken: 'QivHbbd6JaAV0fs0LDqcZEc3n4g',
         tableId: 'tbl0yOiT0XarJwf9',
-        viewId: 'vewJbFx1TY',
+        viewId: 'vew2ViJain',
       },
       {
         key: 'yanglao',

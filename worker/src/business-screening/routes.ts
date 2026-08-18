@@ -642,7 +642,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
     const skipped: Array<{ id: string; reason: string }> = [];
     const eligibleResumes: BusinessScreeningResumeRecord[] = [];
-    const eligibilityOptions = tempLink ? { skipAiCheck: true } : undefined;
+    const eligibilityOptions = tempLink ? { skipAiCheck: true, skipPushStateCheck: true } : undefined;
     for (const id of ids) {
       const resume = resumesById.get(id);
       if (!resume) {

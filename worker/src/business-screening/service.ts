@@ -26,6 +26,8 @@ function resolvePositionTitle(resume: Pick<BusinessScreeningResume, 'mapped_posi
 export interface PushEligibilityOptions {
   /** 历史兼容参数：保留给现有临时链接调用方 */
   skipAiCheck?: boolean;
+  /** 临时链接模式：跳过「业务筛选已发起/已完成」检查，允许已推送过的简历也进入自定义临时链接 */
+  skipPushStateCheck?: boolean;
 }
 
 export function isEligibleForPush(
@@ -37,13 +39,13 @@ export function isEligibleForPush(
   if (text(resume.hr_disposition) === 'rejected' || text(resume.status) === 'rejected') {
     return { ok: false, reason: 'HR已淘汰该简历' };
   }
-  if (text(resume.hr_disposition) === 'pushed' && (businessStatus === '' || businessStatus === 'not_ready')) {
+  if (!options?.skipPushStateCheck && text(resume.hr_disposition) === 'pushed' && (businessStatus === '' || businessStatus === 'not_ready')) {
     return { ok: false, reason: '业务筛选已发起，请使用批次重发' };
   }
-  if (businessStatus === 'pending') {
+  if (!options?.skipPushStateCheck && businessStatus === 'pending') {
     return { ok: false, reason: '业务筛选已发起，请使用批次重发' };
   }
-  if (businessStatus === 'passed' || businessStatus === 'rejected') {
+  if (!options?.skipPushStateCheck && (businessStatus === 'passed' || businessStatus === 'rejected')) {
     return { ok: false, reason: '业务筛选已完成' };
   }
   if (!resolvePositionTitle(resume)) {
