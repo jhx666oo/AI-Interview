@@ -3,6 +3,7 @@ export const MAX_BUSINESS_SCREENING_TITLE_LENGTH = 60;
 
 const ACTION_SUFFIXES = ['给我链接', '发链接', '看一下', '谢谢'];
 const ACTION_REQUEST_PREFIXES = ['请', '麻烦'];
+const ACTION_ONLY_TERMS = ['查询', '查看', '获取', '给我', '看', '拿到', '发我'];
 const WRAPPING_QUOTES: ReadonlyArray<readonly [string, string]> = [
   ['“', '”'],
   ['‘', '’'],
@@ -19,6 +20,13 @@ function removeWrappingQuotes(value: string): string {
     }
   }
   return value;
+}
+
+function isActionOnly(value: string): boolean {
+  if (ACTION_ONLY_TERMS.includes(value)) return true;
+  return ACTION_REQUEST_PREFIXES.some((prefix) => (
+    value.startsWith(prefix) && ACTION_ONLY_TERMS.includes(value.slice(prefix.length).trim())
+  ));
 }
 
 export function normalizeBusinessScreeningTitle(value: unknown): string | null {
@@ -54,7 +62,8 @@ export function normalizeBusinessScreeningTitle(value: unknown): string | null {
     return null;
   }
 
-  if (ACTION_REQUEST_PREFIXES.includes(title)) {
+  title = removeWrappingQuotes(title);
+  if (!title || isActionOnly(title) || ACTION_REQUEST_PREFIXES.includes(title)) {
     return null;
   }
 
