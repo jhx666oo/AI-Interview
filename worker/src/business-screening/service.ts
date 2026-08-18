@@ -23,11 +23,17 @@ function resolvePositionTitle(resume: Pick<BusinessScreeningResume, 'mapped_posi
   return text(resume.mapped_position) || text(resume.position_applied);
 }
 
+export interface PushEligibilityOptions {
+  /** 临时链接模式：跳过「AI 初筛未通过」检查，允许任意 AI 结果的简历进入（模式 B 自定义范围） */
+  skipAiCheck?: boolean;
+}
+
 export function isEligibleForPush(
   resume: Pick<BusinessScreeningResume, 'screening_result' | 'status' | 'hr_disposition' | 'mapped_position' | 'position_applied' | 'business_screening_status'>,
   interviewer: { name: string; openId?: string | null },
+  options?: PushEligibilityOptions,
 ): { ok: true } | { ok: false; reason: string } {
-  if (text(resume.screening_result) !== '通过') {
+  if (!options?.skipAiCheck && text(resume.screening_result) !== '通过') {
     return { ok: false, reason: 'AI初筛未通过' };
   }
   if (text(resume.hr_disposition) === 'rejected' || text(resume.status) === 'rejected') {
@@ -53,6 +59,7 @@ export function groupEligibleResumesForPush(
   positions: PositionInterviewerConfig[],
   interviewerDirectory: InterviewerDirectoryEntry[],
   resolveStandardTitle?: (rawTitle: string) => string,
+  options?: PushEligibilityOptions,
 ): Map<string, PushGroup> {
   const positionsByTitle = new Map<string, PositionInterviewerConfig>();
   for (const position of positions) {
@@ -80,7 +87,7 @@ export function groupEligibleResumesForPush(
     for (const interviewerName of interviewerNames) {
       const directoryEntry = interviewerByName.get(interviewerName);
       const interviewer = normalizeInterviewer(directoryEntry || { name: interviewerName });
-      if (!isEligibleForPush(resume, interviewer).ok) continue;
+      if (!isEligibleForPush(resume, interviewer, options).ok) continue;
 
       // 飞书 openId 是面试官的稳定身份键，避免同一人因名称差异被拆成多个链接批次。
       const groupKey = interviewer.openId || interviewer.name;

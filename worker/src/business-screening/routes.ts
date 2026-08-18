@@ -13,7 +13,7 @@ import {
   DEFAULT_BUSINESS_SCREENING_TITLE,
   normalizeBusinessScreeningTitle,
 } from './display-title';
-import { groupEligibleResumesForPush, isEligibleForPush } from './service';
+import { groupEligibleResumesForPush, isEligibleForPush, type PushEligibilityOptions } from './service';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './token';
 import type {
   BusinessScreeningResume,
@@ -484,13 +484,14 @@ function summarizeSkipReason(
   resume: BusinessScreeningResumeRecord,
   position: { id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null; responsible_person?: string | null } | undefined,
   interviewerDirectory: Map<string, { name: string; openId?: string | null; userId?: string | null }>,
+  options?: PushEligibilityOptions,
 ): string {
   if (!position) return '缺少标准岗位';
   const interviewerNames = uniqueStrings([position.responsible_person]);
   if (interviewerNames.length === 0) return '岗位未配置有效责任人';
   for (const interviewerName of interviewerNames) {
     const interviewer = interviewerDirectory.get(interviewerName) || { name: interviewerName };
-    const eligibility = isEligibleForPush(resume, interviewer);
+    const eligibility = isEligibleForPush(resume, interviewer, options);
     if (!eligibility.ok) return eligibility.reason;
   }
   return '岗位未配置有效责任人';
@@ -572,6 +573,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       && typeof body === 'object'
       && Object.prototype.hasOwnProperty.call(body, 'subtitle');
     const requestedSubtitle = hasSubtitle ? text(body.subtitle) || null : undefined;
+    // 临时链接模式（模式 B）：跳过 AI 初筛通过检查，允许任意范围简历（含 AI 未通过）生成链接
+    const tempLink = body?.temp_link === true;
 
     const db = c.env.DB as D1Database;
     const nowIso = deps.now();
@@ -591,6 +594,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
     const skipped: Array<{ id: string; reason: string }> = [];
     const eligibleResumes: BusinessScreeningResumeRecord[] = [];
+    const eligibilityOptions = tempLink ? { skipAiCheck: true } : undefined;
     for (const id of ids) {
       const resume = resumesById.get(id);
       if (!resume) {
@@ -600,19 +604,17 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
       const positionTitle = resolveStandardTitle(rawTitle);
       const position = positionsByTitle.get(positionTitle);
-      const reason = summarizeSkipReason(resume, position, interviewerDirectory);
-      if (reason !== '岗位未配置有效责任人' || groupEligibleResumesForPush([resume], positions, interviewerDirectoryRows, resolveStandardTitle).size === 0) {
-        const groups = groupEligibleResumesForPush([resume], positions, interviewerDirectoryRows, resolveStandardTitle);
-        if (groups.size === 0) {
-          skipped.push({ id, reason });
-          continue;
-        }
+      const groups = groupEligibleResumesForPush([resume], positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
+      if (groups.size === 0) {
+        const reason = summarizeSkipReason(resume, position, interviewerDirectory, eligibilityOptions);
+        skipped.push({ id, reason });
+        continue;
       }
       eligibleResumes.push(resume);
     }
 
     const eligible = await optimizeResumesForProfile(db, eligibleResumes, resolveStandardTitle);
-    const grouped = groupEligibleResumesForPush(eligible, positions, interviewerDirectoryRows, resolveStandardTitle);
+    const grouped = groupEligibleResumesForPush(eligible, positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
     const sender = await resolveSenderEmail(c, user, deps);
     const currentUserToken = sender.email ? await deps.getCurrentUserToken(c.env, sender.email) : null;
     const keyNoSenderReason = user.id === 'api-key' && !sender.email ? sender.reason : null;

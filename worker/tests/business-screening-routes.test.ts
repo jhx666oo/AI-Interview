@@ -531,6 +531,50 @@ describe('business screening routes', () => {
     expect(response.status).toBe(401);
   });
 
+  it('temp_link mode lets AI-rejected resumes into a temporary link while normal push skips them', async () => {
+    const { request, batches } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      resumes: [{
+        id: 'resume-ai-no',
+        candidate_name: '候选人丙',
+        screening_result: '不通过',
+        status: 'pending_screening',
+        hr_disposition: 'pending',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'not_ready',
+      }],
+    });
+    const headers = { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' };
+
+    // 普通推送：AI 初筛未通过 → 跳过
+    const normalResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: ['resume-ai-no'] }),
+    });
+    expect(normalResp.status).toBe(200);
+    await expect(normalResp.json()).resolves.toMatchObject({
+      pushed: [],
+      skipped: [{ id: 'resume-ai-no', reason: 'AI初筛未通过' }],
+    });
+
+    // 临时链接模式：允许进入，生成批次（模式 B 自定义范围）
+    const tempResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ids: ['resume-ai-no'], temp_link: true, title: 'AI 未通过临时审核' }),
+    });
+    expect(tempResp.status).toBe(200);
+    await expect(tempResp.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: ['resume-ai-no'],
+      skipped: [],
+      batches: [{ interviewer: '张三', itemCount: 1 }],
+    });
+    expect(batches.size).toBe(1);
+  });
+
   it('accepts a valid long-lived API key for push and rejects a wrong key', async () => {
     const { request, createdTokens } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
 
