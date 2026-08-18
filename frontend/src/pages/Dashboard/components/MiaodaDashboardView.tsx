@@ -15,6 +15,14 @@ const percent = (value: number | null | undefined) => value == null ? 'N/A' : `$
 const rate = (numerator: number, denominator: number) => denominator > 0 ? (numerator / denominator) * 100 : null;
 const funnelColors = ['#f2f3f5', '#e8eaef', '#dfe2e8', '#d5d9e1', '#c8cdd7', '#bcc2cc', '#afb5c0'];
 const funnelShapeClipPath = 'polygon(0% 0%, 100% 0%, 93% 100%, 7% 100%)';
+const funnelMinWidth = 30;
+
+/** Keep the funnel silhouette progressive by stage, independent of count outliers. */
+const funnelWidth = (index: number, stageCount: number) => {
+  if (stageCount <= 1) return '100%';
+  const width = 100 - ((100 - funnelMinWidth) * index) / (stageCount - 1);
+  return `${Math.round(width)}%`;
+};
 
 function SectionHeading({ eyebrow, title, description, meta }: { eyebrow?: string; title: string; description?: string; meta?: string }) {
   return <div className={styles.miaodaSectionHeading}>
@@ -70,7 +78,6 @@ function Diagnostic({ board }: { board: DashboardV3Board }) {
 }
 
 function Funnel({ stages }: { stages: DashboardV3FunnelStage[] }) {
-  const max = Math.max(1, ...stages.map((stage) => stage.count));
   const entry = stages[0]?.count || 0;
   return <section className={styles.miaodaSection}>
     <SectionHeading title="招聘漏斗（全事业部汇总 · 岗位累计口径）" />
@@ -78,9 +85,7 @@ function Funnel({ stages }: { stages: DashboardV3FunnelStage[] }) {
       {stages.map((stage, index) => {
         const conversion = index === 0 ? 100 : stage.conversion_rate;
         const overallRate = entry > 0 ? (stage.count / entry) * 100 : null;
-        // Match the reference funnel's 8% minimum while preserving the
-        // relative width of stages whose counts are large enough to show it.
-        const width = `${Math.max(8, stage.count / max * 100)}%`;
+        const width = funnelWidth(index, stages.length);
         const accessibleName = `${stage.label}：${number(stage.count)}人，相对上一层${percent(conversion)}，相对总入口${percent(overallRate)}`;
         return <div className={styles.miaodaFunnelRow} key={stage.key}>
           <Tooltip

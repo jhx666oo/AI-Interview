@@ -72,7 +72,7 @@ describe('MiaodaDashboardView', () => {
     }).length).toBeGreaterThan(0);
   });
 
-  it('scales funnel shapes by stage count with the reference 8% minimum', () => {
+  it('uses a stable progressive silhouette independent of stage count outliers', () => {
     const view = render(<MiaodaDashboardView board={{ ...board, funnel: [
       { key: 'resume_push', label: '简历推送', count: 100, conversion_rate: null },
       { key: 'first_scheduled', label: '安排1面', count: 20, conversion_rate: 20 },
@@ -82,7 +82,7 @@ describe('MiaodaDashboardView', () => {
     const widths = view.getAllByRole('img')
       .map((shape) => (shape.firstElementChild as HTMLElement | null)?.style.width ?? '')
       .filter(Boolean);
-    expect(widths).toEqual(['100%', '20%', '8%']);
+    expect(widths).toEqual(['100%', '65%', '30%']);
   });
 
   it('renders each funnel stage as an inverted trapezoid', () => {
