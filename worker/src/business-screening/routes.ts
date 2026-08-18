@@ -619,7 +619,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       && typeof body === 'object'
       && Object.prototype.hasOwnProperty.call(body, 'subtitle');
     const requestedSubtitle = hasSubtitle ? text(body.subtitle) || null : undefined;
-    // 临时链接模式（模式 B）：跳过 AI 初筛通过检查，允许任意范围简历（含 AI 未通过）生成链接
+    // 历史兼容参数：当前普通推送已允许任意 AI 结果，temp_link 不再额外改变推送资格
     const tempLink = body?.temp_link === true;
     // 静默生成：只生成链接，不自动发送飞书卡片给面试官/业务方（业务方在链接内操作才是推送行为）
     const silent = body?.silent === true;

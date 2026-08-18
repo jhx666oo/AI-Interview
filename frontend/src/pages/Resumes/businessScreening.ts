@@ -55,7 +55,6 @@ export function inferBusinessScreeningStatus(record: ResumeBusinessScreeningReco
 
 export function getBusinessScreeningActions(record: ResumeBusinessScreeningRecord): BusinessScreeningActions {
   const businessStatus = inferBusinessScreeningStatus(record);
-  const screeningResult = clean(record.screening_label) || clean(record.screening_result);
   const tags: BusinessScreeningTag[] = [];
 
   if (businessStatus === 'pending') {
@@ -67,7 +66,9 @@ export function getBusinessScreeningActions(record: ResumeBusinessScreeningRecor
   }
 
   const isTerminalStatus = record.status === 'approved' || record.status === 'rejected' || record.status === 'completed';
-  const canPush = screeningResult === '通过' && businessStatus === 'not_ready' && !isTerminalStatus;
+  const isHrRejected = clean(record.hr_disposition) === 'rejected' || record.status === 'rejected';
+  const isHrPushed = clean(record.hr_disposition) === 'pushed';
+  const canPush = businessStatus === 'not_ready' && !isTerminalStatus && !isHrRejected && !isHrPushed;
   const canReject = businessStatus !== 'pending' && !isTerminalStatus;
 
   return {

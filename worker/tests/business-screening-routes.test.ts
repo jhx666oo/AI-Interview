@@ -560,48 +560,133 @@ describe('business screening routes', () => {
     expect(response.status).toBe(401);
   });
 
-  it('temp_link mode lets AI-rejected resumes into a temporary link while normal push skips them', async () => {
+  it('pushes AI-rejected and unevaluated resumes through the normal route', async () => {
     const { request, batches } = buildHarness({
       apiKeyOwnerEmail: 'hr@example.com',
-      resumes: [{
-        id: 'resume-ai-no',
-        candidate_name: '候选人丙',
-        screening_result: '不通过',
-        status: 'pending_screening',
-        hr_disposition: 'pending',
-        mapped_position: '标准运营',
-        position_applied: '标准运营',
-        business_screening_status: 'not_ready',
-      }],
+      resumes: [
+        {
+          id: 'resume-ai-no',
+          candidate_name: '候选人丙',
+          screening_result: '不通过',
+          status: 'pending_screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-unassessed',
+          candidate_name: '候选人丁',
+          screening_result: null,
+          status: 'pending_screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+      ],
     });
-    const headers = { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' };
-
-    // 普通推送：AI 初筛未通过 → 跳过
-    const normalResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ ids: ['resume-ai-no'] }),
-    });
-    expect(normalResp.status).toBe(200);
-    await expect(normalResp.json()).resolves.toMatchObject({
-      pushed: [],
-      skipped: [{ id: 'resume-ai-no', reason: 'AI初筛未通过' }],
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids: ['resume-ai-no', 'resume-unassessed'] }),
     });
 
-    // 临时链接模式：允许进入，生成批次（模式 B 自定义范围）
-    const tempResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ ids: ['resume-ai-no'], temp_link: true, title: 'AI 未通过临时审核' }),
-    });
-    expect(tempResp.status).toBe(200);
-    await expect(tempResp.json()).resolves.toMatchObject({
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
       ok: true,
-      pushed: ['resume-ai-no'],
+      pushed: ['resume-ai-no', 'resume-unassessed'],
       skipped: [],
-      batches: [{ interviewer: '张三', itemCount: 1 }],
     });
     expect(batches.size).toBe(1);
+  });
+
+  it('still skips HR-rejected, stale pushed, and business-screening terminal resumes', async () => {
+    const { request } = buildHarness({
+      resumes: [
+        {
+          id: 'resume-hr-rejected',
+          candidate_name: 'HR已淘汰',
+          screening_result: '不通过',
+          status: 'pending_review',
+          hr_disposition: 'rejected',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-stale-missing',
+          candidate_name: '历史脏数据缺状态',
+          screening_result: null,
+          status: 'pending_review',
+          hr_disposition: 'pushed',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+        },
+        {
+          id: 'resume-stale-not-ready',
+          candidate_name: '历史脏数据未发起',
+          screening_result: null,
+          status: 'pending_review',
+          hr_disposition: 'pushed',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-screening-pending',
+          candidate_name: '业务筛选中',
+          screening_result: null,
+          status: 'pending_review',
+          hr_disposition: 'pushed',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'pending',
+        },
+        {
+          id: 'resume-screening-done',
+          candidate_name: '业务筛选完成',
+          screening_result: null,
+          status: 'approved',
+          hr_disposition: 'pushed',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'passed',
+        },
+      ],
+    });
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ids: [
+          'resume-hr-rejected',
+          'resume-stale-missing',
+          'resume-stale-not-ready',
+          'resume-screening-pending',
+          'resume-screening-done',
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: [],
+      skipped: [
+        { id: 'resume-hr-rejected', reason: 'HR已淘汰该简历' },
+        { id: 'resume-stale-missing', reason: '业务筛选已发起，请使用批次重发' },
+        { id: 'resume-stale-not-ready', reason: '业务筛选已发起，请使用批次重发' },
+        { id: 'resume-screening-pending', reason: '业务筛选已发起，请使用批次重发' },
+        { id: 'resume-screening-done', reason: '业务筛选已完成' },
+      ],
+    });
   });
 
   it('lists an interviewer active batches with URLs for scope batches and flags legacy ones', async () => {
@@ -1382,8 +1467,8 @@ describe('business screening routes', () => {
     const body = await response.json();
     expect(body).toMatchObject({
       ok: true,
-      pushed: ['resume-1'],
-      skipped: [{ id: 'resume-2', reason: 'AI初筛未通过' }],
+      pushed: ['resume-1', 'resume-2'],
+      skipped: [],
       failed: [],
     });
     expect(body.batches).toHaveLength(1);

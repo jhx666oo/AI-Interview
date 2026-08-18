@@ -33,6 +33,62 @@ describe('resume business screening helpers', () => {
     expect(actions.tags.map((tag) => tag.label)).toContain('待业务筛选');
   });
 
+  it('shows push for AI-rejected resumes that are not otherwise terminal', () => {
+    const actions = getBusinessScreeningActions({
+      status: 'pending_review',
+      screening_result: '不通过',
+      hr_disposition: 'pending',
+      business_screening_status: 'not_ready',
+    });
+
+    expect(actions.primary).toEqual({ key: 'push', label: '推送' });
+  });
+
+  it('shows push for resumes without an AI screening result', () => {
+    const actions = getBusinessScreeningActions({
+      status: 'pending_screening',
+      screening_result: null,
+      hr_disposition: 'pending',
+      business_screening_status: 'not_ready',
+    });
+
+    expect(actions.primary).toEqual({ key: 'push', label: '推送' });
+  });
+
+  it('keeps push hidden for HR-rejected and completed business-screening resumes', () => {
+    expect(getBusinessScreeningActions({
+      status: 'pending_review',
+      screening_result: '不通过',
+      hr_disposition: 'rejected',
+      business_screening_status: 'not_ready',
+    }).primary).toBeNull();
+
+    expect(getBusinessScreeningActions({
+      status: 'pending_review',
+      screening_result: '不通过',
+      hr_disposition: 'pushed',
+      business_screening_status: 'pending',
+    }).primary).toBeNull();
+
+    expect(getBusinessScreeningActions({
+      status: 'pending_review',
+      screening_result: '不通过',
+      hr_disposition: 'pushed',
+      business_screening_status: 'passed',
+    }).primary).toBeNull();
+  });
+
+  it('keeps push hidden for pushed resumes that are still marked not_ready', () => {
+    const actions = getBusinessScreeningActions({
+      status: 'pending_review',
+      screening_result: '不通过',
+      hr_disposition: 'pushed',
+      business_screening_status: 'not_ready',
+    });
+
+    expect(actions.primary).toBeNull();
+  });
+
   it('shows completed business screening outcomes instead of the old HR approval action', () => {
     expect(getBusinessScreeningActions({
       status: 'approved',

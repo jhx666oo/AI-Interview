@@ -7,7 +7,7 @@ import {
 import type { InterviewerDirectoryEntry } from '../src/business-screening/types';
 
 describe('business screening service', () => {
-  it('allows pushing only AI-passed resumes that are not HR-rejected and have an interviewer binding', () => {
+  it('allows pushing non-terminal resumes that are not HR-rejected and have an interviewer binding', () => {
     expect(isEligibleForPush(
       { id: 'r-ok', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营', business_screening_status: 'not_ready' },
       { name: '张三', openId: 'ou_123' },
@@ -16,7 +16,7 @@ describe('business screening service', () => {
     expect(isEligibleForPush(
       { id: 'r-ai-fail', screening_result: '不通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营' },
       { name: '张三', openId: 'ou_123' },
-    )).toEqual({ ok: false, reason: 'AI初筛未通过' });
+    )).toEqual({ ok: true });
 
     expect(isEligibleForPush(
       { id: 'r-legacy-rejected', screening_result: '通过', status: 'rejected', hr_disposition: 'pending', mapped_position: '标准运营' },
@@ -42,6 +42,16 @@ describe('business screening service', () => {
       { id: 'r-business-rejected', screening_result: '通过', status: 'pending_review', hr_disposition: 'pushed', mapped_position: '标准运营', business_screening_status: 'rejected' },
       { name: '张三', openId: 'ou_123' },
     )).toEqual({ ok: false, reason: '业务筛选已完成' });
+
+    expect(isEligibleForPush(
+      { id: 'r-stale-missing', screening_result: '通过', status: 'pending_review', hr_disposition: 'pushed', mapped_position: '标准运营' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: '业务筛选已发起，请使用批次重发' });
+
+    expect(isEligibleForPush(
+      { id: 'r-stale-not-ready', screening_result: '通过', status: 'pending_review', hr_disposition: 'pushed', mapped_position: '标准运营', business_screening_status: 'not_ready' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: false, reason: '业务筛选已发起，请使用批次重发' });
 
     expect(isEligibleForPush(
       { id: 'r-no-position', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '' },
@@ -83,7 +93,7 @@ describe('business screening service', () => {
       interviewer: { name: '李四', openId: 'ou_li' },
       positionTitles: ['销售'],
     });
-    expect(groups.get('ou_zhang')?.resumes.map((resume) => resume.id)).toEqual(['r1']);
+    expect(groups.get('ou_zhang')?.resumes.map((resume) => resume.id)).toEqual(['r1', 'r3']);
     expect(groups.get('ou_li')?.resumes.map((resume) => resume.id)).toEqual(['r2']);
   });
 
