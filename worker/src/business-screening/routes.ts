@@ -218,8 +218,10 @@ export interface BusinessScreeningRouteStore {
   markResumesPushed(db: D1Database, resumeIds: string[], batchId: string, dispatchGroupId: string): Promise<void>;
   loadBatchByTokenHash(db: D1Database, tokenHash: string): Promise<ResumePushBatchRow | null>;
   loadBatchById(db: D1Database, batchId: string): Promise<ResumePushBatchRow | null>;
-  // 查找业务范围（岗位+面试官）当前仍有效（未过期且未撤销）的批次；completed 也返回（可复用并重置 active）
+  // 查找同一面试官当前仍有效（未过期且未撤销）的批次；completed 也返回（可复用并重置 active）
   loadBatchByScope(db: D1Database, scopeKey: string, nowIso: string): Promise<ResumePushBatchRow | null>;
+  // 兼容旧版“岗位+面试官” scope：切换为面试官 scope 后，优先复用该面试官已有的稳定批次链接
+  loadBatchByInterviewer(db: D1Database, interviewerOpenId: string, nowIso: string): Promise<ResumePushBatchRow | null>;
   // 把已处理完的批次重新激活（追加新简历时复用链接）
   resetBatchActive(db: D1Database, batchId: string): Promise<void>;
   updateBatchPresentation(
@@ -620,101 +622,103 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const dispatchGroupId = deps.uuid();
 
     for (const group of grouped.values()) {
-      // 同一业务范围（岗位 + 面试官组合）固定唯一链接：按标准岗位拆分为 scope，
-      // 复用该 scope 当前有效批次（追加新简历），不生成新链接；批次过期后才新建（新周期新链接）
-      const resumesByPosition = new Map<string, BusinessScreeningResumeRecord[]>();
-      for (const resume of group.resumes) {
-        const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
-        const positionTitle = resolveStandardTitle(rawTitle) || '未分配岗位';
-        const list = resumesByPosition.get(positionTitle) || [];
-        list.push(resume);
-        resumesByPosition.set(positionTitle, list);
+      // 固定业务范围改为“面试官”：同一面试官跨岗位、跨多次推送复用同一个有效链接，
+      // 简历只追加到同一批次；批次过期后才创建新周期链接。
+      const scopeKey = group.interviewer.openId;
+      let existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+      // 兼容已上线的旧批次：旧版 scope_key 为“岗位::面试官”，仍沿用其原链接，
+      // 后续新批次才统一写入面试官 scope。
+      if (!existing) {
+        existing = await deps.store.loadBatchByInterviewer(db, group.interviewer.openId, nowIso);
       }
+      const tokenScopeKey = existing?.scope_key?.trim() || scopeKey;
+      const itemCreatedAt = deps.now();
+      const expiresAt = existing ? existing.expires_at : resolveExpiresAt(nowIso, body.expires_in_days);
+      const batchTitle = requestedTitle ?? existing?.batch_title ?? null;
+      const batchSubtitle = requestedSubtitle ?? existing?.batch_subtitle ?? null;
 
-      for (const [positionTitle, scopeResumes] of resumesByPosition) {
-        const scopeKey = `${positionTitle}::${group.interviewer.openId}`;
-        const existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
-        const itemCreatedAt = deps.now();
-        const expiresAt = existing ? existing.expires_at : resolveExpiresAt(nowIso, body.expires_in_days);
-        const batchTitle = requestedTitle ?? existing?.batch_title ?? null;
-        const batchSubtitle = requestedSubtitle ?? existing?.batch_subtitle ?? null;
-
-        let batchId: string;
-        if (existing) {
-          batchId = existing.id;
-          // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
-          await deps.store.resetBatchActive(db, batchId);
-          await deps.store.updateBatchPresentation(db, batchId, {
-            title: requestedTitle,
-            subtitle: requestedSubtitle,
-          });
-        } else {
-          batchId = deps.uuid();
-        }
-        // 链接由 scope + batchId 确定：有效期内复用同一批次 → 同一链接；过期新建批次 → 新链接
-        const issued = await deps.createScopePublicToken(scopeKey, batchId);
-        const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
-        const items: CreateResumePushBatchItemInput[] = scopeResumes.map((resume) => ({
+      let batchId: string;
+      if (existing) {
+        batchId = existing.id;
+        // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
+        await deps.store.resetBatchActive(db, batchId);
+        await deps.store.updateBatchPresentation(db, batchId, {
+          title: requestedTitle,
+          subtitle: requestedSubtitle,
+        });
+      } else {
+        batchId = deps.uuid();
+      }
+      // 链接由 scope + batchId 确定：有效期内复用同一批次 → 同一链接；过期新建批次 → 新链接
+      const issued = await deps.createScopePublicToken(tokenScopeKey, batchId);
+      const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
+      const items: CreateResumePushBatchItemInput[] = group.resumes.map((resume) => {
+        const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
+        const standardTitle = resolveStandardTitle(rawTitle);
+        return {
           id: deps.uuid(),
           batchId,
           resumeId: resume.id,
-          positionId: resume.position_id || positionsByTitle.get(text(resume.mapped_position) || text(resume.position_applied))?.id || null,
+          positionId: resume.position_id || positionsByTitle.get(standardTitle)?.id || null,
           createdAt: itemCreatedAt,
           dispatchGroupId,
-        }));
+        };
+      });
 
-        if (existing) {
-          await deps.store.appendBatchItemsIfAbsent(db, items);
-        } else {
-          await deps.store.createBatch(db, {
-            id: batchId,
-            interviewerId: group.interviewer.userId || null,
-            interviewerName: group.interviewer.name,
-            interviewerOpenId: group.interviewer.openId,
-            tokenHash: issued.tokenHash,
-            expiresAt,
-            createdBy: user.email || 'system',
-            createdAt: nowIso,
-            lastSentAt: null,
-            dispatchGroupId,
-            batchTitle,
-            batchSubtitle,
-            scopeKey,
-          }, items);
-        }
-        await deps.store.markResumesPushed(db, scopeResumes.map((resume) => resume.id), batchId, dispatchGroupId);
-
-        batches.push({
-          batchId,
-          interviewer: group.interviewer.name,
-          url,
-          itemCount: items.length,
+      if (existing) {
+        await deps.store.appendBatchItemsIfAbsent(db, items);
+      } else {
+        await deps.store.createBatch(db, {
+          id: batchId,
+          interviewerId: group.interviewer.userId || null,
+          interviewerName: group.interviewer.name,
+          interviewerOpenId: group.interviewer.openId,
+          tokenHash: issued.tokenHash,
           expiresAt,
-          title: batchTitle || undefined,
-          subtitle: batchSubtitle || undefined,
+          createdBy: user.email || 'system',
+          createdAt: nowIso,
+          lastSentAt: null,
+          dispatchGroupId,
+          batchTitle,
+          batchSubtitle,
+          scopeKey,
+        }, items);
+      }
+      await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId, dispatchGroupId);
+
+      batches.push({
+        batchId,
+        interviewer: group.interviewer.name,
+        url,
+        itemCount: items.length,
+        expiresAt,
+        title: batchTitle || undefined,
+        subtitle: batchSubtitle || undefined,
+      });
+
+      if (!currentUserToken) {
+        failed.push({
+          interviewer: group.interviewer.name,
+          reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
         });
+        continue;
+      }
 
-        if (!currentUserToken) {
-          failed.push({
-            interviewer: group.interviewer.name,
-            reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
-          });
-          continue;
-        }
-
-        try {
-          await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
-            positionTitle,
-            itemCount: items.length,
-            url,
-          }));
-          await deps.store.setBatchLastSentAt(db, batchId, deps.now());
-        } catch (error) {
-          failed.push({
-            interviewer: group.interviewer.name,
-            reason: error instanceof Error ? error.message : '业务筛选链接发送失败',
-          });
-        }
+      try {
+        const positionTitle = group.positionTitles.length === 1
+          ? group.positionTitles[0]
+          : `多个岗位（${group.positionTitles.length}个）`;
+        await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
+          positionTitle,
+          itemCount: items.length,
+          url,
+        }));
+        await deps.store.setBatchLastSentAt(db, batchId, deps.now());
+      } catch (error) {
+        failed.push({
+          interviewer: group.interviewer.name,
+          reason: error instanceof Error ? error.message : '业务筛选链接发送失败',
+        });
       }
     }
 
@@ -1170,6 +1174,18 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
           ORDER BY created_at DESC
           LIMIT 1`,
       ).bind(scopeKey, nowIso).first<ResumePushBatchRow>();
+    },
+    async loadBatchByInterviewer(db, interviewerOpenId, nowIso) {
+      return await db.prepare(
+        `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle, scope_key
+           FROM resume_push_batches
+          WHERE interviewer_open_id = ?
+            AND scope_key IS NOT NULL
+            AND status IN ('active', 'completed')
+            AND (expires_at IS NULL OR expires_at > ?)
+          ORDER BY created_at DESC
+          LIMIT 1`,
+      ).bind(interviewerOpenId, nowIso).first<ResumePushBatchRow>();
     },
     async resetBatchActive(db, batchId) {
       await db.prepare("UPDATE resume_push_batches SET status = 'active' WHERE id = ?")

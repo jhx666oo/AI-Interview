@@ -82,14 +82,16 @@ export function groupEligibleResumesForPush(
       const interviewer = normalizeInterviewer(directoryEntry || { name: interviewerName });
       if (!isEligibleForPush(resume, interviewer).ok) continue;
 
-      const existing = groups.get(interviewer.name);
+      // 飞书 openId 是面试官的稳定身份键，避免同一人因名称差异被拆成多个链接批次。
+      const groupKey = interviewer.openId || interviewer.name;
+      const existing = groups.get(groupKey);
       if (existing) {
         existing.resumes.push(resume);
         if (!existing.positionTitles.includes(positionTitle)) existing.positionTitles.push(positionTitle);
         continue;
       }
 
-      groups.set(interviewer.name, {
+      groups.set(groupKey, {
         interviewer: {
           name: interviewer.name,
           openId: interviewer.openId!,

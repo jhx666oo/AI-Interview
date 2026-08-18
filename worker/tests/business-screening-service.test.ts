@@ -74,17 +74,17 @@ describe('business screening service', () => {
       interviewerDirectory,
     );
 
-    expect([...groups.keys()]).toEqual(['张三', '李四']);
-    expect(groups.get('张三')).toMatchObject({
+    expect([...groups.keys()]).toEqual(['ou_zhang', 'ou_li']);
+    expect(groups.get('ou_zhang')).toMatchObject({
       interviewer: { name: '张三', openId: 'ou_zhang' },
       positionTitles: ['标准运营'],
     });
-    expect(groups.get('李四')).toMatchObject({
+    expect(groups.get('ou_li')).toMatchObject({
       interviewer: { name: '李四', openId: 'ou_li' },
       positionTitles: ['销售'],
     });
-    expect(groups.get('张三')?.resumes.map((resume) => resume.id)).toEqual(['r1']);
-    expect(groups.get('李四')?.resumes.map((resume) => resume.id)).toEqual(['r2']);
+    expect(groups.get('ou_zhang')?.resumes.map((resume) => resume.id)).toEqual(['r1']);
+    expect(groups.get('ou_li')?.resumes.map((resume) => resume.id)).toEqual(['r2']);
   });
 
   it('resolves raw resume positions to standard titles before grouping', () => {
@@ -106,9 +106,9 @@ describe('business screening service', () => {
       resolveStandardTitle,
     );
 
-    expect([...groups.keys()]).toEqual(['张三']);
-    expect(groups.get('张三')?.resumes.map((resume) => resume.id)).toEqual(['r1']);
-    expect(groups.get('张三')?.positionTitles).toEqual(['标准运营']);
+    expect([...groups.keys()]).toEqual(['ou_zhang']);
+    expect(groups.get('ou_zhang')?.resumes.map((resume) => resume.id)).toEqual(['r1']);
+    expect(groups.get('ou_zhang')?.positionTitles).toEqual(['标准运营']);
   });
 
   it('keeps completed interviewer decisions idempotent', () => {

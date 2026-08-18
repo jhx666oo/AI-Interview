@@ -202,6 +202,17 @@ function buildHarness(options?: {
       }
       return null;
     },
+    async loadBatchByInterviewer(_db, interviewerOpenId, nowIso) {
+      for (const batch of batches.values()) {
+        if (
+          batch.interviewer_open_id === interviewerOpenId
+          && Boolean(batch.scope_key)
+          && (batch.status === 'active' || batch.status === 'completed')
+          && (batch.expires_at === null || batch.expires_at === undefined || batch.expires_at > nowIso)
+        ) return { ...batch };
+      }
+      return null;
+    },
     async resetBatchActive(_db, batchId) {
       const batch = batches.get(batchId);
       if (batch) batch.status = 'active';
@@ -639,7 +650,7 @@ describe('business screening routes', () => {
     const { request, batches } = buildHarness({
       positions: [
         { id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
-        { id: 'position-2', title: '运营专员', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
+        { id: 'position-2', title: '运营专员', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '李四' },
       ],
       resumes: [
         {
@@ -2272,7 +2283,7 @@ describe('business screening routes', () => {
     expect(publicBody.resumes[0].profile).toBeUndefined();
   });
 
-  it('reuses the same link for the same position+interviewer scope across pushes', async () => {
+  it('reuses the same link for the same interviewer across positions and pushes', async () => {
     const { request, batches, batchItems } = buildHarness({
       positions: [
         { id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
@@ -2327,7 +2338,7 @@ describe('business screening routes', () => {
     expect(firstBody.batches).toHaveLength(1);
     const firstUrl = firstBody.batches[0].url;
 
-    // 同 scope 再次推送（同一岗位+同一面试官）：链接完全不变，简历追加到同一批次
+    // 同一面试官再次推送（同一岗位）：链接完全不变，简历追加到同一批次
     const second = await push(['resume-a2']);
     expect(second.status).toBe(200);
     const secondBody = await second.json() as any;
@@ -2341,11 +2352,18 @@ describe('business screening routes', () => {
     const publicBody = await publicResp.json() as any;
     expect(publicBody.resumes.map((r: any) => r.id).sort()).toEqual(['resume-a1', 'resume-a2']);
 
-    // 不同岗位（不同业务范围）→ 生成不同链接
+    // 同一面试官收到不同岗位的简历：仍复用同一个链接，简历继续追加
     const other = await push(['resume-b1']);
     expect(other.status).toBe(200);
     const otherBody = await other.json() as any;
     expect(otherBody.batches).toHaveLength(1);
-    expect(otherBody.batches[0].url).not.toBe(firstUrl);
+    expect(otherBody.batches[0].url).toBe(firstUrl);
+    expect(batches.size).toBe(1);
+    expect(batchItems.filter((item) => ['resume-a1', 'resume-a2', 'resume-b1'].includes(item.resume_id))).toHaveLength(3);
+
+    const mergedPublicResp = await request(firstUrl.replace('https://ai-interview-88r.pages.dev/business-screening/', 'https://ai-interview-88r.pages.dev/api/public/business-screening/'), { method: 'GET' });
+    expect(mergedPublicResp.status).toBe(200);
+    const mergedPublicBody = await mergedPublicResp.json() as any;
+    expect(mergedPublicBody.resumes.map((r: any) => r.id).sort()).toEqual(['resume-a1', 'resume-a2', 'resume-b1']);
   });
 });
