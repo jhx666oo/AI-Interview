@@ -552,7 +552,7 @@ const InterviewsList: React.FC = () => {
   // == 表格列 ==
   const columns = [
     {
-      title: '候选人', key: 'candidate', width: 96,
+      title: '候选人', key: 'candidate', width: 110,
       render: (_: any, r: MergedRow) => (
         <Space size={2}>
           <UserOutlined style={{ color: '#1677ff' }} />
@@ -561,7 +561,7 @@ const InterviewsList: React.FC = () => {
       ),
     },
     {
-      title: '标准岗位', key: 'position', width: 100,
+      title: '标准岗位', key: 'position', width: 130,
       render: (_: any, r: MergedRow) => {
         if (r.position) {
           return (
@@ -573,18 +573,18 @@ const InterviewsList: React.FC = () => {
         return <span style={{ color: '#999' }}>{r.standard_position || r.position_applied || '-'}</span>;
       }
     },
-    { title: '学历', dataIndex: 'education', key: 'education', width: 56,
+    { title: '学历', dataIndex: 'education', key: 'education', width: 64,
       render: (v: string) => v || '-' },
-    { title: '城市', dataIndex: 'city', key: 'city', width: 56 },
+    { title: '城市', dataIndex: 'city', key: 'city', width: 64 },
     {
-      title: '候选人状态', key: 'talent_status', width: 88,
+      title: '候选人状态', key: 'talent_status', width: 100,
       render: (_: any, r: MergedRow) => {
         const cfg = talentStatusConfig[r.talent_status] || { color: 'default', text: r.talent_status || '待初筛' };
         return <Tag color={cfg.color}>{cfg.text}</Tag>;
       }
     },
     {
-      title: '面试状态', key: 'interview_status', width: 80,
+      title: '面试状态', key: 'interview_status', width: 88,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id) return <Tag>未安排</Tag>;
         // 动态计算状态
@@ -611,11 +611,11 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '面试时间', key: 'interview_time', width: 110,
+      title: '面试时间', key: 'interview_time', width: 130,
       render: (_: any, r: MergedRow) => r.interview_time || '-',
     },
     {
-      title: '一面面试官', dataIndex: 'primary_interviewer', key: 'primary_interviewer', width: 76, ellipsis: { showTitle: false },
+      title: '一面面试官', dataIndex: 'primary_interviewer', key: 'primary_interviewer', width: 84, ellipsis: { showTitle: false },
       render: (v: string) => (
         <Tooltip title={v || ''}>
           <span>{v || '-'}</span>
@@ -623,7 +623,7 @@ const InterviewsList: React.FC = () => {
       ),
     },
     {
-      title: '二面面试官', dataIndex: 'secondary_interviewer', key: 'secondary_interviewer', width: 76, ellipsis: { showTitle: false },
+      title: '二面面试官', dataIndex: 'secondary_interviewer', key: 'secondary_interviewer', width: 84, ellipsis: { showTitle: false },
       render: (v: string) => (
         <Tooltip title={v || ''}>
           <span>{v || '-'}</span>
@@ -631,7 +631,7 @@ const InterviewsList: React.FC = () => {
       ),
     },
     {
-      title: '一面结果', key: 'result1', width: 64,
+      title: '一面结果', key: 'result1', width: 70,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id || !r.result || r.result === 'pending') return <Tag>待评价</Tag>;
         const cfg = resultLabels[r.result];
@@ -639,7 +639,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '二面结果', key: 'result2', width: 64,
+      title: '二面结果', key: 'result2', width: 70,
       render: (_: any, r: MergedRow) => {
         if (!r.interview_id || !r.result2 || r.result2 === 'pending') return <Tag>待评价</Tag>;
         const cfg = resultLabels[r.result2];
@@ -647,7 +647,7 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
-      title: '操作', align: 'center' as const, key: 'action', width: 330,
+      title: '操作', align: 'center' as const, key: 'action', width: 380,
       render: (_: any, r: MergedRow) => {
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
         // 未评过 → 提醒一面 + 一面评价 同时出现
