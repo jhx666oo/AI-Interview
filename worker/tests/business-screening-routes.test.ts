@@ -20,6 +20,9 @@ type BatchRow = {
   created_at: string;
   last_sent_at: string | null;
   dispatch_group_id?: string | null;
+  batch_title?: string | null;
+  batch_subtitle?: string | null;
+  scope_key?: string | null;
   rawToken?: string;
 };
 
@@ -202,6 +205,12 @@ function buildHarness(options?: {
     async resetBatchActive(_db, batchId) {
       const batch = batches.get(batchId);
       if (batch) batch.status = 'active';
+    },
+    async updateBatchPresentation(_db, batchId, presentation) {
+      const batch = batches.get(batchId);
+      if (!batch) return;
+      if (presentation.title) batch.batch_title = presentation.title;
+      if (presentation.subtitle) batch.batch_subtitle = presentation.subtitle;
     },
     async appendBatchItemsIfAbsent(_db, items) {
       for (const item of items) {
@@ -742,6 +751,92 @@ describe('business screening routes', () => {
     const json = await pushResp.json() as any;
     expect(json.batches[0]).not.toHaveProperty('title');
     expect(json.batches[0]).not.toHaveProperty('subtitle');
+  });
+
+  it('updates the existing stable link title when a new push supplies title', async () => {
+    const { request, createdTokens, resumes } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
+
+    const first = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], title: '旧标题' }),
+    });
+    const firstBody = await first.json() as any;
+    const token = firstBody.batches[0].url.split('/').pop();
+
+    // 新简历触发同 scope 的稳定链接复用；已推送简历仍按既有规则保持 pending。
+    resumes.set('resume-2', {
+      id: 'resume-2',
+      candidate_name: '候选人乙',
+      screening_result: '通过',
+      status: 'pending_review',
+      hr_disposition: 'pending',
+      mapped_position: '标准运营',
+      position_applied: '标准运营',
+      business_screening_status: 'not_ready',
+    });
+
+    await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-2'], title: 'AI 初筛通过表' }),
+    });
+
+    const publicResponse = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${token}`);
+    await expect(publicResponse.json()).resolves.toMatchObject({
+      batch: { title: 'AI 初筛通过表' },
+    });
+    expect(createdTokens).toHaveLength(1);
+  });
+
+  it('persists a new batch title and exposes it from the public endpoint', async () => {
+    const { request } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], title: 'AI 初筛通过表' }),
+    });
+    const body = await response.json() as any;
+    const token = body.batches[0].url.split('/').pop();
+    expect(body.batches[0].title).toBe('AI 初筛通过表');
+
+    const publicResponse = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${token}`);
+    await expect(publicResponse.json()).resolves.toMatchObject({
+      batch: { title: 'AI 初筛通过表' },
+    });
+  });
+
+  it('does not clear an existing title when the next push omits title', async () => {
+    const { request, resumes } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
+    const first = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], title: 'AI 初筛通过表' }),
+    });
+    const firstBody = await first.json() as any;
+    const token = firstBody.batches[0].url.split('/').pop();
+
+    resumes.set('resume-2', {
+      id: 'resume-2',
+      candidate_name: '候选人乙',
+      screening_result: '通过',
+      status: 'pending_review',
+      hr_disposition: 'pending',
+      mapped_position: '标准运营',
+      position_applied: '标准运营',
+      business_screening_status: 'not_ready',
+    });
+
+    await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-2'] }),
+    });
+
+    const publicResponse = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${token}`);
+    await expect(publicResponse.json()).resolves.toMatchObject({
+      batch: { title: 'AI 初筛通过表' },
+    });
   });
 
   it('inherits the original batch title/subtitle on resend', async () => {
