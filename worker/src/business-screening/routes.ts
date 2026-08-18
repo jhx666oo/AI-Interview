@@ -310,14 +310,14 @@ function sanitizePublicItem(item: BusinessScreeningBatchItemView) {
 }
 
 function buildFeishuCard(input: {
-  interviewerName: string;
+  positionTitle: string;
   itemCount: number;
   url: string;
 }): Record<string, unknown> {
   return {
     config: { wide_screen_mode: true },
     header: {
-      title: { tag: 'plain_text', content: `业务筛选待处理：${input.interviewerName}` },
+      title: { tag: 'plain_text', content: `简历筛选待处理：${input.positionTitle}` },
       template: 'blue',
     },
     elements: [
@@ -325,7 +325,7 @@ function buildFeishuCard(input: {
         tag: 'div',
         text: {
           tag: 'lark_md',
-          content: `你有 ${input.itemCount} 份候选人待处理，请通过专属链接完成业务筛选。`,
+          content: `您有 ${input.itemCount} 份候选人简历待处理，请点击链接完成筛选`,
         },
       },
       {
@@ -338,6 +338,14 @@ function buildFeishuCard(input: {
             url: input.url,
           },
         ],
+      },
+      {
+        tag: 'note',
+        elements: [{ tag: 'plain_text', content: '点此查阅简历' }],
+      },
+      {
+        tag: 'note',
+        elements: [{ tag: 'plain_text', content: '发送自 招聘管理智能小助手' }],
       },
     ],
   };
@@ -481,7 +489,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
       try {
         await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
-          interviewerName: group.interviewer.name,
+          positionTitle: group.positionTitles.join('、'),
           itemCount: items.length,
           url,
         }));
@@ -725,9 +733,13 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       }, 400);
     }
 
+    const positionTitle = pendingItems
+      .map((item) => text(item.mapped_position) || text(item.position_applied))
+      .find((title) => title.length > 0) || '岗位';
+
     try {
       await deps.sendFeishuMessageToUser(currentUserToken, batch.interviewer_open_id, buildFeishuCard({
-        interviewerName: batch.interviewer_name,
+        positionTitle,
         itemCount: nextItems.length,
         url,
       }));
