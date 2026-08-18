@@ -618,6 +618,44 @@ describe('business screening routes', () => {
     await expect(okResp.json()).resolves.toMatchObject({ ok: true, failed: [] });
   });
 
+  it('silent push generates the link without sending any Feishu card', async () => {
+    const { request, sentMessages } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+    });
+
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], silent: true, title: '静默生成' }),
+    });
+    expect(okResp.status).toBe(200);
+    // 静默：不发飞书卡片、failed 为空、链接照常生成
+    expect(sentMessages).toHaveLength(0);
+    await expect(okResp.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: ['resume-1'],
+      failed: [],
+      batches: [{ interviewer: '张三', itemCount: 1 }],
+    });
+  });
+
+  it('silent push works without a Feishu-bound sender', async () => {
+    const { request, sentMessages } = buildHarness();
+
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], silent: true }),
+    });
+    expect(okResp.status).toBe(200);
+    expect(sentMessages).toHaveLength(0);
+    await expect(okResp.json()).resolves.toMatchObject({
+      ok: true,
+      failed: [],
+      batches: [{ interviewer: '张三', itemCount: 1 }],
+    });
+  });
+
   it('reports the missing-owner reason when the API key has no Feishu owner configured', async () => {
     const { request, sentMessages } = buildHarness({
       apiKeyOwnerEmail: null,

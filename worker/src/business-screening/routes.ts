@@ -575,6 +575,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const requestedSubtitle = hasSubtitle ? text(body.subtitle) || null : undefined;
     // 临时链接模式（模式 B）：跳过 AI 初筛通过检查，允许任意范围简历（含 AI 未通过）生成链接
     const tempLink = body?.temp_link === true;
+    // 静默生成：只生成链接，不自动发送飞书卡片给面试官/业务方（业务方在链接内操作才是推送行为）
+    const silent = body?.silent === true;
 
     const db = c.env.DB as D1Database;
     const nowIso = deps.now();
@@ -698,29 +700,31 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         subtitle: batchSubtitle || undefined,
       });
 
-      if (!currentUserToken) {
-        failed.push({
-          interviewer: group.interviewer.name,
-          reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
-        });
-        continue;
-      }
+      if (!silent) {
+        if (!currentUserToken) {
+          failed.push({
+            interviewer: group.interviewer.name,
+            reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
+          });
+          continue;
+        }
 
-      try {
-        const positionTitle = group.positionTitles.length === 1
-          ? group.positionTitles[0]
-          : `多个岗位（${group.positionTitles.length}个）`;
-        await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
-          positionTitle,
-          itemCount: items.length,
-          url,
-        }));
-        await deps.store.setBatchLastSentAt(db, batchId, deps.now());
-      } catch (error) {
-        failed.push({
-          interviewer: group.interviewer.name,
-          reason: error instanceof Error ? error.message : '业务筛选链接发送失败',
-        });
+        try {
+          const positionTitle = group.positionTitles.length === 1
+            ? group.positionTitles[0]
+            : `多个岗位（${group.positionTitles.length}个）`;
+          await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
+            positionTitle,
+            itemCount: items.length,
+            url,
+          }));
+          await deps.store.setBatchLastSentAt(db, batchId, deps.now());
+        } catch (error) {
+          failed.push({
+            interviewer: group.interviewer.name,
+            reason: error instanceof Error ? error.message : '业务筛选链接发送失败',
+          });
+        }
       }
     }
 
@@ -985,6 +989,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const db = c.env.DB as D1Database;
     const user = ((c as any).get('user') || {}) as HrUser;
     const body = await c.req.json().catch(() => ({}));
+    // 静默重发：只生成链接，不自动发送飞书卡片
+    const silent = body?.silent === true;
     const hasTitle = body !== null
       && typeof body === 'object'
       && Object.prototype.hasOwnProperty.call(body, 'title');
@@ -1085,7 +1091,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       await deps.store.setBatchStatus(db, batchId, 'revoked');
     }
 
-    if (!currentUserToken) {
+    if (!silent && !currentUserToken) {
       return c.json({
         ok: false,
         resentFromBatchId: batchId,
@@ -1100,22 +1106,24 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       .map((item) => text(item.mapped_position) || text(item.position_applied))
       .find((title) => title.length > 0) || '岗位';
 
-    try {
-      await deps.sendFeishuMessageToUser(currentUserToken, batch.interviewer_open_id, buildFeishuCard({
-        positionTitle,
-        itemCount: pendingItems.length,
-        url,
-      }));
-      await deps.store.setBatchLastSentAt(db, nextBatchId, deps.now());
-    } catch (error) {
-      return c.json({
-        ok: false,
-        resentFromBatchId: batchId,
-        batchId: nextBatchId,
-        itemCount: pendingItems.length,
-        url,
-        detail: error instanceof Error ? error.message : '业务筛选链接发送失败',
-      }, 500);
+    if (!silent) {
+      try {
+        await deps.sendFeishuMessageToUser(currentUserToken, batch.interviewer_open_id, buildFeishuCard({
+          positionTitle,
+          itemCount: pendingItems.length,
+          url,
+        }));
+        await deps.store.setBatchLastSentAt(db, nextBatchId, deps.now());
+      } catch (error) {
+        return c.json({
+          ok: false,
+          resentFromBatchId: batchId,
+          batchId: nextBatchId,
+          itemCount: pendingItems.length,
+          url,
+          detail: error instanceof Error ? error.message : '业务筛选链接发送失败',
+        }, 500);
+      }
     }
 
     return c.json({
