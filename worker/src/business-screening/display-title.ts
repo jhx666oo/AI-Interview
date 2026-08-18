@@ -2,6 +2,7 @@ export const DEFAULT_BUSINESS_SCREENING_TITLE = '业务筛选';
 export const MAX_BUSINESS_SCREENING_TITLE_LENGTH = 60;
 
 const ACTION_SUFFIXES = ['给我链接', '发链接', '看一下', '谢谢'];
+const ACTION_REQUEST_PREFIXES = ['请', '麻烦'];
 const WRAPPING_QUOTES: ReadonlyArray<readonly [string, string]> = [
   ['“', '”'],
   ['‘', '’'],
@@ -50,6 +51,10 @@ export function normalizeBusinessScreeningTitle(value: unknown): string | null {
   }
 
   if (!title) {
+    return null;
+  }
+
+  if (ACTION_REQUEST_PREFIXES.includes(title)) {
     return null;
   }
 
