@@ -53,4 +53,16 @@ describe('public business screening page contract', () => {
     expect(source).toContain('`/public/business-screening/${token}/batch/${action}`');
     expect(source).toContain('placeholder="可选：补充通过建议或淘汰原因"');
   });
+
+  it('supports the select-all then deselect batch flow with per-candidate checkboxes', () => {
+    expect(source).toContain('全选');
+    expect(source).toContain('已选');
+    expect(source).toContain('toggleSelectAll');
+    expect(source).toContain('toggleSelect(resume.id)');
+    expect(source).toContain('setSelectedIds(new Set(');
+    expect(source).toContain('{ resumeIds: targetIds }');
+    expect(source).toContain('checked={selectedIds.has(resume.id)}');
+    expect(source).toContain('disabled={!selectable}');
+    expect(source).toContain('请先勾选要处理的候选人');
+  });
 });

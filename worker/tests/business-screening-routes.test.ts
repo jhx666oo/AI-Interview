@@ -1641,6 +1641,71 @@ describe('business screening routes', () => {
     expect(batches.get('batch-batch-reject')?.status).toBe('completed');
   });
 
+  it('batch actions honor the selected resumeIds subset (select all then deselect)', async () => {
+    const { request, resumes, batches } = buildHarness({
+      resumes: ['resume-s1', 'resume-s2', 'resume-s3'].map((id) => ({
+        id,
+        candidate_name: `候选人${id}`,
+        screening_result: '通过',
+        status: 'pending_review',
+        hr_disposition: 'pushed',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+        business_screening_batch_id: 'batch-batch-select',
+      })),
+      initialBatches: [{
+        id: 'batch-batch-select',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-batch-select',
+        expires_at: '2026-08-19T00:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T00:00:00.000Z',
+        last_sent_at: '2026-08-12T00:00:00.000Z',
+        rawToken: 'batch-select-token',
+      }],
+      initialItems: ['resume-s1', 'resume-s2', 'resume-s3'].map((resumeId, index) => ({
+        id: `item-batch-select-${index}`,
+        batch_id: 'batch-batch-select',
+        resume_id: resumeId,
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T00:00:00.000Z',
+        candidate_name: `候选人${resumeId}`,
+        mapped_position: '标准运营',
+        hr_disposition: 'pushed',
+        business_screening_status: 'pending',
+      })),
+    });
+
+    // 全选后取消 resume-s2，只批量处理选中项（含不在批次内的 id 会被忽略）
+    const response = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/batch-select-token/batch/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resumeIds: ['resume-s1', 'resume-s3', 'resume-not-in-batch'] }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      status: 'passed',
+      applied: 2,
+      skipped: 0,
+      failed: 0,
+      pending: 2,
+    });
+    expect(resumes.get('resume-s1')).toMatchObject({ business_screening_status: 'passed', status: 'approved', stage: 'talent_pool' });
+    expect(resumes.get('resume-s3')).toMatchObject({ business_screening_status: 'passed', status: 'approved', stage: 'talent_pool' });
+    // 被取消勾选的候选人保持待处理
+    expect(resumes.get('resume-s2')).toMatchObject({ business_screening_status: 'pending', status: 'pending_review' });
+    // 批次内仍有待处理项，不置为 completed
+    expect(batches.get('batch-batch-select')?.status).toBe('active');
+  });
+
   it('rejects batch actions for unknown or expired tokens', async () => {
     const { request } = buildHarness({
       initialBatches: [{

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Modal, Tag, Tooltip, message } from 'antd';
+import { Card, Checkbox, Modal, Tag, Tooltip, message } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import {
@@ -285,6 +285,8 @@ const BusinessScreeningPage: React.FC = () => {
   const [view, setView] = useState<'ready' | 'expired' | 'error'>('ready');
   const [data, setData] = useState<BusinessScreeningView | null>(null);
   const [activeResumeId, setActiveResumeId] = useState<string | null>(null);
+  // 批量决策选中集：默认全选待处理候选人，可逐项取消（先全选、再取消不需要处理的）
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<'approve' | 'reject' | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState<'approve' | 'reject' | null>(null);
@@ -307,6 +309,12 @@ const BusinessScreeningPage: React.FC = () => {
       setView('ready');
       setActionError('');
       setActiveResumeId((current) => pickActiveBusinessScreeningResumeId(response.resumes, current));
+      // 批量决策默认全选待处理候选人，用户可再取消个别不需要处理的
+      setSelectedIds(new Set(
+        response.resumes
+          .filter((resume) => resume.status === 'pending')
+          .map((resume) => resume.id),
+      ));
       setRemarks((current) => {
         const next = { ...current };
         response.resumes.forEach((resume) => {
@@ -368,29 +376,50 @@ const BusinessScreeningPage: React.FC = () => {
     [activeResumeId, data],
   );
 
-  const pendingCount = useMemo(
-    () => data?.resumes.filter((resume) => resume.status === 'pending').length || 0,
+  // 批量决策选择模型：待处理候选人集合 + 已选中数量 + 全选状态
+  const pendingResumes = useMemo(
+    () => (data?.resumes || []).filter((resume) => resume.status === 'pending'),
     [data],
   );
+  const pendingCount = pendingResumes.length;
+  const selectedCount = useMemo(
+    () => pendingResumes.filter((resume) => selectedIds.has(resume.id)).length,
+    [pendingResumes, selectedIds],
+  );
+  const allSelected = pendingCount > 0 && selectedCount === pendingCount;
 
-  // 批量决策：把批次内全部待处理候选人一次性通过/淘汰（二次确认后执行，完成后刷新列表）
+  const toggleSelect = (resumeId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(resumeId)) next.delete(resumeId);
+      else next.add(resumeId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(pendingResumes.map((resume) => resume.id)));
+  };
+
+  // 批量决策：只处理当前选中的待处理候选人（先全选、再取消不需要处理的），二次确认后执行并刷新
   const handleBatchDecision = async (action: 'approve' | 'reject') => {
     if (!token || !data?.resumes?.length) return;
-    if (pendingCount === 0) {
-      message.info('当前批次没有待处理候选人');
+    if (selectedCount === 0) {
+      message.info('请先勾选要处理的候选人');
       return;
     }
     const actionLabel = action === 'approve' ? '通过' : '淘汰';
+    const targetIds = [...selectedIds].filter((id) => pendingResumes.some((resume) => resume.id === id));
     Modal.confirm({
       title: `批量${actionLabel}`,
-      content: `确认将当前批次 ${pendingCount} 份待处理候选人全部${actionLabel}吗？此操作会同时提交筛选备注为空的记录。`,
+      content: `确认将选中的 ${selectedCount} 份待处理候选人全部${actionLabel}吗？此操作会同时提交筛选备注为空的记录。`,
       okText: `全部${actionLabel}`,
       cancelText: '取消',
       okButtonProps: { danger: action === 'reject' },
       onOk: async () => {
         setBatchSubmitting(action);
         try {
-          const result = await request.post(`/public/business-screening/${token}/batch/${action}`, {}) as {
+          const result = await request.post(`/public/business-screening/${token}/batch/${action}`, { resumeIds: targetIds }) as {
             applied?: number;
             skipped?: number;
             failed?: number;
@@ -532,7 +561,7 @@ const BusinessScreeningPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleBatchDecision('approve')}
-                disabled={batchSubmitting !== null || submitting !== null || pendingCount === 0}
+                disabled={batchSubmitting !== null || submitting !== null || selectedCount === 0}
                 style={{
                   borderRadius: 999,
                   border: '1px solid #bbf7d0',
@@ -540,16 +569,16 @@ const BusinessScreeningPage: React.FC = () => {
                   color: '#15803d',
                   padding: '3px 10px',
                   fontSize: 12.5,
-                  cursor: batchSubmitting !== null || submitting !== null || pendingCount === 0 ? 'default' : 'pointer',
+                  cursor: batchSubmitting !== null || submitting !== null || selectedCount === 0 ? 'default' : 'pointer',
                   fontWeight: 600,
                 }}
               >
-                {batchSubmitting === 'approve' ? '处理中...' : `批量通过（${pendingCount}）`}
+                {batchSubmitting === 'approve' ? '处理中...' : `批量通过（${selectedCount}）`}
               </button>
               <button
                 type="button"
                 onClick={() => handleBatchDecision('reject')}
-                disabled={batchSubmitting !== null || submitting !== null || pendingCount === 0}
+                disabled={batchSubmitting !== null || submitting !== null || selectedCount === 0}
                 style={{
                   borderRadius: 999,
                   border: '1px solid #fecaca',
@@ -557,11 +586,11 @@ const BusinessScreeningPage: React.FC = () => {
                   color: '#b91c1c',
                   padding: '3px 10px',
                   fontSize: 12.5,
-                  cursor: batchSubmitting !== null || submitting !== null || pendingCount === 0 ? 'default' : 'pointer',
+                  cursor: batchSubmitting !== null || submitting !== null || selectedCount === 0 ? 'default' : 'pointer',
                   fontWeight: 600,
                 }}
               >
-                {batchSubmitting === 'reject' ? '处理中...' : `批量淘汰（${pendingCount}）`}
+                {batchSubmitting === 'reject' ? '处理中...' : `批量淘汰（${selectedCount}）`}
               </button>
             </div>
           </div>
@@ -579,17 +608,31 @@ const BusinessScreeningPage: React.FC = () => {
               }}
             >
               <section className="business-screening-candidates" style={{ ...cardStyle, padding: 6, minWidth: 0, overflowY: 'auto' }}>
-                <h2 style={{ margin: '2px 4px 8px', fontSize: 14 }}>候选人列表</h2>
+                <div className="business-screening-candidate-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '2px 4px 8px' }}>
+                  <h2 style={{ margin: 0, fontSize: 14 }}>候选人列表</h2>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, color: '#475569', cursor: pendingCount ? 'pointer' : 'default' }}>
+                    <Checkbox
+                      checked={allSelected}
+                      indeterminate={pendingCount > 0 && selectedCount > 0 && !allSelected}
+                      disabled={pendingCount === 0}
+                      onChange={toggleSelectAll}
+                    />
+                    全选{pendingCount ? `（已选 ${selectedCount}/${pendingCount}）` : ''}
+                  </label>
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {data.resumes.map((resume) => {
                     const selected = resume.id === activeResumeId;
+                    const selectable = resume.status === 'pending';
                     return (
-                      <button
+                      <div
                         key={resume.id}
-                        type="button"
                         onClick={() => setActiveResumeId(resume.id)}
                         className="business-screening-candidate"
                         style={{
+                          display: 'flex',
+                          gap: 6,
+                          alignItems: 'flex-start',
                           textAlign: 'left',
                           border: selected ? '1px solid #2563eb' : '1px solid #e2e8f0',
                           background: selected ? '#eff6ff' : '#fff',
@@ -598,17 +641,27 @@ const BusinessScreeningPage: React.FC = () => {
                           cursor: 'pointer',
                         }}
                       >
-                        <div className="business-screening-candidate-summary" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
-                          <strong>{resume.candidateName}</strong>
-                          <span style={{ color: resume.status === 'passed' ? '#15803d' : resume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontSize: 13 }}>
-                            {STATUS_LABELS[resume.status]}
-                          </span>
+                        <Checkbox
+                          checked={selectedIds.has(resume.id)}
+                          disabled={!selectable}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={() => toggleSelect(resume.id)}
+                          aria-label={`选择 ${resume.candidateName}`}
+                          style={{ marginTop: 2, flexShrink: 0 }}
+                        />
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div className="business-screening-candidate-summary" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                            <strong>{resume.candidateName}</strong>
+                            <span style={{ color: resume.status === 'passed' ? '#15803d' : resume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontSize: 13 }}>
+                              {STATUS_LABELS[resume.status]}
+                            </span>
+                          </div>
+                          <div className="business-screening-position" style={{ marginTop: 6, color: '#475569', overflowWrap: 'anywhere' }}>{resume.position}</div>
+                          {resume.remark ? (
+                            <div style={{ marginTop: 6, color: '#64748b', fontSize: 13 }}>{resume.remark}</div>
+                          ) : null}
                         </div>
-                        <div className="business-screening-position" style={{ marginTop: 6, color: '#475569', overflowWrap: 'anywhere' }}>{resume.position}</div>
-                        {resume.remark ? (
-                          <div style={{ marginTop: 6, color: '#64748b', fontSize: 13 }}>{resume.remark}</div>
-                        ) : null}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
