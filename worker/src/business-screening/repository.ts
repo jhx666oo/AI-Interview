@@ -24,6 +24,11 @@ export const BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS = [
   'ALTER TABLE resume_push_batch_items ADD COLUMN dispatch_group_id TEXT DEFAULT NULL',
   'ALTER TABLE resume_push_batches ADD COLUMN batch_title TEXT DEFAULT NULL',
   'ALTER TABLE resume_push_batches ADD COLUMN batch_subtitle TEXT DEFAULT NULL',
+  'ALTER TABLE resume_push_batches ADD COLUMN scope_key TEXT DEFAULT NULL',
+] as const;
+
+export const BUSINESS_SCREENING_PUSH_TABLE_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS idx_resume_push_batches_scope_key ON resume_push_batches(scope_key, status, expires_at)',
 ] as const;
 
 export const BUSINESS_SCREENING_SCHEMA_STATEMENTS = [
@@ -89,6 +94,9 @@ export async function ensureBusinessScreeningSchema(db: Db): Promise<void> {
       if (!isIgnorableMigrationError(error)) throw error;
     }
   }
+  for (const sql of BUSINESS_SCREENING_PUSH_TABLE_INDEXES) {
+    await db.prepare(sql).run();
+  }
 }
 
 export async function createResumePushBatch(
@@ -99,8 +107,8 @@ export async function createResumePushBatch(
   const status: ResumePushBatchStatus = input.status || 'active';
   await db.prepare(
     `INSERT INTO resume_push_batches
-      (id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle, scope_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     input.id,
     input.interviewerId || null,
@@ -115,7 +123,31 @@ export async function createResumePushBatch(
     input.dispatchGroupId,
     input.batchTitle || null,
     input.batchSubtitle || null,
+    input.scopeKey || null,
   ).run();
+}
+
+export async function insertResumePushBatchItemsIfAbsent(
+  db: Db,
+  items: CreateResumePushBatchItemInput[],
+): Promise<void> {
+  for (const item of items) {
+    await db.prepare(
+      `INSERT OR IGNORE INTO resume_push_batch_items
+        (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      item.id,
+      item.batchId,
+      item.resumeId,
+      item.positionId || null,
+      item.status || 'pending',
+      item.remark || null,
+      item.processedAt || null,
+      item.createdAt || new Date().toISOString(),
+      item.dispatchGroupId,
+    ).run();
+  }
 }
 
 export async function insertResumePushBatchItems(
@@ -166,9 +198,10 @@ export async function loadResumePushBatchByTokenHash(
   tokenHash: string,
 ): Promise<ResumePushBatchRow | null> {
   return await db.prepare(
-    `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle
+    `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle, scope_key
        FROM resume_push_batches
       WHERE token_hash = ?
+      ORDER BY created_at DESC
       LIMIT 1`,
   ).bind(tokenHash).first<ResumePushBatchRow>();
 }

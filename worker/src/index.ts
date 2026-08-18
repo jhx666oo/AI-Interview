@@ -39,7 +39,7 @@ import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveRemi
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
 import { ensureBusinessScreeningSchema } from './business-screening/repository';
 import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from './business-screening/routes';
-import { createPublicToken } from './business-screening/token';
+import { createPublicToken, createScopePublicToken } from './business-screening/token';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
 import {
@@ -1573,6 +1573,7 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
   now,
   uuid,
   createPublicToken,
+  createScopePublicToken,
   getResumeFileBytes,
   resolveApiKeyOwnerEmail: async (env) => {
     const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).first() as any;

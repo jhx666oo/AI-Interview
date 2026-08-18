@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   BUSINESS_SCREENING_RESUME_MIGRATIONS,
+  BUSINESS_SCREENING_PUSH_TABLE_INDEXES,
   BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS,
   BUSINESS_SCREENING_SCHEMA_STATEMENTS,
   applyTerminalResumeOutcome,
@@ -66,6 +67,7 @@ describe('business screening schema compatibility', () => {
       ...BUSINESS_SCREENING_RESUME_MIGRATIONS,
       ...BUSINESS_SCREENING_SCHEMA_STATEMENTS,
       ...BUSINESS_SCREENING_PUSH_TABLE_MIGRATIONS,
+      ...BUSINESS_SCREENING_PUSH_TABLE_INDEXES,
     ]);
   });
 });
@@ -132,7 +134,7 @@ describe('business screening repository writes', () => {
     });
 
     expect(calls.find((call) => call.sql.includes('INSERT INTO resume_push_batches'))?.values).toEqual([
-      'batch-1', 'user-1', '张三', 'ou_123', 'hash-1', null, 'active', 'hr@example.com', '2026-08-12T12:00:00.000Z', null, 'dispatch-1', null, null,
+      'batch-1', 'user-1', '张三', 'ou_123', 'hash-1', null, 'active', 'hr@example.com', '2026-08-12T12:00:00.000Z', null, 'dispatch-1', null, null, null,
     ]);
     expect(calls.find((call) => call.sql.includes('INSERT INTO resume_push_batch_items'))?.values).toEqual([
       'item-1', 'batch-1', 'resume-1', 'position-1', 'pending', null, null, '2026-08-12T12:00:00.000Z', 'dispatch-1',

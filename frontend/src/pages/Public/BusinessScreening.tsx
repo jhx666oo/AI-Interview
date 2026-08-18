@@ -40,7 +40,8 @@ const formatTime = (value?: string) => {
 };
 
 const shellStyle: React.CSSProperties = {
-  minHeight: '100vh',
+  height: '100vh',
+  overflow: 'hidden',
   background: '#f8fafc',
   padding: '16px',
 };
@@ -449,19 +450,19 @@ const BusinessScreeningPage: React.FC = () => {
 
   return (
     <div className="business-screening-page" style={shellStyle}>
-      <div className="business-screening-container" style={{ maxWidth: 1160, margin: '0 auto' }}>
-        <div style={{ ...cardStyle, padding: 20 }}>
-          <div style={{ marginBottom: 20 }}>
-            <h1 style={{ margin: 0, fontSize: 32 }}>{data?.batch.title || '业务筛选'}</h1>
-            <p style={{ margin: '8px 0 12px', color: '#64748b' }}>{data?.batch.subtitle || '请查看候选人信息并完成入库 / 不入库决策。'}</p>
+      <div className="business-screening-container" style={{ maxWidth: 1280, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...cardStyle, padding: 12, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ marginBottom: 10, flexShrink: 0 }}>
+            <h1 style={{ margin: 0, fontSize: 20 }}>{data?.batch.title || '业务筛选'}</h1>
+            <p style={{ margin: '3px 0 6px', color: '#64748b', fontSize: 12.5 }}>{data?.batch.subtitle || '请查看候选人信息并完成入库 / 不入库决策。'}</p>
             <div className="business-screening-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', padding: '6px 12px', fontSize: 14 }}>
+              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', padding: '3px 9px', fontSize: 12.5 }}>
                 {data?.batch.interviewer || '待分配'}
               </span>
-              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>
+              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '3px 9px', fontSize: 12.5 }}>
                 候选人 {data?.resumes.length || 0} 人
               </span>
-              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>
+              <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '3px 9px', fontSize: 12.5 }}>
                 链接到期 {formatTime(data?.batch.expiresAt)}
               </span>
               <button
@@ -473,8 +474,8 @@ const BusinessScreeningPage: React.FC = () => {
                   border: '1px solid #2563eb',
                   background: downloading ? '#dbeafe' : '#2563eb',
                   color: downloading ? '#1d4ed8' : '#fff',
-                  padding: '6px 14px',
-                  fontSize: 14,
+                  padding: '3px 10px',
+                  fontSize: 12.5,
                   cursor: downloading ? 'default' : 'pointer',
                   fontWeight: 600,
                 }}
@@ -489,12 +490,15 @@ const BusinessScreeningPage: React.FC = () => {
               className="business-screening-grid"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'minmax(0, 360px) minmax(0, 1fr)',
+                gridTemplateColumns: 'minmax(0, 200px) minmax(0, 1fr)',
                 gap: 16,
+                flex: 1,
+                minHeight: 0,
+                overflow: 'hidden',
               }}
             >
-              <section className="business-screening-candidates" style={{ ...cardStyle, padding: 12, minWidth: 0 }}>
-                <h2 style={{ margin: '4px 4px 12px', fontSize: 18 }}>候选人列表</h2>
+              <section className="business-screening-candidates" style={{ ...cardStyle, padding: 6, minWidth: 0, overflowY: 'auto' }}>
+                <h2 style={{ margin: '2px 4px 8px', fontSize: 14 }}>候选人列表</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {data.resumes.map((resume) => {
                     const selected = resume.id === activeResumeId;
@@ -509,7 +513,7 @@ const BusinessScreeningPage: React.FC = () => {
                           border: selected ? '1px solid #2563eb' : '1px solid #e2e8f0',
                           background: selected ? '#eff6ff' : '#fff',
                           borderRadius: 14,
-                          padding: 14,
+                          padding: 8,
                           cursor: 'pointer',
                         }}
                       >
@@ -529,7 +533,7 @@ const BusinessScreeningPage: React.FC = () => {
                 </div>
               </section>
 
-              <section className="business-screening-detail" style={{ ...cardStyle, padding: 20, minWidth: 0 }}>
+              <section className="business-screening-detail" style={{ ...cardStyle, padding: 20, minWidth: 0, overflowY: 'auto' }}>
                 {activeResume ? (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -593,7 +597,14 @@ const BusinessScreeningPage: React.FC = () => {
                     {/* AI 初筛评估（简历列表卡片式评估区，ant-card-body 样式） */}
                     <AiEvaluationCard resume={activeResume} />
 
-                    {activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}
+                    {activeResume.profile ? (
+                      <ProfileDescriptions profile={activeResume.profile} />
+                    ) : (
+                      <div style={{ marginTop: 20, border: '1px dashed #cbd5e1', borderRadius: 12, padding: 14, background: '#f8fafc', color: '#64748b', fontSize: 13, lineHeight: 1.7 }}>
+                        该简历暂无结构化档案（可能仅完成 AI 初筛、未生成字段解析）。可点击右上角「预览简历」查看简历原文；
+                        如需生成档案，请联系 HR 在简历管理中对这位候选人执行「重新评估」。
+                      </div>
+                    )}
 
                     <div style={{ marginTop: 20 }}>
                       <label htmlFor="business-screening-remark" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
@@ -683,8 +694,31 @@ const BusinessScreeningPage: React.FC = () => {
         }
 
         @media (max-width: 1024px) {
+          .business-screening-page {
+            height: auto !important;
+            min-height: 100vh;
+            overflow: auto !important;
+          }
+
+          .business-screening-container {
+            height: auto !important;
+          }
+
+          .business-screening-container > div {
+            height: auto !important;
+            overflow: visible !important;
+          }
+
           .business-screening-grid {
             grid-template-columns: 1fr !important;
+            overflow: visible !important;
+            flex: none !important;
+          }
+
+          .business-screening-candidates,
+          .business-screening-detail {
+            overflow: visible !important;
+            max-height: none !important;
           }
         }
 

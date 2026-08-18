@@ -34,7 +34,8 @@ describe('public business screening page contract', () => {
     expect(source).toContain('profile.educationHistory?.length');
     expect(source).toContain('selfEvaluation');
     expect(source).toContain('profile.skills?.length ? profile.skills.join(\'、\')');
-    expect(source).toContain('{activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}');
+    expect(source).toContain('<ProfileDescriptions profile={activeResume.profile} />');
+    expect(source).toContain('暂无结构化档案');
   });
 
   it('renders the dynamic page title/subtitle from the batch with fallbacks', () => {
