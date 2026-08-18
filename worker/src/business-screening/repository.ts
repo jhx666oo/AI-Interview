@@ -173,14 +173,8 @@ export async function insertResumePushBatchItems(
   await runBatch(db, stmts);
 }
 
-/** D1 批量提交（一次往返），不支持 batch 的环境（测试 mock）回退逐条执行 */
+/** 批量执行：逐条提交（线上 D1 batch 在 Pages Functions 环境有兼容问题，暂不用 batch） */
 async function runBatch(db: Db, stmts: D1PreparedStatement[]): Promise<void> {
-  if (stmts.length === 0) return;
-  const batchFn = (db as any).batch;
-  if (typeof batchFn === 'function') {
-    await batchFn(stmts);
-    return;
-  }
   for (const stmt of stmts) {
     await stmt.run();
   }
