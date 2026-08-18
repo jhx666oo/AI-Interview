@@ -597,7 +597,14 @@ const BusinessScreeningPage: React.FC = () => {
                     {/* AI 初筛评估（简历列表卡片式评估区，ant-card-body 样式） */}
                     <AiEvaluationCard resume={activeResume} />
 
-                    {activeResume.profile ? <ProfileDescriptions profile={activeResume.profile} /> : null}
+                    {activeResume.profile ? (
+                      <ProfileDescriptions profile={activeResume.profile} />
+                    ) : (
+                      <div style={{ marginTop: 20, border: '1px dashed #cbd5e1', borderRadius: 12, padding: 14, background: '#f8fafc', color: '#64748b', fontSize: 13, lineHeight: 1.7 }}>
+                        该简历暂无结构化档案（可能仅完成 AI 初筛、未生成字段解析）。可点击右上角「预览简历」查看简历原文；
+                        如需生成档案，请联系 HR 在简历管理中对这位候选人执行「重新评估」。
+                      </div>
+                    )}
 
                     <div style={{ marginTop: 20 }}>
                       <label htmlFor="business-screening-remark" style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
