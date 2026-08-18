@@ -31,6 +31,7 @@ function buildHarness(options?: {
   sendFailuresByOpenId?: Record<string, string>;
   initialBatches?: BatchRow[];
   initialItems?: BusinessScreeningBatchItemView[];
+  apiKeyOwnerEmail?: string | null;
 }) {
   const resumes = new Map(
     (options?.resumes || [
@@ -335,6 +336,9 @@ function buildHarness(options?: {
     getResumeFileBytes: async (_env, resumeId) => {
       return { bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), fileName: `${resumeId}.pdf` }; // mock PDF 字节
     },
+    resolveApiKeyOwnerEmail: options?.apiKeyOwnerEmail === undefined
+      ? undefined
+      : async () => options.apiKeyOwnerEmail as string | null,
     store,
   };
 
@@ -407,7 +411,7 @@ describe('business screening routes', () => {
   });
 
   it('accepts a valid long-lived API key for push and rejects a wrong key', async () => {
-    const { request, createdTokens } = buildHarness();
+    const { request, createdTokens } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
 
     // 错误 key → 401
     const wrongKeyResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
@@ -432,8 +436,43 @@ describe('business screening routes', () => {
     });
   });
 
+  it('sends the Feishu card via the configured API-key owner user', async () => {
+    const { request, sentMessages } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+    });
+
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(okResp.status).toBe(200);
+    // 归属用户已配 → 卡片成功发送给责任人，failed 为空
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0].openId).toBe('ou_zhang');
+    await expect(okResp.json()).resolves.toMatchObject({ ok: true, failed: [] });
+  });
+
+  it('reports the missing-owner reason when the API key has no Feishu owner configured', async () => {
+    const { request, sentMessages } = buildHarness({
+      apiKeyOwnerEmail: null,
+    });
+
+    const okResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'] }),
+    });
+    expect(okResp.status).toBe(200);
+    expect(sentMessages).toHaveLength(0);
+    await expect(okResp.json()).resolves.toMatchObject({
+      failed: [{ interviewer: '张三', reason: expect.stringContaining('未配置飞书归属用户') }],
+    });
+  });
+
   it('allows a long-lived API key to resend a batch as permanent', async () => {
     const { request, batches } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
       initialBatches: [{
         id: 'batch-key-resend',
         interviewer_id: 'user-zhang',

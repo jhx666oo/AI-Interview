@@ -209,6 +209,23 @@ export interface BusinessScreeningRouteStore {
 
 type HrUser = { id?: string; email?: string; role?: string; full_name?: string };
 
+// 解析飞书卡片发送人：JWT 用户用本人；API Key 身份用配置的归属用户（未配置返回原因）
+async function resolveSenderEmail(
+  c: any,
+  user: HrUser,
+  deps: BusinessScreeningRouteDeps,
+): Promise<{ email: string | null; reason?: string }> {
+  if (user.id !== 'api-key') return { email: user.email || null };
+  if (!deps.resolveApiKeyOwnerEmail) {
+    return { email: null, reason: 'API Key 未配置飞书归属用户，无法发送业务筛选链接' };
+  }
+  const owner = await deps.resolveApiKeyOwnerEmail(c.env);
+  if (!owner) {
+    return { email: null, reason: 'API Key 未配置飞书归属用户，无法发送业务筛选链接' };
+  }
+  return { email: owner };
+}
+
 export interface BusinessScreeningRouteDeps {
   authMiddleware: (c: any, next: any) => Promise<Response | void>;
   requireRole: (roles: string[]) => (c: any, next: any) => Promise<Response | void>;
@@ -219,6 +236,8 @@ export interface BusinessScreeningRouteDeps {
   uuid: () => string;
   createPublicToken: typeof createPublicToken;
   store: BusinessScreeningRouteStore;
+  // API Key 身份的飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（未配置则无法发飞书，链接仍生成）
+  resolveApiKeyOwnerEmail?: (env: any) => Promise<string | null>;
 }
 
 function text(value: unknown): string {
@@ -401,7 +420,9 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     }
 
     const grouped = groupEligibleResumesForPush(eligibleResumes, positions, interviewerDirectoryRows, resolveStandardTitle);
-    const currentUserToken = user.email ? await deps.getCurrentUserToken(c.env, user.email) : null;
+    const sender = await resolveSenderEmail(c, user, deps);
+    const currentUserToken = sender.email ? await deps.getCurrentUserToken(c.env, sender.email) : null;
+    const keyNoSenderReason = user.id === 'api-key' && !sender.email ? sender.reason : null;
     const pushedResumeIds = uniqueStrings([...grouped.values()].flatMap((group) => group.resumes.map((resume) => resume.id)));
     const failed: Array<{ interviewer: string; reason: string }> = [];
     const batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number; expiresAt: string | null; title?: string; subtitle?: string }> = [];
@@ -453,7 +474,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       if (!currentUserToken) {
         failed.push({
           interviewer: group.interviewer.name,
-          reason: '当前账号未授权飞书身份，无法发送业务筛选链接',
+          reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
         });
         continue;
       }
@@ -659,7 +680,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       return c.json({ detail: 'No pending resumes to resend' }, 409);
     }
 
-    const currentUserToken = user.email ? await deps.getCurrentUserToken(c.env, user.email) : null;
+    const sender = await resolveSenderEmail(c, user, deps);
+    const currentUserToken = sender.email ? await deps.getCurrentUserToken(c.env, sender.email) : null;
     const issued = await deps.createPublicToken();
     const nextBatchId = deps.uuid();
     const dispatchGroupId = deps.uuid();

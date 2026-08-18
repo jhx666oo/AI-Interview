@@ -1574,9 +1574,35 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
   uuid,
   createPublicToken,
   getResumeFileBytes,
+  resolveApiKeyOwnerEmail: async (env) => {
+    const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).first() as any;
+    return typeof row?.value === 'string' && row.value.trim() ? row.value.trim() : null;
+  },
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
 });
 app.route('/', businessScreeningRoutes);
+
+// API Key 飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（管理员配置）
+const BUSINESS_SCREENING_KEY_OWNER_SETTING = 'business_screening_key_owner';
+
+app.get('/api/settings/business-screening-key-owner', authMiddleware, requireRole(['admin']), async (c) => {
+  const row = await c.env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).first() as any;
+  return c.json({ owner_email: row?.value || null });
+});
+
+app.put('/api/settings/business-screening-key-owner', authMiddleware, requireRole(['admin']), async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const ownerEmail = typeof body.owner_email === 'string' ? body.owner_email.trim() : '';
+  if (!ownerEmail) {
+    await c.env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).run();
+    return c.json({ ok: true, owner_email: null });
+  }
+  const nowIso = new Date().toISOString();
+  await c.env.DB.prepare(
+    'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?'
+  ).bind(BUSINESS_SCREENING_KEY_OWNER_SETTING, ownerEmail, nowIso, ownerEmail, nowIso).run();
+  return c.json({ ok: true, owner_email: ownerEmail });
+});
 
 // 全面公开只读查询 API（2026-08-14）：两档鉴权（无 key 公开脱敏 / x-api-key 完整），
 // 姓名容错（编辑距离 ≤ 1）。person/:name/resumes 由既有路由处理，不在此重复注册。
