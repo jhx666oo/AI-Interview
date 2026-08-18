@@ -450,7 +450,7 @@ const BusinessScreeningPage: React.FC = () => {
 
   return (
     <div className="business-screening-page" style={shellStyle}>
-      <div className="business-screening-container" style={{ maxWidth: 760, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div className="business-screening-container" style={{ maxWidth: 1280, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
         <div style={{ ...cardStyle, padding: 12, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
           <div style={{ marginBottom: 10, flexShrink: 0 }}>
             <h1 style={{ margin: 0, fontSize: 20 }}>{data?.batch.title || '业务筛选'}</h1>
