@@ -261,6 +261,23 @@ function AiEvaluationCard({ resume }: { resume: BusinessScreeningResume }) {
   );
 }
 
+/**
+ * 动态加载的 PdfViewer（pdf.js）：仅在 Modal 打开时才开始加载，与简历管理列表页一致
+ */
+function DynamicPdfViewer({ pdfUrl }: { pdfUrl: string }) {
+  const [Comp, setComp] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    import('../../components/PdfViewer').then((mod) => {
+      if (!cancelled) { setComp(() => mod.default); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [pdfUrl]);
+  if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80vh', color: '#999' }}>加载 PDF 引擎...</div>;
+  return <Comp pdfUrl={pdfUrl} />;
+}
+
 const BusinessScreeningPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [loading, setLoading] = useState(true);
@@ -272,6 +289,7 @@ const BusinessScreeningPage: React.FC = () => {
   const [actionError, setActionError] = useState<string>('');
   const [downloading, setDownloading] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
+  const [previewPdfUrl, setPreviewPdfUrl] = useState('');
 
   const fetchData = async () => {
     if (!token) {
@@ -514,7 +532,10 @@ const BusinessScreeningPage: React.FC = () => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <button
                           type="button"
-                          onClick={() => setPreviewVisible(true)}
+                          onClick={() => {
+                            setPreviewPdfUrl(`/api/public/business-screening/${token}/resumes/${activeResume.id}/file?preview=1`);
+                            setPreviewVisible(true);
+                          }}
                           title="预览简历源文件"
                           style={{
                             borderRadius: 8,
@@ -715,21 +736,22 @@ const BusinessScreeningPage: React.FC = () => {
         }
       `}</style>
 
-      {/* 简历源文件预览弹窗 */}
+      {/* 简历源文件预览弹窗（pdf.js 渲染，与简历管理列表页一致） */}
       <Modal
         open={previewVisible}
-        onCancel={() => setPreviewVisible(false)}
+        onCancel={() => { setPreviewPdfUrl(''); setPreviewVisible(false); }}
         footer={null}
-        width="80%"
-        title={activeResume ? `简历预览 - ${activeResume.candidateName}` : '简历预览'}
+        width={1000}
+        title={activeResume ? `简历 - ${activeResume.candidateName}` : '简历预览'}
         destroyOnHidden
+        styles={{ body: { height: '85vh', padding: 0 } }}
       >
-        {activeResume && (
-          <iframe
-            title="简历预览"
-            src={`/api/public/business-screening/${token}/resumes/${activeResume.id}/file?preview=1`}
-            style={{ width: '100%', height: '70vh', border: 'none', borderRadius: 8, background: '#fff' }}
-          />
+        {previewPdfUrl ? (
+          <DynamicPdfViewer pdfUrl={previewPdfUrl} />
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+            加载中...
+          </div>
         )}
       </Modal>
     </div>
