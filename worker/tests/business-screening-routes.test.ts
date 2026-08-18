@@ -209,8 +209,8 @@ function buildHarness(options?: {
     async updateBatchPresentation(_db, batchId, presentation) {
       const batch = batches.get(batchId);
       if (!batch) return;
-      if (presentation.title) batch.batch_title = presentation.title;
-      if (presentation.subtitle) batch.batch_subtitle = presentation.subtitle;
+      if (presentation.title !== undefined && presentation.title !== null) batch.batch_title = presentation.title;
+      if (presentation.subtitle !== undefined && presentation.subtitle !== null) batch.batch_subtitle = presentation.subtitle;
     },
     async appendBatchItemsIfAbsent(_db, items) {
       for (const item of items) {
@@ -897,6 +897,90 @@ describe('business screening routes', () => {
     expect(publicResp.status).toBe(200);
     await expect(publicResp.json()).resolves.toMatchObject({
       batch: { title: '原批次标题', subtitle: '原批次说明' },
+    });
+  });
+
+  it('normalizes explicit resend titles and defaults action-only resend titles', async () => {
+    const baseBatch = {
+      interviewer_id: 'user-zhang',
+      interviewer_name: '张三',
+      interviewer_open_id: 'ou_zhang',
+      expires_at: '2026-08-19T12:00:00.000Z',
+      status: 'active' as const,
+      created_by: 'hr@example.com',
+      created_at: '2026-08-12T12:00:00.000Z',
+      last_sent_at: null,
+    };
+    const baseItem = {
+      position_id: 'position-1',
+      status: 'pending' as const,
+      remark: null,
+      processed_at: null,
+      created_at: '2026-08-12T12:00:00.000Z',
+      candidate_name: '候选人甲',
+      mapped_position: '标准运营',
+    };
+    const baseResume = {
+      id: 'resume-1',
+      candidate_name: '候选人甲',
+      screening_result: '通过',
+      status: 'pending_review',
+      mapped_position: '标准运营',
+      position_applied: '标准运营',
+      business_screening_status: 'pending' as const,
+    };
+
+    const cleaned = buildHarness({
+      initialBatches: [{ ...baseBatch, id: 'batch-resend-cleaned', token_hash: 'hash-resend-cleaned', rawToken: 'resend-cleaned-token' }],
+      initialItems: [{ ...baseItem, id: 'item-resend-cleaned', batch_id: 'batch-resend-cleaned', resume_id: 'resume-1' }],
+      resumes: [baseResume],
+    });
+    const cleanedResponse = await cleaned.request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches/batch-resend-cleaned/resend', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '  “AI 初筛通过表” 给我链接' }),
+    });
+    expect(cleanedResponse.status).toBe(200);
+    expect([...cleaned.batches.values()].find((candidate) => candidate.id !== 'batch-resend-cleaned')?.batch_title).toBe('AI 初筛通过表');
+
+    const fallback = buildHarness({
+      initialBatches: [{ ...baseBatch, id: 'batch-resend-fallback', token_hash: 'hash-resend-fallback', rawToken: 'resend-fallback-token' }],
+      initialItems: [{ ...baseItem, id: 'item-resend-fallback', batch_id: 'batch-resend-fallback', resume_id: 'resume-1' }],
+      resumes: [baseResume],
+    });
+    const fallbackResponse = await fallback.request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches/batch-resend-fallback/resend', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '查询' }),
+    });
+    expect(fallbackResponse.status).toBe(200);
+    expect([...fallback.batches.values()].find((candidate) => candidate.id !== 'batch-resend-fallback')?.batch_title).toBe('业务筛选');
+  });
+
+  it('updates a stable resend batch title without issuing another token', async () => {
+    const { request, batches, createdTokens } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
+    const pushResponse = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ ids: ['resume-1'], title: '旧标题', subtitle: '原说明' }),
+    });
+    const pushBody = await pushResponse.json() as any;
+    const token = pushBody.batches[0].url.split('/').pop();
+    const batchId = pushBody.batches[0].batchId;
+
+    const resendResponse = await request(`https://ai-interview-88r.pages.dev/api/resumes/business-screening/batches/${batchId}/resend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': 'test-api-key' },
+      body: JSON.stringify({ title: '  “AI 初筛通过表” 给我链接' }),
+    });
+    expect(resendResponse.status).toBe(200);
+    await expect(resendResponse.json()).resolves.toMatchObject({ batchId });
+    expect(createdTokens).toHaveLength(1);
+    expect(batches.get(batchId)).toMatchObject({ batch_title: 'AI 初筛通过表', batch_subtitle: '原说明' });
+
+    const publicResponse = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${token}`);
+    await expect(publicResponse.json()).resolves.toMatchObject({
+      batch: { title: 'AI 初筛通过表', subtitle: '原说明' },
     });
   });
 

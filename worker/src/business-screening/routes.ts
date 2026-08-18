@@ -905,6 +905,16 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const db = c.env.DB as D1Database;
     const user = ((c as any).get('user') || {}) as HrUser;
     const body = await c.req.json().catch(() => ({}));
+    const hasTitle = body !== null
+      && typeof body === 'object'
+      && Object.prototype.hasOwnProperty.call(body, 'title');
+    const requestedTitle = hasTitle
+      ? normalizeBusinessScreeningTitle(body.title) || DEFAULT_BUSINESS_SCREENING_TITLE
+      : undefined;
+    const hasSubtitle = body !== null
+      && typeof body === 'object'
+      && Object.prototype.hasOwnProperty.call(body, 'subtitle');
+    const requestedSubtitle = hasSubtitle ? text(body.subtitle) || null : undefined;
     const batch = await deps.store.loadBatchById(db, batchId);
     if (!batch) return c.json({ detail: 'Batch not found' }, 404);
 
@@ -941,6 +951,10 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         nextBatchId = current.id;
         await deps.store.appendBatchItemsIfAbsent(db, nextItems);
         await deps.store.resetBatchActive(db, nextBatchId);
+        await deps.store.updateBatchPresentation(db, nextBatchId, {
+          title: requestedTitle,
+          subtitle: requestedSubtitle,
+        });
       } else {
         nextBatchId = deps.uuid();
         await deps.store.createBatch(db, {
@@ -954,8 +968,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
           createdAt: nowIso,
           lastSentAt: null,
           dispatchGroupId,
-          batchTitle: text(body.title) || batch.batch_title || null,
-          batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
+          batchTitle: requestedTitle ?? batch.batch_title ?? null,
+          batchSubtitle: requestedSubtitle ?? batch.batch_subtitle ?? null,
           scopeKey,
         }, nextItems.map((item) => ({ ...item, batchId: nextBatchId })));
       }
@@ -984,8 +998,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         lastSentAt: null,
         dispatchGroupId,
         // 重发默认沿用原批次标题/说明，也可在请求体里覆盖
-        batchTitle: text(body.title) || batch.batch_title || null,
-        batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
+        batchTitle: requestedTitle ?? batch.batch_title ?? null,
+        batchSubtitle: requestedSubtitle ?? batch.batch_subtitle ?? null,
       }, nextItems);
       await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
       await deps.store.setBatchStatus(db, batchId, 'revoked');
@@ -1168,8 +1182,8 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
                 batch_subtitle = COALESCE(?, batch_subtitle)
           WHERE id = ?`,
       ).bind(
-        presentation.title || null,
-        presentation.subtitle || null,
+        presentation.title ?? null,
+        presentation.subtitle ?? null,
         batchId,
       ).run();
     },
