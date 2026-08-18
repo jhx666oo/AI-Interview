@@ -218,6 +218,35 @@ export async function loadResumePushBatchByTokenHash(
   ).bind(tokenHash).first<ResumePushBatchRow>();
 }
 
+export async function loadLatestResumePushBatchByInterviewer(
+  db: Db,
+  interviewerOpenId: string,
+): Promise<ResumePushBatchRow | null> {
+  return await db.prepare(
+    `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle, scope_key
+       FROM resume_push_batches
+      WHERE interviewer_open_id = ?
+        AND scope_key IS NOT NULL
+        AND status IN ('active', 'completed', 'expired')
+      ORDER BY created_at DESC
+      LIMIT 1`,
+  ).bind(interviewerOpenId).first<ResumePushBatchRow>();
+}
+
+export async function refreshResumePushBatchExpiry(
+  db: Db,
+  batchId: string,
+  expiresAt: string | null,
+): Promise<void> {
+  await db.prepare(
+    `UPDATE resume_push_batches
+        SET expires_at = ?,
+            status = CASE WHEN status = 'expired' THEN 'active' ELSE status END
+      WHERE id = ?
+        AND status != 'revoked'`,
+  ).bind(expiresAt, batchId).run();
+}
+
 export async function revokeActiveBusinessScreeningBatchesForResume(
   db: Db,
   resumeId: string,

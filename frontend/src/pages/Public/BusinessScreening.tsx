@@ -7,6 +7,8 @@ import {
   applyBusinessScreeningDecision,
   buildBusinessScreeningDecisionPayload,
   classifyBusinessScreeningLoadError,
+  filterBusinessScreeningResumes,
+  getBusinessScreeningPositions,
   mapBusinessScreeningDecisionError,
   pickActiveBusinessScreeningResumeId,
   type BusinessScreeningProfile,
@@ -285,6 +287,7 @@ const BusinessScreeningPage: React.FC = () => {
   const [view, setView] = useState<'ready' | 'expired' | 'error'>('ready');
   const [data, setData] = useState<BusinessScreeningView | null>(null);
   const [activeResumeId, setActiveResumeId] = useState<string | null>(null);
+  const [selectedPositions, setSelectedPositions] = useState<Set<string>>(new Set());
   // 批量决策选中集：默认全选待处理候选人，可逐项取消（先全选、再取消不需要处理的）
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [remarks, setRemarks] = useState<Record<string, string>>({});
@@ -308,6 +311,11 @@ const BusinessScreeningPage: React.FC = () => {
       setData(response);
       setView('ready');
       setActionError('');
+      const positions = getBusinessScreeningPositions(response.resumes);
+      setSelectedPositions((current) => {
+        if (current.size === 0) return new Set(positions);
+        return new Set([...current].filter((position) => positions.includes(position)));
+      });
       setActiveResumeId((current) => pickActiveBusinessScreeningResumeId(response.resumes, current));
       // 批量决策默认全选待处理候选人，用户可再取消个别不需要处理的
       setSelectedIds(new Set(
@@ -371,15 +379,38 @@ const BusinessScreeningPage: React.FC = () => {
     fetchData();
   }, [token]);
 
-  const activeResume = useMemo(
-    () => data?.resumes.find((resume) => resume.id === activeResumeId) || null,
-    [activeResumeId, data],
+  const positionOptions = useMemo(
+    () => getBusinessScreeningPositions(data?.resumes || []),
+    [data],
   );
+  const visibleResumes = useMemo(
+    () => filterBusinessScreeningResumes(data?.resumes || [], new Set(selectedPositions)),
+    [data, selectedPositions],
+  );
+  const activeResume = useMemo(
+    () => visibleResumes.find((resume) => resume.id === activeResumeId) || null,
+    [activeResumeId, visibleResumes],
+  );
+  const positionCounts = useMemo(() => {
+    const counts = new Map<string, { total: number; pending: number }>();
+    (data?.resumes || []).forEach((resume) => {
+      const current = counts.get(resume.position) || { total: 0, pending: 0 };
+      current.total += 1;
+      if (resume.status === 'pending') current.pending += 1;
+      counts.set(resume.position, current);
+    });
+    return counts;
+  }, [data]);
+
+  useEffect(() => {
+    if (!activeResumeId || visibleResumes.some((resume) => resume.id === activeResumeId)) return;
+    setActiveResumeId(pickActiveBusinessScreeningResumeId(visibleResumes));
+  }, [activeResumeId, visibleResumes]);
 
   // 批量决策选择模型：待处理候选人集合 + 已选中数量 + 全选状态
   const pendingResumes = useMemo(
-    () => (data?.resumes || []).filter((resume) => resume.status === 'pending'),
-    [data],
+    () => visibleResumes.filter((resume) => resume.status === 'pending'),
+    [visibleResumes],
   );
   const pendingCount = pendingResumes.length;
   const selectedCount = useMemo(
@@ -387,6 +418,15 @@ const BusinessScreeningPage: React.FC = () => {
     [pendingResumes, selectedIds],
   );
   const allSelected = pendingCount > 0 && selectedCount === pendingCount;
+
+  const togglePosition = (position: string, checked: boolean) => {
+    setSelectedPositions((current) => {
+      const next = current.size === 0 ? new Set(positionOptions) : new Set(current);
+      if (checked) next.add(position);
+      else next.delete(position);
+      return next.size === positionOptions.length ? new Set() : next;
+    });
+  };
 
   const toggleSelect = (resumeId: string) => {
     setSelectedIds((current) => {
@@ -470,7 +510,7 @@ const BusinessScreeningPage: React.FC = () => {
       } : current);
 
       // 决策成功后自动切换到下一份候选人：优先当前之后的待处理项，否则回绕到第一份待处理
-      const resumes = data?.resumes || [];
+      const resumes = visibleResumes;
       const idx = resumes.findIndex((r) => r.id === activeResume.id);
       const after = resumes.slice(idx + 1);
       const next = after.find((r) => r.status === 'pending')
@@ -593,9 +633,47 @@ const BusinessScreeningPage: React.FC = () => {
                 {batchSubmitting === 'reject' ? '处理中...' : `批量淘汰（${selectedCount}）`}
               </button>
             </div>
+            {positionOptions.length > 1 ? (
+              <div
+                className="business-screening-position-filter"
+                style={{
+                  marginTop: 10,
+                  padding: '8px 10px',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 10,
+                  background: '#f8fafc',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ color: '#475569', fontSize: 12, lineHeight: '24px', fontWeight: 600, flexShrink: 0 }}>
+                  岗位筛选
+                </span>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', minWidth: 0 }}>
+                  {positionOptions.map((position) => {
+                    const counts = positionCounts.get(position) || { total: 0, pending: 0 };
+                    const checked = selectedPositions.size === 0 || selectedPositions.has(position);
+                    return (
+                      <Checkbox
+                        key={position}
+                        checked={checked}
+                        onChange={(event) => togglePosition(position, event.target.checked)}
+                        style={{ marginInlineStart: 0, marginInlineEnd: 4, color: '#334155', fontSize: 12 }}
+                      >
+                        <span style={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+                          {position}（待处理 {counts.pending} / 共 {counts.total}）
+                        </span>
+                      </Checkbox>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </div>
 
-          {data?.resumes.length ? (
+          {visibleResumes.length ? (
             <div
               className="business-screening-grid"
               style={{
@@ -609,7 +687,9 @@ const BusinessScreeningPage: React.FC = () => {
             >
               <section className="business-screening-candidates" style={{ ...cardStyle, padding: 6, minWidth: 0, overflowY: 'auto' }}>
                 <div className="business-screening-candidate-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '2px 4px 8px', gap: 8 }}>
-                  <h2 style={{ margin: 0, fontSize: 13, flexShrink: 0 }}>候选人列表</h2>
+                  <h2 style={{ margin: 0, fontSize: 13, flexShrink: 0 }}>
+                    候选人列表{data?.resumes.length !== visibleResumes.length ? `（${visibleResumes.length}/${data?.resumes.length}）` : ''}
+                  </h2>
                   <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#475569', cursor: pendingCount ? 'pointer' : 'default', whiteSpace: 'nowrap', flexShrink: 0 }}>
                     <Checkbox
                       checked={allSelected}
@@ -621,7 +701,7 @@ const BusinessScreeningPage: React.FC = () => {
                   </label>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {data.resumes.map((resume) => {
+                  {visibleResumes.map((resume) => {
                     const selected = resume.id === activeResumeId;
                     const selectable = resume.status === 'pending';
                     return (
@@ -817,7 +897,7 @@ const BusinessScreeningPage: React.FC = () => {
             </div>
           ) : (
             <div style={{ ...cardStyle, padding: 32, textAlign: 'center', color: '#64748b' }}>
-              当前批次暂无待处理候选人
+              当前岗位筛选条件下暂无候选人
             </div>
           )}
         </div>

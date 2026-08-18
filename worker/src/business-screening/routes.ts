@@ -4,9 +4,11 @@ import {
   ensureBusinessScreeningSchema,
   insertResumePushBatchItems,
   insertResumePushBatchItemsIfAbsent,
+  loadLatestResumePushBatchByInterviewer,
   loadResumePushBatchByTokenHash,
   markResumesPushed,
   recordBusinessScreeningDecision,
+  refreshResumePushBatchExpiry,
   revokeActiveBusinessScreeningBatchesForResume,
 } from './repository';
 import {
@@ -222,10 +224,14 @@ export interface BusinessScreeningRouteStore {
   loadBatchByScope(db: D1Database, scopeKey: string, nowIso: string): Promise<ResumePushBatchRow | null>;
   // 兼容旧版“岗位+面试官” scope：切换为面试官 scope 后，优先复用该面试官已有的稳定批次链接
   loadBatchByInterviewer(db: D1Database, interviewerOpenId: string, nowIso: string): Promise<ResumePushBatchRow | null>;
+  // 查找同一负责人最近的 canonical 批次；允许已过期，但不允许已撤销
+  loadLatestBatchByInterviewer(db: D1Database, interviewerOpenId: string): Promise<ResumePushBatchRow | null>;
   // 列出某面试官当前有效（active/completed 且未过期）的全部批次（供 skill 模式 A 取回现有链接）
   listActiveBatchesByInterviewer(db: D1Database, interviewerName: string, nowIso: string): Promise<ResumePushBatchRow[]>;
   // 把已处理完的批次重新激活（追加新简历时复用链接）
   resetBatchActive(db: D1Database, batchId: string): Promise<void>;
+  // 推送/重发时刷新固定链接的有效期
+  refreshBatchExpiry(db: D1Database, batchId: string, expiresAt: string | null): Promise<void>;
   updateBatchPresentation(
     db: D1Database,
     batchId: string,
@@ -460,7 +466,7 @@ function buildFeishuCard(input: {
         tag: 'div',
         text: {
           tag: 'lark_md',
-          content: `您有 ${input.itemCount} 份候选人简历待处理，请点击链接完成筛选`,
+          content: `您有 ${input.itemCount} 份候选人简历待处理，已统一汇总到待筛选列表，请点击链接完成筛选`,
         },
       },
       {
@@ -469,7 +475,7 @@ function buildFeishuCard(input: {
           {
             tag: 'button',
             type: 'primary',
-            text: { tag: 'plain_text', content: '点此查阅简历' },
+            text: { tag: 'plain_text', content: '进入待筛选简历' },
             url: input.url,
           },
         ],
@@ -675,9 +681,12 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       if (!existing) {
         existing = await deps.store.loadBatchByInterviewer(db, group.interviewer.openId, nowIso);
       }
+      if (!existing) {
+        existing = await deps.store.loadLatestBatchByInterviewer(db, group.interviewer.openId);
+      }
       const tokenScopeKey = existing?.scope_key?.trim() || scopeKey;
       const itemCreatedAt = deps.now();
-      const expiresAt = existing ? existing.expires_at : resolveExpiresAt(nowIso, body.expires_in_days);
+      const expiresAt = resolveExpiresAt(nowIso, body.expires_in_days);
       const batchTitle = requestedTitle ?? existing?.batch_title ?? null;
       const batchSubtitle = requestedSubtitle ?? existing?.batch_subtitle ?? null;
 
@@ -686,6 +695,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         batchId = existing.id;
         // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
         await deps.store.resetBatchActive(db, batchId);
+        await deps.store.refreshBatchExpiry(db, batchId, expiresAt);
         await deps.store.updateBatchPresentation(db, batchId, {
           title: requestedTitle,
           subtitle: requestedSubtitle,
@@ -729,6 +739,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         }, items);
       }
       await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId, dispatchGroupId);
+      const pendingCount = await deps.store.countPendingBatchItems(db, batchId);
 
       batches.push({
         batchId,
@@ -755,7 +766,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
             : `多个岗位（${group.positionTitles.length}个）`;
           await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
             positionTitle,
-            itemCount: items.length,
+            itemCount: pendingCount,
             url,
           }));
           await deps.store.setBatchLastSentAt(db, batchId, deps.now());
@@ -1062,10 +1073,14 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     let url: string;
     const scopeKey = batch.scope_key?.trim();
     if (scopeKey) {
-      const current = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+      let current = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+      if (!current) {
+        current = await deps.store.loadLatestBatchByInterviewer(db, batch.interviewer_open_id);
+      }
       nextBatchId = current ? current.id : deps.uuid();
-      // 链接由 scope + batchId 确定：复用当前批次 → 同一链接；批次过期 → 新建批次新链接
-      const issued = await deps.createScopePublicToken(scopeKey, nextBatchId);
+      // 链接由 scope + batchId 确定：复用 canonical 批次 → 同一链接；推送时续期
+      const tokenScopeKey = current?.scope_key?.trim() || scopeKey;
+      const issued = await deps.createScopePublicToken(tokenScopeKey, nextBatchId);
       url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
       const nextItems = pendingItems.map((item) => ({
         id: deps.uuid(),
@@ -1078,6 +1093,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       if (current) {
         await deps.store.appendBatchItemsIfAbsent(db, nextItems);
         await deps.store.resetBatchActive(db, nextBatchId);
+        await deps.store.refreshBatchExpiry(db, nextBatchId, resolveExpiresAt(nowIso, body.expires_in_days));
         await deps.store.updateBatchPresentation(db, nextBatchId, {
           title: requestedTitle,
           subtitle: requestedSubtitle,
@@ -1148,9 +1164,10 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
     if (!silent) {
       try {
+        const pendingCount = await deps.store.countPendingBatchItems(db, nextBatchId);
         await deps.sendFeishuMessageToUser(currentUserToken, batch.interviewer_open_id, buildFeishuCard({
           positionTitle,
-          itemCount: pendingItems.length,
+          itemCount: pendingCount,
           url,
         }));
         await deps.store.setBatchLastSentAt(db, nextBatchId, deps.now());
@@ -1310,6 +1327,9 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
           LIMIT 1`,
       ).bind(interviewerOpenId, nowIso).first<ResumePushBatchRow>();
     },
+    async loadLatestBatchByInterviewer(db, interviewerOpenId) {
+      return loadLatestResumePushBatchByInterviewer(db, interviewerOpenId);
+    },
     async listActiveBatchesByInterviewer(db, interviewerName, nowIso) {
       return queryAll<ResumePushBatchRow>(
         db,
@@ -1326,6 +1346,9 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
       await db.prepare("UPDATE resume_push_batches SET status = 'active' WHERE id = ?")
         .bind(batchId)
         .run();
+    },
+    async refreshBatchExpiry(db, batchId, expiresAt) {
+      await refreshResumePushBatchExpiry(db, batchId, expiresAt);
     },
     async updateBatchPresentation(db, batchId, presentation) {
       await db.prepare(

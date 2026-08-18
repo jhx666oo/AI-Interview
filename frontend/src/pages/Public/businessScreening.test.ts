@@ -3,6 +3,8 @@ import {
   applyBusinessScreeningDecision,
   buildBusinessScreeningDecisionPayload,
   classifyBusinessScreeningLoadError,
+  filterBusinessScreeningResumes,
+  getBusinessScreeningPositions,
   mapBusinessScreeningDecisionError,
   pickActiveBusinessScreeningResumeId,
 } from './businessScreeningLogic';
@@ -17,6 +19,18 @@ describe('business screening public helpers', () => {
     expect(pickActiveBusinessScreeningResumeId(resumes, 'resume-2')).toBe('resume-2');
     expect(pickActiveBusinessScreeningResumeId(resumes, 'missing')).toBe('resume-1');
     expect(pickActiveBusinessScreeningResumeId([], 'missing')).toBeNull();
+  });
+
+  it('builds a stable unique position list for the interviewer workbench', () => {
+    expect(getBusinessScreeningPositions([
+      ...resumes,
+      { id: 'resume-3', candidateName: '候选人丙', position: '产品经理', status: 'pending' as const },
+    ])).toEqual(['产品经理', '运营经理']);
+  });
+
+  it('filters candidates by selected positions and treats an empty selection as all positions', () => {
+    expect(filterBusinessScreeningResumes(resumes, new Set(['产品经理']))).toEqual([resumes[0]]);
+    expect(filterBusinessScreeningResumes(resumes, new Set())).toEqual(resumes);
   });
 
   it('treats 410 links as expired and all other failures as generic errors', () => {
