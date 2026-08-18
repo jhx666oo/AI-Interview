@@ -611,7 +611,6 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
       for (const [positionTitle, scopeResumes] of resumesByPosition) {
         const scopeKey = `${positionTitle}::${group.interviewer.openId}`;
-        const issued = await deps.createScopePublicToken(scopeKey, nowIso);
         const existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
         const itemCreatedAt = deps.now();
         const expiresAt = existing ? existing.expires_at : resolveExpiresAt(nowIso, body.expires_in_days);
@@ -626,6 +625,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         } else {
           batchId = deps.uuid();
         }
+        // 链接由 scope + batchId 确定：有效期内复用同一批次 → 同一链接；过期新建批次 → 新链接
+        const issued = await deps.createScopePublicToken(scopeKey, batchId);
         const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
         const items: CreateResumePushBatchItemInput[] = scopeResumes.map((resume) => ({
           id: deps.uuid(),
@@ -900,23 +901,23 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     let url: string;
     const scopeKey = batch.scope_key?.trim();
     if (scopeKey) {
-      const issued = await deps.createScopePublicToken(scopeKey, nowIso);
-      url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
       const current = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+      const nextBatchId = current ? current.id : deps.uuid();
+      // 链接由 scope + batchId 确定：复用当前批次 → 同一链接；批次过期 → 新建批次新链接
+      const issued = await deps.createScopePublicToken(scopeKey, nextBatchId);
+      url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
       const nextItems = pendingItems.map((item) => ({
         id: deps.uuid(),
-        batchId: current ? current.id : deps.uuid(),
+        batchId: nextBatchId,
         resumeId: item.resume_id,
         positionId: item.position_id,
         createdAt: nowIso,
         dispatchGroupId,
       }));
       if (current) {
-        nextBatchId = current.id;
         await deps.store.appendBatchItemsIfAbsent(db, nextItems);
         await deps.store.resetBatchActive(db, nextBatchId);
       } else {
-        nextBatchId = deps.uuid();
         await deps.store.createBatch(db, {
           id: nextBatchId,
           interviewerId: batch.interviewer_id,
@@ -931,7 +932,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
           batchTitle: text(body.title) || batch.batch_title || null,
           batchSubtitle: text(body.subtitle) || batch.batch_subtitle || null,
           scopeKey,
-        }, nextItems.map((item) => ({ ...item, batchId: nextBatchId })));
+        }, nextItems);
       }
       await deps.store.markResumesPushed(db, pendingItems.map((item) => item.resume_id), nextBatchId, dispatchGroupId);
     } else {
