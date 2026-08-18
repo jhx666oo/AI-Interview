@@ -131,45 +131,58 @@ export async function insertResumePushBatchItemsIfAbsent(
   db: Db,
   items: CreateResumePushBatchItemInput[],
 ): Promise<void> {
-  for (const item of items) {
-    await db.prepare(
-      `INSERT OR IGNORE INTO resume_push_batch_items
-        (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      item.id,
-      item.batchId,
-      item.resumeId,
-      item.positionId || null,
-      item.status || 'pending',
-      item.remark || null,
-      item.processedAt || null,
-      item.createdAt || new Date().toISOString(),
-      item.dispatchGroupId,
-    ).run();
-  }
+  if (items.length === 0) return;
+  const stmts = items.map((item) => db.prepare(
+    `INSERT OR IGNORE INTO resume_push_batch_items
+      (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    item.id,
+    item.batchId,
+    item.resumeId,
+    item.positionId || null,
+    item.status || 'pending',
+    item.remark || null,
+    item.processedAt || null,
+    item.createdAt || new Date().toISOString(),
+    item.dispatchGroupId,
+  ));
+  await runBatch(db, stmts);
 }
 
 export async function insertResumePushBatchItems(
   db: Db,
   items: CreateResumePushBatchItemInput[],
 ): Promise<void> {
-  for (const item of items) {
-    await db.prepare(
-      `INSERT INTO resume_push_batch_items
-        (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      item.id,
-      item.batchId,
-      item.resumeId,
-      item.positionId || null,
-      item.status || 'pending',
-      item.remark || null,
-      item.processedAt || null,
-      item.createdAt || new Date().toISOString(),
-      item.dispatchGroupId,
-    ).run();
+  if (items.length === 0) return;
+  const stmts = items.map((item) => db.prepare(
+    `INSERT INTO resume_push_batch_items
+      (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    item.id,
+    item.batchId,
+    item.resumeId,
+    item.positionId || null,
+    item.status || 'pending',
+    item.remark || null,
+    item.processedAt || null,
+    item.createdAt || new Date().toISOString(),
+    item.dispatchGroupId,
+  ));
+  await runBatch(db, stmts);
+}
+
+/** D1 批量提交（一次往返），不支持 batch 的环境（测试 mock）回退逐条执行 */
+async function runBatch(db: Db, stmts: D1PreparedStatement[]): Promise<void> {
+  if (stmts.length === 0) return;
+  const batchFn = (db as any).batch;
+  if (typeof batchFn === 'function') {
+    await batchFn(stmts);
+    return;
+  }
+  for (const stmt of stmts) {
+    await stmt.run();
   }
 }
 
@@ -180,17 +193,16 @@ export async function markResumesPushed(
   dispatchGroupId: string,
 ): Promise<void> {
   const timestamp = new Date().toISOString();
-  for (const resumeId of resumeIds) {
-    await db.prepare(
-      `UPDATE resumes
-          SET hr_disposition = 'pushed',
-              business_screening_status = 'pending',
-              business_screening_batch_id = ?,
-              business_screening_dispatch_group_id = ?,
-              updated_at = ?
-        WHERE id = ?`,
-    ).bind(batchId, dispatchGroupId, timestamp, resumeId).run();
-  }
+  const stmts = resumeIds.map((resumeId) => db.prepare(
+    `UPDATE resumes
+        SET hr_disposition = 'pushed',
+            business_screening_status = 'pending',
+            business_screening_batch_id = ?,
+            business_screening_dispatch_group_id = ?,
+            updated_at = ?
+      WHERE id = ?`,
+  ).bind(batchId, dispatchGroupId, timestamp, resumeId));
+  await runBatch(db, stmts);
 }
 
 export async function loadResumePushBatchByTokenHash(
