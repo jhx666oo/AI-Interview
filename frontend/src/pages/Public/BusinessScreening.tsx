@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Modal, Tag, Tooltip, message } from 'antd';
+import { Card, Checkbox, Modal, Tag, Tooltip, message } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import {
@@ -22,8 +22,8 @@ import {
 
 const STATUS_LABELS: Record<BusinessScreeningResume['status'], string> = {
   pending: '待处理',
-  passed: '已入库',
-  rejected: '不入库',
+  passed: '已通过',
+  rejected: '已淘汰',
 };
 
 const formatTime = (value?: string) => {
@@ -285,8 +285,11 @@ const BusinessScreeningPage: React.FC = () => {
   const [view, setView] = useState<'ready' | 'expired' | 'error'>('ready');
   const [data, setData] = useState<BusinessScreeningView | null>(null);
   const [activeResumeId, setActiveResumeId] = useState<string | null>(null);
+  // 批量决策选中集：默认全选待处理候选人，可逐项取消（先全选、再取消不需要处理的）
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<'approve' | 'reject' | null>(null);
+  const [batchSubmitting, setBatchSubmitting] = useState<'approve' | 'reject' | null>(null);
   const [actionError, setActionError] = useState<string>('');
   const [downloading, setDownloading] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -306,6 +309,12 @@ const BusinessScreeningPage: React.FC = () => {
       setView('ready');
       setActionError('');
       setActiveResumeId((current) => pickActiveBusinessScreeningResumeId(response.resumes, current));
+      // 批量决策默认全选待处理候选人，用户可再取消个别不需要处理的
+      setSelectedIds(new Set(
+        response.resumes
+          .filter((resume) => resume.status === 'pending')
+          .map((resume) => resume.id),
+      ));
       setRemarks((current) => {
         const next = { ...current };
         response.resumes.forEach((resume) => {
@@ -366,6 +375,73 @@ const BusinessScreeningPage: React.FC = () => {
     () => data?.resumes.find((resume) => resume.id === activeResumeId) || null,
     [activeResumeId, data],
   );
+
+  // 批量决策选择模型：待处理候选人集合 + 已选中数量 + 全选状态
+  const pendingResumes = useMemo(
+    () => (data?.resumes || []).filter((resume) => resume.status === 'pending'),
+    [data],
+  );
+  const pendingCount = pendingResumes.length;
+  const selectedCount = useMemo(
+    () => pendingResumes.filter((resume) => selectedIds.has(resume.id)).length,
+    [pendingResumes, selectedIds],
+  );
+  const allSelected = pendingCount > 0 && selectedCount === pendingCount;
+
+  const toggleSelect = (resumeId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(resumeId)) next.delete(resumeId);
+      else next.add(resumeId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(pendingResumes.map((resume) => resume.id)));
+  };
+
+  // 批量决策：只处理当前选中的待处理候选人（先全选、再取消不需要处理的），二次确认后执行并刷新
+  const handleBatchDecision = async (action: 'approve' | 'reject') => {
+    if (!token || !data?.resumes?.length) return;
+    if (selectedCount === 0) {
+      message.info('请先勾选要处理的候选人');
+      return;
+    }
+    const actionLabel = action === 'approve' ? '通过' : '淘汰';
+    const targetIds = [...selectedIds].filter((id) => pendingResumes.some((resume) => resume.id === id));
+    Modal.confirm({
+      title: `批量${actionLabel}`,
+      content: `确认将选中的 ${selectedCount} 份待处理候选人全部${actionLabel}吗？此操作会同时提交筛选备注为空的记录。`,
+      okText: `全部${actionLabel}`,
+      cancelText: '取消',
+      okButtonProps: { danger: action === 'reject' },
+      onOk: async () => {
+        setBatchSubmitting(action);
+        try {
+          const result = await request.post(`/public/business-screening/${token}/batch/${action}`, { resumeIds: targetIds }) as {
+            applied?: number;
+            skipped?: number;
+            failed?: number;
+          };
+          await fetchData();
+          const applied = result.applied ?? 0;
+          const failed = result.failed ?? 0;
+          if (applied > 0) {
+            message.success(`已批量${actionLabel} ${applied} 份候选人${failed ? `，${failed} 份处理失败` : ''}`);
+          } else if (failed > 0) {
+            message.error(`批量${actionLabel}失败 ${failed} 份，请稍后重试`);
+          } else {
+            message.info('没有可处理的候选人');
+          }
+        } catch (error: any) {
+          message.error(mapBusinessScreeningDecisionError(error));
+        } finally {
+          setBatchSubmitting(null);
+        }
+      },
+    });
+  };
 
   const handleDecision = async (action: 'approve' | 'reject') => {
     if (!token || !activeResume) return;
@@ -454,7 +530,7 @@ const BusinessScreeningPage: React.FC = () => {
         <div style={{ ...cardStyle, padding: 12, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
           <div style={{ marginBottom: 10, flexShrink: 0 }}>
             <h1 style={{ margin: 0, fontSize: 20 }}>{data?.batch.title || '业务筛选'}</h1>
-            <p style={{ margin: '3px 0 6px', color: '#64748b', fontSize: 12.5 }}>{data?.batch.subtitle || '请查看候选人信息并完成入库 / 不入库决策。'}</p>
+            <p style={{ margin: '3px 0 6px', color: '#64748b', fontSize: 12.5 }}>{data?.batch.subtitle || '请查看候选人信息并完成通过 / 淘汰决策。'}</p>
             <div className="business-screening-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <span className="business-screening-meta-pill" style={{ borderRadius: 999, background: '#eff6ff', color: '#1d4ed8', padding: '3px 9px', fontSize: 12.5 }}>
                 {data?.batch.interviewer || '待分配'}
@@ -482,6 +558,40 @@ const BusinessScreeningPage: React.FC = () => {
               >
                 {downloading ? '下载中...' : `批量下载简历源文件（${data?.resumes.length || 0}）`}
               </button>
+              <button
+                type="button"
+                onClick={() => handleBatchDecision('approve')}
+                disabled={batchSubmitting !== null || submitting !== null || selectedCount === 0}
+                style={{
+                  borderRadius: 999,
+                  border: '1px solid #bbf7d0',
+                  background: batchSubmitting === 'approve' ? '#dcfce7' : '#f0fdf4',
+                  color: '#15803d',
+                  padding: '3px 10px',
+                  fontSize: 12.5,
+                  cursor: batchSubmitting !== null || submitting !== null || selectedCount === 0 ? 'default' : 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                {batchSubmitting === 'approve' ? '处理中...' : `批量通过（${selectedCount}）`}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBatchDecision('reject')}
+                disabled={batchSubmitting !== null || submitting !== null || selectedCount === 0}
+                style={{
+                  borderRadius: 999,
+                  border: '1px solid #fecaca',
+                  background: batchSubmitting === 'reject' ? '#ffe4e6' : '#fff1f2',
+                  color: '#b91c1c',
+                  padding: '3px 10px',
+                  fontSize: 12.5,
+                  cursor: batchSubmitting !== null || submitting !== null || selectedCount === 0 ? 'default' : 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                {batchSubmitting === 'reject' ? '处理中...' : `批量淘汰（${selectedCount}）`}
+              </button>
             </div>
           </div>
 
@@ -490,44 +600,70 @@ const BusinessScreeningPage: React.FC = () => {
               className="business-screening-grid"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'minmax(0, 200px) minmax(0, 1fr)',
-                gap: 16,
+                gridTemplateColumns: 'minmax(0, 236px) minmax(0, 1fr)',
+                gap: 12,
                 flex: 1,
                 minHeight: 0,
                 overflow: 'hidden',
               }}
             >
               <section className="business-screening-candidates" style={{ ...cardStyle, padding: 6, minWidth: 0, overflowY: 'auto' }}>
-                <h2 style={{ margin: '2px 4px 8px', fontSize: 14 }}>候选人列表</h2>
+                <div className="business-screening-candidate-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '2px 4px 8px', gap: 8 }}>
+                  <h2 style={{ margin: 0, fontSize: 13, flexShrink: 0 }}>候选人列表</h2>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#475569', cursor: pendingCount ? 'pointer' : 'default', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    <Checkbox
+                      checked={allSelected}
+                      indeterminate={pendingCount > 0 && selectedCount > 0 && !allSelected}
+                      disabled={pendingCount === 0}
+                      onChange={toggleSelectAll}
+                    />
+                    全选{pendingCount ? `（已选 ${selectedCount}/${pendingCount}）` : ''}
+                  </label>
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {data.resumes.map((resume) => {
                     const selected = resume.id === activeResumeId;
+                    const selectable = resume.status === 'pending';
                     return (
-                      <button
+                      <div
                         key={resume.id}
-                        type="button"
                         onClick={() => setActiveResumeId(resume.id)}
                         className="business-screening-candidate"
                         style={{
+                          display: 'flex',
+                          gap: 5,
+                          alignItems: 'flex-start',
                           textAlign: 'left',
                           border: selected ? '1px solid #2563eb' : '1px solid #e2e8f0',
                           background: selected ? '#eff6ff' : '#fff',
-                          borderRadius: 14,
-                          padding: 8,
+                          borderRadius: 10,
+                          padding: 6,
                           cursor: 'pointer',
                         }}
                       >
-                        <div className="business-screening-candidate-summary" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
-                          <strong>{resume.candidateName}</strong>
-                          <span style={{ color: resume.status === 'passed' ? '#15803d' : resume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontSize: 13 }}>
-                            {STATUS_LABELS[resume.status]}
-                          </span>
+                        <Checkbox
+                          checked={selectedIds.has(resume.id)}
+                          disabled={!selectable}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={() => toggleSelect(resume.id)}
+                          aria-label={`选择 ${resume.candidateName}`}
+                          style={{ marginTop: 1, flexShrink: 0 }}
+                        />
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div className="business-screening-candidate-summary" style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                            <strong style={{ fontSize: 13, fontWeight: 600, minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {resume.candidateName}
+                            </strong>
+                            <span style={{ flexShrink: 0, color: resume.status === 'passed' ? '#15803d' : resume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontSize: 12 }}>
+                              {STATUS_LABELS[resume.status]}
+                            </span>
+                          </div>
+                          <div className="business-screening-position" style={{ marginTop: 4, color: '#475569', fontSize: 12, overflowWrap: 'anywhere' }}>{resume.position}</div>
+                          {resume.remark ? (
+                            <div style={{ marginTop: 4, color: '#64748b', fontSize: 12 }}>{resume.remark}</div>
+                          ) : null}
                         </div>
-                        <div className="business-screening-position" style={{ marginTop: 6, color: '#475569', overflowWrap: 'anywhere' }}>{resume.position}</div>
-                        {resume.remark ? (
-                          <div style={{ marginTop: 6, color: '#64748b', fontSize: 13 }}>{resume.remark}</div>
-                        ) : null}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -619,7 +755,7 @@ const BusinessScreeningPage: React.FC = () => {
                           ...current,
                           [activeResume.id]: event.target.value,
                         }))}
-                        placeholder="可选：补充入库建议或不入库原因"
+                        placeholder="可选：补充通过建议或淘汰原因"
                         style={{
                           width: '100%',
                           resize: 'vertical',
@@ -653,7 +789,7 @@ const BusinessScreeningPage: React.FC = () => {
                           opacity: submitting !== null ? 0.7 : 1,
                         }}
                       >
-                        {submitting === 'approve' ? '提交中...' : '入库'}
+                        {submitting === 'approve' ? '提交中...' : '通过'}
                       </button>
                       <button
                         type="button"
@@ -670,7 +806,7 @@ const BusinessScreeningPage: React.FC = () => {
                           opacity: submitting !== null ? 0.7 : 1,
                         }}
                       >
-                        {submitting === 'reject' ? '提交中...' : '不入库'}
+                        {submitting === 'reject' ? '提交中...' : '淘汰'}
                       </button>
                     </div>
                   </>

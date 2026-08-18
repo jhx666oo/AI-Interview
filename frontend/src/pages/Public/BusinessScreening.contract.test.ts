@@ -40,6 +40,29 @@ describe('public business screening page contract', () => {
 
   it('renders the dynamic page title/subtitle from the batch with fallbacks', () => {
     expect(source).toContain('{data?.batch.title || \'业务筛选\'}');
-    expect(source).toContain('{data?.batch.subtitle || \'请查看候选人信息并完成入库 / 不入库决策。\'}');
+    expect(source).toContain('{data?.batch.subtitle || \'请查看候选人信息并完成通过 / 淘汰决策。\'}');
+  });
+
+  it('labels single decisions as 通过/淘汰 and exposes batch approve/reject actions', () => {
+    expect(source).toContain("passed: '已通过'");
+    expect(source).toContain("rejected: '已淘汰'");
+    expect(source).toContain("{submitting === 'approve' ? '提交中...' : '通过'}");
+    expect(source).toContain("{submitting === 'reject' ? '提交中...' : '淘汰'}");
+    expect(source).toContain('批量通过');
+    expect(source).toContain('批量淘汰');
+    expect(source).toContain('`/public/business-screening/${token}/batch/${action}`');
+    expect(source).toContain('placeholder="可选：补充通过建议或淘汰原因"');
+  });
+
+  it('supports the select-all then deselect batch flow with per-candidate checkboxes', () => {
+    expect(source).toContain('全选');
+    expect(source).toContain('已选');
+    expect(source).toContain('toggleSelectAll');
+    expect(source).toContain('toggleSelect(resume.id)');
+    expect(source).toContain('setSelectedIds(new Set(');
+    expect(source).toContain('{ resumeIds: targetIds }');
+    expect(source).toContain('checked={selectedIds.has(resume.id)}');
+    expect(source).toContain('disabled={!selectable}');
+    expect(source).toContain('请先勾选要处理的候选人');
   });
 });

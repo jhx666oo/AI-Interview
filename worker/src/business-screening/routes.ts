@@ -872,6 +872,79 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     handlePublicDecision(c, 'rejected')
   ));
 
+  /**
+   * 批量决策：对选中（默认全部）的待处理候选人一次性通过/淘汰。
+   * 请求体可携带 resumeIds 精确指定目标候选人（全选后取消个别候选人的交互链路）；
+   * 未传或为空数组时回退为处理全部待处理候选人。
+   * 逐项复用 recordDecision（幂等/冲突语义与单条一致），
+   * 处理完后若批次无待处理项则自动置为 completed。
+   */
+  async function handleBatchDecision(
+    c: any,
+    status: 'passed' | 'rejected',
+  ) {
+    const tokenHash = await hashPublicToken(c.req.param('token'));
+    const db = c.env.DB as D1Database;
+    const batch = await deps.store.loadBatchByTokenHash(db, tokenHash);
+    if (!batch) return c.json({ detail: 'Not found' }, 404);
+
+    const access = isBatchAccessible(batch, deps.now());
+    if (!access.ok) {
+      if (access.nextStatus) await deps.store.setBatchStatus(db, batch.id, access.nextStatus);
+      return c.json({ detail: 'Link unavailable' }, access.status);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const remark = text(body?.remark) || null;
+    const requestedIds = Array.isArray(body?.resumeIds)
+      ? uniqueStrings(body.resumeIds)
+      : null;
+    const items = await deps.store.listBatchItems(db, batch.id);
+    const pendingItems = items.filter((item) => item.status === 'pending');
+    const targets = requestedIds
+      ? pendingItems.filter((item) => requestedIds.includes(item.resume_id))
+      : pendingItems;
+
+    let applied = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const item of targets) {
+      const result = await deps.store.recordDecision(db, {
+        batchItemId: item.id,
+        resumeId: item.resume_id,
+        batchId: batch.id,
+        status,
+        remark,
+        screenedAt: deps.now(),
+        screenedBy: batch.interviewer_name,
+      });
+      if (result.applied) applied += 1;
+      else if (result.idempotent) skipped += 1;
+      else failed += 1;
+    }
+
+    const pendingCount = await deps.store.countPendingBatchItems(db, batch.id);
+    if (pendingCount === 0) {
+      await deps.store.setBatchStatus(db, batch.id, 'completed');
+    }
+
+    return c.json({
+      ok: true,
+      status,
+      applied,
+      skipped,
+      failed,
+      pending: targets.length,
+    });
+  }
+
+  app.post('/api/public/business-screening/:token/batch/approve', async (c) => (
+    handleBatchDecision(c, 'passed')
+  ));
+  app.post('/api/public/business-screening/:token/batch/reject', async (c) => (
+    handleBatchDecision(c, 'rejected')
+  ));
+
   // 免登录下载批次内某份简历的源文件（PDF）：校验公开 token 有效 + 简历属于该批次
   app.get('/api/public/business-screening/:token/resumes/:resumeId/file', async (c) => {
     const tokenHash = await hashPublicToken(c.req.param('token'));
