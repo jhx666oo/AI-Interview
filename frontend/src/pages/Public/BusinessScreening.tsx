@@ -40,7 +40,8 @@ const formatTime = (value?: string) => {
 };
 
 const shellStyle: React.CSSProperties = {
-  minHeight: '100vh',
+  height: '100vh',
+  overflow: 'hidden',
   background: '#f8fafc',
   padding: '16px',
 };
@@ -449,9 +450,9 @@ const BusinessScreeningPage: React.FC = () => {
 
   return (
     <div className="business-screening-page" style={shellStyle}>
-      <div className="business-screening-container" style={{ maxWidth: 1160, margin: '0 auto' }}>
-        <div style={{ ...cardStyle, padding: 20 }}>
-          <div style={{ marginBottom: 20 }}>
+      <div className="business-screening-container" style={{ maxWidth: 1160, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...cardStyle, padding: 20, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ marginBottom: 20, flexShrink: 0 }}>
             <h1 style={{ margin: 0, fontSize: 32 }}>{data?.batch.title || '业务筛选'}</h1>
             <p style={{ margin: '8px 0 12px', color: '#64748b' }}>{data?.batch.subtitle || '请查看候选人信息并完成入库 / 不入库决策。'}</p>
             <div className="business-screening-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -491,9 +492,12 @@ const BusinessScreeningPage: React.FC = () => {
                 display: 'grid',
                 gridTemplateColumns: 'minmax(0, 360px) minmax(0, 1fr)',
                 gap: 16,
+                flex: 1,
+                minHeight: 0,
+                overflow: 'hidden',
               }}
             >
-              <section className="business-screening-candidates" style={{ ...cardStyle, padding: 12, minWidth: 0 }}>
+              <section className="business-screening-candidates" style={{ ...cardStyle, padding: 12, minWidth: 0, overflowY: 'auto' }}>
                 <h2 style={{ margin: '4px 4px 12px', fontSize: 18 }}>候选人列表</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {data.resumes.map((resume) => {
@@ -529,7 +533,7 @@ const BusinessScreeningPage: React.FC = () => {
                 </div>
               </section>
 
-              <section className="business-screening-detail" style={{ ...cardStyle, padding: 20, minWidth: 0 }}>
+              <section className="business-screening-detail" style={{ ...cardStyle, padding: 20, minWidth: 0, overflowY: 'auto' }}>
                 {activeResume ? (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -683,8 +687,31 @@ const BusinessScreeningPage: React.FC = () => {
         }
 
         @media (max-width: 1024px) {
+          .business-screening-page {
+            height: auto !important;
+            min-height: 100vh;
+            overflow: auto !important;
+          }
+
+          .business-screening-container {
+            height: auto !important;
+          }
+
+          .business-screening-container > div {
+            height: auto !important;
+            overflow: visible !important;
+          }
+
           .business-screening-grid {
             grid-template-columns: 1fr !important;
+            overflow: visible !important;
+            flex: none !important;
+          }
+
+          .business-screening-candidates,
+          .business-screening-detail {
+            overflow: visible !important;
+            max-height: none !important;
           }
         }
 
