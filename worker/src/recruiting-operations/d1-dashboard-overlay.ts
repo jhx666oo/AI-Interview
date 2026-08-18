@@ -119,6 +119,7 @@ function createD1Position(
     position_id: `d1:${position.id}`,
     department: String(position.department || '未分配事业部'),
     position_name: position.title,
+    position_type: position.title,
     display_name: city ? `${position.title}-${city}` : position.title,
     city,
     hrbps: position.responsible_person ? [position.responsible_person] : ['未分配'],

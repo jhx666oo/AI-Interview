@@ -43,6 +43,7 @@ import type {
   RecruitingBoard,
 } from './types';
 import { filterDashboardV3Board, type DashboardV3Board } from './v3-types';
+import { buildMiaodaExportRows, MIAODA_EXPORT_COLUMN_WIDTHS } from './exportDashboardExcel';
 import styles from './dashboard.module.css';
 import { createDashboardV3Snapshot, fetchDashboardLegacy, fetchDashboardV3, syncDashboardV3, type DashboardV3Source } from './api';
 
@@ -393,6 +394,14 @@ const Dashboard: React.FC = () => {
 
 
   const handleExportExcel = () => {
+    if (filteredBoardV3) {
+      const rows = buildMiaodaExportRows(filteredBoardV3);
+      if (rows.length === 0) { message.warning("暂无数据可导出"); return; }
+      const periodEnd = filteredBoardV3.snapshot_date || filteredBoardV3.updated_at.slice(0, 10);
+      downloadExcel(rows, `招聘看板数据_最新_${periodEnd}`, '招聘数据', MIAODA_EXPORT_COLUMN_WIDTHS);
+      message.success("导出成功");
+      return;
+    }
     if (!board) return;
     const now = new Date();
     const periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);

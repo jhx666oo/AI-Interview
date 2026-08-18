@@ -10,6 +10,7 @@ export interface FeishuPositionMetric {
   feishu_record_id: string;
   department: string;
   position_name: string;
+  position_type?: string;
   display_name: string;
   city: string;
   hrbps: string[];
@@ -30,6 +31,7 @@ export interface FeishuPositionMetric {
 
 const FIELD_NAMES = {
   position_name: ['岗位名称'],
+  position_type: ['岗位类型', '职位类型', '岗位类别'],
   city: ['城市'],
   department: ['所属部门', '所属事业部', '事业部'],
   hrbps: ['负责HRBP', '负责 HRBP', 'HRBP', '负责'],
@@ -134,12 +136,14 @@ export function normalizeFeishuPositionRecord(record: FeishuBoardSourceRecord): 
   const status = text(rawField(fields, FIELD_NAMES.status));
   const notes = text(rawField(fields, FIELD_NAMES.notes));
   const department = normalizeDepartment(text(rawField(fields, FIELD_NAMES.department)));
+  const positionType = text(rawField(fields, FIELD_NAMES.position_type)) || positionName;
   const thirdPass = nullableNumber(rawField(fields, FIELD_NAMES.third_pass));
 
   return {
     feishu_record_id: record.record_id,
     department,
     position_name: positionName,
+    position_type: positionType,
     display_name: city ? `${positionName}-${city}` : positionName,
     city,
     hrbps: names(rawField(fields, FIELD_NAMES.hrbps)).length > 0 ? names(rawField(fields, FIELD_NAMES.hrbps)) : ['未分配'],

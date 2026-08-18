@@ -41,6 +41,7 @@ function mergePosition(source: FeishuPositionMetric, overlay: D1DashboardOverlay
     position_id: source.feishu_record_id,
     department: source.department,
     position_name: source.position_name,
+    position_type: source.position_type || source.position_name,
     display_name: source.display_name,
     city: source.city,
     hrbps: source.hrbps,

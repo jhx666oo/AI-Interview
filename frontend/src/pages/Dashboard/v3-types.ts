@@ -5,6 +5,7 @@ export interface DashboardV3Position {
   position_id: string;
   department: string;
   position_name: string;
+  position_type?: string;
   display_name: string;
   city: string;
   hrbps: string[];
