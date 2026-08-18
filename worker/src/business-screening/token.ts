@@ -25,7 +25,7 @@ export async function createPublicToken(): Promise<{ token: string; tokenHash: s
   };
 }
 
-// 固定业务范围链接：同一 scope（岗位+面试官）的批次在 30 天有效期内复用同一个 batchId，
+// 固定业务范围链接：同一面试官 scope 的批次在 30 天有效期内复用同一个 batchId，
 // token = SHA-256(scopeKey + '::' + batchId)，因此有效期内链接恒定唯一；
 // 批次过期后新建批次（新 batchId）→ 生成新链接（新 30 天周期）。
 export async function createScopePublicToken(

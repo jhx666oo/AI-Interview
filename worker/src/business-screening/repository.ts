@@ -131,45 +131,52 @@ export async function insertResumePushBatchItemsIfAbsent(
   db: Db,
   items: CreateResumePushBatchItemInput[],
 ): Promise<void> {
-  for (const item of items) {
-    await db.prepare(
-      `INSERT OR IGNORE INTO resume_push_batch_items
-        (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      item.id,
-      item.batchId,
-      item.resumeId,
-      item.positionId || null,
-      item.status || 'pending',
-      item.remark || null,
-      item.processedAt || null,
-      item.createdAt || new Date().toISOString(),
-      item.dispatchGroupId,
-    ).run();
-  }
+  if (items.length === 0) return;
+  const stmts = items.map((item) => db.prepare(
+    `INSERT OR IGNORE INTO resume_push_batch_items
+      (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    item.id,
+    item.batchId,
+    item.resumeId,
+    item.positionId || null,
+    item.status || 'pending',
+    item.remark || null,
+    item.processedAt || null,
+    item.createdAt || new Date().toISOString(),
+    item.dispatchGroupId,
+  ));
+  await runBatch(db, stmts);
 }
 
 export async function insertResumePushBatchItems(
   db: Db,
   items: CreateResumePushBatchItemInput[],
 ): Promise<void> {
-  for (const item of items) {
-    await db.prepare(
-      `INSERT INTO resume_push_batch_items
-        (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      item.id,
-      item.batchId,
-      item.resumeId,
-      item.positionId || null,
-      item.status || 'pending',
-      item.remark || null,
-      item.processedAt || null,
-      item.createdAt || new Date().toISOString(),
-      item.dispatchGroupId,
-    ).run();
+  if (items.length === 0) return;
+  const stmts = items.map((item) => db.prepare(
+    `INSERT INTO resume_push_batch_items
+      (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    item.id,
+    item.batchId,
+    item.resumeId,
+    item.positionId || null,
+    item.status || 'pending',
+    item.remark || null,
+    item.processedAt || null,
+    item.createdAt || new Date().toISOString(),
+    item.dispatchGroupId,
+  ));
+  await runBatch(db, stmts);
+}
+
+/** 批量执行：逐条提交（线上 D1 batch 在 Pages Functions 环境有兼容问题，暂不用 batch） */
+async function runBatch(db: Db, stmts: D1PreparedStatement[]): Promise<void> {
+  for (const stmt of stmts) {
+    await stmt.run();
   }
 }
 
@@ -180,17 +187,16 @@ export async function markResumesPushed(
   dispatchGroupId: string,
 ): Promise<void> {
   const timestamp = new Date().toISOString();
-  for (const resumeId of resumeIds) {
-    await db.prepare(
-      `UPDATE resumes
-          SET hr_disposition = 'pushed',
-              business_screening_status = 'pending',
-              business_screening_batch_id = ?,
-              business_screening_dispatch_group_id = ?,
-              updated_at = ?
-        WHERE id = ?`,
-    ).bind(batchId, dispatchGroupId, timestamp, resumeId).run();
-  }
+  const stmts = resumeIds.map((resumeId) => db.prepare(
+    `UPDATE resumes
+        SET hr_disposition = 'pushed',
+            business_screening_status = 'pending',
+            business_screening_batch_id = ?,
+            business_screening_dispatch_group_id = ?,
+            updated_at = ?
+      WHERE id = ?`,
+  ).bind(batchId, dispatchGroupId, timestamp, resumeId));
+  await runBatch(db, stmts);
 }
 
 export async function loadResumePushBatchByTokenHash(
@@ -204,6 +210,35 @@ export async function loadResumePushBatchByTokenHash(
       ORDER BY created_at DESC
       LIMIT 1`,
   ).bind(tokenHash).first<ResumePushBatchRow>();
+}
+
+export async function loadLatestResumePushBatchByInterviewer(
+  db: Db,
+  interviewerOpenId: string,
+): Promise<ResumePushBatchRow | null> {
+  return await db.prepare(
+    `SELECT id, interviewer_id, interviewer_name, interviewer_open_id, token_hash, expires_at, status, created_by, created_at, last_sent_at, dispatch_group_id, batch_title, batch_subtitle, scope_key
+       FROM resume_push_batches
+      WHERE interviewer_open_id = ?
+        AND scope_key IS NOT NULL
+        AND status IN ('active', 'completed', 'expired')
+      ORDER BY created_at DESC
+      LIMIT 1`,
+  ).bind(interviewerOpenId).first<ResumePushBatchRow>();
+}
+
+export async function refreshResumePushBatchExpiry(
+  db: Db,
+  batchId: string,
+  expiresAt: string | null,
+): Promise<void> {
+  await db.prepare(
+    `UPDATE resume_push_batches
+        SET expires_at = ?,
+            status = CASE WHEN status = 'expired' THEN 'active' ELSE status END
+      WHERE id = ?
+        AND status != 'revoked'`,
+  ).bind(expiresAt, batchId).run();
 }
 
 export async function revokeActiveBusinessScreeningBatchesForResume(

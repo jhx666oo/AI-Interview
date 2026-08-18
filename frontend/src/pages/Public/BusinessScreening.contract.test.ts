@@ -27,6 +27,14 @@ describe('public business screening page contract', () => {
     expect(source).toContain('候选人列表');
   });
 
+  it('renders a multi-position filter for a unified interviewer workbench', () => {
+    expect(source).toContain('business-screening-position-filter');
+    expect(source).toContain('岗位筛选');
+    expect(source).toContain('togglePosition');
+    expect(source).toContain('待处理 {counts.pending} / 共 {counts.total}');
+    expect(source).toContain('filterBusinessScreeningResumes');
+  });
+
   it('renders the structured candidate profile (parsed_data fields, no source file)', () => {
     expect(source).toContain('ProfileDescriptions');
     expect(source).toContain('候选人档案');
@@ -52,5 +60,17 @@ describe('public business screening page contract', () => {
     expect(source).toContain('批量淘汰');
     expect(source).toContain('`/public/business-screening/${token}/batch/${action}`');
     expect(source).toContain('placeholder="可选：补充通过建议或淘汰原因"');
+  });
+
+  it('supports the select-all then deselect batch flow with per-candidate checkboxes', () => {
+    expect(source).toContain('全选');
+    expect(source).toContain('已选');
+    expect(source).toContain('toggleSelectAll');
+    expect(source).toContain('toggleSelect(resume.id)');
+    expect(source).toContain('setSelectedIds(new Set(');
+    expect(source).toContain('{ resumeIds: targetIds }');
+    expect(source).toContain('checked={selectedIds.has(resume.id)}');
+    expect(source).toContain('disabled={!selectable}');
+    expect(source).toContain('请先勾选要处理的候选人');
   });
 });
