@@ -40,7 +40,7 @@ import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-not
 import { ensureBusinessScreeningSchema } from './business-screening/repository';
 import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from './business-screening/routes';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './business-screening/token';
-import { createInterviewCardRoutes } from './interview-card/routes';
+import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
 import {
@@ -13257,6 +13257,23 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
     const resumeFile = resumeId
       ? await getResumeFileBytes(c.env, resumeId)
       : { bytes: null, fileName: 'resume.pdf' };
+
+    // 生成面试管理卡片链接（汇总候选人档案 + 各轮面试情况），失败不阻塞提醒主流程
+    let cardLinkUrl: string | null = null;
+    try {
+      const cardLink = await createOrReuseInterviewCardLink(c.env.DB, {
+        resumeId,
+        candidateName: typeof source.interview?.candidate_name === 'string' ? source.interview.candidate_name : undefined,
+        positionApplied: typeof source.interview?.position_applied === 'string'
+          ? source.interview.position_applied
+          : (typeof source.resume?.position_applied === 'string' ? source.resume.position_applied : undefined),
+        createdBy: currentUser?.full_name || currentUser?.email || '',
+      }, { now, uuid, hashPublicToken });
+      cardLinkUrl = `https://ai-interview-88r.pages.dev${cardLink.url}`;
+    } catch (cardError: any) {
+      console.error(`[InterviewNotify] 面试卡片链接生成失败（不影响提醒）: ${cardError?.message || cardError}`);
+    }
+
     const delivery = await deliverInterviewReminder({
       userToken,
       resourceToken,
@@ -13264,6 +13281,7 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       view: buildInterviewReminderView(source),
       operatorName: currentUser?.full_name || currentUser?.email || '',
       file: resumeFile.bytes ? { bytes: resumeFile.bytes, fileName: resumeFile.fileName } : undefined,
+      cardLink: cardLinkUrl,
     }, {
       fetch,
       refreshUserToken: async () => {
@@ -13291,6 +13309,7 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       card_sent: delivery.cardSent,
       file_sent: delivery.fileSent,
       sent_as: currentUser.email || '',
+      card_link: cardLinkUrl,
       warning: delivery.warning || (resumeFile.bytes ? null : '未找到可发送的简历 PDF'),
     });
   } catch (err: any) {

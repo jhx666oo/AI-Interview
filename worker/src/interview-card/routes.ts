@@ -126,32 +126,114 @@ export async function deriveInterviewCardToken(cardId: string): Promise<string> 
   return `${TOKEN_PREFIX}${base64Url.slice(0, 28)}`;
 }
 
+export interface InterviewCardCreateInput {
+  resumeId?: string;
+  candidateName?: string;
+  positionApplied?: string;
+  createdBy?: string;
+}
+
+export interface InterviewCardCreateResult {
+  id: string;
+  token: string;
+  url: string;
+  expires_at: string;
+  status: 'active';
+  reused: boolean;
+}
+
+/**
+ * 生成或复用某候选人的面试卡片链接（服务层，路由与面试提醒推送共用）。
+ * 同一候选人已有链接时复用同一条记录并顺延 7 天（URL 由 id 确定性派生，保持稳定）；
+ * 无则新建。resume_id 与 candidate_name 至少提供其一。
+ */
+export async function createOrReuseInterviewCardLink(
+  db: D1Database,
+  input: InterviewCardCreateInput,
+  deps: { now: () => string; uuid: () => string; hashPublicToken: (token: string) => Promise<string> },
+): Promise<InterviewCardCreateResult> {
+  const resumeId = text(input.resumeId);
+  const candidateName = text(input.candidateName);
+  const positionApplied = text(input.positionApplied);
+  if (!resumeId && !candidateName) {
+    throw new Error('resume_id 或 candidate_name 至少提供一个');
+  }
+
+  const nowIso = deps.now();
+  const expiresAt = addDays(nowIso, LINK_TTL_DAYS);
+
+  const existing = await findLinkByIdentifier(db, { resumeId, candidateName, positionApplied });
+  if (existing) {
+    await db.prepare(
+      `UPDATE ${CARD_TABLE} SET status = 'active', expires_at = ?, updated_at = ? WHERE id = ?`,
+    ).bind(expiresAt, nowIso, existing.id).run();
+    const token = await deriveInterviewCardToken(existing.id);
+    return {
+      id: existing.id,
+      token,
+      url: `/interview-card/${token}`,
+      expires_at: expiresAt,
+      status: 'active',
+      reused: true,
+    };
+  }
+
+  const id = deps.uuid();
+  const token = await deriveInterviewCardToken(id);
+  const tokenHash = await deps.hashPublicToken(token);
+  await db.prepare(
+    `INSERT INTO ${CARD_TABLE} (id, resume_id, candidate_name, position_applied, token_hash, status, expires_at, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+  ).bind(
+    id,
+    resumeId || null,
+    candidateName || null,
+    positionApplied || null,
+    tokenHash,
+    expiresAt,
+    input.createdBy || '',
+    nowIso,
+    nowIso,
+  ).run();
+
+  return {
+    id,
+    token,
+    url: `/interview-card/${token}`,
+    expires_at: expiresAt,
+    status: 'active',
+    reused: false,
+  };
+}
+
+const CARD_TABLE = 'interview_card_links';
+
+async function findLinkByIdentifier(
+  db: D1Database,
+  identifier: { resumeId?: string; candidateName?: string; positionApplied?: string },
+): Promise<InterviewCardLinkRow | null> {
+  if (text(identifier.resumeId)) {
+    return (await db.prepare(
+      `SELECT * FROM ${CARD_TABLE} WHERE resume_id = ? ORDER BY created_at DESC LIMIT 1`,
+    ).bind(identifier.resumeId).first()) as InterviewCardLinkRow | null;
+  }
+  const name = text(identifier.candidateName);
+  if (!name) return null;
+  const position = text(identifier.positionApplied);
+  if (position) {
+    return (await db.prepare(
+      `SELECT * FROM ${CARD_TABLE} WHERE candidate_name = ? AND position_applied = ? ORDER BY created_at DESC LIMIT 1`,
+    ).bind(name, position).first()) as InterviewCardLinkRow | null;
+  }
+  return (await db.prepare(
+    `SELECT * FROM ${CARD_TABLE} WHERE candidate_name = ? ORDER BY created_at DESC LIMIT 1`,
+  ).bind(name).first()) as InterviewCardLinkRow | null;
+}
+
 export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
   const app = new Hono();
 
-  const cardTable = 'interview_card_links';
-
-  async function findLinkByIdentifier(
-    db: D1Database,
-    identifier: { resumeId?: string; candidateName?: string; positionApplied?: string },
-  ): Promise<InterviewCardLinkRow | null> {
-    if (text(identifier.resumeId)) {
-      return (await db.prepare(
-        `SELECT * FROM ${cardTable} WHERE resume_id = ? ORDER BY created_at DESC LIMIT 1`,
-      ).bind(identifier.resumeId).first()) as InterviewCardLinkRow | null;
-    }
-    const name = text(identifier.candidateName);
-    if (!name) return null;
-    const position = text(identifier.positionApplied);
-    if (position) {
-      return (await db.prepare(
-        `SELECT * FROM ${cardTable} WHERE candidate_name = ? AND position_applied = ? ORDER BY created_at DESC LIMIT 1`,
-      ).bind(name, position).first()) as InterviewCardLinkRow | null;
-    }
-    return (await db.prepare(
-      `SELECT * FROM ${cardTable} WHERE candidate_name = ? ORDER BY created_at DESC LIMIT 1`,
-    ).bind(name).first()) as InterviewCardLinkRow | null;
-  }
+  const cardTable = CARD_TABLE;
 
   // ==================== 生成 / 复用面试卡片链接（登录态） ====================
   // body: { resume_id?, candidate_name?, position_applied? }
@@ -167,52 +249,17 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
       return c.json({ detail: 'resume_id 或 candidate_name 至少提供一个' }, 400);
     }
 
-    const db = c.env.DB as D1Database;
-    const nowIso = deps.now();
-    const expiresAt = addDays(nowIso, LINK_TTL_DAYS);
-
-    const existing = await findLinkByIdentifier(db, { resumeId, candidateName, positionApplied });
-    if (existing) {
-      await db.prepare(
-        `UPDATE ${cardTable} SET status = 'active', expires_at = ?, updated_at = ? WHERE id = ?`,
-      ).bind(expiresAt, nowIso, existing.id).run();
-      const token = await deriveInterviewCardToken(existing.id);
-      return c.json({
-        id: existing.id,
-        token,
-        url: `/interview-card/${token}`,
-        expires_at: expiresAt,
-        status: 'active',
-        reused: true,
-      });
+    try {
+      const result = await createOrReuseInterviewCardLink(c.env.DB as D1Database, {
+        resumeId,
+        candidateName,
+        positionApplied,
+        createdBy: (c.get('user') as any)?.full_name || (c.get('user') as any)?.email || '',
+      }, deps);
+      return c.json(result);
+    } catch (e: any) {
+      return c.json({ detail: e?.message || '生成失败' }, 400);
     }
-
-    const id = deps.uuid();
-    const token = await deriveInterviewCardToken(id);
-    const tokenHash = await deps.hashPublicToken(token);
-    await db.prepare(
-      `INSERT INTO ${cardTable} (id, resume_id, candidate_name, position_applied, token_hash, status, expires_at, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-    ).bind(
-      id,
-      resumeId || null,
-      candidateName || null,
-      positionApplied || null,
-      tokenHash,
-      expiresAt,
-      (c.get('user') as any)?.full_name || (c.get('user') as any)?.email || '',
-      nowIso,
-      nowIso,
-    ).run();
-
-    return c.json({
-      id,
-      token,
-      url: `/interview-card/${token}`,
-      expires_at: expiresAt,
-      status: 'active',
-      reused: false,
-    });
   });
 
   // ==================== 查询候选人已有面试卡片链接（登录态） ====================
