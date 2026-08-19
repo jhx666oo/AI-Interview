@@ -7,7 +7,7 @@ import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
   BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined, PlusOutlined, DeleteOutlined,
-  HomeOutlined
+  HomeOutlined, LinkOutlined, CopyOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -530,6 +530,48 @@ const InterviewsList: React.FC = () => {
     setViewEvalVisible(true);
   };
 
+  // == 面试管理卡片链接 ==
+  const [cardLinkVisible, setCardLinkVisible] = useState(false);
+  const [cardLinkRecord, setCardLinkRecord] = useState<MergedRow | null>(null);
+  const [cardLinkUrl, setCardLinkUrl] = useState('');
+  const [cardLinkExpires, setCardLinkExpires] = useState('');
+  const [cardLinkLoading, setCardLinkLoading] = useState(false);
+
+  const getCardLinkFullUrl = (urlPath: string) => {
+    // 生产域名固定，本地开发用当前 origin
+    const base = (window as any).CARD_LINK_BASE || window.location.origin;
+    return `${base}${urlPath}`;
+  };
+
+  const handleGenCardLink = async (record: MergedRow) => {
+    try {
+      setCardLinkLoading(true);
+      const res = await request.post('/interview-card-links', {
+        resume_id: record.resume_id || undefined,
+        candidate_name: record.candidate_name,
+        position_applied: record.position_applied || record.position || record.standard_position || '',
+      });
+      setCardLinkRecord(record);
+      setCardLinkUrl(getCardLinkFullUrl(res.url));
+      setCardLinkExpires(res.expires_at || '');
+      setCardLinkVisible(true);
+      message.success(res.reused ? '已复用该候选人已有的面试卡片链接' : '面试卡片链接已生成');
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '生成失败');
+    } finally {
+      setCardLinkLoading(false);
+    }
+  };
+
+  const handleCopyCardLink = async () => {
+    try {
+      await navigator.clipboard.writeText(cardLinkUrl);
+      message.success('链接已复制');
+    } catch {
+      message.success(`链接：${cardLinkUrl}`);
+    }
+  };
+
   // == 送入入职 ==
   const handleSendToOnboarding = async (record: MergedRow) => {
     try {
@@ -698,6 +740,9 @@ const InterviewsList: React.FC = () => {
               {canView && (
                 <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
               )}
+              <Tooltip title="面试卡片：汇总该候选人面试情况的可分享链接（7 天有效）">
+                <Button size="small" icon={<LinkOutlined />} loading={cardLinkLoading} disabled={!!cardLinkLoading} onClick={() => handleGenCardLink(r)}>面试卡片</Button>
+              </Tooltip>
               <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
               <Tooltip title="编辑"><Button size="small" icon={<EditOutlined />} onClick={() => handleOpenEdit(r)} /></Tooltip>
             </Space>
@@ -898,6 +943,34 @@ const InterviewsList: React.FC = () => {
         )}
       </ResponsiveModal>
 
+      {/* 面试卡片链接弹窗 */}
+      <ResponsiveModal
+        title={<span><LinkOutlined /> 面试卡片链接 - {cardLinkRecord?.candidate_name || ''}</span>}
+        open={cardLinkVisible}
+        onCancel={() => setCardLinkVisible(false)}
+        footer={
+          <Space>
+            <Button onClick={() => setCardLinkVisible(false)}>关闭</Button>
+            <Button icon={<CopyOutlined />} onClick={handleCopyCardLink}>复制链接</Button>
+            <Button type="primary" icon={<EyeOutlined />} href={cardLinkUrl} target="_blank" rel="noreferrer">打开链接</Button>
+          </Space>
+        }
+        width={560}
+      >
+        <div style={{ marginBottom: 12, fontSize: 13, color: '#475569', lineHeight: 1.8 }}>
+          <div>该链接汇总了候选人的简历档案、各轮面试情况、评分评价、备注与进度时间线，可分享给业务方或面试官查看。</div>
+          <div style={{ marginTop: 4 }}>
+            {cardLinkExpires ? `链接有效期至 ${new Date(cardLinkExpires).toLocaleDateString('zh-CN')}（7 天），过期后需重新生成。` : ''}
+            重新生成不会改变链接地址。
+          </div>
+        </div>
+        <Input
+          readOnly
+          value={cardLinkUrl}
+          onFocus={(e) => e.target.select()}
+          addonAfter={<CopyOutlined style={{ cursor: 'pointer' }} onClick={handleCopyCardLink} />}
+        />
+      </ResponsiveModal>
       {/* 新建面试弹窗 */}
       <ResponsiveModal
         title={<span>新建面试</span>}

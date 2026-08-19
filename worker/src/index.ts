@@ -39,7 +39,8 @@ import { loadInterviewReminderSource, resolveExactInterviewerOpenId, resolveRemi
 import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-notifications/user-token-storage';
 import { ensureBusinessScreeningSchema } from './business-screening/repository';
 import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from './business-screening/routes';
-import { createPublicToken, createScopePublicToken } from './business-screening/token';
+import { createPublicToken, createScopePublicToken, hashPublicToken } from './business-screening/token';
+import { createInterviewCardRoutes } from './interview-card/routes';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
 import {
@@ -1595,6 +1596,15 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
 });
 app.route('/', businessScreeningRoutes);
+
+// 面试管理卡片：单个候选人面试情况汇总的免登录公开链接（固定 7 天有效，可撤销/续期）
+const interviewCardRoutes = createInterviewCardRoutes({
+  authMiddleware: businessScreeningAuthMiddleware,
+  now,
+  uuid,
+  hashPublicToken,
+});
+app.route('/', interviewCardRoutes);
 
 // API Key 飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（管理员配置）
 const BUSINESS_SCREENING_KEY_OWNER_SETTING = 'business_screening_key_owner';
