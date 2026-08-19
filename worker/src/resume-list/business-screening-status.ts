@@ -80,5 +80,5 @@ export function buildBusinessScreeningStatusSqlClause(
 }
 
 export function buildBusinessScreeningBatchItemVisibilityClause(alias = 'r'): string {
-  return `${alias}.hr_disposition = 'pushed'`;
+  return `${alias}.hr_disposition = 'pushed' AND COALESCE(${alias}.status, '') NOT IN ('approved', 'rejected')`;
 }

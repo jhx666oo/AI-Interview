@@ -36,6 +36,8 @@ describe('resume business-screening state', () => {
   });
 
   it('only exposes currently pushed resumes in a public business-screening batch', () => {
-    expect(buildBusinessScreeningBatchItemVisibilityClause()).toBe("r.hr_disposition = 'pushed'");
+    expect(buildBusinessScreeningBatchItemVisibilityClause()).toBe(
+      "r.hr_disposition = 'pushed' AND COALESCE(r.status, '') NOT IN ('approved', 'rejected')",
+    );
   });
 });
