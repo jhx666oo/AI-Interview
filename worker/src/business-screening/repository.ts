@@ -132,22 +132,30 @@ export async function insertResumePushBatchItemsIfAbsent(
   items: CreateResumePushBatchItemInput[],
 ): Promise<void> {
   if (items.length === 0) return;
-  const stmts = items.map((item) => db.prepare(
-    `INSERT OR IGNORE INTO resume_push_batch_items
-      (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    item.id,
-    item.batchId,
-    item.resumeId,
-    item.positionId || null,
-    item.status || 'pending',
-    item.remark || null,
-    item.processedAt || null,
-    item.createdAt || new Date().toISOString(),
-    item.dispatchGroupId,
-  ));
-  await runBatch(db, stmts);
+  // 分块多值 INSERT OR IGNORE（每块 100 行），大幅减少 D1 往返，避免大批量超时
+  const CHUNK = 100;
+  for (let start = 0; start < items.length; start += CHUNK) {
+    const chunk = items.slice(start, start + CHUNK);
+    const cols = '(id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)';
+    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+    const values: unknown[] = [];
+    for (const item of chunk) {
+      values.push(
+        item.id,
+        item.batchId,
+        item.resumeId,
+        item.positionId || null,
+        item.status || 'pending',
+        item.remark || null,
+        item.processedAt || null,
+        item.createdAt || new Date().toISOString(),
+        item.dispatchGroupId,
+      );
+    }
+    await db.prepare(
+      `INSERT OR IGNORE INTO resume_push_batch_items ${cols} VALUES ${placeholders}`,
+    ).bind(...values).run();
+  }
 }
 
 export async function insertResumePushBatchItems(
@@ -155,22 +163,30 @@ export async function insertResumePushBatchItems(
   items: CreateResumePushBatchItemInput[],
 ): Promise<void> {
   if (items.length === 0) return;
-  const stmts = items.map((item) => db.prepare(
-    `INSERT INTO resume_push_batch_items
-      (id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    item.id,
-    item.batchId,
-    item.resumeId,
-    item.positionId || null,
-    item.status || 'pending',
-    item.remark || null,
-    item.processedAt || null,
-    item.createdAt || new Date().toISOString(),
-    item.dispatchGroupId,
-  ));
-  await runBatch(db, stmts);
+  // 分块多值 INSERT（每块 100 行），大幅减少 D1 往返，避免大批量超时
+  const CHUNK = 100;
+  for (let start = 0; start < items.length; start += CHUNK) {
+    const chunk = items.slice(start, start + CHUNK);
+    const cols = '(id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)';
+    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+    const values: unknown[] = [];
+    for (const item of chunk) {
+      values.push(
+        item.id,
+        item.batchId,
+        item.resumeId,
+        item.positionId || null,
+        item.status || 'pending',
+        item.remark || null,
+        item.processedAt || null,
+        item.createdAt || new Date().toISOString(),
+        item.dispatchGroupId,
+      );
+    }
+    await db.prepare(
+      `INSERT INTO resume_push_batch_items ${cols} VALUES ${placeholders}`,
+    ).bind(...values).run();
+  }
 }
 
 /** 批量执行：逐条提交（线上 D1 batch 在 Pages Functions 环境有兼容问题，暂不用 batch） */
@@ -187,16 +203,23 @@ export async function markResumesPushed(
   dispatchGroupId: string,
 ): Promise<void> {
   const timestamp = new Date().toISOString();
-  const stmts = resumeIds.map((resumeId) => db.prepare(
-    `UPDATE resumes
-        SET hr_disposition = 'pushed',
-            business_screening_status = 'pending',
-            business_screening_batch_id = ?,
-            business_screening_dispatch_group_id = ?,
-            updated_at = ?
-      WHERE id = ?`,
-  ).bind(batchId, dispatchGroupId, timestamp, resumeId));
-  await runBatch(db, stmts);
+  if (resumeIds.length === 0) return;
+  // 分块多值 UPDATE ... WHERE id IN (…)，每块 100 个 id，避免大批量逐条往返超时
+  const CHUNK = 100;
+  for (let start = 0; start < resumeIds.length; start += CHUNK) {
+    const chunk = resumeIds.slice(start, start + CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const values: unknown[] = [batchId, dispatchGroupId, timestamp, ...chunk];
+    await db.prepare(
+      `UPDATE resumes
+          SET hr_disposition = 'pushed',
+              business_screening_status = 'pending',
+              business_screening_batch_id = ?,
+              business_screening_dispatch_group_id = ?,
+              updated_at = ?
+        WHERE id IN (${placeholders})`,
+    ).bind(...values).run();
+  }
 }
 
 export async function loadResumePushBatchByTokenHash(
