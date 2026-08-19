@@ -780,6 +780,49 @@ describe('business screening routes', () => {
     });
   });
 
+  it('temp_link mode creates an independent link each time and never reuses the scope batch', async () => {
+    const { request, batches } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      resumes: [
+        {
+          id: 'resume-a',
+          candidate_name: '候选人A',
+          screening_result: '通过',
+          status: 'pending_screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-b',
+          candidate_name: '候选人B',
+          screening_result: '通过',
+          status: 'pending_screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+      ],
+    });
+    const headers = { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' };
+
+    // 两次同 scope 的 temp_link 推送 → 两个不同链接（独立新批次）
+    const r1 = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST', headers,
+      body: JSON.stringify({ ids: ['resume-a'], temp_link: true, title: '临时1' }),
+    });
+    const j1 = await r1.json() as any;
+    const r2 = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST', headers,
+      body: JSON.stringify({ ids: ['resume-b'], temp_link: true, title: '临时2' }),
+    });
+    const j2 = await r2.json() as any;
+    expect(j1.batches[0].url).not.toBe(j2.batches[0].url);
+    expect(batches.size).toBe(2);
+  });
+
   it('accepts a valid long-lived API key for push and rejects a wrong key', async () => {
     const { request, createdTokens } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
 
