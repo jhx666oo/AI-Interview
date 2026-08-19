@@ -164,9 +164,22 @@ export async function createOrReuseInterviewCardLink(
 
   const existing = await findLinkByIdentifier(db, { resumeId, candidateName, positionApplied });
   if (existing) {
+    // 复用时回填缺失的标识字段（如先按姓名创建、后带 resume_id 复用），
+    // 保证后续任意一种标识都能命中同一条记录 → 同一个人的链接恒定一致。
     await db.prepare(
-      `UPDATE ${CARD_TABLE} SET status = 'active', expires_at = ?, updated_at = ? WHERE id = ?`,
-    ).bind(expiresAt, nowIso, existing.id).run();
+      `UPDATE ${CARD_TABLE}
+       SET status = 'active', expires_at = ?, updated_at = ?,
+           resume_id = COALESCE(?, resume_id),
+           candidate_name = COALESCE(?, candidate_name),
+           position_applied = COALESCE(?, position_applied)
+       WHERE id = ?`,
+    ).bind(
+      expiresAt, nowIso,
+      resumeId || null,
+      candidateName || null,
+      positionApplied || null,
+      existing.id,
+    ).run();
     const token = await deriveInterviewCardToken(existing.id);
     return {
       id: existing.id,
@@ -212,18 +225,26 @@ async function findLinkByIdentifier(
   db: D1Database,
   identifier: { resumeId?: string; candidateName?: string; positionApplied?: string },
 ): Promise<InterviewCardLinkRow | null> {
-  if (text(identifier.resumeId)) {
-    return (await db.prepare(
+  // 查找顺序保证「同一个人（候选人）恒定同一条链接」：
+  // 1) resume_id（权威标识）→ 2) 姓名+岗位 → 3) 仅姓名
+  // 兜底链覆盖：重复上传多份简历（不同 resume_id）、手动面试无简历、
+  // 入口标识不全（提醒推送带 resume_id，前端按钮可能只带姓名）等场景。
+  const resumeId = text(identifier.resumeId);
+  if (resumeId) {
+    const row = (await db.prepare(
       `SELECT * FROM ${CARD_TABLE} WHERE resume_id = ? ORDER BY created_at DESC LIMIT 1`,
-    ).bind(identifier.resumeId).first()) as InterviewCardLinkRow | null;
+    ).bind(resumeId).first()) as InterviewCardLinkRow | null;
+    if (row) return row;
   }
+
   const name = text(identifier.candidateName);
   if (!name) return null;
   const position = text(identifier.positionApplied);
   if (position) {
-    return (await db.prepare(
+    const row = (await db.prepare(
       `SELECT * FROM ${CARD_TABLE} WHERE candidate_name = ? AND position_applied = ? ORDER BY created_at DESC LIMIT 1`,
     ).bind(name, position).first()) as InterviewCardLinkRow | null;
+    if (row) return row;
   }
   return (await db.prepare(
     `SELECT * FROM ${CARD_TABLE} WHERE candidate_name = ? ORDER BY created_at DESC LIMIT 1`,
