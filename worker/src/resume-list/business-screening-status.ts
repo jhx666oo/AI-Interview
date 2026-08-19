@@ -18,17 +18,18 @@ export function isBusinessScreeningStatusFilter(value: unknown): value is Busine
 
 export function inferBusinessScreeningStatus(record: ResumeBusinessScreeningRecord): BusinessScreeningStatus {
   const explicit = clean(record.business_screening_status);
-  if (VALID_STATUSES.has(explicit as BusinessScreeningStatus)) {
-    return explicit as BusinessScreeningStatus;
-  }
+  const pushed = clean(record.hr_disposition) === 'pushed';
 
-  if (clean(record.hr_disposition) === 'pushed') {
-    if (record.status === 'approved') return 'passed';
-    if (record.status === 'rejected') return 'rejected';
-    return 'pending';
-  }
+  // 业务筛选状态只对真正点击过“推送”的简历生效。
+  // 历史数据可能在未推送时被写成 pending/passed/rejected，不能因此污染当前列表。
+  if (!pushed) return 'not_ready';
 
-  return 'not_ready';
+  if (explicit === 'passed' || explicit === 'rejected') return explicit;
+
+  if (record.status === 'approved') return 'passed';
+  if (record.status === 'rejected') return 'rejected';
+
+  return 'pending';
 }
 
 export function exposeBusinessScreeningState<T extends ResumeBusinessScreeningRecord>(item: T): T & {
@@ -53,26 +54,27 @@ export function buildBusinessScreeningStatusSqlClause(
   filter: BusinessScreeningStatus,
 ): { clause: string; params: string[] } {
   const blank = "(r.business_screening_status IS NULL OR r.business_screening_status = '')";
+  const pushed = "r.hr_disposition = 'pushed'";
   if (filter === 'pending') {
     return {
-      clause: `((r.business_screening_status = ?) OR (${blank} AND r.hr_disposition = 'pushed' AND COALESCE(r.status, '') NOT IN ('approved', 'rejected')))`,
+      clause: `((r.business_screening_status = ? AND ${pushed}) OR (${blank} AND ${pushed} AND COALESCE(r.status, '') NOT IN ('approved', 'rejected')))`,
       params: [filter],
     };
   }
   if (filter === 'passed') {
     return {
-      clause: `((r.business_screening_status = ?) OR (${blank} AND r.hr_disposition = 'pushed' AND r.status = 'approved'))`,
+      clause: `((r.business_screening_status = ? AND ${pushed}) OR (${blank} AND ${pushed} AND r.status = 'approved'))`,
       params: [filter],
     };
   }
   if (filter === 'rejected') {
     return {
-      clause: `((r.business_screening_status = ?) OR (${blank} AND r.hr_disposition = 'pushed' AND r.status = 'rejected'))`,
+      clause: `((r.business_screening_status = ? AND ${pushed}) OR (${blank} AND ${pushed} AND r.status = 'rejected'))`,
       params: [filter],
     };
   }
   return {
-    clause: `((r.business_screening_status = ?) OR (${blank} AND COALESCE(r.hr_disposition, 'pending') != 'pushed'))`,
+    clause: `((COALESCE(r.hr_disposition, 'pending') != 'pushed') OR (r.business_screening_status = ? AND ${pushed}))`,
     params: [filter],
   };
 }

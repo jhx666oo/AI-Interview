@@ -502,21 +502,25 @@ function buildHarness(options?: {
               async run() {
                 if (sql.includes('UPDATE resumes') && sql.includes("SET hr_disposition = 'rejected'")) {
                   const comment = values[0] as string;
-                  const businessRemark = values[1] as string;
-                  const screenedAt = values[2] as string;
-                  const screenedBy = values[3] as string;
-                  const updatedAt = values[4] as string;
-                  const resumeId = values[5] as string;
+                  const screenedAt = values[1] as string;
+                  const screenedBy = values[2] as string;
+                  const updatedAt = values[3] as string;
+                  const resumeId = values[4] as string;
                   const resume = resumes.get(resumeId);
                   if (!resume) return { meta: { changes: 0 } };
-                  const currentBusinessStatus = resume.business_screening_status;
+                  const wasPushed = resume.hr_disposition === 'pushed';
                   resume.hr_disposition = 'rejected';
                   resume.hr_review = comment;
-                  if (currentBusinessStatus !== 'passed' && currentBusinessStatus !== 'rejected') {
+                  if (wasPushed) {
                     resume.business_screening_status = 'rejected';
-                    resume.business_screening_remark = businessRemark;
+                    resume.business_screening_remark = comment;
                     resume.business_screened_at = screenedAt;
                     resume.business_screened_by = screenedBy;
+                  } else {
+                    resume.business_screening_status = 'not_ready';
+                    resume.business_screening_remark = '';
+                    resume.business_screened_at = null;
+                    resume.business_screened_by = '';
                   }
                   resume.status = 'rejected';
                   resume.stage = 'rejected';
@@ -1377,6 +1381,37 @@ describe('business screening routes', () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
       detail: expect.stringContaining('completed'),
+    });
+  });
+
+  it('does not let a stale terminal business status block HR rejection before push', async () => {
+    const { request, resumes } = buildHarness({
+      resumes: [{
+        id: 'resume-1',
+        candidate_name: '候选人甲',
+        screening_result: '通过',
+        status: 'pending_review',
+        hr_disposition: 'pending',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'passed',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/resume-1/business-screening/reject', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ comment: '历史未推送记录直接淘汰' }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(resumes.get('resume-1')).toMatchObject({
+      hr_disposition: 'rejected',
+      business_screening_status: 'not_ready',
+      status: 'rejected',
     });
   });
 

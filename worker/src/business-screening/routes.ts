@@ -795,7 +795,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     const resumes = await deps.store.listResumesByIds(db, [id]);
     const resume = resumes[0];
     if (!resume) return c.json({ detail: 'Candidate not found' }, 404);
-    if (resume.business_screening_status === 'passed' || resume.business_screening_status === 'rejected') {
+    if (resume.hr_disposition === 'pushed'
+      && (resume.business_screening_status === 'passed' || resume.business_screening_status === 'rejected')) {
       return c.json({ detail: 'business screening already completed' }, 409);
     }
 
@@ -806,26 +807,26 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
           SET hr_disposition = 'rejected',
               hr_review = ?,
               business_screening_status = CASE
-                WHEN business_screening_status IN ('passed', 'rejected') THEN business_screening_status
-                ELSE 'rejected'
+                WHEN hr_disposition = 'pushed' THEN 'rejected'
+                ELSE 'not_ready'
               END,
               business_screening_remark = CASE
-                WHEN business_screening_status IN ('passed', 'rejected') THEN business_screening_remark
-                ELSE ?
+                WHEN hr_disposition = 'pushed' THEN ?
+                ELSE ''
               END,
               business_screened_at = CASE
-                WHEN business_screening_status IN ('passed', 'rejected') THEN business_screened_at
-                ELSE ?
+                WHEN hr_disposition = 'pushed' THEN ?
+                ELSE NULL
               END,
               business_screened_by = CASE
-                WHEN business_screening_status IN ('passed', 'rejected') THEN business_screened_by
-                ELSE ?
+                WHEN hr_disposition = 'pushed' THEN ?
+                ELSE ''
               END,
               status = 'rejected',
               stage = 'rejected',
               updated_at = ?
         WHERE id = ?`,
-    ).bind(comment, comment, decisionAt, 'HR', decisionAt, id).run();
+    ).bind(comment, decisionAt, 'HR', decisionAt, id).run();
     await deps.store.revokeActiveBatchesForResume(db, id);
     await deps.recordResumeDecisionTimestamp(db, id, 'rejected', decisionAt);
     const updated = (await deps.store.listResumesByIds(db, [id]))[0];

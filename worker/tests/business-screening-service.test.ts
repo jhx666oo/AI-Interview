@@ -19,6 +19,11 @@ describe('business screening service', () => {
     )).toEqual({ ok: true });
 
     expect(isEligibleForPush(
+      { id: 'r-stale-unpushed', screening_result: '通过', status: 'pending_review', hr_disposition: 'pending', mapped_position: '标准运营', business_screening_status: 'pending' },
+      { name: '张三', openId: 'ou_123' },
+    )).toEqual({ ok: true });
+
+    expect(isEligibleForPush(
       { id: 'r-legacy-rejected', screening_result: '通过', status: 'rejected', hr_disposition: 'pending', mapped_position: '标准运营' },
       { name: '张三', openId: 'ou_123' },
     )).toEqual({ ok: false, reason: 'HR已淘汰该简历' });

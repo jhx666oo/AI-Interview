@@ -35,7 +35,8 @@ export function isEligibleForPush(
   interviewer: { name: string; openId?: string | null },
   options?: PushEligibilityOptions,
 ): { ok: true } | { ok: false; reason: string } {
-  const businessStatus = text(resume.business_screening_status);
+  const pushed = text(resume.hr_disposition) === 'pushed';
+  const businessStatus = pushed ? text(resume.business_screening_status) : '';
   if (text(resume.hr_disposition) === 'rejected' || text(resume.status) === 'rejected') {
     return { ok: false, reason: 'HR已淘汰该简历' };
   }

@@ -114,6 +114,18 @@ describe('resume business screening helpers', () => {
     })).toBe('not_ready');
   });
 
+  it('shows the push action when an unpushed resume has a stale pending marker', () => {
+    const actions = getBusinessScreeningActions({
+      status: 'pending_review',
+      screening_result: '通过',
+      hr_disposition: 'pending',
+      business_screening_status: 'pending',
+    });
+
+    expect(actions.primary).toEqual({ key: 'push', label: '推送' });
+    expect(actions.tags).toEqual([]);
+  });
+
   it('maps status filter values to the correct list params', () => {
     expect(getBusinessScreeningStatusMeta('business_screening_pending')).toEqual({
       color: 'processing',

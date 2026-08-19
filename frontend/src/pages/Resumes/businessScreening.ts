@@ -39,18 +39,14 @@ const clean = (value: unknown): string => (typeof value === 'string' ? value.tri
 
 export function inferBusinessScreeningStatus(record: ResumeBusinessScreeningRecord): BusinessScreeningStatus {
   const explicit = clean(record.business_screening_status);
-  if (explicit === 'pending' || explicit === 'passed' || explicit === 'rejected' || explicit === 'not_ready') {
-    return explicit;
-  }
-
   const hrDisposition = clean(record.hr_disposition);
-  if (hrDisposition === 'pushed') {
-    if (record.status === 'approved') return 'passed';
-    if (record.status === 'rejected') return 'rejected';
-    return 'pending';
-  }
+  if (hrDisposition !== 'pushed') return 'not_ready';
 
-  return 'not_ready';
+  if (explicit === 'passed' || explicit === 'rejected') return explicit;
+  if (record.status === 'approved') return 'passed';
+  if (record.status === 'rejected') return 'rejected';
+
+  return 'pending';
 }
 
 export function getBusinessScreeningActions(record: ResumeBusinessScreeningRecord): BusinessScreeningActions {
