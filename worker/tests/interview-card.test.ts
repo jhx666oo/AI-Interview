@@ -29,10 +29,18 @@ class FakeD1 {
   }
 
   private async execute(sql: string, params: any[], method: 'first' | 'all' | 'run'): Promise<any> {
-    if (sql.includes('UPDATE interview_card_links SET status = \'active\'') && sql.includes('WHERE id = ?')) {
-      const [expiresAt, updatedAt, id] = params;
+    if (sql.includes("SET status = 'active'") && sql.includes('COALESCE(?, resume_id)')) {
+      // 复用链接：刷新有效期并回填缺失的标识字段（与生产 SQL 的 COALESCE 语义一致）
+      const [expiresAt, updatedAt, resumeId, candidateName, positionApplied, id] = params;
       const row = this.links.find((r) => r.id === id);
-      if (row) { row.status = 'active'; row.expires_at = expiresAt; row.updated_at = updatedAt; }
+      if (row) {
+        row.status = 'active';
+        row.expires_at = expiresAt;
+        row.updated_at = updatedAt;
+        if (resumeId) row.resume_id = resumeId;
+        if (candidateName) row.candidate_name = candidateName;
+        if (positionApplied) row.position_applied = positionApplied;
+      }
       return { meta: { changes: row ? 1 : 0 } };
     }
     if (sql.includes('UPDATE interview_card_links SET status = \'revoked\'') && sql.includes('WHERE id = ?')) {
@@ -228,6 +236,40 @@ describe('createOrReuseInterviewCardLink service', () => {
     const h = buildHarness();
     await expect(createOrReuseInterviewCardLink(h.db, {}, { now: () => '', uuid: () => 'x', hashPublicToken }))
       .rejects.toThrow('至少提供一个');
+  });
+
+  it('keeps ONE link per person across different resume ids (duplicate uploads)', async () => {
+    const h = buildHarness({ resumes: [sampleResume] });
+    const svc = { now: () => '2026-08-19T00:00:00.000Z', uuid: () => 'svc-a', hashPublicToken };
+    // 第一份简历生成
+    const first = await createOrReuseInterviewCardLink(h.db, {
+      resumeId: 'resume-1', candidateName: '张三', positionApplied: '前端工程师',
+    }, svc);
+    // 同一人第二份简历（重复上传，不同 resume_id）：姓名+岗位兜底命中同一条
+    const second = await createOrReuseInterviewCardLink(h.db, {
+      resumeId: 'resume-1-dup', candidateName: '张三', positionApplied: '前端工程师',
+    }, svc);
+    expect(second.reused).toBe(true);
+    expect(second.url).toBe(first.url);
+    expect(h.db.links).toHaveLength(1);
+  });
+
+  it('keeps ONE link per person when created by name only and later reused with a resume id', async () => {
+    const h = buildHarness({ resumes: [sampleResume] });
+    const svc = { now: () => '2026-08-19T00:00:00.000Z', uuid: () => 'svc-b', hashPublicToken };
+    // 手动面试（无简历关联）：仅按姓名创建
+    const byName = await createOrReuseInterviewCardLink(h.db, {
+      candidateName: '张三',
+    }, svc);
+    // 之后提醒推送带 resume_id：resume_id 未命中 → 仅姓名兜底命中同一条，并回填 resume_id
+    const withResume = await createOrReuseInterviewCardLink(h.db, {
+      resumeId: 'resume-1', candidateName: '张三', positionApplied: '前端工程师',
+    }, svc);
+    expect(withResume.reused).toBe(true);
+    expect(withResume.url).toBe(byName.url);
+    expect(h.db.links).toHaveLength(1);
+    expect(h.db.links[0].resume_id).toBe('resume-1');
+    expect(h.db.links[0].position_applied).toBe('前端工程师');
   });
 });
 
