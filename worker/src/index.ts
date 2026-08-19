@@ -1603,6 +1603,7 @@ const interviewCardRoutes = createInterviewCardRoutes({
   now,
   uuid,
   hashPublicToken,
+  getResumeFileBytes,
 });
 app.route('/', interviewCardRoutes);
 
