@@ -827,6 +827,54 @@ describe('business screening routes', () => {
     expect(batches.size).toBe(2);
   });
 
+  it('temp_link with batch_id appends to the same batch and keeps one link', async () => {
+    const { request } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      resumes: [
+        {
+          id: 'resume-aa',
+          candidate_name: '候选人AA',
+          screening_result: '通过',
+          status: 'pending_screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+        {
+          id: 'resume-bb',
+          candidate_name: '候选人BB',
+          screening_result: '通过',
+          status: 'pending_screening',
+          hr_disposition: 'pending',
+          mapped_position: '标准运营',
+          position_applied: '标准运营',
+          business_screening_status: 'not_ready',
+        },
+      ],
+    });
+    const headers = { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' };
+
+    // 第一批：生成临时批次
+    const r1 = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST', headers,
+      body: JSON.stringify({ ids: ['resume-aa'], temp_link: true, title: '分批临时' }),
+    });
+    const j1 = await r1.json() as any;
+    expect(j1.batches).toHaveLength(1);
+    const batchId = j1.batches[0].batchId;
+
+    // 第二批：带 batch_id 追加到同一批次 → 同一链接
+    const r2 = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST', headers,
+      body: JSON.stringify({ ids: ['resume-bb'], temp_link: true, batch_id: batchId }),
+    });
+    const j2 = await r2.json() as any;
+    expect(j2.batches).toHaveLength(1);
+    expect(j2.batches[0].url).toBe(j1.batches[0].url);
+    expect(j2.batches[0].itemCount).toBe(1);
+  });
+
   it('accepts a valid long-lived API key for push and rejects a wrong key', async () => {
     const { request, createdTokens } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
 
