@@ -32,6 +32,7 @@ export interface InterviewCardRouteDeps {
   now: () => string;
   uuid: () => string;
   hashPublicToken: (token: string) => Promise<string>;
+  getResumeFileBytes: (env: any, resumeId: string) => Promise<{ bytes: Uint8Array | null; fileName: string }>;
 }
 
 /** 公开页透出的面试记录（不含联系方式与敏感内部字段） */
@@ -83,8 +84,22 @@ export interface InterviewCardPublicView {
     candidate_name: string;
     position_applied: string;
     mapped_position: string;
+    status: string | null;
+    stage: string | null;
+    parse_status: string | null;
     hr_review: string | null;
     business_screening_remark: string | null;
+    // 简历评估（公开页主体信息，字段口径与业务筛选公开页一致：电话可见、邮箱不暴露）
+    contact: string | null;
+    match_score: number | null;
+    screening_result: string | null;
+    ai_review: string | null;
+    ai_evaluation: string | null;
+    capability_scores: string | null;
+    hard_requirement_result: string | null;
+    ocr_markdown: string | null;
+    raw_text: string | null;
+    resume_markdown: string | null;
     profile: BusinessScreeningPublicProfile | undefined;
   };
   interviews: InterviewCardPublicInterview[];
@@ -356,19 +371,19 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
     const positionApplied = text(row.position_applied);
 
     // 1) 候选人档案：优先 resume_id，缺失时按姓名兜底
+    const resumeCols = `id, candidate_name, position_applied, mapped_position, parsed_data, education, work_experience,
+                gender, birthday, certifications, self_evaluation, hr_review, business_screening_remark,
+                status, stage, parse_status, contact, match_score, screening_result, ai_review, ai_evaluation,
+                capability_scores, hard_requirement_result, ocr_markdown, raw_text, resume_markdown`;
     let resumeRow: any = null;
     if (text(row.resume_id)) {
       resumeRow = await db.prepare(
-        `SELECT id, candidate_name, position_applied, mapped_position, parsed_data, education, work_experience,
-                gender, birthday, certifications, self_evaluation, hr_review, business_screening_remark, status, stage
-         FROM resumes WHERE id = ?`,
+        `SELECT ${resumeCols} FROM resumes WHERE id = ?`,
       ).bind(row.resume_id).first();
     }
     if (!resumeRow && candidateName !== '候选人') {
       resumeRow = await db.prepare(
-        `SELECT id, candidate_name, position_applied, mapped_position, parsed_data, education, work_experience,
-                gender, birthday, certifications, self_evaluation, hr_review, business_screening_remark, status, stage
-         FROM resumes WHERE candidate_name = ?
+        `SELECT ${resumeCols} FROM resumes WHERE candidate_name = ?
          ORDER BY created_at DESC LIMIT 1`,
       ).bind(candidateName).first();
     }
@@ -428,8 +443,21 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
         candidate_name: resumeRow?.candidate_name || candidateName,
         position_applied: resumeRow?.position_applied || positionApplied,
         mapped_position: resumeRow?.mapped_position || '',
+        status: resumeRow?.status || null,
+        stage: resumeRow?.stage || null,
+        parse_status: resumeRow?.parse_status || null,
         hr_review: resumeRow?.hr_review || null,
         business_screening_remark: resumeRow?.business_screening_remark || null,
+        contact: resumeRow?.contact || null,
+        match_score: resumeRow?.match_score ?? null,
+        screening_result: resumeRow?.screening_result || null,
+        ai_review: resumeRow?.ai_review || null,
+        ai_evaluation: resumeRow?.ai_evaluation || null,
+        capability_scores: resumeRow?.capability_scores || null,
+        hard_requirement_result: resumeRow?.hard_requirement_result || null,
+        ocr_markdown: resumeRow?.ocr_markdown || null,
+        raw_text: resumeRow?.raw_text || null,
+        resume_markdown: resumeRow?.resume_markdown || null,
         profile,
       },
       interviews: interviews.map((iv: any) => ({
@@ -467,6 +495,45 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
         metadata: parseJsonObject<Record<string, unknown>>(e.metadata_json) || {},
       })),
     } satisfies InterviewCardPublicView);
+  });
+
+  // ==================== 公开读取：免登录预览/下载候选人简历 PDF ====================
+  // 与业务筛选文件端点同机制：?preview=1 inline 预览 / 默认 attachment 下载
+  app.get('/api/public/interview-card/:token/file', async (c) => {
+    const tokenHash = await deps.hashPublicToken(c.req.param('token'));
+    const db = c.env.DB as D1Database;
+    const row = (await db.prepare(
+      `SELECT * FROM ${cardTable} WHERE token_hash = ?`,
+    ).bind(tokenHash).first()) as InterviewCardLinkRow | null;
+    if (!row) return c.json({ detail: 'Not found' }, 404);
+    if (!isActiveLink(row, deps.now())) return c.json({ detail: 'Link unavailable' }, 410);
+
+    // 与公开读取一致的简历解析：优先 resume_id，缺失时按姓名兜底
+    let resumeId = text(row.resume_id);
+    if (!resumeId) {
+      const candidateName = text(row.candidate_name);
+      if (!candidateName) return c.json({ detail: 'Not found' }, 404);
+      const resumeRow = await db.prepare(
+        'SELECT id FROM resumes WHERE candidate_name = ? ORDER BY created_at DESC LIMIT 1',
+      ).bind(candidateName).first();
+      resumeId = resumeRow?.id || '';
+    }
+    if (!resumeId) return c.json({ detail: 'Not found' }, 404);
+
+    const file = await deps.getResumeFileBytes(c.env, resumeId);
+    if (!file.bytes) {
+      return c.json({ detail: '该简历源文件未本地缓存，无法预览。请重新上传 PDF 或联系管理员', not_cached: true }, 404);
+    }
+    const isPreview = c.req.query('preview') === 'true' || c.req.query('preview') === '1';
+    const safeName = (text(row.candidate_name) || 'resume').replace(/[\\/:*?"<>|]/g, '_');
+    return new Response(file.bytes, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `${isPreview ? 'inline' : 'attachment'}; filename="${encodeURIComponent(safeName)}.pdf"`,
+        'Cache-Control': 'private, max-age=300',
+      },
+    });
   });
 
   return app;

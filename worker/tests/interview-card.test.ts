@@ -134,12 +134,16 @@ function buildHarness(options?: {
   resumes?: AnyRow[];
   interviews?: AnyRow[];
   events?: AnyRow[];
+  fileBytes?: Uint8Array | null;
 }) {
   const db = new FakeD1();
   db.links = (options?.links || []).map((r) => ({ ...r }));
   db.resumes = (options?.resumes || []).map((r) => ({ ...r }));
   db.interviews = (options?.interviews || []).map((r) => ({ ...r }));
   db.events = (options?.events || []).map((r) => ({ ...r }));
+  const fileBytes = options?.fileBytes === undefined
+    ? new Uint8Array([1, 2, 3, 4])
+    : options.fileBytes;
 
   let nowValue = options?.now || '2026-08-19T00:00:00.000Z';
   let uuidCounter = 0;
@@ -151,6 +155,10 @@ function buildHarness(options?: {
     now: () => nowValue,
     uuid: () => `card-${++uuidCounter}`,
     hashPublicToken,
+    getResumeFileBytes: async (_env, resumeId) => ({
+      bytes: fileBytes && (resumeId === 'resume-1') ? fileBytes : null,
+      fileName: 'resume.pdf',
+    }),
   };
   const app = createInterviewCardRoutes(deps);
   const env = { DB: db };
@@ -457,5 +465,81 @@ describe('GET /api/public/interview-card/:token', () => {
     await h.app.request(`/api/interview-card-links/${created.id}`, { method: 'DELETE' }, h.env);
     const res = await h.app.request(`/api/public/interview-card/${created.token}`, {}, h.env);
     expect(res.status).toBe(410);
+  });
+
+  it('exposes resume evaluation fields for the resume-first public page', async () => {
+    const h = buildHarness({
+      resumes: [{
+        ...sampleResume,
+        contact: '13800000000',
+        email: 'secret@example.com',
+        match_score: 88,
+        screening_result: '通过',
+        ai_review: JSON.stringify({ summary: '整体匹配', risks: ['稳定性需核实'] }),
+        ocr_markdown: '# 张三的简历\n本科，3年前端经验',
+        parse_status: 'ai_screened',
+      }],
+    });
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1', candidate_name: '张三' }),
+    }, h.env)).json();
+    const body = await (await h.app.request(`/api/public/interview-card/${created.token}`, {}, h.env)).json();
+    // 简历主体信息：评估、原文、电话（与业务筛选口径一致）；email 不透出
+    expect(body.candidate.match_score).toBe(88);
+    expect(body.candidate.screening_result).toBe('通过');
+    expect(body.candidate.ai_review).toContain('整体匹配');
+    expect(body.candidate.ocr_markdown).toContain('张三的简历');
+    expect(body.candidate.contact).toBe('13800000000');
+    expect(body.candidate).not.toHaveProperty('email');
+    expect(body.candidate.parse_status).toBe('ai_screened');
+  });
+});
+
+describe('GET /api/public/interview-card/:token/file', () => {
+  it('serves the resume PDF for a valid token (inline preview vs attachment)', async () => {
+    const h = buildHarness({ resumes: [sampleResume], fileBytes: new Uint8Array([9, 9, 9]) });
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1', candidate_name: '张三' }),
+    }, h.env)).json();
+
+    const preview = await h.app.request(`/api/public/interview-card/${created.token}/file?preview=1`, {}, h.env);
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get('content-type')).toBe('application/pdf');
+    expect(preview.headers.get('content-disposition')).toContain('inline');
+
+    const download = await h.app.request(`/api/public/interview-card/${created.token}/file`, {}, h.env);
+    expect(download.status).toBe(200);
+    expect(download.headers.get('content-disposition')).toContain('attachment');
+  });
+
+  it('falls back to candidate_name lookup when the card has no resume_id', async () => {
+    const h = buildHarness({ resumes: [sampleResume], fileBytes: new Uint8Array([7]) });
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ candidate_name: '张三' }),
+    }, h.env)).json();
+    const res = await h.app.request(`/api/public/interview-card/${created.token}/file`, {}, h.env);
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 404 when no cached PDF exists and 410 for expired links', async () => {
+    const h = buildHarness({ resumes: [sampleResume], fileBytes: null });
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1' }),
+    }, h.env)).json();
+    const missing = await h.app.request(`/api/public/interview-card/${created.token}/file`, {}, h.env);
+    expect(missing.status).toBe(404);
+
+    const h2 = buildHarness({ resumes: [sampleResume] });
+    const created2 = await (await h2.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1' }),
+    }, h2.env)).json();
+    h2.setNow('2026-09-01T00:00:00.000Z');
+    const expired = await h2.app.request(`/api/public/interview-card/${created2.token}/file`, {}, h2.env);
+    expect(expired.status).toBe(410);
   });
 });

@@ -1,17 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Spin, Tag, message } from 'antd';
+import { Spin, Tag, Progress, Descriptions, Button } from 'antd';
 import {
   CalendarOutlined, ClockCircleOutlined, EnvironmentOutlined, TeamOutlined,
-  UserOutlined, FileTextOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  HistoryOutlined, CommentOutlined, PhoneOutlined, VideoCameraOutlined,
+  UserOutlined, FileTextOutlined, CheckCircleOutlined,
+  HistoryOutlined, CommentOutlined, DownloadOutlined, PhoneOutlined,
 } from '@ant-design/icons';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import request from '../../utils/request';
-import type { BusinessScreeningProfile } from '../Public/businessScreeningLogic';
+import { useViewportWidth } from '../../components/Layout/responsive';
+import {
+  asDisplayTextList,
+  formatWeightedScore,
+  getScreeningGateRows,
+  normalizeResumeEvaluation,
+} from '../../utils/resumeEvaluation';
+import type { BusinessScreeningProfile } from './businessScreeningLogic';
 
 // =================== 面试管理卡片（免登录公开页） ===================
-// 简历档案信息结构与系统内简历详情页 /resumes/:id 保持一致（不含联系方式），
-// 另汇总各轮面试情况、评分评价、HR 备注与进度时间线。
+// 布局照搬简历详情页 /resumes/:id：左侧简历原件 PDF 预览，右侧候选人档案为主体
+// （Descriptions 档案 + AI 评估 + 简历文本识别），面试情况/备注/时间线作为辅助信息区。
+// 字段口径与业务筛选公开页一致：电话可见、邮箱不透出。
 
 interface InterviewCardPublicInterview {
   id: string;
@@ -49,181 +59,184 @@ interface InterviewCardTimelineEvent {
   metadata: Record<string, unknown>;
 }
 
+interface InterviewCardCandidate {
+  resume_id: string | null;
+  candidate_name: string;
+  position_applied: string;
+  mapped_position: string;
+  status: string | null;
+  stage: string | null;
+  parse_status: string | null;
+  hr_review: string | null;
+  business_screening_remark: string | null;
+  contact: string | null;
+  match_score: number | null;
+  screening_result: string | null;
+  ai_review: string | null;
+  ai_evaluation: string | null;
+  capability_scores: string | null;
+  hard_requirement_result: string | null;
+  ocr_markdown: string | null;
+  raw_text: string | null;
+  resume_markdown: string | null;
+  profile: BusinessScreeningProfile | undefined;
+}
+
 interface InterviewCardView {
   card: { id: string; expires_at: string; created_at: string; status: string };
-  candidate: {
-    resume_id: string | null;
-    candidate_name: string;
-    position_applied: string;
-    mapped_position: string;
-    hr_review: string | null;
-    business_screening_remark: string | null;
-    profile: BusinessScreeningProfile | undefined;
-  };
+  candidate: InterviewCardCandidate;
   interviews: InterviewCardPublicInterview[];
   timeline: InterviewCardTimelineEvent[];
 }
 
 const INTERVIEW_STATUS: Record<string, { text: string; color: string }> = {
-  scheduled: { text: '待面试', color: '#3b82f6' },
-  in_progress: { text: '面试中', color: '#f59e0b' },
-  completed: { text: '已完成', color: '#10b981' },
-  cancelled: { text: '已取消', color: '#94a3b8' },
-  failed: { text: '已淘汰', color: '#ef4444' },
-  pending_onboarding: { text: '待入职', color: '#f59e0b' },
-  onboarded: { text: '已入职', color: '#10b981' },
+  scheduled: { text: '待面试', color: 'blue' },
+  in_progress: { text: '面试中', color: 'orange' },
+  completed: { text: '已完成', color: 'green' },
+  cancelled: { text: '已取消', color: 'default' },
+  failed: { text: '已淘汰', color: 'red' },
+  pending_onboarding: { text: '待入职', color: 'orange' },
+  onboarded: { text: '已入职', color: 'green' },
 };
 
 const INTERVIEW_RESULT: Record<string, { text: string; color: string }> = {
-  pending: { text: '待评价', color: '#94a3b8' },
-  passed: { text: '通过', color: '#10b981' },
-  failed: { text: '不通过', color: '#ef4444' },
+  pending: { text: '待评价', color: 'default' },
+  passed: { text: '通过', color: 'green' },
+  failed: { text: '不通过', color: 'red' },
 };
 
-const INTERVIEW_TYPE: Record<string, string> = {
-  onsite: '现场面试',
-  video: '视频面试',
-  phone: '电话面试',
-  online: '在线面试',
-};
+const INTERVIEW_TYPE: Record<string, string> = { onsite: '现场', video: '视频', phone: '电话', online: '在线' };
+const INTERVIEW_CATEGORY: Record<string, string> = { technical: '技术面', behavioral: '行为面', hr: 'HR面', culture: '文化面' };
 
-const INTERVIEW_CATEGORY: Record<string, string> = {
-  technical: '技术面',
-  behavioral: '行为面',
-  hr: 'HR 面',
-  culture: '文化面',
+const STATUS_MAP: Record<string, { text: string; color: string }> = {
+  pending_screening: { text: '待初筛', color: 'warning' },
+  pending_review: { text: '待评审', color: 'warning' },
+  pending_dept_review: { text: '待部门评审', color: 'cyan' },
+  pending_hr_decision: { text: '待HR决策', color: 'purple' },
+  pending_interview: { text: '待面试', color: 'geekblue' },
+  interview_passed: { text: '面试通过', color: 'lime' },
+  interview_failed: { text: '面试未通过', color: 'magenta' },
+  offer_pending: { text: 'Offer待确认', color: 'blue' },
+  offer_accepted: { text: '已接受Offer', color: 'success' },
+  offer_rejected: { text: '已拒绝Offer', color: 'error' },
+  onboarding: { text: '入职中', color: 'blue' },
+  completed: { text: '已完成', color: 'success' },
+  rejected: { text: '已淘汰', color: 'error' },
+  hired: { text: '已录用', color: 'success' },
+  waitlist: { text: '备选', color: 'gold' },
+  approved: { text: '已入库', color: 'success' },
 };
 
 const STAGE_LABELS: Record<string, string> = {
-  resume_received: '简历收到',
-  ai_screened: 'AI 初筛完成',
-  hr_approved: 'HR 通过',
-  hr_rejected: 'HR 淘汰',
-  interview_scheduled: '安排面试',
-  interview_completed: '完成面试',
-  interview_passed: '面试通过',
-  interview_failed: '面试未通过',
-  offer_sent: 'Offer 发出',
-  offer_accepted: 'Offer 接受',
-  offer_rejected: 'Offer 拒绝',
-  hired: '已录用',
-  candidate_withdrawn: '候选人放弃',
+  resume_received: '简历收到', ai_screened: 'AI 初筛完成', hr_approved: 'HR 通过', hr_rejected: 'HR 淘汰',
+  interview_scheduled: '安排面试', interview_completed: '完成面试', interview_passed: '面试通过',
+  interview_failed: '面试未通过', offer_sent: 'Offer 发出', offer_accepted: 'Offer 接受',
+  offer_rejected: 'Offer 拒绝', hired: '已录用', candidate_withdrawn: '候选人放弃',
 };
 
 const formatTime = (value?: string | null) => {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit',
-  });
+  return date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
 
 const formatDate = (value?: string | null) => {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  return date.toLocaleDateString('zh-CN');
 };
 
-const cardStyle: React.CSSProperties = {
+const formatExperience = (value?: string) => {
+  if (!value) return '未识别';
+  const text = String(value);
+  return text.includes('年') ? text : `${text}年`;
+};
+
+/** 动态加载的 PdfViewer（pdf.js）：与简历管理/业务筛选一致，仅在需要时加载 */
+function DynamicPdfViewer({ pdfUrl }: { pdfUrl: string }) {
+  const [Comp, setComp] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    import('../../components/PdfViewer').then((mod) => {
+      if (!cancelled) { setComp(() => mod.default); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [pdfUrl]);
+  if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94A3B8' }}>加载 PDF 引擎...</div>;
+  return <Comp pdfUrl={pdfUrl} />;
+}
+
+const sectionCardStyle: React.CSSProperties = {
   background: '#fff',
-  border: '1px solid #e2e8f0',
   borderRadius: 16,
-  boxShadow: '0 8px 24px rgba(15, 23, 42, 0.06)',
-  padding: '20px 24px',
+  boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+  border: '1px solid #E2E8F0',
+  padding: '16px 20px',
+  marginBottom: 16,
 };
 
 const sectionTitleStyle: React.CSSProperties = {
-  fontSize: 16,
-  fontWeight: 600,
-  color: '#0f172a',
-  marginBottom: 16,
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
+  fontSize: 16, fontWeight: 600, color: '#0F172A',
+  marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8,
 };
 
-function ProfileDescriptions({ profile }: { profile: BusinessScreeningProfile }) {
-  if (!profile) return null;
-  const rows: Array<{ label: string; value?: string; full?: boolean }> = [
-    { label: '学历', value: profile.highestDegree },
-    { label: '毕业院校', value: profile.school },
-    { label: '专业', value: profile.major },
-    { label: '工作年限', value: profile.yearsOfExperience },
-    { label: '最近公司', value: profile.recentCompany },
-    { label: '当前职位', value: profile.currentTitle },
-    { label: '性别', value: profile.gender },
-    { label: '出生年月', value: profile.birthday },
-    { label: '技能', value: profile.skills?.length ? profile.skills.join('、') : undefined },
-    { label: '证书/资质', value: profile.certifications?.length ? profile.certifications.join('、') : undefined },
-    { label: '自我评价', value: profile.selfEvaluation, full: true },
-    { label: '工作经历', value: undefined, full: true },
-    { label: '教育经历', value: undefined, full: true },
-  ];
-
-  const profileRow: React.CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: 'minmax(96px, 132px) minmax(0, 1fr)',
-    borderBottom: '1px solid #eef2f7',
-  };
-  const labelStyle: React.CSSProperties = {
-    background: '#f8fafc', color: '#475569', fontSize: 13,
-    padding: '10px 14px', borderRight: '1px solid #eef2f7',
-  };
-  const valueStyle: React.CSSProperties = {
-    color: '#1e293b', fontSize: 14, padding: '10px 14px',
-    whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
-  };
-
+/** 面试情况（辅助信息区）：紧凑小字排版，一轮一卡 */
+function InterviewRoundsSection({ interviews }: { interviews: InterviewCardPublicInterview[] }) {
   return (
-    <div style={{ border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden', marginBottom: 24 }}>
-      <div style={{ padding: '10px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <UserOutlined /> 候选人档案
+    <div style={sectionCardStyle}>
+      <div style={sectionTitleStyle}>
+        <TeamOutlined /> 面试情况
+        <span style={{ fontSize: 12, fontWeight: 400, color: '#94A3B8' }}>各轮安排与评价</span>
       </div>
-      {rows.map((row) => {
-        if (row.label === '工作经历') {
-          if (!profile.workExperience?.length) return null;
-          return (
-            <div key={row.label} style={profileRow}>
-              <div style={labelStyle}>工作经历</div>
-              <div style={valueStyle}>
-                {profile.workExperience.map((work, index) => (
-                  <div key={index} style={{ marginBottom: index < profile.workExperience!.length - 1 ? 8 : 0 }}>
-                    <strong>{work.company || '公司不详'}</strong>
-                    {work.title ? ` · ${work.title}` : ''}
-                    {work.duration ? `（${work.duration}）` : work.start || work.end ? `（${work.start || ''}~${work.end || ''}）` : ''}
-                    {work.description ? <div style={{ color: '#666', fontSize: 13 }}>{work.description}</div> : null}
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        }
-        if (row.label === '教育经历') {
-          if (!profile.educationHistory?.length) return null;
-          return (
-            <div key={row.label} style={profileRow}>
-              <div style={labelStyle}>教育经历</div>
-              <div style={valueStyle}>
-                {profile.educationHistory.map((edu, index) => (
-                  <div key={index} style={{ marginBottom: index < profile.educationHistory!.length - 1 ? 4 : 0 }}>
-                    <strong>{edu.school || '学校不详'}</strong>
-                    {edu.degree ? ` · ${edu.degree}` : ''}
-                    {edu.major ? ` · ${edu.major}` : ''}
-                    {edu.start || edu.end ? `（${edu.start || ''}~${edu.end || ''}）` : ''}
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        }
-        if (!row.value && row.value !== undefined) return null;
+      {interviews.length === 0 && (
+        <div style={{ color: '#94A3B8', fontSize: 13, textAlign: 'center', padding: '16px 0' }}>暂无面试记录</div>
+      )}
+      {interviews.map((iv, index) => {
+        const roundLabel = iv.round != null ? `第${iv.round}轮` : `面试 ${index + 1}`;
+        const statusCfg = INTERVIEW_STATUS[iv.status || ''] || { text: iv.status || '—', color: 'default' };
+        const resultCfg = INTERVIEW_RESULT[iv.result || ''] || { text: iv.result || '待评价', color: 'default' };
+        const result2Cfg = iv.result2 && iv.result2 !== 'pending' ? INTERVIEW_RESULT[iv.result2] : null;
+        const interviewers = [iv.primary_interviewer, iv.secondary_interviewer, iv.interviewer]
+          .filter((v, i, arr) => v && arr.indexOf(v) === i).join('、');
         return (
-          <div key={row.label} style={profileRow}>
-            <div style={labelStyle}>{row.label}</div>
-            <div style={valueStyle}>{row.value || '—'}</div>
+          <div key={iv.id} style={{ border: '1px solid #EEF2F7', borderRadius: 10, padding: '10px 14px', marginBottom: 10, background: '#FAFBFC' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#0F172A' }}>{roundLabel}</span>
+              <Tag color={statusCfg.color} style={{ margin: 0, fontSize: 12 }}>{statusCfg.text}</Tag>
+              {iv.result && iv.result !== 'pending' && (
+                <Tag color={resultCfg.color} style={{ margin: 0, fontSize: 12 }}>一面{resultCfg.text}</Tag>
+              )}
+              {result2Cfg && <Tag color={result2Cfg.color} style={{ margin: 0, fontSize: 12 }}>二面{result2Cfg.text}</Tag>}
+              {iv.total_score != null && (
+                <span style={{ fontSize: 12, color: '#475569', marginLeft: 'auto' }}>评分 <strong>{iv.total_score}</strong></span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: '#64748B', lineHeight: 1.9 }}>
+              <div><ClockCircleOutlined style={{ marginRight: 6 }} />{formatTime(iv.interview_time || iv.started_at)}</div>
+              <div><TeamOutlined style={{ marginRight: 6 }} />{interviewers || '—'}</div>
+              <div>
+                <EnvironmentOutlined style={{ marginRight: 6 }} />
+                {[INTERVIEW_TYPE[iv.interview_type || ''] || iv.interview_type || '',
+                  INTERVIEW_CATEGORY[iv.interview_category || ''] || iv.interview_category || '',
+                  iv.interview_location || '', iv.meeting_link || ''].filter(Boolean).join(' · ') || '—'}
+              </div>
+            </div>
+            {(iv.evaluation || iv.evaluation2 || iv.suggestion) && (
+              <div style={{ marginTop: 8, fontSize: 12, color: '#334155' }}>
+                {iv.evaluation && <div style={{ marginBottom: 4 }}><span style={{ color: '#94A3B8' }}>一面评价：</span><span style={{ whiteSpace: 'pre-wrap' }}>{iv.evaluation}</span></div>}
+                {iv.evaluation2 && <div style={{ marginBottom: 4 }}><span style={{ color: '#94A3B8' }}>二面评价：</span><span style={{ whiteSpace: 'pre-wrap' }}>{iv.evaluation2}</span></div>}
+                {iv.suggestion && <div><span style={{ color: '#94A3B8' }}>建议：</span>{iv.suggestion}</div>}
+              </div>
+            )}
+            {iv.comments && Object.entries(iv.comments).filter(([, v]) => v).length > 0 && (
+              <div style={{ marginTop: 6, fontSize: 12, color: '#64748B' }}>
+                <span style={{ color: '#94A3B8' }}>分题评语：</span>
+                {Object.entries(iv.comments).filter(([, v]) => v).map(([k, v]) => `Q${Number(k) + 1}. ${v}`).join('；')}
+              </div>
+            )}
           </div>
         );
       })}
@@ -231,138 +244,51 @@ function ProfileDescriptions({ profile }: { profile: BusinessScreeningProfile })
   );
 }
 
-function InterviewRoundCard({ interview, index }: { interview: InterviewCardPublicInterview; index: number }) {
-  const roundLabel = interview.round != null ? `第${interview.round}轮` : `面试 ${index + 1}`;
-  const statusCfg = INTERVIEW_STATUS[interview.status || ''] || { text: interview.status || '—', color: '#64748b' };
-  const resultCfg = INTERVIEW_RESULT[interview.result || ''] || { text: interview.result || '待评价', color: '#64748b' };
-  const result2Cfg = interview.result2 && interview.result2 !== 'pending' ? INTERVIEW_RESULT[interview.result2] : null;
-
-  const infoItems: Array<{ icon: React.ReactNode; label: string; value: string }> = [
-    {
-      icon: <ClockCircleOutlined />,
-      label: '面试时间',
-      value: formatTime(interview.interview_time || interview.started_at),
-    },
-    {
-      icon: <TeamOutlined />,
-      label: '面试官',
-      value: [interview.primary_interviewer, interview.secondary_interviewer, interview.interviewer]
-        .filter((v, i, arr) => v && arr.indexOf(v) === i)
-        .join('、') || '—',
-    },
-    {
-      icon: <EnvironmentOutlined />,
-      label: '方式/地点',
-      value: [
-        INTERVIEW_TYPE[interview.interview_type || ''] || interview.interview_type || '',
-        INTERVIEW_CATEGORY[interview.interview_category || ''] || interview.interview_category || '',
-        interview.interview_location || '',
-        interview.meeting_link || '',
-      ].filter(Boolean).join(' · ') || '—',
-    },
-  ];
-
-  const renderComments = () => {
-    if (!interview.comments) return null;
-    const entries = Object.entries(interview.comments).filter(([, v]) => v);
-    if (!entries.length) return null;
-    return (
-      <div style={{ marginTop: 12, background: '#f8fafc', borderRadius: 8, padding: '10px 12px' }}>
-        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6, fontWeight: 600 }}>分题评语</div>
-        {entries.map(([k, v]) => (
-          <div key={k} style={{ fontSize: 13, color: '#334155', marginBottom: 4 }}>
-            <span style={{ color: '#94a3b8', marginRight: 6 }}>Q{Number(k) + 1}.</span>
-            {v}
-          </div>
-        ))}
-      </div>
-    );
-  };
-
+/** 备注区：HR 备注 + 业务筛选备注 */
+function RemarksSection({ candidate }: { candidate: InterviewCardCandidate }) {
+  if (!candidate.hr_review && !candidate.business_screening_remark) return null;
   return (
-    <div style={{ border: '1px solid #e2e8f0', borderRadius: 12, padding: 16, marginBottom: 16, background: '#fff' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 15, fontWeight: 600, color: '#0f172a' }}>{roundLabel}</span>
-        <Tag color={statusCfg.color} style={{ margin: 0 }}>{statusCfg.text}</Tag>
-        {interview.result && interview.result !== 'pending' && (
-          <Tag color={resultCfg.color} style={{ margin: 0 }} icon={interview.result === 'passed' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}>
-            一面结果：{resultCfg.text}
-          </Tag>
-        )}
-        {result2Cfg && (
-          <Tag color={result2Cfg.color} style={{ margin: 0 }} icon={result2Cfg.text === '通过' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}>
-            二面结果：{result2Cfg.text}
-          </Tag>
-        )}
-        {interview.total_score != null && (
-          <span style={{ fontSize: 13, color: '#475569', marginLeft: 'auto' }}>
-            综合评分：<strong style={{ color: '#0f172a', fontSize: 16 }}>{interview.total_score}</strong>
-          </span>
-        )}
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginBottom: 12 }}>
-        {infoItems.map((item) => (
-          <div key={item.label} style={{ fontSize: 13, color: '#334155', minWidth: 0 }}>
-            <span style={{ color: '#94a3b8', marginRight: 6 }}>{item.icon}</span>
-            <span style={{ color: '#94a3b8', marginRight: 6 }}>{item.label}：</span>
-            <span style={{ overflowWrap: 'anywhere' }}>{item.value}</span>
+    <div style={sectionCardStyle}>
+      <div style={sectionTitleStyle}><CommentOutlined /> 备注</div>
+      {candidate.hr_review && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: '#64748B', fontWeight: 600, marginBottom: 4 }}>HR 备注</div>
+          <div style={{ fontSize: 13, color: '#1E293B', whiteSpace: 'pre-wrap', background: '#F8FAFC', borderRadius: 8, padding: '8px 12px' }}>
+            {candidate.hr_review}
           </div>
-        ))}
-      </div>
-
-      {(interview.evaluation || interview.evaluation2 || interview.suggestion) && (
-        <div style={{ borderTop: '1px dashed #e2e8f0', paddingTop: 12 }}>
-          {interview.evaluation && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>一面评价</div>
-              <div style={{ fontSize: 13, color: '#1e293b', whiteSpace: 'pre-wrap', background: '#f8fafc', borderRadius: 8, padding: '10px 12px' }}>
-                {interview.evaluation}
-              </div>
-            </div>
-          )}
-          {interview.evaluation2 && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>二面评价</div>
-              <div style={{ fontSize: 13, color: '#1e293b', whiteSpace: 'pre-wrap', background: '#f8fafc', borderRadius: 8, padding: '10px 12px' }}>
-                {interview.evaluation2}
-              </div>
-            </div>
-          )}
-          {interview.suggestion && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>面试建议</div>
-              <div style={{ fontSize: 13, color: '#1e293b', whiteSpace: 'pre-wrap' }}>{interview.suggestion}</div>
-            </div>
-          )}
         </div>
       )}
-
-      {renderComments()}
+      {candidate.business_screening_remark && (
+        <div>
+          <div style={{ fontSize: 12, color: '#64748B', fontWeight: 600, marginBottom: 4 }}>业务筛选备注</div>
+          <div style={{ fontSize: 13, color: '#1E293B', whiteSpace: 'pre-wrap', background: '#F8FAFC', borderRadius: 8, padding: '8px 12px' }}>
+            {candidate.business_screening_remark}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function Timeline({ events }: { events: InterviewCardTimelineEvent[] }) {
+/** 进度时间线（辅助信息区，紧凑） */
+function TimelineSection({ events }: { events: InterviewCardTimelineEvent[] }) {
   if (!events.length) return null;
   return (
-    <div style={{ marginTop: 24 }}>
-      <div style={{ ...sectionTitleStyle, marginBottom: 12 }}>
-        <HistoryOutlined /> 进度时间线
-      </div>
-      <div style={{ borderLeft: '2px solid #e2e8f0', marginLeft: 8, paddingLeft: 20 }}>
+    <div style={sectionCardStyle}>
+      <div style={sectionTitleStyle}><HistoryOutlined /> 进度时间线</div>
+      <div style={{ borderLeft: '2px solid #E2E8F0', marginLeft: 6, paddingLeft: 16 }}>
         {events.map((event, index) => (
-          <div key={index} style={{ position: 'relative', paddingBottom: 16 }}>
+          <div key={index} style={{ position: 'relative', paddingBottom: 12 }}>
             <div style={{
-              position: 'absolute', left: -26.5, top: 4, width: 10, height: 10, borderRadius: '50%',
-              background: index === events.length - 1 ? '#3b82f6' : '#cbd5e1',
-              border: '2px solid #fff', boxShadow: '0 0 0 2px #e2e8f0',
+              position: 'absolute', left: -21.5, top: 4, width: 9, height: 9, borderRadius: '50%',
+              background: index === events.length - 1 ? '#3B82F6' : '#CBD5E1',
+              border: '2px solid #fff', boxShadow: '0 0 0 2px #E2E8F0',
             }} />
-            <div style={{ fontSize: 13, color: '#0f172a', fontWeight: 600 }}>
+            <div style={{ fontSize: 12, color: '#0F172A', fontWeight: 600 }}>
               {STAGE_LABELS[event.stage] || event.stage}
               {event.action ? <span style={{ fontWeight: 400, color: '#475569', marginLeft: 8 }}>{event.action}</span> : null}
             </div>
-            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{formatTime(event.occurred_at)}</div>
+            <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 1 }}>{formatTime(event.occurred_at)}</div>
           </div>
         ))}
       </div>
@@ -372,6 +298,8 @@ function Timeline({ events }: { events: InterviewCardTimelineEvent[] }) {
 
 const InterviewCard: React.FC = () => {
   const { token } = useParams();
+  const viewportWidth = useViewportWidth();
+  const isMobileLayout = viewportWidth < 768;
   const [data, setData] = useState<InterviewCardView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -389,7 +317,6 @@ const InterviewCard: React.FC = () => {
         if (status === 404) setError('链接无效或不存在');
         else if (status === 410) setError('链接已失效，请联系 HR 重新生成');
         else setError('加载失败，请稍后重试');
-        message.error(error || '加载失败');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -407,121 +334,232 @@ const InterviewCard: React.FC = () => {
 
   if (error || !data) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#f8fafc', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#F8FAFC', gap: 12 }}>
         <div style={{ fontSize: 40 }}>🔗</div>
         <div style={{ fontSize: 16, color: '#334155', fontWeight: 600 }}>{error || '加载失败'}</div>
-        <div style={{ fontSize: 13, color: '#94a3b8' }}>如有疑问请联系 HR</div>
+        <div style={{ fontSize: 13, color: '#94A3B8' }}>如有疑问请联系 HR</div>
       </div>
     );
   }
 
   const { card, candidate, interviews, timeline } = data;
+  const profile = candidate.profile;
   const positionTitle = candidate.mapped_position || candidate.position_applied || '—';
+  const statusInfo = STATUS_MAP[candidate.status || ''] || { text: candidate.status || '待定', color: 'default' };
+  const evaluation = normalizeResumeEvaluation({
+    ai_evaluation: candidate.ai_evaluation,
+    ai_review: candidate.ai_review,
+    match_score: candidate.match_score,
+  });
+  const gateRows = getScreeningGateRows(evaluation);
+  const aiReviewObject = evaluation.source && typeof evaluation.source === 'object' ? evaluation.source : {};
+  const strengths = asDisplayTextList((aiReviewObject as any).strengths);
+  const risks = asDisplayTextList((aiReviewObject as any).risks);
+  const suggestedQuestions = asDisplayTextList((aiReviewObject as any).suggested_questions);
+  const matchedSkills = asDisplayTextList((aiReviewObject as any).skill_match?.matched);
+  const skillGaps = asDisplayTextList((aiReviewObject as any).skill_match?.gaps);
+  const ocrText = candidate.ocr_markdown || candidate.raw_text || candidate.resume_markdown || '';
 
-  return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', padding: '24px 16px' }}>
-      <div style={{ maxWidth: 880, margin: '0 auto' }}>
+  const pdfUrl = `/api/public/interview-card/${token}/file?preview=1`;
+  const downloadUrl = `/api/public/interview-card/${token}/file`;
+  const hasResumeFile = !!candidate.resume_id;
 
-        {/* 头部卡片 */}
-        <div style={{ ...cardStyle, marginBottom: 20, padding: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <FileTextOutlined /> 面试管理卡片
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', lineHeight: 1.3, overflowWrap: 'anywhere' }}>
-                {candidate.candidate_name}
-              </div>
-              <div style={{ fontSize: 14, color: '#475569', marginTop: 4 }}>
-                应聘岗位：{positionTitle}
-              </div>
-            </div>
-            <div style={{ textAlign: 'right', fontSize: 12, color: '#94a3b8' }}>
-              <div style={{ marginBottom: 4 }}>
-                <CalendarOutlined /> 生成时间 {formatDate(card.created_at)}
-              </div>
-              <div>
-                <ClockCircleOutlined style={{ marginRight: 4 }} />
-                链接有效期至 <strong style={{ color: '#f59e0b' }}>{formatDate(card.expires_at)}</strong>
-              </div>
-            </div>
-          </div>
-
-          {/* 面试进度总览 */}
-          {interviews.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16, paddingTop: 16, borderTop: '1px solid #eef2f7' }}>
-              <span style={{ fontSize: 13, color: '#64748b', alignSelf: 'center' }}>面试进度：</span>
-              {interviews.map((iv) => {
-                const label = iv.round != null ? `第${iv.round}轮` : '面试';
-                const done = iv.status === 'completed';
-                const passed = iv.result === 'passed';
-                const failed = iv.result === 'failed' || iv.status === 'failed';
-                const color = failed ? '#ef4444' : passed ? '#10b981' : done ? '#f59e0b' : '#3b82f6';
-                const icon = failed ? <CloseCircleOutlined /> : passed ? <CheckCircleOutlined /> : done ? <ClockCircleOutlined /> : <CalendarOutlined />;
-                return (
-                  <Tag key={iv.id} color={color} icon={icon} style={{ margin: 0, fontSize: 12 }}>
-                    {label}{done || failed ? ` · ${INTERVIEW_RESULT[iv.result || '']?.text || iv.result || ''}` : ' · 进行中'}
-                  </Tag>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* 候选人档案（信息结构照搬系统简历详情页 /resumes/:id，不含联系方式） */}
-        <div style={{ ...cardStyle, marginBottom: 20 }}>
-          <ProfileDescriptions profile={candidate.profile} />
-          {(candidate.hr_review || candidate.business_screening_remark) && (
-            <div>
-              <div style={{ ...sectionTitleStyle, marginBottom: 12 }}>
-                <CommentOutlined /> 备注
-              </div>
-              {candidate.hr_review && (
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>HR 备注</div>
-                  <div style={{ fontSize: 13, color: '#1e293b', whiteSpace: 'pre-wrap', background: '#f8fafc', borderRadius: 8, padding: '10px 12px' }}>
-                    {candidate.hr_review}
-                  </div>
-                </div>
-              )}
-              {candidate.business_screening_remark && (
-                <div>
-                  <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>业务筛选备注</div>
-                  <div style={{ fontSize: 13, color: '#1e293b', whiteSpace: 'pre-wrap', background: '#f8fafc', borderRadius: 8, padding: '10px 12px' }}>
-                    {candidate.business_screening_remark}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* 面试情况 */}
-        <div style={{ ...cardStyle, marginBottom: 20 }}>
-          <div style={{ ...sectionTitleStyle, marginBottom: 16 }}>
-            <TeamOutlined /> 面试情况
-            {interviews.length === 0 && <Tag color="default" style={{ marginLeft: 8 }}>暂无面试记录</Tag>}
-          </div>
-          {interviews.map((iv, index) => (
-            <InterviewRoundCard key={iv.id} interview={iv} index={index} />
-          ))}
-          {interviews.length === 0 && (
-            <div style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
-              该候选人暂无面试记录，可前往系统「面试管理」安排面试
-            </div>
-          )}
-        </div>
-
-        {/* 进度时间线 */}
-        {timeline.length > 0 && (
-          <div style={{ ...cardStyle, marginBottom: 20 }}>
-            <Timeline events={timeline} />
+  // ===== 左侧：简历原件预览（与简历详情页一致） =====
+  const pdfPane = (
+    <div style={{
+      flex: isMobileLayout ? '0 0 auto' : '1 1 45%', width: isMobileLayout ? '100%' : undefined,
+      minWidth: 0, height: isMobileLayout ? 'min(60vh, 480px)' : undefined,
+      background: '#fff', borderRadius: 16, border: '1px solid #E2E8F0', overflow: 'hidden',
+      display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#F8FAFC' }}>
+        <span style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <FileTextOutlined /> 简历原件预览
+        </span>
+        {hasResumeFile && (
+          <Button type="primary" icon={<DownloadOutlined />} href={downloadUrl} target="_blank">下载原件</Button>
+        )}
+      </div>
+      <div style={{ flex: 1, background: '#F1F5F9', minHeight: isMobileLayout ? undefined : 0 }}>
+        {hasResumeFile ? (
+          <DynamicPdfViewer pdfUrl={pdfUrl} />
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94A3B8', fontSize: 13, padding: 24, textAlign: 'center' }}>
+            该候选人未关联简历文件
           </div>
         )}
+      </div>
+    </div>
+  );
 
-        <div style={{ textAlign: 'center', fontSize: 12, color: '#94a3b8', padding: '8px 0 16px' }}>
-          本页面由 AI-Interview 系统生成 · 仅供招聘内部协作使用 · 请勿外传
+  // ===== 右侧：候选人信息为主体 =====
+  const infoPane = (
+    <div style={{ flex: isMobileLayout ? '0 0 auto' : '1 1 55%', width: isMobileLayout ? '100%' : undefined, maxWidth: '100%', minWidth: 0, overflowY: isMobileLayout ? 'visible' : 'auto', paddingRight: isMobileLayout ? 0 : '4px' }}>
+
+      {/* 头部：姓名 + 岗位 + 加权分 + 状态（与简历详情页一致） */}
+      <div style={sectionCardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0F172A', lineHeight: 1.3, overflowWrap: 'anywhere' }}>
+              {candidate.candidate_name}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 14, color: '#475569', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <span>应聘岗位：{positionTitle}</span>
+              {candidate.contact && <span><PhoneOutlined style={{ marginRight: 4 }} />{candidate.contact}</span>}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 12, color: '#94A3B8', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <span><CalendarOutlined /> 生成 {formatDate(card.created_at)}</span>
+              <span><ClockCircleOutlined /> 有效期至 {formatDate(card.expires_at)}</span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            {evaluation.overallScore != null && (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 11, color: '#94A3B8' }}>加权分</div>
+                <Progress
+                  type="circle"
+                  percent={(evaluation.overallScore || 0) * 20}
+                  size={48}
+                  format={() => <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>{formatWeightedScore(evaluation.overallScore)}</span>}
+                  strokeColor={evaluation.overallScore >= 4 ? '#10B981' : evaluation.overallScore >= 3 ? '#F59E0B' : '#EF4444'}
+                />
+              </div>
+            )}
+            <Tag color={statusInfo.color} style={{ fontSize: 13, padding: '4px 10px', margin: 0 }}>{statusInfo.text}</Tag>
+          </div>
         </div>
+
+        {/* 门槛标签 */}
+        {gateRows.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
+            {gateRows.map((gate) => (
+              <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
+                {gate.passed ? `${gate.label}已通过` : gate.reason}
+              </Tag>
+            ))}
+            {evaluation.screeningReason && (
+              <span style={{ fontSize: 12, color: '#64748B', alignSelf: 'center' }}>初筛结论：{evaluation.screeningReason}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 候选人档案（Descriptions，与简历详情页字段一致） */}
+      <div style={sectionCardStyle}>
+        <div style={sectionTitleStyle}><UserOutlined /> 候选人档案</div>
+        <Descriptions column={isMobileLayout ? 1 : 2} bordered size="small">
+          <Descriptions.Item label="应聘岗位">{positionTitle}</Descriptions.Item>
+          <Descriptions.Item label="学历">{profile?.highestDegree || '未识别'}</Descriptions.Item>
+          <Descriptions.Item label="毕业院校">{profile?.school || '未识别'}</Descriptions.Item>
+          <Descriptions.Item label="专业">{profile?.major || '未识别'}</Descriptions.Item>
+          <Descriptions.Item label="工作年限">{formatExperience(profile?.yearsOfExperience)}</Descriptions.Item>
+          <Descriptions.Item label="最近公司">{profile?.recentCompany || '未识别'}</Descriptions.Item>
+          <Descriptions.Item label="性别">{profile?.gender || '未识别'}</Descriptions.Item>
+          <Descriptions.Item label="出生年月">{profile?.birthday || '未识别'}</Descriptions.Item>
+          <Descriptions.Item label="当前职位">{profile?.currentTitle || '未识别'}</Descriptions.Item>
+          <Descriptions.Item label="电话">{candidate.contact || '未识别'}</Descriptions.Item>
+          <Descriptions.Item label="技能" span={2}>
+            {profile?.skills?.length ? profile.skills.join('、') : '未识别'}
+          </Descriptions.Item>
+          <Descriptions.Item label="证书/资质" span={2}>
+            {profile?.certifications?.length ? profile.certifications.join('、') : '未识别'}
+          </Descriptions.Item>
+          <Descriptions.Item label="自我评价" span={2}>
+            {profile?.selfEvaluation || '未识别'}
+          </Descriptions.Item>
+          {profile?.workExperience?.length ? (
+            <Descriptions.Item label="工作经历" span={2}>
+              {profile.workExperience.map((w, i) => (
+                <div key={i} style={{ marginBottom: 6 }}>
+                  <strong>{w.company || '公司不详'}</strong> · {w.title || ''}（{w.duration || `${w.start || ''}~${w.end || ''}`}）
+                  {w.description && <div style={{ color: '#666' }}>{w.description}</div>}
+                </div>
+              ))}
+            </Descriptions.Item>
+          ) : null}
+          {profile?.educationHistory?.length ? (
+            <Descriptions.Item label="教育经历" span={2}>
+              {profile.educationHistory.map((e, i) => (
+                <div key={i} style={{ marginBottom: 4 }}>
+                  <strong>{e.school || '学校不详'}</strong> · {e.degree || ''} · {e.major || ''}（{e.start || ''}~{e.end || ''}）
+                </div>
+              ))}
+            </Descriptions.Item>
+          ) : null}
+        </Descriptions>
+      </div>
+
+      {/* AI 评估（优势/风险/建议提问/技能匹配） */}
+      {(strengths.length > 0 || risks.length > 0 || suggestedQuestions.length > 0 || matchedSkills.length > 0 || skillGaps.length > 0) && (
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>
+            <CheckCircleOutlined style={{ color: '#6366F1' }} /> AI 评估
+          </div>
+          {strengths.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: '#64748B', fontWeight: 600, marginBottom: 4 }}>优势</div>
+              {strengths.map((s, i) => <div key={i} style={{ fontSize: 13, color: '#1E293B', marginBottom: 2 }}>· {s}</div>)}
+            </div>
+          )}
+          {risks.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: '#64748B', fontWeight: 600, marginBottom: 4 }}>风险点</div>
+              {risks.map((r, i) => <div key={i} style={{ fontSize: 13, color: '#B45309', marginBottom: 2 }}>· {r}</div>)}
+            </div>
+          )}
+          {suggestedQuestions.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: '#64748B', fontWeight: 600, marginBottom: 4 }}>建议提问</div>
+              {suggestedQuestions.map((q, i) => <div key={i} style={{ fontSize: 13, color: '#1E293B', marginBottom: 2 }}>· {q}</div>)}
+            </div>
+          )}
+          {(matchedSkills.length > 0 || skillGaps.length > 0) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {matchedSkills.map((s, i) => <Tag key={`m${i}`} color="green" style={{ margin: 0 }}>{s}</Tag>)}
+              {skillGaps.map((s, i) => <Tag key={`g${i}`} color="orange" style={{ margin: 0 }}>待验证：{s}</Tag>)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 简历文本识别（OCR Markdown，与简历详情页一致） */}
+      {ocrText && (
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>
+            <FileTextOutlined style={{ color: '#6366F1' }} /> 简历文本识别
+            <span style={{ fontSize: 12, fontWeight: 400, color: '#94A3B8' }}>OCR 结构化文本</span>
+          </div>
+          <div style={{ background: '#F8FAFC', padding: '16px 20px', borderRadius: 12, border: '1px solid #E2E8F0', maxHeight: 480, overflow: 'auto', fontSize: 13 }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{ocrText.substring(0, 100000)}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+
+      {/* 面试情况（辅助信息） */}
+      <InterviewRoundsSection interviews={interviews} />
+
+      {/* 备注 */}
+      <RemarksSection candidate={candidate} />
+
+      {/* 进度时间线 */}
+      <TimelineSection events={timeline} />
+
+      <div style={{ textAlign: 'center', fontSize: 12, color: '#94A3B8', padding: '4px 0 12px' }}>
+        本页面由 AI-Interview 系统生成 · 仅供招聘内部协作使用 · 请勿外传
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#F8FAFC', padding: isMobileLayout ? '12px' : '20px 24px' }}>
+      <div style={{
+        height: isMobileLayout ? 'auto' : 'calc(100vh - 40px)',
+        display: 'flex', flexDirection: isMobileLayout ? 'column' : 'row',
+        gap: 16, overflow: isMobileLayout ? 'visible' : 'hidden',
+        maxWidth: 1400, margin: '0 auto',
+      }}>
+        {pdfPane}
+        {infoPane}
       </div>
     </div>
   );
