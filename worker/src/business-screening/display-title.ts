@@ -4,6 +4,7 @@ export const MAX_BUSINESS_SCREENING_TITLE_LENGTH = 60;
 const ACTION_SUFFIXES = ['给我链接', '发链接', '看一下', '谢谢'];
 const ACTION_REQUEST_PREFIXES = ['请', '麻烦'];
 const ACTION_ONLY_TERMS = ['查询', '查看', '获取', '给我', '看', '拿到', '发我'];
+const COUNT_ONLY_TITLE_PATTERN = /^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万亿]+)\s*(?:份|人|条|个|封|项)(?:简历|候选人|数据|记录)?$/u;
 const WRAPPING_QUOTES: ReadonlyArray<readonly [string, string]> = [
   ['“', '”'],
   ['‘', '’'],
@@ -27,6 +28,10 @@ function isActionOnly(value: string): boolean {
   return ACTION_REQUEST_PREFIXES.some((prefix) => (
     value.startsWith(prefix) && ACTION_ONLY_TERMS.includes(value.slice(prefix.length).trim())
   ));
+}
+
+function isCountOnlyTitle(value: string): boolean {
+  return COUNT_ONLY_TITLE_PATTERN.test(value);
 }
 
 export function normalizeBusinessScreeningTitle(value: unknown): string | null {
@@ -63,7 +68,7 @@ export function normalizeBusinessScreeningTitle(value: unknown): string | null {
   }
 
   title = removeWrappingQuotes(title);
-  if (!title || isActionOnly(title) || ACTION_REQUEST_PREFIXES.includes(title)) {
+  if (!title || isActionOnly(title) || isCountOnlyTitle(title) || ACTION_REQUEST_PREFIXES.includes(title)) {
     return null;
   }
 

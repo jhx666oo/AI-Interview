@@ -32,4 +32,10 @@ describe('normalizeBusinessScreeningTitle', () => {
     expect(normalizeBusinessScreeningTitle('查询 AI 初筛通过表')).toBe('查询 AI 初筛通过表');
     expect(DEFAULT_BUSINESS_SCREENING_TITLE).toBe('业务筛选');
   });
+
+  it('does not use a resume count as the public page title', () => {
+    expect(normalizeBusinessScreeningTitle('100份')).toBeNull();
+    expect(normalizeBusinessScreeningTitle('100份简历')).toBeNull();
+    expect(normalizeBusinessScreeningTitle('AI 初筛通过表')).toBe('AI 初筛通过表');
+  });
 });
