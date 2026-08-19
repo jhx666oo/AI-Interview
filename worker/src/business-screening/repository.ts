@@ -132,8 +132,8 @@ export async function insertResumePushBatchItemsIfAbsent(
   items: CreateResumePushBatchItemInput[],
 ): Promise<void> {
   if (items.length === 0) return;
-  // 分块多值 INSERT OR IGNORE（每块 100 行），大幅减少 D1 往返，避免大批量超时
-  const CHUNK = 100;
+  // 分块多值 INSERT OR IGNORE（每块 10 行（D1 单语句绑定参数上限约 100，10×9=90 参数）），大幅减少 D1 往返，避免大批量超时
+  const CHUNK = 10;
   for (let start = 0; start < items.length; start += CHUNK) {
     const chunk = items.slice(start, start + CHUNK);
     const cols = '(id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)';
@@ -163,8 +163,8 @@ export async function insertResumePushBatchItems(
   items: CreateResumePushBatchItemInput[],
 ): Promise<void> {
   if (items.length === 0) return;
-  // 分块多值 INSERT（每块 100 行），大幅减少 D1 往返，避免大批量超时
-  const CHUNK = 100;
+  // 分块多值 INSERT（每块 10 行（D1 单语句绑定参数上限约 100，10×9=90 参数）），大幅减少 D1 往返，避免大批量超时
+  const CHUNK = 10;
   for (let start = 0; start < items.length; start += CHUNK) {
     const chunk = items.slice(start, start + CHUNK);
     const cols = '(id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)';
@@ -205,7 +205,7 @@ export async function markResumesPushed(
   const timestamp = new Date().toISOString();
   if (resumeIds.length === 0) return;
   // 分块多值 UPDATE ... WHERE id IN (…)，每块 100 个 id，避免大批量逐条往返超时
-  const CHUNK = 100;
+  const CHUNK = 10;
   for (let start = 0; start < resumeIds.length; start += CHUNK) {
     const chunk = resumeIds.slice(start, start + CHUNK);
     const placeholders = chunk.map(() => '?').join(', ');
