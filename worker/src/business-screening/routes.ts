@@ -676,14 +676,19 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       // 固定业务范围改为“面试官”：同一面试官跨岗位、跨多次推送复用同一个有效链接，
       // 简历只追加到同一批次；批次过期后才创建新周期链接。
       const scopeKey = group.interviewer.openId;
-      let existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
-      // 兼容已上线的旧批次：旧版 scope_key 为“岗位::面试官”，仍沿用其原链接，
-      // 后续新批次才统一写入面试官 scope。
-      if (!existing) {
-        existing = await deps.store.loadBatchByInterviewer(db, group.interviewer.openId, nowIso);
-      }
-      if (!existing) {
-        existing = await deps.store.loadLatestBatchByInterviewer(db, group.interviewer.openId);
+      // 临时链接模式（模式 B）：每次生成独立新批次/新链接（内容=当次范围），
+      // 不复用 scope 固定批次，避免与推送链接内容互相污染。
+      let existing: ResumePushBatchRow | null = null;
+      if (!tempLink) {
+        existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+        // 兼容已上线的旧批次：旧版 scope_key 为“岗位::面试官”，仍沿用其原链接，
+        // 后续新批次才统一写入面试官 scope。
+        if (!existing) {
+          existing = await deps.store.loadBatchByInterviewer(db, group.interviewer.openId, nowIso);
+        }
+        if (!existing) {
+          existing = await deps.store.loadLatestBatchByInterviewer(db, group.interviewer.openId);
+        }
       }
       const tokenScopeKey = existing?.scope_key?.trim() || scopeKey;
       const itemCreatedAt = deps.now();
