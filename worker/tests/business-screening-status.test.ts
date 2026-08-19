@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildBusinessScreeningBatchItemVisibilityClause,
   buildBusinessScreeningStatusSqlClause,
   exposeBusinessScreeningState,
   inferBusinessScreeningStatus,
@@ -32,5 +33,9 @@ describe('resume business-screening state', () => {
 
     expect(filter.clause).toContain("r.hr_disposition = 'pushed'");
     expect(filter.clause).toContain("r.business_screening_status = ? AND r.hr_disposition = 'pushed'");
+  });
+
+  it('only exposes currently pushed resumes in a public business-screening batch', () => {
+    expect(buildBusinessScreeningBatchItemVisibilityClause()).toBe("r.hr_disposition = 'pushed'");
   });
 });

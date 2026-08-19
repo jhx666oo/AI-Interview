@@ -42,6 +42,7 @@ describe('resume business screening helpers', () => {
     });
 
     expect(actions.primary).toEqual({ key: 'push', label: '推送' });
+    expect(actions.secondary).toEqual({ key: 'reject', label: '淘汰' });
   });
 
   it('shows push for resumes without an AI screening result', () => {

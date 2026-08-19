@@ -17,6 +17,7 @@ import {
 } from './display-title';
 import { groupEligibleResumesForPush, isEligibleForPush, type PushEligibilityOptions } from './service';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './token';
+import { buildBusinessScreeningBatchItemVisibilityClause } from '../resume-list/business-screening-status';
 import type {
   BusinessScreeningResume,
   CreateResumePushBatchItemInput,
@@ -1206,6 +1207,8 @@ function placeholders(count: number): string {
 }
 
 export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId: (db: D1Database, name: string) => Promise<string | null>): BusinessScreeningRouteStore {
+  const visibleBatchItemClause = buildBusinessScreeningBatchItemVisibilityClause('r');
+
   return {
     async listResumesByIds(db, ids) {
       if (ids.length === 0) return [];
@@ -1376,6 +1379,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
           WHERE i.batch_id = ?
+            AND ${visibleBatchItemClause}
           ORDER BY i.created_at ASC`,
         [batchId],
       );
@@ -1389,6 +1393,7 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
            FROM resume_push_batch_items i
            JOIN resumes r ON r.id = i.resume_id
           WHERE i.batch_id = ? AND i.resume_id = ?
+            AND ${visibleBatchItemClause}
           LIMIT 1`,
       ).bind(batchId, resumeId).first<BusinessScreeningBatchItemView>();
     },
@@ -1412,7 +1417,10 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
       const row = await db.prepare(
         `SELECT COUNT(*) as count
            FROM resume_push_batch_items
-          WHERE batch_id = ? AND status = 'pending'`,
+           JOIN resumes r ON r.id = resume_push_batch_items.resume_id
+          WHERE resume_push_batch_items.batch_id = ?
+            AND resume_push_batch_items.status = 'pending'
+            AND ${visibleBatchItemClause}`,
       ).bind(batchId).first<{ count: number }>();
       return Number(row?.count || 0);
     },
