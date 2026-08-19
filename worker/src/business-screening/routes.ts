@@ -662,7 +662,11 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       eligibleResumes.push(resume);
     }
 
-    const eligible = await optimizeResumesForProfile(db, eligibleResumes, resolveStandardTitle);
+    // 临时链接模式（模式 B）：直接放入用户指定简历，不做同名档案优选替换
+    // （优选替换在无责任人的同名岗位组合下会异常，且临时链接本就不需要）
+    const eligible = tempLink
+      ? eligibleResumes
+      : await optimizeResumesForProfile(db, eligibleResumes, resolveStandardTitle);
     const grouped = groupEligibleResumesForPush(eligible, positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
     const sender = await resolveSenderEmail(c, user, deps);
     const currentUserToken = sender.email ? await deps.getCurrentUserToken(c.env, sender.email) : null;
