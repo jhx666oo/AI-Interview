@@ -41,6 +41,16 @@ import { ensureBusinessScreeningSchema } from './business-screening/repository';
 import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from './business-screening/routes';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './business-screening/token';
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
+import { createInterviewStartRoutes } from './interview-start/routes';
+import { createInterviewCalendarEvent } from './interview-start/feishu-calendar';
+import {
+  ensureInterviewInvite,
+  frontendBaseUrl,
+  loadInterviewStartContext,
+  resolveEventTimeframe,
+  sendCandidateInterviewEmail,
+} from './interview-start/service';
+import { isSmtpConfigured } from './interview-start/smtp';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
 import {
@@ -1606,6 +1616,10 @@ const interviewCardRoutes = createInterviewCardRoutes({
   getResumeFileBytes,
 });
 app.route('/', interviewCardRoutes);
+
+// 开始面试流程：候选人面试详情免登录链接（公开端点；服务层在 /interviews/:id/start 中使用）
+const interviewStartRoutes = createInterviewStartRoutes({ now, hashPublicToken });
+app.route('/', interviewStartRoutes);
 
 // API Key 飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（管理员配置）
 const BUSINESS_SCREENING_KEY_OWNER_SETTING = 'business_screening_key_owner';
@@ -8417,9 +8431,123 @@ app.get('/api/interviews/:id/questions', authMiddleware, async (c) => {
 app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
   const id = c.req.param('id');
   await c.env.DB.prepare("UPDATE interviews SET status = 'in_progress', started_at = ? WHERE id = ?").bind(now(), id).run();
+
+  // ===== 开始面试联动流程：①飞书会议日程（自动创建会议链接）②候选人免登录详情链接 ③候选人邮件 =====
+  const startFlow: {
+    meeting_link: string | null;
+    calendar_event_id: string | null;
+    candidate_email: string | null;
+    email_status: 'queued' | 'skipped';
+    email_detail: string;
+    invite_url: string | null;
+    warnings: string[];
+  } = {
+    meeting_link: null,
+    calendar_event_id: null,
+    candidate_email: null,
+    email_status: 'skipped',
+    email_detail: '',
+    invite_url: null,
+    warnings: [],
+  };
+
+  const startCtx = await loadInterviewStartContext(c.env.DB as D1Database, id);
+  if (startCtx) {
+    startFlow.candidate_email = startCtx.candidateEmail;
+    const existingMeetingLink = String(startCtx.interview.meeting_link || '').trim();
+
+    // 1) 飞书会议日程（已有会议链接则跳过创建）
+    if (existingMeetingLink) {
+      startFlow.meeting_link = existingMeetingLink;
+    } else {
+      try {
+        const timeframe = resolveEventTimeframe(startCtx.interview);
+        // 日程参与人：主/副面试官（解析到飞书 open_id 才邀请，失败不阻塞）
+        const attendeeNames = [...new Set(
+          [String(startCtx.interview.primary_interviewer || '').trim(), String(startCtx.interview.secondary_interviewer || '').trim()].filter(Boolean),
+        )];
+        const attendeeOpenIds: string[] = [];
+        for (const name of attendeeNames) {
+          const openId = await resolveExactInterviewerOpenId(c.env.DB as D1Database, name);
+          if (openId) attendeeOpenIds.push(openId);
+        }
+        const event = await createInterviewCalendarEvent(c.env, {
+          summary: `面试 - ${startCtx.candidateName} - ${startCtx.positionName}`,
+          description: [
+            `候选人：${startCtx.candidateName}`,
+            `应聘岗位：${startCtx.positionName}`,
+            `面试时间：${timeframe.timeLabel}`,
+            '',
+            '由 AI-Interview「开始面试」流程自动创建。',
+          ].join('\n'),
+          startTimestamp: timeframe.startTs,
+          endTimestamp: timeframe.endTs,
+          attendeeOpenIds,
+        }, {}, FEISHU_CONFIG.appId);
+        startFlow.calendar_event_id = event.eventId;
+        if (event.meetingUrl) {
+          await c.env.DB.prepare('UPDATE interviews SET meeting_link = ?, feishu_event_id = ?, updated_at = ? WHERE id = ?')
+            .bind(event.meetingUrl, event.eventId, now(), id).run();
+          startFlow.meeting_link = event.meetingUrl;
+        } else {
+          await c.env.DB.prepare('UPDATE interviews SET feishu_event_id = ?, updated_at = ? WHERE id = ?')
+            .bind(event.eventId, now(), id).run();
+          startFlow.warnings.push('飞书日程已创建，但会议链接尚未生成，请稍后刷新面试详情或手动补充会议链接');
+        }
+        startFlow.warnings.push(...event.attendeeErrors);
+      } catch (e: any) {
+        startFlow.warnings.push(`飞书会议日程创建失败：${e?.message || e}`);
+      }
+    }
+
+    // 2) 候选人面试详情免登录链接 + 3) 候选人邮件（异步）
+    try {
+      const configRow = await c.env.DB.prepare('SELECT frontend_url, mail_from_name FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+      const baseUrl = frontendBaseUrl(configRow?.frontend_url);
+      const fromName = (configRow?.mail_from_name && String(configRow.mail_from_name).trim()) || '招聘系统';
+      const invite = await ensureInterviewInvite(c.env.DB as D1Database, startCtx.interview, { now, hashPublicToken });
+      const inviteUrl = `${baseUrl}${invite.url}`;
+      startFlow.invite_url = inviteUrl;
+
+      // 邮件状态同步预检（实际发送异步执行）
+      if (!startCtx.candidateEmail) {
+        startFlow.email_status = 'skipped';
+        startFlow.email_detail = '候选人简历未解析到邮箱，邮件未发送';
+      } else {
+        const smtpRow = await c.env.DB.prepare('SELECT smtp_host, smtp_port, smtp_username, smtp_password, mail_from, mail_from_name, mail_enabled FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+        if (!isSmtpConfigured(smtpRow)) {
+          startFlow.email_status = 'skipped';
+          startFlow.email_detail = 'SMTP 邮件服务未启用或配置不完整（系统设置 → 邮件设置），邮件未发送';
+        } else {
+          startFlow.email_status = 'queued';
+          c.executionCtx.waitUntil((async () => {
+            try {
+              const result = await sendCandidateInterviewEmail(c.env.DB as D1Database, {
+                ctx: startCtx,
+                meetingUrl: startFlow.meeting_link,
+                inviteUrl,
+                fromName,
+                nowIso: now(),
+              });
+              if (result.status === 'failed') {
+                console.error(`[InterviewStart] 候选人邮件发送失败: ${result.reason}`);
+              } else {
+                console.log(`[InterviewStart] 候选人邮件 ${result.status}${result.status === 'sent' ? ` -> ${result.to}` : `: ${result.reason}`}`);
+              }
+            } catch (e: any) {
+              console.error(`[InterviewStart] 候选人邮件任务异常: ${e?.message || e}`);
+            }
+          })());
+        }
+      }
+    } catch (e: any) {
+      startFlow.warnings.push(`候选人邀请链接生成失败：${e?.message || e}`);
+    }
+  }
+
   const row = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first() as any;
 
-  // 异步通知面试官
+  // 异步通知面试官（沿用原有逻辑）
   if (row) {
     c.executionCtx.waitUntil((async () => {
       try {
@@ -8443,7 +8571,7 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
     })());
   }
 
-  return c.json(transformRow(row));
+  return c.json({ ...transformRow(row), start_flow: startFlow });
 });
 
 // 从人才库一键开始面试 → 创建面试记录 + 通知面试官
@@ -9178,12 +9306,56 @@ app.post('/api/settings/system/test', authMiddleware, requireRole(['admin']), as
 });
 
 app.get('/api/settings/mail', authMiddleware, async (c) => {
-  const row = await c.env.DB.prepare('SELECT smtp_host, smtp_port, smtp_username, mail_from, mail_from_name, mail_enabled, frontend_url FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
-  return c.json(transformRow(row) || {});
+  const row = await c.env.DB.prepare('SELECT smtp_host, smtp_port, smtp_username, smtp_password, mail_from, mail_from_name, mail_enabled, frontend_url FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
+  const data = transformRow(row) || {};
+  delete data.smtp_password; // 密码不回显
+  return c.json({ ...data, smtp_password_set: Boolean((row as any)?.smtp_password) });
 });
 
+// 保存 SMTP 配置（邮件设置页）。smtp_password 仅在提供非空值时覆盖，避免误清空。
 app.put('/api/settings/mail', authMiddleware, async (c) => {
-  return c.json({ detail: 'Mail settings updated' });
+  const body = await c.req.json().catch(() => ({}));
+  const str = (v: any): string | null => (typeof v === 'string' ? v.trim() : null);
+
+  const fields: Record<string, any> = {
+    smtp_host: str(body.smtp_host),
+    smtp_port: Number(body.smtp_port) || 465,
+    smtp_username: str(body.smtp_username),
+    mail_from: str(body.mail_from),
+    mail_from_name: str(body.mail_from_name) || '招聘系统',
+    mail_enabled: body.mail_enabled ? 1 : 0,
+    frontend_url: str(body.frontend_url),
+    updated_at: now(),
+  };
+  if (typeof body.smtp_password === 'string' && body.smtp_password.trim()) {
+    fields.smtp_password = body.smtp_password.trim();
+  }
+
+  const existing = await c.env.DB.prepare('SELECT id FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+  const rowId = existing?.id || uuid();
+
+  if (existing) {
+    const sets = Object.keys(fields).map((k) => `${k} = ?`).join(', ');
+    await c.env.DB.prepare(`UPDATE system_configs SET ${sets} WHERE id = ?`)
+      .bind(...Object.values(fields), rowId).run();
+  } else {
+    const cols = Object.keys(fields);
+    await c.env.DB.prepare(`INSERT INTO system_configs (id, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`)
+      .bind(rowId, ...Object.values(fields)).run();
+  }
+
+  const row = await c.env.DB.prepare('SELECT smtp_host, smtp_port, smtp_username, mail_from, mail_from_name, mail_enabled, frontend_url, smtp_password FROM system_configs WHERE id = ?').bind(rowId).first() as any;
+  return c.json({
+    ok: true,
+    smtp_host: row?.smtp_host || null,
+    smtp_port: row?.smtp_port ?? 465,
+    smtp_username: row?.smtp_username || null,
+    mail_from: row?.mail_from || null,
+    mail_from_name: row?.mail_from_name || '招聘系统',
+    mail_enabled: row?.mail_enabled ?? 0,
+    frontend_url: row?.frontend_url || null,
+    smtp_password_set: Boolean(row?.smtp_password),
+  });
 });
 
 app.get('/api/settings/prompts', authMiddleware, async (c) => {
@@ -10634,6 +10806,11 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE positions ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE interviews ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE interviews ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
+    // 开始面试流程 - 飞书会议日程 + 候选人邮件
+    "ALTER TABLE interviews ADD COLUMN feishu_event_id TEXT DEFAULT ''",
+    "ALTER TABLE interviews ADD COLUMN invite_token_hash TEXT DEFAULT ''",
+    "ALTER TABLE interviews ADD COLUMN invite_expires_at TEXT",
+    "ALTER TABLE interviews ADD COLUMN invite_email_sent_at TEXT",
     // v2.0 全需求重构 - 需求管理增强
     "ALTER TABLE job_requisitions ADD COLUMN city TEXT DEFAULT '[]'",
     "ALTER TABLE job_requisitions ADD COLUMN hard_requirements TEXT DEFAULT '[]'",

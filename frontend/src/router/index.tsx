@@ -22,6 +22,7 @@ const PublicJobDetail = lazy(() => import('../pages/Public/JobDetail'));
 const PublicReview = lazy(() => import('../pages/Public/Review'));
 const BusinessScreening = lazy(() => import('../pages/Public/BusinessScreening'));
 const InterviewCard = lazy(() => import('../pages/Public/InterviewCard'));
+const InterviewInvite = lazy(() => import('../pages/Public/InterviewInvite'));
 const SharedDashboard = lazy(() => import('../pages/SharedDashboard'));
 const UsersList = lazy(() => import('../pages/Settings/Users'));
 const ProfileSettings = lazy(() => import('../pages/Settings/Profile'));
@@ -97,6 +98,10 @@ const router = createBrowserRouter([
   {
     path: '/interview-card/:token',
     element: <LazyPage><InterviewCard /></LazyPage>,
+  },
+  {
+    path: '/interview-invite/:token',
+    element: <LazyPage><InterviewInvite /></LazyPage>,
   },
   {
     path: '/shared/dashboard/:token',

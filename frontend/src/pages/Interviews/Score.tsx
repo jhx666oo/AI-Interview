@@ -217,14 +217,54 @@ const InterviewScore: React.FC = () => {
     }
   };
 
-  // 开始面试
+  // 开始面试（联动：飞书会议日程 + 候选人邮件）
   const handleStartInterview = async () => {
     if (!id) return;
 
     setStartingInterview(true);
     try {
-      await request.post(`/interviews/${id}/start`);
+      const res: any = await request.post(`/interviews/${id}/start`);
       message.success('面试已开始');
+      const flow = res?.start_flow;
+      if (flow) {
+        const emailText =
+          flow.email_status === 'queued'
+            ? `候选人邮件已加入发送队列（${flow.candidate_email || '邮箱未解析'}）`
+            : `候选人邮件未发送：${flow.email_detail || '未配置'}`;
+        const content = (
+          <div style={{ fontSize: 13, lineHeight: 2 }}>
+            <div>
+              会议链接：
+              {flow.meeting_link ? (
+                <Typography.Link href={flow.meeting_link} target="_blank" style={{ wordBreak: 'break-all' }}>
+                  {flow.meeting_link}
+                </Typography.Link>
+              ) : (
+                <Typography.Text type="warning">未生成（见下方提示）</Typography.Text>
+              )}
+            </div>
+            {flow.invite_url && (
+              <div>
+                候选人详情页：
+                <Typography.Link href={flow.invite_url} target="_blank" style={{ wordBreak: 'break-all' }}>
+                  {flow.invite_url}
+                </Typography.Link>
+              </div>
+            )}
+            <div>邮件通知：{emailText}</div>
+            {Array.isArray(flow.warnings) && flow.warnings.length > 0 && (
+              <div style={{ color: '#d46b08' }}>
+                {flow.warnings.map((w: string, i: number) => <div key={i}>⚠ {w}</div>)}
+              </div>
+            )}
+          </div>
+        );
+        Modal.success({
+          title: '面试联动流程已触发',
+          width: 560,
+          content,
+        });
+      }
       fetchInterview(id, true);
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '开始面试失败');

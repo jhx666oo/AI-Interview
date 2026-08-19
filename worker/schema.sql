@@ -284,6 +284,10 @@ CREATE TABLE IF NOT EXISTS interviews (
   secondary_interviewer TEXT DEFAULT '',
   candidate_name TEXT DEFAULT '',
   position_applied TEXT DEFAULT '',
+  feishu_event_id TEXT DEFAULT '',
+  invite_token_hash TEXT DEFAULT '',
+  invite_expires_at TEXT,
+  invite_email_sent_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT
 );
