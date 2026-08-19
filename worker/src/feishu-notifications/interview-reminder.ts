@@ -27,6 +27,8 @@ export interface InterviewReminderDeliveryInput {
   view: InterviewReminderView;
   operatorName: string;
   file?: { bytes: Uint8Array; fileName: string };
+  /** 面试管理卡片链接（汇总候选人档案 + 各轮面试情况），存在时卡片附「查看面试详情」按钮 */
+  cardLink?: string | null;
 }
 
 export interface InterviewReminderDeliveryResult {
@@ -325,12 +327,41 @@ export function buildInterviewReminderView(
 
 export function buildInterviewReminderCard(
   view: InterviewReminderView,
-  options: { operatorName: string; attachmentAvailable: boolean },
+  options: { operatorName: string; attachmentAvailable: boolean; cardLink?: string | null },
 ): FeishuCard {
   const age = view.age === null ? EMPTY_VALUE : `${view.age} 岁`;
   const attachment = options.attachmentAvailable
     ? '简历 PDF 将在下一条消息发送'
     : '暂无可发送的简历 PDF';
+  const cardLink = text(options.cardLink);
+
+  const elements: FeishuCard[] = [
+    { tag: 'markdown', content: `**候选人：** ${view.name}\n**面试时间：** ${view.interviewTime}\n**岗位：** ${view.position}` },
+    { tag: 'hr' },
+    { tag: 'markdown', content: `**学历：** ${view.education}\n**年龄：** ${age}\n**性别：** ${view.gender}\n**城市：** ${view.city}` },
+    { tag: 'hr' },
+    { tag: 'markdown', content: `**AI 面试建议：**\n${view.aiAdvice}` },
+  ];
+
+  if (cardLink) {
+    elements.push(
+      { tag: 'hr' },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '查看面试详情（一面/二面评价）' },
+            type: 'primary',
+            url: cardLink,
+            multi_url: { url: cardLink },
+          },
+        ],
+      },
+    );
+  }
+
+  elements.push({ tag: 'note', elements: [{ tag: 'plain_text', content: `${attachment}｜操作人：${options.operatorName || EMPTY_VALUE}` }] });
 
   return {
     config: { wide_screen_mode: true },
@@ -338,14 +369,7 @@ export function buildInterviewReminderCard(
       template: 'blue',
       title: { tag: 'plain_text', content: '面试提醒' },
     },
-    elements: [
-      { tag: 'markdown', content: `**候选人：** ${view.name}\n**面试时间：** ${view.interviewTime}\n**岗位：** ${view.position}` },
-      { tag: 'hr' },
-      { tag: 'markdown', content: `**学历：** ${view.education}\n**年龄：** ${age}\n**性别：** ${view.gender}\n**城市：** ${view.city}` },
-      { tag: 'hr' },
-      { tag: 'markdown', content: `**AI 面试建议：**\n${view.aiAdvice}` },
-      { tag: 'note', elements: [{ tag: 'plain_text', content: `${attachment}｜操作人：${options.operatorName || EMPTY_VALUE}` }] },
-    ],
+    elements,
   };
 }
 
@@ -427,6 +451,7 @@ export async function deliverInterviewReminder(
     JSON.stringify(buildInterviewReminderCard(input.view, {
       operatorName: input.operatorName,
       attachmentAvailable: Boolean(fileKey),
+      cardLink: input.cardLink,
     })),
   );
 

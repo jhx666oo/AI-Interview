@@ -521,6 +521,29 @@ describe('interview reminders', () => {
     expect(serialized).not.toContain('risk_points');
   });
 
+  it('renders a view-details button when a card link is provided', () => {
+    const card = buildInterviewReminderCard({
+      name: '张三', education: '本科', age: 29, gender: '女', position: '社区运营',
+      interviewTime: '2026-08-11 10:00', city: '北京', aiAdvice: '建议核实稳定性',
+    }, {
+      operatorName: '金皓翔', attachmentAvailable: false,
+      cardLink: 'https://ai-interview-88r.pages.dev/interview-card/ic-test-token',
+    });
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain('查看面试详情（一面/二面评价）');
+    expect(serialized).toContain('https://ai-interview-88r.pages.dev/interview-card/ic-test-token');
+    expect(serialized).toContain('"tag":"button"');
+  });
+
+  it('omits the view-details button when no card link is available', () => {
+    const card = buildInterviewReminderCard({
+      name: '张三', education: '本科', age: 29, gender: '女', position: '社区运营',
+      interviewTime: '2026-08-11 10:00', city: '北京', aiAdvice: '建议核实稳定性',
+    }, { operatorName: '金皓翔', attachmentAvailable: false, cardLink: null });
+    const serialized = JSON.stringify(card);
+    expect(serialized).not.toContain('查看面试详情');
+  });
+
   it('keeps timezone-less D1 interview time as Shanghai local time', () => {
     const view = buildInterviewReminderView({
       interview: { interview_time: '2026-08-11 10:15:30' },

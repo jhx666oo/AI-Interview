@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInterviewCardRoutes, deriveInterviewCardToken, type InterviewCardRouteDeps } from '../src/interview-card/routes';
+import { createInterviewCardRoutes, createOrReuseInterviewCardLink, deriveInterviewCardToken, type InterviewCardRouteDeps } from '../src/interview-card/routes';
 import { hashPublicToken } from '../src/business-screening/token';
 
 /**
@@ -201,6 +201,33 @@ describe('deriveInterviewCardToken', () => {
     expect(t1).toMatch(/^ic-[A-Za-z0-9_-]{28}$/);
     expect(t2).toBe(t1);
     expect(t3).not.toBe(t1);
+  });
+});
+
+describe('createOrReuseInterviewCardLink service', () => {
+  it('creates a link for a resume (service-level, used by interview reminders)', async () => {
+    const h = buildHarness({ resumes: [sampleResume] });
+    const result = await createOrReuseInterviewCardLink(h.db, {
+      resumeId: 'resume-1', candidateName: '张三', positionApplied: '前端工程师', createdBy: '提醒人',
+    }, { now: () => '2026-08-19T00:00:00.000Z', uuid: () => 'svc-1', hashPublicToken });
+
+    expect(result.reused).toBe(false);
+    expect(result.url).toBe(`/interview-card/${result.token}`);
+    expect(result.token).toMatch(/^ic-/);
+    expect(result.expires_at).toBe('2026-08-26T00:00:00.000Z');
+    // 幂等：再次调用复用同一条记录，URL 不变
+    const again = await createOrReuseInterviewCardLink(h.db, {
+      resumeId: 'resume-1', candidateName: '张三',
+    }, { now: () => '2026-08-19T00:00:00.000Z', uuid: () => 'svc-2', hashPublicToken });
+    expect(again.reused).toBe(true);
+    expect(again.url).toBe(result.url);
+    expect(h.db.links).toHaveLength(1);
+  });
+
+  it('rejects when neither resume_id nor candidate_name is provided', async () => {
+    const h = buildHarness();
+    await expect(createOrReuseInterviewCardLink(h.db, {}, { now: () => '', uuid: () => 'x', hashPublicToken }))
+      .rejects.toThrow('至少提供一个');
   });
 });
 
