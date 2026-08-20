@@ -153,6 +153,13 @@ export function buildFutureInterviewWindows(fromTs: number, skipWorkdays = 2, wo
   return windows;
 }
 
+/** 毫秒时间戳 → 北京时间带时区 ISO8601（飞书 freebusy time_min/time_max 要求带时区，UTC Z 格式会 190002） */
+function toFeishuBeijingIso(ms: number): string {
+  const d = new Date(ms + 8 * 3600_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00+08:00`;
+}
+
 export interface FreeSlotSearchInput {
   /** tenant_access_token */
   token: string;
@@ -191,8 +198,8 @@ async function fetchMergedBusy(
       {
         method: 'POST',
         body: JSON.stringify({
-          time_min: new Date(windows[0].start).toISOString(),
-          time_max: new Date(windows[windows.length - 1].end).toISOString(),
+          time_min: toFeishuBeijingIso(windows[0].start),
+          time_max: toFeishuBeijingIso(windows[windows.length - 1].end),
           user_ids: [openId],
         }),
       },
