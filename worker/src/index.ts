@@ -14237,14 +14237,19 @@ async function reparseOneWorkExperience(db: D1Database, id: string, env: Env): P
       .join('\n').trim();
     if (!text) return { id, error: 'no resume text' };
     const snippet = text.slice(0, 60000);
-    const response = await callAI(
-      env,
-      WORK_EXPERIENCE_EXTRACT_SYSTEM_PROMPT,
-      WORK_EXPERIENCE_EXTRACT_USER_PROMPT.replace('{resume_text}', snippet),
-      undefined,
-      { structured: true, temperature: 0, maxTokens: 8192 },
-    );
-    const json = extractJSON(response);
+    // JSON 解析失败时重试一次（偶发 LLM 输出格式问题）
+    let json: any = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const response = await callAI(
+        env,
+        WORK_EXPERIENCE_EXTRACT_SYSTEM_PROMPT,
+        WORK_EXPERIENCE_EXTRACT_USER_PROMPT.replace('{resume_text}', snippet),
+        undefined,
+        { structured: true, temperature: 0, maxTokens: 8192 },
+      );
+      json = extractJSON(response);
+      if (json && typeof json === 'object') break;
+    }
     if (!json || typeof json !== 'object') return { id, error: 'AI response not JSON' };
     const workExperience = Array.isArray(json.work_experience) ? json.work_experience : [];
     let existing: Record<string, unknown> = {};
@@ -14271,26 +14276,18 @@ app.post('/api/admin/reparse-work-experience', businessScreeningAuthMiddleware, 
     if (body && body.all === true) {
       const rawLimit = Number(body.limit || 60);
       const limit = Math.max(1, Math.min(Number.isFinite(rawLimit) ? rawLimit : 60, 200));
-      const excludeIds = Array.isArray(body.exclude_ids)
-        ? body.exclude_ids.map((v: unknown) => String(v).trim()).filter(Boolean).slice(0, 2000)
-        : [];
-      let ids: string[] = [];
-      if (excludeIds.length > 0) {
-        const placeholders = excludeIds.map(() => '?').join(',');
-        const rows = await c.env.DB.prepare(
-          `SELECT id FROM resumes WHERE ((resume_markdown IS NOT NULL AND resume_markdown != '')
-             OR (raw_text IS NOT NULL AND raw_text != '') OR (ocr_markdown IS NOT NULL AND ocr_markdown != ''))
-           AND id NOT IN (${placeholders}) LIMIT ?`,
-        ).bind(...excludeIds, limit).all();
-        ids = (rows.results || []).map((r: any) => String(r.id));
-      } else {
-        const rows = await c.env.DB.prepare(
-          `SELECT id FROM resumes WHERE (resume_markdown IS NOT NULL AND resume_markdown != '')
-             OR (raw_text IS NOT NULL AND raw_text != '') OR (ocr_markdown IS NOT NULL AND ocr_markdown != '')
-           LIMIT ?`,
-        ).bind(limit).all();
-        ids = (rows.results || []).map((r: any) => String(r.id));
-      }
+      const excludeIds = new Set(Array.isArray(body.exclude_ids)
+        ? body.exclude_ids.map((v: unknown) => String(v).trim()).filter(Boolean).slice(0, 5000)
+        : []);
+      // 一次取全部有文本的 id，JS 侧过滤 exclude 再切 limit（避免 D1 NOT IN 超过 100 绑定变量上限）
+      const rows = await c.env.DB.prepare(
+        `SELECT id FROM resumes WHERE ((resume_markdown IS NOT NULL AND resume_markdown != '')
+           OR (raw_text IS NOT NULL AND raw_text != '') OR (ocr_markdown IS NOT NULL AND ocr_markdown != ''))`,
+      ).all();
+      const ids = (rows.results || [])
+        .map((r: any) => String(r.id))
+        .filter((id: string) => !excludeIds.has(id))
+        .slice(0, limit);
       if (ids.length === 0) return c.json({ ok: true, processed: 0, remaining: 0, processed_ids: [], results: [] });
 
       const results: any[] = [];
