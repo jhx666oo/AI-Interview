@@ -737,6 +737,38 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     }
   });
 
+  // 按岗位推送：把该岗位所有 AI 初筛通过简历推送到岗位负责人业务链接（含已入库/已决策，按状态标记）。
+  // 简历管理页筛选栏「推送岗位 + 推送」入口调用：选一个岗位即推该岗位 AI 通过全集，无需逐份勾选。
+  app.post('/api/positions/business-screening/push', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const positionTitle = String(body?.position || '').trim();
+      if (!positionTitle) return c.json({ detail: 'position 不能为空' }, 400);
+      const db = c.env.DB as D1Database;
+      const user = ((c as any).get('user') || {}) as HrUser;
+      // 解析标准岗位标题（position_mappings 反查：原始名 → 标准名）
+      const mappings = await deps.store.listPositionMappings(db, [positionTitle]);
+      const standardTitle = (mappings[0]?.mapped_name || positionTitle).trim();
+      const aiPassedRows = await deps.store.listAiPassedResumesByPositionTitles(db, [standardTitle]);
+      if (aiPassedRows.length === 0) {
+        return c.json({ detail: `岗位「${standardTitle}」暂无 AI 初筛通过的简历，无法推送` }, 400);
+      }
+      const result = await pushResumesToBusinessScreening(db, deps, {
+        ids: aiPassedRows.map((r) => r.id),
+        expiresInDays: body?.expires_in_days,
+        silent: body?.silent === true,
+        title: body?.title,
+        subtitle: body?.subtitle,
+        position: standardTitle,
+        createdBy: user.email || 'system',
+      }, { origin: new URL(c.req.url).origin, user, env: c.env });
+      return c.json({ ...result, position: standardTitle });
+    } catch (e: any) {
+      console.error(`[business-screening] 按岗位推送失败: ${e?.message || e}`);
+      return c.json({ detail: `按岗位推送失败: ${e?.message || e}` }, 500);
+    }
+  });
+
   app.post('/api/resumes/business-screening/push', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const ids = uniqueStrings(Array.isArray(body?.ids) ? body.ids : []);

@@ -3779,6 +3779,69 @@ describe('push 自动归拢该岗位 AI 通过全集（含已入库/已决策）
   });
 });
 
+describe('POST /api/positions/business-screening/push（筛选栏按岗位推送该岗位 AI 通过全集）', () => {
+  it('选岗位推送：把该岗位所有 AI 通过简历（含已入库）推送到负责人链接，按状态标记', async () => {
+    const h = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      resumes: [
+        { id: 'n1', candidate_name: '护士甲', position_applied: '护士（入职五险一金）(A155143)', mapped_position: '护士（入职五险一金）(A155143)', screening_result: '通过', status: 'pending_screening', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+        { id: 'n2', candidate_name: '护士乙', position_applied: '护士（入职五险一金）(A155143)', mapped_position: '护士（入职五险一金）(A155143)', screening_result: '通过', status: 'approved', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+        // 其它岗位的 AI 通过简历不应被卷入
+        { id: 'pm1', candidate_name: '产品甲', position_applied: 'IoT产品经理', mapped_position: 'IoT产品经理', screening_result: '通过', status: 'pending_screening', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+      ] as any,
+      positions: [
+        { id: 'pos-nurse', title: '护士（入职五险一金）', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
+        { id: 'pos-pm', title: '软件产品经理（智能硬件方向）', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
+      ],
+      positionMappings: [
+        { raw_name: '护士（入职五险一金）(A155143)', mapped_name: '护士（入职五险一金）' },
+        { raw_name: 'IoT产品经理', mapped_name: '软件产品经理（智能硬件方向）' },
+      ],
+      interviewerDirectory: [{ name: '张三', openId: 'ou_zhang', userId: 'user-zhang' }],
+    });
+    const res = await h.request('/api/positions/business-screening/push', {
+      method: 'POST', headers: { authorization: 'Bearer hr-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ position: '护士（入职五险一金）(A155143)' }),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    const body = JSON.parse(text);
+    expect(body.ok).toBe(true);
+    expect(body.position).toBe('护士（入职五险一金）');
+    const ids = new Set((body.pushed || []).map((id: string) => id));
+    expect(ids.has('n1')).toBe(true);
+    expect(ids.has('n2')).toBe(true);
+    expect(ids.has('pm1')).toBe(false);
+    // 链接内该岗位 2 份 AI 通过简历齐全（n1 待处理、n2 已入库标记 passed）
+    const url = body.batches[0].url;
+    const token = url.split('/').pop() as string;
+    const pub = await h.request(`/api/public/business-screening/${token}`);
+    const pubBody = JSON.parse(await pub.text());
+    const byId = Object.fromEntries((pubBody.resumes || []).map((r: any) => [r.id, r.status]));
+    expect(byId['n1']).toBe('pending');
+    expect(byId['n2']).toBe('passed');
+    expect(byId['pm1']).toBeUndefined();
+  });
+
+  it('岗位无 AI 通过简历时返回 400 提示，不创建批次', async () => {
+    const h = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      resumes: [
+        { id: 'r-no-pass', candidate_name: '不通过甲', position_applied: 'P', mapped_position: 'P', screening_result: '不通过', status: 'pending_screening', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+      ] as any,
+      positions: [{ id: 'position-1', title: 'P', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' }],
+      interviewerDirectory: [{ name: '张三', openId: 'ou_zhang', userId: 'user-zhang' }],
+    });
+    const res = await h.request('/api/positions/business-screening/push', {
+      method: 'POST', headers: { authorization: 'Bearer hr-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ position: 'P' }),
+    });
+    expect(res.status).toBe(400);
+    const body = JSON.parse(await res.text());
+    expect(body.detail).toContain('暂无 AI 初筛通过');
+  });
+});
+
 describe('GET /api/positions/business-screening-links（岗位业务链接按 AI 通过简历匹配）', () => {
   it('按岗位标题匹配批次（items.position_id 为空也能找到该岗位链接）', async () => {
     const h = buildHarness({
