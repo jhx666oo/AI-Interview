@@ -5,7 +5,7 @@ import type {
   BusinessScreeningRouteStore,
   BusinessScreeningRouteDeps,
 } from '../src/business-screening/routes';
-import { createBusinessScreeningRoutes } from '../src/business-screening/routes';
+import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from '../src/business-screening/routes';
 import { hashPublicToken } from '../src/business-screening/token';
 
 type BatchRow = {
@@ -3484,5 +3484,41 @@ describe('public reparse（链接内简历信息未提取完整时重新解析�
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
     });
     expect(expired.status).toBe(410);
+  });
+});
+
+describe('createD1BusinessScreeningRouteStore contract', () => {
+  it('exposes removeResumeFromBusinessScreeningBatches used by the eliminate endpoint', async () => {
+    // 回归防护：曾在恢复脚本中丢失该方法的导入/接口/store 实现，
+    // 单测 mock store 掩盖了问题，导致线上 eliminate 500。
+    const store = createD1BusinessScreeningRouteStore(async () => 'ou_x');
+    expect(typeof store.removeResumeFromBusinessScreeningBatches).toBe('function');
+
+    const sql: string[] = [];
+    const fakeDb = {
+      prepare(s: string) {
+        return {
+          bind(...values: unknown[]) {
+            return {
+              async run() {
+                sql.push(s);
+                return { meta: { changes: 1 } };
+              },
+              async first() {
+                return null;
+              },
+              async all() {
+                return { results: [] };
+              },
+            };
+          },
+        };
+      },
+    } as any;
+
+    const result = await store.removeResumeFromBusinessScreeningBatches(fakeDb, 'resume-x', '2026-08-20T00:00:00.000Z');
+    expect(result.removed).toBe(1);
+    expect(sql.some((s) => s.includes('DELETE FROM resume_push_batch_items'))).toBe(true);
+    expect(sql.some((s) => s.includes('UPDATE resumes') && s.includes("hr_disposition = 'pending'"))).toBe(true);
   });
 });

@@ -9,6 +9,7 @@ import {
   markResumesPushed,
   recordBusinessScreeningDecision,
   refreshResumePushBatchExpiry,
+  removeResumeFromBusinessScreeningBatches,
   revokeActiveBusinessScreeningBatchesForResume,
 } from './repository';
 import {
@@ -255,6 +256,8 @@ export interface BusinessScreeningRouteStore {
     },
   ): Promise<RecordBusinessScreeningDecisionResult>;
   revokeActiveBatchesForResume(db: D1Database, resumeId: string): Promise<void>;
+  // 把简历从业务筛选链接中移除（删未决条目 + 重置推送状态），返回删除条数
+  removeResumeFromBusinessScreeningBatches(db: D1Database, resumeId: string, nowIso?: string): Promise<{ removed: number }>;
   setBatchStatus(db: D1Database, batchId: string, status: 'active' | 'completed' | 'revoked' | 'expired'): Promise<void>;
   setBatchLastSentAt(db: D1Database, batchId: string, sentAt: string): Promise<void>;
   countPendingBatchItems(db: D1Database, batchId: string): Promise<number>;
@@ -265,7 +268,7 @@ type HrUser = { id?: string; email?: string; role?: string; full_name?: string }
 
 // 解析飞书卡片发送人：JWT 用户用本人；API Key 身份用配置的归属用户（未配置返回原因）
 async function resolveSenderEmail(
-  c: any,
+  env: any,
   user: HrUser,
   deps: BusinessScreeningRouteDeps,
 ): Promise<{ email: string | null; reason?: string }> {
@@ -273,7 +276,7 @@ async function resolveSenderEmail(
   if (!deps.resolveApiKeyOwnerEmail) {
     return { email: null, reason: 'API Key 未配置飞书归属用户，无法发送业务筛选链接' };
   }
-  const owner = await deps.resolveApiKeyOwnerEmail(c.env);
+  const owner = await deps.resolveApiKeyOwnerEmail(env);
   if (!owner) {
     return { email: null, reason: 'API Key 未配置飞书归属用户，无法发送业务筛选链接' };
   }
@@ -975,7 +978,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       return c.json({ detail: 'No pending resumes to resend' }, 409);
     }
 
-    const sender = await resolveSenderEmail(c, user, deps);
+    const sender = await resolveSenderEmail(c.env, user, deps);
     const currentUserToken = sender.email ? await deps.getCurrentUserToken(c.env, sender.email) : null;
     const dispatchGroupId = deps.uuid();
     const nowIso = deps.now();
@@ -1627,6 +1630,9 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     },
     async revokeActiveBatchesForResume(db, resumeId) {
       await revokeActiveBusinessScreeningBatchesForResume(db, resumeId);
+    },
+    async removeResumeFromBusinessScreeningBatches(db, resumeId, nowIso) {
+      return removeResumeFromBusinessScreeningBatches(db, resumeId, nowIso);
     },
     async setBatchStatus(db, batchId, status) {
       await db.prepare('UPDATE resume_push_batches SET status = ? WHERE id = ?')
