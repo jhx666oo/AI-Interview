@@ -139,6 +139,9 @@ class FakeD1 {
       const rows = this.interviews.filter((r) => r.candidate_name === name && (!position || r.position_applied === position));
       return method === 'first' ? (rows[0] || null) : { results: rows };
     }
+    if (sql.includes('FROM interviewer_mappings') || sql.includes('FROM users')) {
+      return { results: [] };
+    }
     if (sql.includes('FROM candidate_stage_events')) {
       const [resumeId] = params;
       const rows = this.events.filter((r) => r.resume_id === resumeId);
@@ -731,5 +734,86 @@ describe('POST /api/public/interview-card/:token/evaluate', () => {
       body: JSON.stringify({ evaluation: 'x', result: 'passed' }),
     }, h2.env);
     expect(expired.status).toBe(410);
+  });
+});
+
+describe('POST /api/public/interview-card/:token/reschedule', () => {
+  async function createCard(h: ReturnType<typeof buildHarness>) {
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1', candidate_name: '张三', position_applied: '前端工程师' }),
+    }, h.env)).json() as any;
+    return created.token as string;
+  }
+
+  it('有效 token + 合法未来时间 → 更新成功（无日程时不同步飞书）', async () => {
+    const h = buildHarness({
+      resumes: [sampleResume],
+      interviews: [sampleInterview({ interview_time: '2026-08-20 14:00', feishu_event_id: '' })],
+    });
+    const token = await createCard(h);
+    const res = await h.app.request(`/api/public/interview-card/${token}/reschedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '2026-08-21 10:00' }),
+    }, h.env);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.interview_time).toBe('2026-08-21 10:00');
+    expect(body.calendar_synced).toBe(false);
+    const iv = h.db.interviews.find((r: any) => r.id === 'iv-1');
+    expect(iv.interview_time).toBe('2026-08-21 10:00');
+  });
+
+  it('非法时间格式 → 400；过去时间 → 400', async () => {
+    const h = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
+    const token = await createCard(h);
+    const bad = await h.app.request(`/api/public/interview-card/${token}/reschedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '下周一下午' }),
+    }, h.env);
+    expect(bad.status).toBe(400);
+    const past = await h.app.request(`/api/public/interview-card/${token}/reschedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '2020-01-01 09:00' }),
+    }, h.env);
+    expect(past.status).toBe(400);
+  });
+
+  it('未知 token → 404；过期链接 → 410', async () => {
+    const h = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
+    const nf = await h.app.request('/api/public/interview-card/ic-unknown/reschedule', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '2026-08-21 10:00' }),
+    }, h.env);
+    expect(nf.status).toBe(404);
+
+    const h2 = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
+    const token = await createCard(h2);
+    h2.setNow('2026-10-15T00:00:00.000Z');
+    const expired = await h2.app.request(`/api/public/interview-card/${token}/reschedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '2026-08-21 10:00' }),
+    }, h2.env);
+    expect(expired.status).toBe(410);
+  });
+});
+
+describe('GET /api/public/interview-card/:token/slots', () => {
+  it('面试官未绑定飞书 → 返回空列表与原因', async () => {
+    const h = buildHarness({
+      resumes: [sampleResume],
+      interviews: [sampleInterview({ primary_interviewer: '王面试官' })],
+    });
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1' }),
+    }, h.env)).json() as any;
+    const res = await h.app.request(`/api/public/interview-card/${created.token}/slots`, {}, h.env);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.slots).toEqual([]);
+    expect(body.reason).toContain('未绑定');
   });
 });

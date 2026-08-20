@@ -1,10 +1,8 @@
 /**
  * 面试官面试提醒（「开始面试」流程 + 面试前 30 分钟 cron 共用）：
  * 1. 生成/复用该候选人的面试卡片固定链接（一个简历一个链接）
- * 2. 给主面试官发飞书卡片（候选人/岗位/面试时间/AI 建议 + 卡片链接按钮）
- * 3. 附加候选人简历 PDF（有则发，失败不阻塞）
- *
- * 发送身份：交互场景传当前登录用户的 user_access_token，cron 场景传 bot token。
+ * 2. 给主面试官发飞书文本消息：候选人 / 岗位 / 面试时间 + 面试卡片链接
+ *    （面试管理统一用卡片链接——看简历、填评价、改时间都在链接内；不发卡片、不附 PDF）
  */
 
 import {
@@ -12,21 +10,16 @@ import {
   resolveExactInterviewerOpenId,
   resolveReminderInterviewer,
 } from '../feishu-notifications/reminder-source';
-import {
-  buildInterviewReminderView,
-  deliverInterviewReminder,
-} from '../feishu-notifications/interview-reminder';
+import { buildInterviewReminderView } from '../feishu-notifications/interview-reminder';
 import { createOrReuseInterviewCardLink } from '../interview-card/routes';
 
 export interface InterviewReminderDeps {
   now: () => string;
   uuid: () => string;
   hashPublicToken: (token: string) => Promise<string>;
-  getResumeFileBytes: (env: any, resumeId: string) => Promise<{ bytes: Uint8Array | null; fileName: string }>;
   getBotToken: (env: any) => Promise<string>;
   /** 前端域名（卡片链接前缀），默认 https://ai-interview-88r.pages.dev */
   frontendBase?: string;
-  refreshUserToken?: (email: string) => Promise<string | null>;
 }
 
 export interface SendInterviewReminderInput {
@@ -38,16 +31,12 @@ export interface SendInterviewReminderInput {
   operatorName?: string;
   /** 指定面试官姓名（默认主面试官） */
   interviewerName?: string;
-  /** 当前登录用户邮箱（用于 user token 过期刷新，可选） */
-  userEmail?: string;
 }
 
 export interface SendInterviewReminderResult {
   ok: boolean;
   interviewerName: string | null;
   cardLinkUrl: string | null;
-  cardSent: boolean;
-  fileSent: boolean;
   reason?: string;
 }
 
@@ -55,8 +44,25 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/** 发送飞书文本消息（收件人为 open_id） */
+export async function sendFeishuTextMessage(token: string, openId: string, content: string): Promise<void> {
+  const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      receive_id: openId,
+      msg_type: 'text',
+      content: JSON.stringify({ text: content }),
+    }),
+  });
+  const data: any = await resp.json().catch(() => null);
+  if (!data || data.code !== 0) {
+    throw new Error(`发送飞书消息失败: ${data ? `${data.code} ${data.msg || ''}` : `HTTP ${resp.status}`}`);
+  }
+}
+
 /**
- * 给面试官发送面试提醒（卡片 + 简历 PDF + 卡片链接）。
+ * 给面试官发送面试提醒（文本消息 + 面试卡片链接）。
  * 任何一步失败都不抛异常，返回结构化结果供调用方记录。
  */
 export async function sendInterviewerInterviewReminder(
@@ -66,7 +72,7 @@ export async function sendInterviewerInterviewReminder(
   deps: InterviewReminderDeps,
 ): Promise<SendInterviewReminderResult> {
   const empty: Omit<SendInterviewReminderResult, 'reason'> = {
-    ok: false, interviewerName: null, cardLinkUrl: null, cardSent: false, fileSent: false,
+    ok: false, interviewerName: null, cardLinkUrl: null,
   };
   try {
     const source = await loadInterviewReminderSource(db, input.interviewId);
@@ -83,10 +89,10 @@ export async function sendInterviewerInterviewReminder(
     const token = text(input.userToken);
     if (!token) return { ...empty, interviewerName, reason: '缺少发送凭据' };
 
-    // 1) 面试卡片固定链接（一个简历一个链接；生成失败不阻塞提醒主流程）
-    const resumeId = typeof source.resume?.id === 'string' ? text(source.resume.id) : '';
+    // 面试卡片固定链接（一个简历一个链接；生成失败不阻塞提醒，此时只发文字）
     let cardLinkUrl: string | null = null;
     try {
+      const resumeId = typeof source.resume?.id === 'string' ? text(source.resume.id) : '';
       const card = await createOrReuseInterviewCardLink(db, {
         resumeId,
         candidateName: typeof source.interview?.candidate_name === 'string'
@@ -100,38 +106,19 @@ export async function sendInterviewerInterviewReminder(
       const base = text(deps.frontendBase) || 'https://ai-interview-88r.pages.dev';
       cardLinkUrl = `${base.replace(/\/+$/, '')}${card.url}`;
     } catch {
-      // 卡片链接生成失败仅影响按钮，不影响卡片/PDF 发送
+      // 链接生成失败仅影响链接行，不影响文字提醒
     }
 
-    // 2) 简历 PDF（有则附带，失败不阻塞）
-    const resumeFile = resumeId
-      ? await deps.getResumeFileBytes(env, resumeId)
-      : { bytes: null, fileName: 'resume.pdf' };
+    const view = buildInterviewReminderView(source);
+    const lines = [
+      `面试提醒：${view.name}`,
+      `岗位：${view.position}`,
+      `面试时间：${view.interviewTime}`,
+    ];
+    if (cardLinkUrl) lines.push(`面试卡片链接：${cardLinkUrl}`);
+    await sendFeishuTextMessage(token, openId, lines.join('\n'));
 
-    // 3) 发送（卡片 + PDF）
-    const delivery = await deliverInterviewReminder({
-      userToken: token,
-      resourceToken: await deps.getBotToken(env),
-      receiverOpenId: openId,
-      view: buildInterviewReminderView(source),
-      operatorName: input.operatorName || '系统',
-      file: resumeFile.bytes ? { bytes: resumeFile.bytes, fileName: resumeFile.fileName } : undefined,
-      cardLink: cardLinkUrl,
-    }, {
-      fetch,
-      refreshUserToken: input.userEmail && deps.refreshUserToken
-        ? () => deps.refreshUserToken!(input.userEmail!)
-        : undefined,
-    });
-
-    return {
-      ok: delivery.cardSent,
-      interviewerName,
-      cardLinkUrl,
-      cardSent: delivery.cardSent,
-      fileSent: delivery.fileSent,
-      reason: delivery.warning || undefined,
-    };
+    return { ok: true, interviewerName, cardLinkUrl };
   } catch (e: any) {
     return { ...empty, reason: e?.message || String(e) };
   }

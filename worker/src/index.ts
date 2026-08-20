@@ -41,11 +41,9 @@ import { ensureBusinessScreeningSchema } from './business-screening/repository';
 import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from './business-screening/routes';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './business-screening/token';
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
-import { createInterviewStartRoutes } from './interview-start/routes';
 import { createInterviewCalendarEvent, findFirstFreeInterviewSlot } from './interview-start/feishu-calendar';
-import { sendInterviewerInterviewReminder } from './interview-start/reminders';
+import { sendInterviewerInterviewReminder, sendFeishuTextMessage } from './interview-start/reminders';
 import {
-  ensureInterviewInvite,
   frontendBaseUrl,
   loadInterviewStartContext,
   resolveEventTimeframe,
@@ -1617,10 +1615,6 @@ const interviewCardRoutes = createInterviewCardRoutes({
   getResumeFileBytes,
 });
 app.route('/', interviewCardRoutes);
-
-// 开始面试流程：候选人面试详情免登录链接（公开端点；服务层在 /interviews/:id/start 中使用）
-const interviewStartRoutes = createInterviewStartRoutes({ now, hashPublicToken });
-app.route('/', interviewStartRoutes);
 
 // API Key 飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（管理员配置）
 const BUSINESS_SCREENING_KEY_OWNER_SETTING = 'business_screening_key_owner';
@@ -8447,7 +8441,6 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
     candidate_email: string | null;
     email_status: 'queued' | 'skipped';
     email_detail: string;
-    invite_url: string | null;
     card_link: string | null;
     warnings: string[];
   } = {
@@ -8456,7 +8449,6 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
     candidate_email: null,
     email_status: 'skipped',
     email_detail: '',
-    invite_url: null,
     card_link: null,
     warnings: [],
   };
@@ -8542,14 +8534,10 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
       }
     }
 
-    // 2) 候选人面试详情免登录链接 + 3) 候选人邮件（异步）
+    // 2) 候选人邮件（异步）
     try {
       const configRow = await c.env.DB.prepare('SELECT frontend_url, mail_from_name FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
-      const baseUrl = frontendBaseUrl(configRow?.frontend_url);
       const fromName = (configRow?.mail_from_name && String(configRow.mail_from_name).trim()) || '招聘系统';
-      const invite = await ensureInterviewInvite(c.env.DB as D1Database, startCtx.interview, { now, hashPublicToken });
-      const inviteUrl = `${baseUrl}${invite.url}`;
-      startFlow.invite_url = inviteUrl;
 
       // 邮件状态同步预检（实际发送异步执行）
       if (!startCtx.candidateEmail) {
@@ -8582,7 +8570,7 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
         }
       }
     } catch (e: any) {
-      startFlow.warnings.push(`候选人邀请链接生成失败：${e?.message || e}`);
+      startFlow.warnings.push(`候选人邮件预检失败：${e?.message || e}`);
     }
 
     // 4) 面试卡片固定链接（一个简历一个链接，供面试官提醒 / 面试管理列展示 / 前端弹窗）
@@ -13516,13 +13504,9 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       }, 400);
     }
 
-    const resourceToken = await getFeishuToken(c.env);
     const resumeId = typeof source.resume?.id === 'string' ? source.resume.id : '';
-    const resumeFile = resumeId
-      ? await getResumeFileBytes(c.env, resumeId)
-      : { bytes: null, fileName: 'resume.pdf' };
 
-    // 生成面试管理卡片链接（汇总候选人档案 + 各轮面试情况），失败不阻塞提醒主流程
+    // 生成面试管理卡片链接（面试管理唯一链接，汇总候选人档案 + 各轮面试情况），失败不阻塞提醒主流程
     let cardLinkUrl: string | null = null;
     try {
       const cardLink = await createOrReuseInterviewCardLink(c.env.DB, {
@@ -13538,29 +13522,22 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       console.error(`[InterviewNotify] 面试卡片链接生成失败（不影响提醒）: ${cardError?.message || cardError}`);
     }
 
-    const delivery = await deliverInterviewReminder({
-      userToken,
-      resourceToken,
-      receiverOpenId: openId,
-      view: buildInterviewReminderView(source),
-      operatorName: currentUser?.full_name || currentUser?.email || '',
-      file: resumeFile.bytes ? { bytes: resumeFile.bytes, fileName: resumeFile.fileName } : undefined,
-      cardLink: cardLinkUrl,
-    }, {
-      fetch,
-      refreshUserToken: async () => {
-        if (!currentUser.email) return null;
-        const refreshed = await refreshUserAccessToken(c.env, currentUser.email);
-        return refreshed?.access_token || null;
-      },
-    });
+    // 只发链接：文本消息（候选人/岗位/面试时间 + 面试卡片链接），不发卡片、不附 PDF
+    const view = buildInterviewReminderView(source);
+    const lines = [
+      `面试提醒：${view.name}`,
+      `岗位：${view.position}`,
+      `面试时间：${view.interviewTime}`,
+    ];
+    if (cardLinkUrl) lines.push(`面试卡片链接：${cardLinkUrl}`);
+    await sendFeishuTextMessage(userToken, openId, lines.join('\n'));
 
     await logOperation(c.env, {
       action: 'interview.notify',
       entityType: 'interview',
       entityId: id,
       actor: currentUser?.email,
-      detail: JSON.stringify({ card_sent: delivery.cardSent, file_sent: delivery.fileSent }),
+      detail: JSON.stringify({ sent_link: true, card_link: cardLinkUrl }),
     });
 
     if (source.interview.secondary_interviewer === interviewerName) {
@@ -13569,12 +13546,11 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
     }
 
     return c.json({
-      ok: delivery.cardSent,
-      card_sent: delivery.cardSent,
-      file_sent: delivery.fileSent,
-      sent_as: currentUser.email || '',
+      ok: true,
+      card_sent: true,
       card_link: cardLinkUrl,
-      warning: delivery.warning || (resumeFile.bytes ? null : '未找到可发送的简历 PDF'),
+      sent_as: currentUser.email || '',
+      warning: null,
     });
   } catch (err: any) {
     if (err?.code === 'AMBIGUOUS_RESUME') {

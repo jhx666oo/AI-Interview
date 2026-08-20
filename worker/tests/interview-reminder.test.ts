@@ -278,7 +278,7 @@ describe('interview reminders', () => {
     expect(workerSource).toContain("ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT");
   });
 
-  it('wires the endpoint to current-user delivery without candidate-body or sender fallback paths', async () => {
+  it('wires the endpoint to current-user text-link delivery without candidate-body or sender fallback paths', async () => {
     const source = await readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8');
     const route = source.slice(
       source.indexOf("app.post('/api/interviews/:id/notify-interviewer'"),
@@ -287,12 +287,13 @@ describe('interview reminders', () => {
 
     expect(route).toContain('loadInterviewReminderSource(c.env.DB, id)');
     expect(route).toContain('getValidUserAccessToken(c.env, currentUser.email)');
-    expect(route).toContain('getFeishuToken(c.env)');
-    expect(route).toContain('getResumeFileBytes(c.env, resumeId)');
-    expect(route).toContain('deliverInterviewReminder');
+    expect(route).toContain('sendFeishuTextMessage(userToken, openId,');
+    expect(route).toContain('createOrReuseInterviewCardLink(c.env.DB,');
     expect(route).toContain('resolveExactInterviewerOpenId(c.env.DB, interviewerName)');
     expect(route).toContain('need_feishu_auth: true');
     expect(route).toContain('need_bind: true');
+    expect(route).not.toContain('deliverInterviewReminder');
+    expect(route).not.toContain('getResumeFileBytes(c.env, resumeId)');
     expect(route).not.toContain('body.candidate_name');
     expect(route).not.toContain('sendFeishuMessageWithFallback');
     expect(route).not.toMatch(/callAI|chat\/completions/);
@@ -655,9 +656,9 @@ describe('interview reminders', () => {
 
     expect(validToken).toContain('row.feishu_token_expires_at <= 0');
     expect(validToken).toContain('return row.feishu_token');
-    expect(route).toContain('refreshUserAccessToken(c.env, currentUser.email)');
-    expect(route).toContain('refreshUserToken');
+    expect(route).toContain('getValidUserAccessToken(c.env, currentUser.email)');
     expect(route).toContain('need_feishu_auth: true');
+    expect(route).not.toContain('refreshUserToken');
     expect(route).not.toContain('getAnyFeishuUserToken');
     expect(route).not.toContain('sendFeishuMessageWithFallback');
     expect(route).not.toContain('tenant_access_token');

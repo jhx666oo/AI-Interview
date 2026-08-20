@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { Spin, Tag, Progress, Descriptions, Button, Form, Input, Radio, message } from 'antd';
+import { Spin, Tag, Progress, Descriptions, Button, Form, Input, Radio, message, Modal, DatePicker } from 'antd';
+import dayjs, { type Dayjs } from 'dayjs';
 import {
   CalendarOutlined, ClockCircleOutlined, EnvironmentOutlined, TeamOutlined,
   UserOutlined, FileTextOutlined, CheckCircleOutlined,
-  HistoryOutlined, CommentOutlined, DownloadOutlined, PhoneOutlined,
+  HistoryOutlined, CommentOutlined, DownloadOutlined, PhoneOutlined, EditOutlined,
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -251,6 +252,131 @@ function resolveTargetRound(iv: InterviewCardPublicInterview): 1 | 2 | null {
   const r2Done = iv.result2 === 'passed' || iv.result2 === 'failed';
   if (r1Done) return iv.result === 'passed' && !r2Done ? 2 : null;
   return 1;
+}
+
+/** 面试安排：展示面试时间并支持面试官修改（空闲时段点选 + 可手填，interview-invite 功能迁移） */
+function RescheduleSection({
+  interviews, token, onSubmitted,
+}: {
+  interviews: InterviewCardPublicInterview[];
+  token: string;
+  onSubmitted: () => void;
+}) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [slots, setSlots] = useState<Array<{ start: string; end: string }>>([]);
+  const [slotLoading, setSlotLoading] = useState(false);
+  const [slotReason, setSlotReason] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [customTime, setCustomTime] = useState<Dayjs | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const primary = interviews[0];
+  if (!primary) return null;
+  const currentTime = primary.interview_time || null;
+
+  const openReschedule = async () => {
+    setModalOpen(true);
+    setSelectedSlot(null);
+    setCustomTime(null);
+    setSlotReason(null);
+    setSlotLoading(true);
+    try {
+      const res = await request.get(`/public/interview-card/${token}/slots`);
+      setSlots(res?.slots || []);
+      if (res?.reason) setSlotReason(res.reason);
+    } catch {
+      setSlots([]);
+      setSlotReason('空闲时段加载失败，可手动选择下方时间');
+    } finally {
+      setSlotLoading(false);
+    }
+  };
+
+  const submitReschedule = async () => {
+    const picked = selectedSlot || (customTime ? customTime.format('YYYY-MM-DD HH:mm') : '');
+    if (!picked) {
+      message.warning('请选择一个空闲时段或手动填写时间');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await request.post(`/public/interview-card/${token}/reschedule`, {
+        interview_time: picked,
+      });
+      message.success(`面试时间已更新为 ${res?.interview_time || picked}`);
+      setModalOpen(false);
+      onSubmitted();
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '修改失败，请重试');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={sectionCardStyle}>
+      <div style={sectionTitleStyle}>
+        <CalendarOutlined style={{ color: '#2563EB' }} /> 面试安排
+        <span style={{ fontSize: 12, fontWeight: 400, color: '#94A3B8' }}>面试官可修改时间</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontSize: 14, color: '#0F172A', fontWeight: 500 }}>
+          <ClockCircleOutlined style={{ marginRight: 6, color: '#64748B' }} />
+          {currentTime || '待定'}
+        </div>
+        <Button size="small" icon={<EditOutlined />} onClick={openReschedule}>修改时间</Button>
+      </div>
+
+      <Modal
+        title="修改面试时间"
+        open={modalOpen}
+        onOk={submitReschedule}
+        onCancel={() => setModalOpen(false)}
+        confirmLoading={submitting}
+        okText="保存修改"
+        cancelText="取消"
+        width={520}
+      >
+        <div style={{ fontSize: 13, color: '#64748B', marginBottom: 12 }}>
+          以下为主面试官未来两个工作日的空闲时段（自动跳过周末与午休），也可手动填写：
+        </div>
+        {slotLoading ? (
+          <div style={{ textAlign: 'center', padding: '20px 0', color: '#94A3B8' }}>正在查询面试官空闲时段...</div>
+        ) : slots.length > 0 ? (
+          <Radio.Group
+            value={selectedSlot}
+            onChange={(e) => { setSelectedSlot(e.target.value); setCustomTime(null); }}
+            style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}
+          >
+            {slots.map((s) => (
+              <Radio key={s.start} value={s.start} style={{ lineHeight: '28px' }}>
+                {s.start} ~ {s.end}
+              </Radio>
+            ))}
+          </Radio.Group>
+        ) : (
+          <div style={{ color: '#d46b08', fontSize: 13, marginBottom: 12 }}>
+            {slotReason || '暂无推荐空闲时段'}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+          <span style={{ fontSize: 13, color: '#64748B', whiteSpace: 'nowrap' }}>或手动填写：</span>
+          <DatePicker
+            showTime={{ format: 'HH:mm', minuteStep: 30 }}
+            format="YYYY-MM-DD HH:mm"
+            value={customTime}
+            onChange={(v) => { setCustomTime(v); if (v) setSelectedSlot(null); }}
+            placeholder="选择日期与时间"
+            style={{ width: 240 }}
+            allowClear
+          />
+        </div>
+        <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 12 }}>
+          保存后系统面试时间与飞书会议日程将同步更新。
+        </div>
+      </Modal>
+    </div>
+  );
 }
 
 /** 面试评价（面试官在卡片链接内填写一面/二面评价与结果） */
@@ -618,6 +744,9 @@ const InterviewCard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 面试安排（展示时间 + 面试官修改入口） */}
+      <RescheduleSection interviews={interviews} token={token} onSubmitted={() => loadData(true)} />
 
       {/* 面试情况（辅助信息） */}
       <InterviewRoundsSection interviews={interviews} />

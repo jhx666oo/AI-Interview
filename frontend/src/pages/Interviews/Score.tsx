@@ -243,14 +243,6 @@ const InterviewScore: React.FC = () => {
                 <Typography.Text type="warning">未生成（见下方提示）</Typography.Text>
               )}
             </div>
-            {flow.invite_url && (
-              <div>
-                候选人详情页：
-                <Typography.Link href={flow.invite_url} target="_blank" style={{ wordBreak: 'break-all' }}>
-                  {flow.invite_url}
-                </Typography.Link>
-              </div>
-            )}
             {flow.card_link && (
               <div>
                 面试卡片链接（看简历/填评价）：
