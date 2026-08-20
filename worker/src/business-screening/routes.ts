@@ -1211,7 +1211,17 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         let status: ResumePushBatchItemStatus = 'pending';
         if (bs === 'passed') status = 'passed';
         else if (bs === 'rejected' || hr === 'rejected') status = 'rejected';
-        items.push({ id: deps.uuid(), batchId, resumeId: r.id, status, createdAt: nowIso });
+        items.push({
+          id: deps.uuid(),
+          batchId,
+          resumeId: r.id,
+          positionId: null,
+          status,
+          remark: null,
+          processedAt: null,
+          createdAt: nowIso,
+          dispatchGroupId: null,
+        });
         mapped.push({ resume_id: r.id, status });
       }
       await insertResumePushBatchItemsIfAbsent(db, items);
@@ -1222,7 +1232,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       return c.json({ ok: true, consolidated: items.length, items: mapped });
     } catch (e: any) {
       console.error(`[business-screening] consolidate 失败: ${e?.message || e}\n${e?.stack || ''}`);
-      return c.json({ detail: `consolidate 失败: ${e?.message || e}`, stack: String(e?.stack || '').slice(0, 500) }, 500);
+      return c.json({ detail: `consolidate 失败: ${e?.message || e}` }, 500);
     }
   });
 

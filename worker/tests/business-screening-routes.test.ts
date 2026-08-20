@@ -3522,3 +3522,30 @@ describe('createD1BusinessScreeningRouteStore contract', () => {
     expect(sql.some((s) => s.includes('UPDATE resumes') && s.includes("hr_disposition = 'pending'"))).toBe(true);
   });
 });
+
+describe('POST /api/resumes/business-screening/batches/:batchId/consolidate', () => {
+  it('归拢已决策简历到批次并保留状态', async () => {
+    const h = buildHarness({
+      resumes: [
+        { id: 'r-passed', candidate_name: '甲', position_applied: 'P', mapped_position: 'P', screening_result: '通过', business_screening_status: 'passed', hr_disposition: 'pushed', status: 'approved' },
+        { id: 'r-rejected', candidate_name: '乙', position_applied: 'P', mapped_position: 'P', screening_result: '通过', business_screening_status: 'rejected', hr_disposition: 'pushed', status: 'rejected' },
+        { id: 'r-pending', candidate_name: '丙', position_applied: 'P', mapped_position: 'P', screening_result: '通过', business_screening_status: 'pending', hr_disposition: 'pushed', status: 'pending_screening' },
+      ] as any,
+      initialBatches: [
+        { id: 'b-cons', interviewer_id: 'u', interviewer_name: '魏秋柠', interviewer_open_id: 'ou_1', token_hash: 'h', expires_at: '2099-01-01T00:00:00.000Z', status: 'active', created_by: 'x', created_at: '2026-08-12T00:00:00.000Z', scope_key: 'sk' } as any,
+      ],
+    });
+    const res = await h.request('/api/resumes/business-screening/batches/b-cons/consolidate', {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer hr-token' },
+      body: JSON.stringify({ resume_ids: ['r-passed', 'r-rejected', 'r-pending'] }),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    const body = JSON.parse(text);
+    expect(body.consolidated).toBe(3);
+    const byId = Object.fromEntries(body.items.map((i: any) => [i.resume_id, i.status]));
+    expect(byId['r-passed']).toBe('passed');
+    expect(byId['r-rejected']).toBe('rejected');
+    expect(byId['r-pending']).toBe('pending');
+  });
+});
