@@ -7,7 +7,7 @@
 ## 本地结果
 
 - 前端：43 个测试文件、198 个测试通过；`npm run build`（TypeScript、Vite、Pages `_worker.js`）通过。
-- Worker：85 个测试文件、679 个测试通过；自动化 consumer 独立 esbuild bundle 通过。
+- Worker：88 个测试文件、685 个测试通过；自动化 consumer 独立 esbuild bundle 通过。
 - 新增数据兼容工具：`scripts/audit_interview_rounds.sql` 只读；`scripts/backfill_interview_rounds.py` 默认 JSONL/dry-run，`--emit-sql` 才输出可审阅 SQL。
 - 新增漏斗口径：`FunnelQuery.computeInterviewStatuses()` 将待安排、已安排、已完成、通过/失败、人工处理和部分通知失败分开统计。
 
