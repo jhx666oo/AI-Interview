@@ -43,7 +43,7 @@ import { createPublicToken, createScopePublicToken, hashPublicToken } from './bu
 import { syncAiResultToBusinessScreening, buildBusinessScreeningAutoLinkDeps } from './business-screening/auto-link';
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
 import { createInterviewAutomationRoutes } from './interview-automation/routes';
-import { createInterviewCalendarEvent, findFirstFreeInterviewSlot, listFreeInterviewSlots } from './interview-start/feishu-calendar';
+import { createInterviewCalendarEvent, findFirstFreeInterviewSlot, listFreeInterviewSlots, updateInterviewCalendarEventTime } from './interview-start/feishu-calendar';
 import { sendInterviewerInterviewReminder, sendFeishuTextMessage } from './interview-start/reminders';
 import {
   frontendBaseUrl,
@@ -5544,6 +5544,56 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
     });
   } catch (e: any) {
     return c.json({ detail: '创建面试失败: ' + e.message }, 500);
+  }
+});
+
+// 已有面试记录的「安排/改期」：直连飞书 HTTP 建/改会议（不依赖异步队列/AUTOMATION 配置）
+app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+    const startAt = String(body?.start_at || '').trim();
+    const timeMs = Date.parse(startAt);
+    if (!Number.isFinite(timeMs)) return c.json({ detail: 'start_at 必须为 ISO 时间（如 2026-08-25T10:00:00+08:00）' }, 400);
+    const duration = Math.max(30, Math.min(480, Number(body?.duration_minutes) || 60));
+    const db = c.env.DB as D1Database;
+    const interview = await db.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first() as any;
+    if (!interview) return c.json({ detail: '面试记录不存在' }, 404);
+
+    const startTs = Math.floor(timeMs / 1000);
+    const endTs = startTs + duration * 60;
+    const timeLabel = formatBeijingSlot(startTs);
+    let meetingLink = String(interview.meeting_link || '').trim();
+    let eventId = String(interview.feishu_event_id || '').trim();
+
+    if (eventId) {
+      // 已有日程 → 直连飞书改时间
+      const upd = await updateInterviewCalendarEventTime(c.env, eventId, {
+        startTimestamp: startTs,
+        endTimestamp: endTs,
+      }, {}, FEISHU_CONFIG.appId);
+      if (!upd.ok) return c.json({ detail: upd.error || '更新飞书日程失败' }, 500);
+    } else {
+      // 无日程 → 直连飞书建会议
+      const event = await createInterviewCalendarEvent(c.env, {
+        summary: `面试 - ${interview.candidate_name || '候选人'} - ${interview.position_applied || '应聘岗位'} - 第${interview.round || 1}轮`,
+        description: `候选人：${interview.candidate_name || ''}\n应聘岗位：${interview.position_applied || ''}\n面试时间：${timeLabel}\n由 AI-Interview 安排面试流程自动创建。`,
+        startTimestamp: startTs,
+        endTimestamp: endTs,
+        attendeeOpenIds: [],
+      }, {}, FEISHU_CONFIG.appId);
+      eventId = event.eventId;
+      meetingLink = event.meetingUrl || '';
+    }
+
+    await db.prepare(
+      'UPDATE interviews SET interview_time = ?, meeting_link = ?, feishu_event_id = ?, updated_at = ? WHERE id = ?',
+    ).bind(timeLabel, meetingLink, eventId, now(), id).run();
+
+    return c.json({ ok: true, interview_time: timeLabel, meeting_link: meetingLink, calendar_event_id: eventId });
+  } catch (e: any) {
+    console.error(`[schedule-direct] 直连安排日程失败: ${e?.message || e}`);
+    return c.json({ detail: `直连安排日程失败: ${e?.message || e}` }, 500);
   }
 });
 

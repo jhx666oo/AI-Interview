@@ -487,12 +487,9 @@ const InterviewsList: React.FC = () => {
           return;
         }
         const localStart = `${values.interview_date.format('YYYY-MM-DD')}T${values.interview_time.format('HH:mm')}:00+08:00`;
-        await request.post(`/interviews/${scheduleRecord.interview_id}/schedule`, {
+        await request.post(`/interviews/${scheduleRecord.interview_id}/schedule-direct`, {
           start_at: new Date(localStart).toISOString(),
           duration_minutes: 60,
-          interview_type: 'video',
-          location: values.interview_location || '',
-          timezone: 'Asia/Shanghai',
         });
       } else {
         // 无面试记录：先创建「待安排」面试，再立即触发自动化安排（建会议链接 + 面试官卡片附简历 + 候选人邮件）
