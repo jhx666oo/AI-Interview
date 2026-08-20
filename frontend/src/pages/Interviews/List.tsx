@@ -739,7 +739,7 @@ const InterviewsList: React.FC = () => {
               {canView && (
                 <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
               )}
-              <Tooltip title="面试卡片：该简历的固定链接（进入面试管理自动生成，7 天有效，进入本页自动续期）">
+              <Tooltip title="面试卡片：该简历的固定链接（进入面试管理自动生成，30 天有效，进入本页自动续期）">
                 <Button size="small" icon={<LinkOutlined />} loading={cardLinkLoading} disabled={!!cardLinkLoading} onClick={() => handleGenCardLink(r)}>面试卡片</Button>
               </Tooltip>
               <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
@@ -932,7 +932,7 @@ const InterviewsList: React.FC = () => {
         <div style={{ marginBottom: 12, fontSize: 13, color: '#475569', lineHeight: 1.8 }}>
           <div>该链接为该简历的固定链接，汇总了候选人简历档案、各轮面试情况、评分评价、备注与进度时间线，可分享给业务方或面试官查看。</div>
           <div style={{ marginTop: 4 }}>
-            {cardLinkExpires ? `当前有效期至 ${new Date(cardLinkExpires).toLocaleDateString('zh-CN')}，进入面试管理页会自动续期 7 天。` : ''}
+            {cardLinkExpires ? `当前有效期至 ${new Date(cardLinkExpires).toLocaleDateString('zh-CN')}，进入面试管理页会自动续期 30 天。` : ''}
             链接地址固定不变。
           </div>
         </div>
