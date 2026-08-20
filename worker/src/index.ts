@@ -42,6 +42,7 @@ import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } fr
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './business-screening/token';
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
 import { createInterviewStartRoutes } from './interview-start/routes';
+import { createInterviewAutomationRoutes } from './interview-automation/routes';
 import { createInterviewCalendarEvent, findFirstFreeInterviewSlot } from './interview-start/feishu-calendar';
 import { sendInterviewerInterviewReminder } from './interview-start/reminders';
 import {
@@ -94,6 +95,9 @@ import {
   toPublicRecruitingBoard as toPublicRecruitingBoardV2,
 } from './recruiting-operations/dashboard';
 import type { RecruitingBoard, RecruitingBoardPositionRow } from './recruiting-operations/dashboard';
+import { InterviewAutomationRepository } from './interview-automation/repository';
+import { enqueueInterviewAutomation } from './interview-automation/enqueue';
+import type { InterviewAutomationQueueMessage } from './interview-automation/types';
 
 export {
   getBoardFirstInterviewCount,
@@ -133,6 +137,9 @@ interface Env extends DashboardFeishuSourceEnv {
   CRON_SECRET?: string;
   RESUME_UPLOAD_API_KEY?: string; // 对外简历上传接口的 API Key（x-api-key header）
   RESUME_PROCESSING_QUEUE: Queue<ResumeProcessingQueueMessage>;
+  INTERVIEW_AUTOMATION_QUEUE?: Queue<InterviewAutomationQueueMessage>;
+  INTERVIEW_AUTOMATION_ENABLED?: string;
+  FEISHU_RECRUITMENT_CALENDAR_ID?: string;
 }
 
 // 飞书配置（非敏感 ID 类配置；appSecret 必须通过环境变量 FEISHU_APP_SECRET 提供：
@@ -1604,6 +1611,11 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
     const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).first() as any;
     return typeof row?.value === 'string' && row.value.trim() ? row.value.trim() : null;
   },
+  enqueueAutomation: async (env, input) => {
+    if (String(env.INTERVIEW_AUTOMATION_ENABLED || '').toLowerCase() !== 'true' || !env.INTERVIEW_AUTOMATION_QUEUE) return;
+    const repo = new InterviewAutomationRepository(env.DB, { uuid, now });
+    await enqueueInterviewAutomation(repo, env.INTERVIEW_AUTOMATION_QUEUE, input);
+  },
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
 });
 app.route('/', businessScreeningRoutes);
@@ -1621,6 +1633,13 @@ app.route('/', interviewCardRoutes);
 // 开始面试流程：候选人面试详情免登录链接（公开端点；服务层在 /interviews/:id/start 中使用）
 const interviewStartRoutes = createInterviewStartRoutes({ now, hashPublicToken });
 app.route('/', interviewStartRoutes);
+
+const interviewAutomationRoutes = createInterviewAutomationRoutes({
+  authMiddleware,
+  now,
+  uuid,
+});
+app.route('/', interviewAutomationRoutes);
 
 // API Key 飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（管理员配置）
 const BUSINESS_SCREENING_KEY_OWNER_SETTING = 'business_screening_key_owner';
@@ -10877,6 +10896,8 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT",
     "ALTER TABLE positions ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE positions ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
+    // 面试自动化灰度开关：岗位 AI 初筛通过后是否自动进入业务筛选/面试推进
+    "ALTER TABLE positions ADD COLUMN auto_business_screening_enabled INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE interviews ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE interviews ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
     // 开始面试流程 - 飞书会议日程 + 候选人邮件
@@ -11775,7 +11796,7 @@ async function getValidUserAccessToken(env: Env, email: string): Promise<string 
   return refreshed?.access_token || null;
 }
 
-async function getFeishuToken(env: Env): Promise<string> {
+export async function getFeishuToken(env: Env): Promise<string> {
   // 先查 D1 缓存（飞书 token 有效期 2h，缓存 110min 留 10min buffer）
   try {
     const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('feishu_token').first();
@@ -13021,7 +13042,7 @@ async function sendFeishuMessageToChat(token: string, chatId: string, cardConten
 }
 
 /** 发送消息给指定用户（通过 open_id） */
-async function sendFeishuMessageToUser(token: string, openId: string, cardContent: any): Promise<any> {
+export async function sendFeishuMessageToUser(token: string, openId: string, cardContent: any): Promise<any> {
   const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },

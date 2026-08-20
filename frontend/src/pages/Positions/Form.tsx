@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Form, Input, Button, Card, message, Select, AutoComplete, Typography } from 'antd';
+import { Form, Input, Button, Card, message, Select, AutoComplete, Typography, Switch } from 'antd';
 import { useNavigate, useParams } from 'react-router-dom';
 import { RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
@@ -176,6 +176,7 @@ const PositionForm: React.FC = () => {
             position_type: 'full_time',
             headcount: 1,
             screening_rules_config: { enabled: false, values: { ...DEFAULT_SCREENING_RULES } },
+            auto_business_screening_enabled: false,
             primary_interviewer: '杜雁玲',
             secondary_interviewer: '何雨菱',
           }}
@@ -316,6 +317,15 @@ const PositionForm: React.FC = () => {
               <Select.Option value="published">招聘中</Select.Option>
               <Select.Option value="closed">已关闭</Select.Option>
             </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="auto_business_screening_enabled"
+            label="面试自动化"
+            valuePropName="checked"
+            extra="开启后，AI 初筛通过的候选人会异步进入业务筛选与面试安排；默认关闭，可先灰度验证。"
+          >
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>

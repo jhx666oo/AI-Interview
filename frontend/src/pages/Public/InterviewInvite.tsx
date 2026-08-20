@@ -4,7 +4,7 @@ import { Spin, Tag, Button, Typography, Modal, Radio, DatePicker, message } from
 import dayjs, { type Dayjs } from 'dayjs';
 import {
   CalendarOutlined, ClockCircleOutlined, EnvironmentOutlined, VideoCameraOutlined,
-  UserOutlined, SafetyOutlined, LinkOutlined, EditOutlined,
+  UserOutlined, SafetyOutlined, LinkOutlined,
 } from '@ant-design/icons';
 import request from '../../utils/request';
 
@@ -184,7 +184,7 @@ const InterviewInvite: React.FC = () => {
               <div style={infoLabelStyle}>面试时间</div>
               <div style={infoValueStyle}>{interview.interview_time || '待定（请与 HR 确认）'}</div>
             </div>
-            <Button size="small" type="link" icon={<EditOutlined />} onClick={openReschedule}>修改</Button>
+            <Tag color="default" style={{ marginLeft: 8 }}>如需调整请联系 HR</Tag>
           </div>
           <div style={infoItemStyle}>
             <VideoCameraOutlined style={infoIconStyle} />
@@ -251,7 +251,7 @@ const InterviewInvite: React.FC = () => {
             <span style={{ fontWeight: 600 }}>温馨提示</span>
           </div>
           1. 请提前 10 分钟进入会议或到达面试地点，并准备好简历与相关材料；<br />
-          2. 面试时间如需调整，面试官可点击上方「修改」选择空闲时段；<br />
+          2. 面试时间如需调整，请联系 HR 通过系统登录态操作；<br />
           3. 本页面链接 7 天内有效，过期后请联系 HR 重新发送。
         </div>
       </div>

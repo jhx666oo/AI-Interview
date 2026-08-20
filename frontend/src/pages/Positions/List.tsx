@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Table, Button, Space, message, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert, Checkbox, Collapse } from 'antd';
+import { Table, Button, Space, message, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert, Checkbox, Collapse, Switch } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
@@ -58,6 +58,7 @@ interface Position {
   screening_rules?: string | null;
   primary_interviewer: string | null;
   secondary_interviewer: string | null;
+  auto_business_screening_enabled?: boolean | number | null;
   created_at: string;
   updated_at: string;
   stats: PositionStats;
@@ -309,6 +310,7 @@ const PositionsList: React.FC = () => {
       headcount: 1,
       capability_dimensions: defaultCapabilityDimensions(),
       screening_rules_config: { enabled: false, values: { ...DEFAULT_SCREENING_RULES } },
+      auto_business_screening_enabled: false,
     });
     setIsModalVisible(true);
   };
@@ -350,6 +352,7 @@ const PositionsList: React.FC = () => {
         enabled: !!screeningRules,
         values: screeningRules || { ...DEFAULT_SCREENING_RULES },
       };
+      formVals.auto_business_screening_enabled = !!res.auto_business_screening_enabled;
       // 任职要求 JSON 字符串 → 多选数组
       if (res.requirements) {
         try {
@@ -1099,6 +1102,15 @@ const PositionsList: React.FC = () => {
               <Select.Option value="published">招聘中</Select.Option>
               <Select.Option value="closed">已关闭</Select.Option>
             </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="auto_business_screening_enabled"
+            label="面试自动化"
+            valuePropName="checked"
+            extra="开启后，AI 初筛通过的候选人会异步进入业务筛选与面试安排；默认关闭，可先灰度验证。"
+          >
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
         </Form>
       </ResponsiveModal>

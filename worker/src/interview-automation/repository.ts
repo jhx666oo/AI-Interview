@@ -26,14 +26,19 @@ export class InterviewAutomationRepository implements InterviewAutomationStore {
 
     const id = this.deps.uuid();
     const timestamp = this.deps.now();
+    const resume = await this.db.prepare('SELECT candidate_name, position_applied FROM resumes WHERE id = ?').bind(input.resumeId).first<any>();
+    const position = input.positionId
+      ? await this.db.prepare('SELECT title FROM positions WHERE id = ?').bind(input.positionId).first<any>()
+      : null;
     await this.db.prepare(
       `INSERT INTO interviews (
-        id, resume_id, position_id, round, interviewer, primary_interviewer,
+        id, resume_id, candidate_name, position_id, position_applied, round, interviewer, primary_interviewer,
         secondary_interviewer, previous_interview_id, status, schedule_status,
         version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_schedule', 'not_ready', 1, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_schedule', 'not_ready', 1, ?, ?)`,
     ).bind(
-      id, input.resumeId, input.positionId || null, input.round, input.interviewer,
+      id, input.resumeId, resume?.candidate_name || '', input.positionId || null,
+      position?.title || resume?.position_applied || '', input.round, input.interviewer,
       input.interviewer, input.secondaryInterviewer || '', input.previousInterviewId || null,
       timestamp, timestamp,
     ).run();
@@ -190,6 +195,12 @@ export class InterviewAutomationRepository implements InterviewAutomationStore {
     ).bind(this.deps.now(), resumeId).run();
   }
 
+  async markCandidateInterviewing(resumeId: string) {
+    await this.db.prepare(
+      `UPDATE resumes SET stage = 'interviewing', status = 'interviewing', updated_at = ? WHERE id = ?`,
+    ).bind(this.deps.now(), resumeId).run();
+  }
+
   async requireInterview(interviewId: string) {
     const row = await this.loadInterview(interviewId);
     if (!row) throw new Error('INTERVIEW_NOT_FOUND');
@@ -203,10 +214,12 @@ export class InterviewAutomationRepository implements InterviewAutomationStore {
     const now = this.deps.now();
     await this.db.prepare(
       `UPDATE interviews SET scheduled_start_at = ?, scheduled_end_at = ?, interview_time = ?,
-       duration_minutes = ?, timezone = ?, schedule_status = 'queued', version = ?, updated_at = ? WHERE id = ?`,
+       duration_minutes = ?, timezone = ?, interview_type = COALESCE(?, interview_type),
+       interview_location = COALESCE(?, interview_location), schedule_status = 'queued', version = ?, updated_at = ? WHERE id = ?`,
     ).bind(
       input.scheduledStartAt || null, input.scheduledEndAt || null, input.interviewTime || null,
-      Number(input.durationMinutes || 60), input.timezone || 'Asia/Shanghai', version, now, interviewId,
+      Number(input.durationMinutes || 60), input.timezone || 'Asia/Shanghai', input.interviewType || null,
+      input.interviewLocation || null, version, now, interviewId,
     ).run();
     return { ...(row as any), ...input, schedule_status: 'queued', version };
   }
@@ -220,7 +233,7 @@ export class InterviewAutomationRepository implements InterviewAutomationStore {
     const now = this.deps.now();
     await this.db.prepare(
       `UPDATE interviews SET result = COALESCE(?, result), evaluation = COALESCE(?, evaluation),
-       status = CASE WHEN ? = 'failed' THEN 'completed' ELSE status END, updated_at = ? WHERE id = ?`,
+       status = CASE WHEN ? IN ('passed', 'failed') THEN 'completed' ELSE status END, updated_at = ? WHERE id = ?`,
     ).bind(result, input.evaluation || null, result, now, interviewId).run();
     return { ...row, ...input, result, actor_id: actorId };
   }

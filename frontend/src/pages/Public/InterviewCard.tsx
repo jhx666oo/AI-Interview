@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Spin, Tag, Progress, Descriptions, Button, Form, Input, Radio, message } from 'antd';
+import { Spin, Tag, Progress, Descriptions, Button } from 'antd';
 import {
   CalendarOutlined, ClockCircleOutlined, EnvironmentOutlined, TeamOutlined,
   UserOutlined, FileTextOutlined, CheckCircleOutlined,
@@ -255,76 +255,22 @@ function resolveTargetRound(iv: InterviewCardPublicInterview): 1 | 2 | null {
 
 /** 面试评价（面试官在卡片链接内填写一面/二面评价与结果） */
 function EvaluationSection({
-  interviews, token, onSubmitted,
+  interviews,
 }: {
   interviews: InterviewCardPublicInterview[];
-  token: string;
-  onSubmitted: () => void;
 }) {
-  const [form] = Form.useForm();
-  const [submitting, setSubmitting] = useState(false);
-
   const primary = interviews[0];
   if (!primary || !primary.id) return null;
-
   const targetRound = resolveTargetRound(primary);
-  if (targetRound === null) {
-    return (
-      <div style={sectionCardStyle}>
-        <div style={sectionTitleStyle}><CommentOutlined /> 面试评价</div>
-        <div style={{ fontSize: 13, color: '#94A3B8', textAlign: 'center', padding: '8px 0' }}>
-          该候选人各轮面试评价已完成
-        </div>
-      </div>
-    );
-  }
-
-  const submit = async () => {
-    try {
-      const values = await form.validateFields();
-      setSubmitting(true);
-      await request.post(`/public/interview-card/${token}/evaluate`, {
-        evaluation: values.evaluation || '',
-        result: values.result || '',
-        round: targetRound,
-      });
-      message.success(`第${targetRound}面评价已提交`);
-      form.resetFields();
-      onSubmitted();
-    } catch (e: any) {
-      if (e?.errorFields) return;
-      message.error(e?.response?.data?.detail || '提交失败，请重试');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <div style={sectionCardStyle}>
       <div style={sectionTitleStyle}>
         <CommentOutlined style={{ color: '#2563EB' }} /> 面试评价
-        <span style={{ fontSize: 12, fontWeight: 400, color: '#94A3B8' }}>第{targetRound}面（填写后自动保存）</span>
       </div>
-      <Form form={form} layout="vertical" requiredMark={false}>
-        <Form.Item
-          name="evaluation"
-          label={`第${targetRound}面评价`}
-          rules={[{ required: true, message: `请填写第${targetRound}面评价` }]}
-        >
-          <Input.TextArea rows={5} placeholder={`请填写对候选人的第${targetRound}面评价：岗位匹配、核心能力、稳定性等...`} maxLength={2000} showCount />
-        </Form.Item>
-        <Form.Item
-          name="result"
-          label={`第${targetRound}面结果`}
-          rules={[{ required: true, message: '请选择面试结果' }]}
-        >
-          <Radio.Group>
-            <Radio value="passed"><span style={{ color: '#10B981' }}>通过</span></Radio>
-            <Radio value="failed"><span style={{ color: '#EF4444' }}>不通过</span></Radio>
-          </Radio.Group>
-        </Form.Item>
-        <Button type="primary" loading={submitting} onClick={submit}>提交第{targetRound}面评价</Button>
-      </Form>
+      <div style={{ fontSize: 13, color: '#64748B', lineHeight: 1.8 }}>
+        {targetRound === null ? '该候选人各轮面试评价已完成。' : `当前为第${targetRound}面，评价请登录系统后在面试管理页提交。`}
+        <br />公开链接仅用于查看候选人资料、面试信息和历史记录。
+      </div>
     </div>
   );
 }
@@ -623,7 +569,7 @@ const InterviewCard: React.FC = () => {
       <InterviewRoundsSection interviews={interviews} />
 
       {/* 面试评价（面试官在链接内填写） */}
-      <EvaluationSection interviews={interviews} token={token} onSubmitted={() => loadData(true)} />
+      <EvaluationSection interviews={interviews} />
 
       {/* 备注 */}
       <RemarksSection candidate={candidate} />

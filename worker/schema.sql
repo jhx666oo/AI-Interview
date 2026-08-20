@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS positions (
   personalized_requirements TEXT DEFAULT '',
   capability_dimensions TEXT DEFAULT '[]',
   screening_rules TEXT DEFAULT '',
+  auto_business_screening_enabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );

@@ -71,8 +71,8 @@ class FakeD1 {
       return { meta: { changes: 1 } };
     }
     if (sql.includes('UPDATE interviews SET scheduled_start_at')) {
-      const row = this.interviews.find((item) => item.id === params[7]);
-      if (row) { row.scheduled_start_at = params[0]; row.scheduled_end_at = params[1]; row.interview_time = params[2]; row.duration_minutes = params[3]; row.timezone = params[4]; row.schedule_status = 'queued'; row.version = params[5]; row.updated_at = params[6]; }
+      const row = this.interviews.find((item) => item.id === params[9]);
+      if (row) { row.scheduled_start_at = params[0]; row.scheduled_end_at = params[1]; row.interview_time = params[2]; row.duration_minutes = params[3]; row.timezone = params[4]; row.interview_type = params[5]; row.interview_location = params[6]; row.schedule_status = 'queued'; row.version = params[7]; row.updated_at = params[8]; }
       return { meta: { changes: row ? 1 : 0 } };
     }
     if (sql.includes('UPDATE interviews SET result = COALESCE')) {

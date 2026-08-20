@@ -16,6 +16,11 @@ export type ResumeProcessorDeps = {
   updateResume(resumeId: string, update: Record<string, unknown>): Promise<void>;
   setJobStep(jobId: string, step: ResumeJobStep): Promise<void>;
   assertJobRunning(jobId: string): Promise<void>;
+  onScreened?: (input: {
+    resume: ResumeRow;
+    fields: Record<string, unknown>;
+    result: Record<string, unknown>;
+  }) => Promise<void>;
 };
 
 function jsonObject(value: string | null): Record<string, unknown> | null {
@@ -57,8 +62,9 @@ function hasReusableFields(fields: Record<string, unknown> | null): boolean {
   // 两个及以上有效字段已经足够支持重新初筛，避免重评估再次调用字段提取 AI。
   const populatedCount = LEGACY_FIELD_KEYS.reduce((count, key) => {
     const value = fields[key];
-    const populated = Array.isArray(value)
-      ? value.length > 0
+    const populatedList = Array.isArray(value) ? (value as unknown[]) : null;
+    const populated = populatedList
+      ? populatedList.length > 0
       : value !== null && value !== undefined && String(value).trim() !== '';
     return count + (populated ? 1 : 0);
   }, 0);
@@ -103,7 +109,7 @@ export async function processResume(
 
   if (message.reprocess || !jsonObject(resume.ai_evaluation)) {
     await deps.setJobStep(message.jobId, 'screening');
-    const result = await deps.screen(text, fields, resume);
+    const result = await deps.screen(text, fields || {}, resume);
     await deps.assertJobRunning(message.jobId);
     await deps.updateResume(message.resumeId, {
       ai_review: JSON.stringify(result),
@@ -118,6 +124,9 @@ export async function processResume(
       }),
       parse_status: 'ai_screened',
     });
+    if (deps.onScreened) {
+      await deps.onScreened({ resume, fields: fields || {}, result });
+    }
   } else {
     // 补字段任务不应把已有评估的简历永久留在 screening 状态。
     await deps.assertJobRunning(message.jobId);
