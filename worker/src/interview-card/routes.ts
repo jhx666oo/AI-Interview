@@ -40,6 +40,8 @@ export interface InterviewCardRouteDeps {
   uuid: () => string;
   hashPublicToken: (token: string) => Promise<string>;
   getResumeFileBytes: (env: any, resumeId: string) => Promise<{ bytes: Uint8Array | null; fileName: string }>;
+  // 公开页「重新解析」：卡片页简历信息未提取完整时，面试官可触发 AI 重新评估（入队去重）
+  enqueueResumeReprocess?: (env: any, resumeId: string) => Promise<{ jobId: string; status: 'queued' | 'running'; queued: boolean }>;
 }
 
 /** 公开页透出的面试记录（不含联系方式与敏感内部字段） */
@@ -707,9 +709,14 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
     if (!row) return c.json({ detail: 'Not found' }, 404);
     if (!isActiveLink(row, deps.now())) return c.json({ detail: 'Link unavailable' }, 410);
 
-    const resumeRow = text(row.resume_id)
-      ? await db.prepare('SELECT primary_interviewer, interviewer FROM interviews WHERE resume_id = ? ORDER BY COALESCE(round, 99) ASC LIMIT 1').bind(row.resume_id).first()
-      : null;
+    // 面试官：优先简历维度，缺失时按候选人姓名兜底（手动创建的面试无 resume_id）
+    let resumeRow: any = null;
+    if (text(row.resume_id)) {
+      resumeRow = await db.prepare('SELECT primary_interviewer, interviewer FROM interviews WHERE resume_id = ? ORDER BY COALESCE(round, 99) ASC LIMIT 1').bind(row.resume_id).first();
+    }
+    if (!resumeRow && text(row.candidate_name)) {
+      resumeRow = await db.prepare('SELECT primary_interviewer, interviewer FROM interviews WHERE candidate_name = ? ORDER BY COALESCE(round, 99) ASC LIMIT 1').bind(text(row.candidate_name)).first();
+    }
     const primaryName = text(resumeRow?.primary_interviewer) || text(resumeRow?.interviewer);
     if (!primaryName) return c.json({ ok: true, slots: [], reason: '面试未配置面试官' });
 
@@ -833,6 +840,43 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
         'Cache-Control': 'private, max-age=300',
       },
     });
+  });
+
+  // 公开「重新解析」：卡片页简历信息未提取完整时，面试官可触发 AI 重新评估（免登录，凭链接 token 校验）
+  app.post('/api/public/interview-card/:token/reparse', async (c) => {
+    const tokenHash = await deps.hashPublicToken(c.req.param('token'));
+    const db = c.env.DB as D1Database;
+    const row = (await db.prepare(
+      `SELECT * FROM ${CARD_TABLE} WHERE token_hash = ?`,
+    ).bind(tokenHash).first()) as InterviewCardLinkRow | null;
+    if (!row) return c.json({ detail: 'Not found' }, 404);
+    if (!isActiveLink(row, deps.now())) return c.json({ detail: 'Link unavailable' }, 410);
+
+    // 与公开读取一致的简历解析：优先 resume_id，缺失时按姓名兜底
+    let resumeId = text(row.resume_id);
+    if (!resumeId) {
+      const candidateName = text(row.candidate_name);
+      if (!candidateName) return c.json({ detail: 'Not found' }, 404);
+      const resumeRow = await db.prepare(
+        'SELECT id FROM resumes WHERE candidate_name = ? ORDER BY created_at DESC LIMIT 1',
+      ).bind(candidateName).first();
+      resumeId = resumeRow?.id || '';
+    }
+    if (!resumeId) return c.json({ detail: 'Not found' }, 404);
+    if (!deps.enqueueResumeReprocess) return c.json({ detail: '重新解析暂不可用，请联系 HR' }, 503);
+
+    try {
+      const result = await deps.enqueueResumeReprocess(c.env, resumeId);
+      return c.json({
+        ok: true,
+        resume_id: resumeId,
+        job_id: result.jobId,
+        queued: result.queued,
+        status: result.status,
+      });
+    } catch (e: any) {
+      return c.json({ detail: e?.message || '重新解析失败' }, 500);
+    }
   });
 
   return app;
