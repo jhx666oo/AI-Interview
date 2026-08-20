@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Spin, Tag, Progress, Descriptions, Button } from 'antd';
+import { Spin, Tag, Progress, Descriptions, Button, message } from 'antd';
 import {
   CalendarOutlined, ClockCircleOutlined, EnvironmentOutlined, TeamOutlined,
   UserOutlined, FileTextOutlined, CheckCircleOutlined,
-  HistoryOutlined, CommentOutlined, DownloadOutlined, PhoneOutlined,
+  HistoryOutlined, CommentOutlined, DownloadOutlined, PhoneOutlined, SyncOutlined,
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -334,6 +334,25 @@ const InterviewCard: React.FC = () => {
   const [data, setData] = useState<InterviewCardView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reparsing, setReparsing] = useState(false);
+
+  // 重新解析：简历信息未提取完整时，凭公开链接 token 触发 AI 重新评估（入队去重）
+  const handleReparse = async () => {
+    if (!data?.candidate?.resume_id || reparsing) return;
+    setReparsing(true);
+    try {
+      const res = await request.post(`/public/interview-card/${token}/reparse`, {}) as { queued?: boolean };
+      if (res.queued === false) {
+        message.info('该简历正在重新解析中，请稍后刷新页面查看');
+      } else {
+        message.success('已提交重新解析，通常 1-2 分钟完成，请稍后刷新本页查看');
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '重新解析失败，请稍后重试');
+    } finally {
+      setReparsing(false);
+    }
+  };
 
   const loadData = React.useCallback(async (silent?: boolean) => {
     try {
@@ -476,7 +495,22 @@ const InterviewCard: React.FC = () => {
 
       {/* 候选人档案（Descriptions，与简历详情页字段一致） */}
       <div style={sectionCardStyle}>
-        <div style={sectionTitleStyle}><UserOutlined /> 候选人档案</div>
+        <div style={{ ...sectionTitleStyle, justifyContent: 'space-between' }}>
+          <span><UserOutlined /> 候选人档案</span>
+          {candidate.resume_id ? (
+            <span>
+              <Button
+                size="small"
+                icon={<SyncOutlined />}
+                loading={reparsing}
+                onClick={handleReparse}
+                title="简历信息未提取完整时，点击重新解析（AI 重新评估，通常 1-2 分钟）"
+              >
+                重新解析
+              </Button>
+            </span>
+          ) : null}
+        </div>
         <Descriptions column={isMobileLayout ? 1 : 2} bordered size="small">
           <Descriptions.Item label="应聘岗位">{positionTitle}</Descriptions.Item>
           <Descriptions.Item label="学历">{profile?.highestDegree || '未识别'}</Descriptions.Item>
