@@ -8913,8 +8913,10 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
           const resume = await c.env.DB.prepare('SELECT * FROM resumes WHERE id = ?').bind(resumeId).first() as any;
           if (resume) {
             candidateName = resume.candidate_name || '未知';
-            const pd = safeJson(resume.parsed_data);
-            positionName = pd?.target_position || resume.mapped_position || resume.position_applied || '未知岗位';
+            const parsed = safeJsonParse(resume.parsed_data);
+            positionName = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+              ? String((parsed as any).target_position || '')
+              : '') || resume.mapped_position || resume.position_applied || '未知岗位';
           }
         }
         const fakeRecord = { candidate_name: candidateName, mapped_position: positionName, position_applied: positionName };
