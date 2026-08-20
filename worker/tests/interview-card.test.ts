@@ -75,6 +75,12 @@ class FakeD1 {
       }
       return { meta: { changes: row ? 1 : 0 } };
     }
+    if (sql.includes('INSERT INTO interviews')) {
+      // 评价自动创建面试记录：VALUES (?, ?, ?, ?, 1, 'scheduled', ?, ?) —— round/status 为字面量，绑定 6 个参数
+      const [id, resumeId, candidateName, positionApplied, createdAt, updatedAt] = params;
+      this.interviews.push({ id, resume_id: resumeId, candidate_name: candidateName, position_applied: positionApplied, round: 1, status: 'scheduled', created_at: createdAt, updated_at: updatedAt, result: 'pending', result2: 'pending' });
+      return { meta: { changes: 1 } };
+    }
     if (sql.includes('INSERT INTO interview_card_links')) {
       // SQL 中 status='active' 为字面量，VALUES 占位符 9 个：id, resume_id, candidate_name, position_applied, token_hash, expires_at, created_by, created_at, updated_at
       const [id, resumeId, name, position, tokenHash, expiresAt, createdBy, createdAt, updatedAt] = params;
@@ -644,16 +650,54 @@ describe('GET /api/public/interview-card/:token/file', () => {
 });
 
 describe('POST /api/public/interview-card/:token/evaluate', () => {
-  it('任意公开 token 都返回 410，且不写入面试评价', async () => {
+  async function createCard(h: ReturnType<typeof buildHarness>) {
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1', candidate_name: '张三', position_applied: '前端工程师' }),
+    }, h.env)).json() as any;
+    return created.token as string;
+  }
+
+  it('有效 token：一面评价写入 evaluation/result/status', async () => {
+    const h = buildHarness({
+      resumes: [sampleResume],
+      interviews: [sampleInterview({ result: 'pending', evaluation: '', status: 'scheduled' })],
+    });
+    const token = await createCard(h);
+    const res = await h.app.request(`/api/public/interview-card/${token}/evaluate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ evaluation: '一面：基础扎实', result: 'passed', round: 1 }),
+    }, h.env);
+    expect(res.status).toBe(200);
+    const iv = h.db.interviews.find((r: any) => r.id === 'iv-1');
+    expect(iv.evaluation).toContain('基础扎实');
+    expect(iv.result).toBe('passed');
+    expect(iv.status).toBe('scheduled');
+  });
+
+  it('候选人无面试记录：自动创建一面面试并写入评价', async () => {
+    const h = buildHarness({ resumes: [sampleResume], interviews: [] });
+    const token = await createCard(h);
+    const res = await h.app.request(`/api/public/interview-card/${token}/evaluate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ evaluation: '一面：自动创建', result: 'failed', round: 1 }),
+    }, h.env);
+    expect(res.status).toBe(200);
+    const created = h.db.interviews.find((r: any) => r.candidate_name === '张三');
+    expect(created).toBeTruthy();
+    expect(created.round).toBe(1);
+    expect(created.evaluation).toContain('自动创建');
+    expect(created.result).toBe('failed');
+    expect(created.status).toBe('completed');
+  });
+
+  it('未知 token → 404', async () => {
     const h = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
     const res = await h.app.request('/api/public/interview-card/ic-any/evaluate', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ evaluation: 'x', result: 'passed' }),
     }, h.env);
-    expect(res.status).toBe(410);
-    const body = await res.json();
-    expect(body.code).toBe('PUBLIC_WRITE_DISABLED');
-    expect(h.db.interviews[0].evaluation).toBe(sampleInterview().evaluation);
+    expect(res.status).toBe(404);
   });
 });
 

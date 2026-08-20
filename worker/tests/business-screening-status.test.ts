@@ -35,9 +35,7 @@ describe('resume business-screening state', () => {
     expect(filter.clause).toContain("r.business_screening_status = ? AND r.hr_disposition = 'pushed'");
   });
 
-  it('only exposes currently pushed resumes in a public business-screening batch', () => {
-    expect(buildBusinessScreeningBatchItemVisibilityClause()).toBe(
-      "r.hr_disposition = 'pushed' AND COALESCE(r.status, '') NOT IN ('approved', 'rejected')",
-    );
+  it('exposes all batch items in a public business-screening link (含已决策，前端按状态标记)', () => {
+    expect(buildBusinessScreeningBatchItemVisibilityClause()).toBe('1=1');
   });
 });
