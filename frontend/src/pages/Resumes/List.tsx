@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Table, Button, Space, message, Tag, Modal, Tooltip, Typography, Form, Select, Upload, Input, DatePicker, InputNumber, Card, Row, Col, Checkbox, Statistic, Pagination, Empty, Avatar, Badge, Dropdown, Progress, Radio } from 'antd';
-import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, CloudUploadOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, TeamOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ReloadOutlined, CloseCircleOutlined, SearchOutlined, SolutionOutlined, SyncOutlined, FileTextOutlined, CheckOutlined, CloseOutlined, UserOutlined, EnvironmentOutlined, BookOutlined, InfoCircleOutlined, EditOutlined, SettingOutlined, RobotOutlined, CloudUploadOutlined, SendOutlined } from '@ant-design/icons';
 import DOMPurify from 'dompurify';
 import request from '../../utils/request';
 import { downloadExcel } from '../../utils/exportExcel';
@@ -126,6 +126,8 @@ const ResumesList: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [batchPushing, setBatchPushing] = useState(false);
   const [pushExpiry, setPushExpiry] = useState<number>(7);
+  // 每条简历「推送」时选择的岗位（未选择则按简历自身岗位推送）
+  const [pushPositionByResume, setPushPositionByResume] = useState<Record<string, string>>({});
   const canBatchPush = user?.role === 'admin' || user?.role === 'hr';
   const [businessScreeningState, setBusinessScreeningState] = useState<Record<string, BusinessScreeningOverlay>>(
     () => loadStoredJson<Record<string, BusinessScreeningOverlay>>(BUSINESS_SCREENING_STATE_KEY, {}),
@@ -1127,7 +1129,12 @@ const ResumesList: React.FC = () => {
   const handlePush = async (record: any) => {
     try {
       // 手动推送：AI 不通过 → 改为通过并推送到业务链接（后端一个接口完成）
-      const res = await request.post(`/resumes/${record.id}/business-screening/manual-push`, { expires_in_days: pushExpiry }) as BusinessScreeningPushResult & {
+      // 可选 position：选择岗位后按该岗位推送到对应业务的筛选链接；未选择则按简历自身岗位
+      const position = pushPositionByResume[record.id];
+      const res = await request.post(`/resumes/${record.id}/business-screening/manual-push`, {
+        expires_in_days: pushExpiry,
+        position: position || undefined,
+      }) as BusinessScreeningPushResult & {
         ai_result?: string;
         business_screening_status?: string;
       };
@@ -1380,10 +1387,21 @@ const handleUploadClick = () => {
         <Tooltip title="预览"><Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handlePreview(record)} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
         {hardResult?.passed === false && <Tag color="error">❌ 硬性不通过</Tag>}
-        {businessActions.primary && (
-          <Button type="primary" size="small" icon={<CheckOutlined style={{ color: '#52c41a' }} />} onClick={() => handlePush(record)}>
-            {businessActions.primary.label}
-          </Button>
+        {canBatchPush && (
+          <>
+            <Select
+              size="small"
+              placeholder="选择推送岗位"
+              style={{ width: 150 }}
+              allowClear
+              value={pushPositionByResume[record.id] || undefined}
+              onChange={(v) => setPushPositionByResume(prev => ({ ...prev, [record.id]: v }))}
+              options={positions.map((p: any) => ({ label: p.title, value: p.title }))}
+            />
+            <Button type="primary" size="small" icon={<SendOutlined />} onClick={() => handlePush(record)}>
+              推送
+            </Button>
+          </>
         )}
         {businessActions.secondary && (
           <Button size="small" icon={<CloseOutlined />} onClick={() => handleReject(record)}>

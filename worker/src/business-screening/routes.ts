@@ -686,6 +686,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       tempLink: body?.temp_link === true,
       batchId: body?.batch_id,
       createdBy: user.email || 'system',
+      position: body?.position ? String(body.position).trim() : null,
     }, { origin: new URL(c.req.url).origin, user, env: c.env });
     return c.json(result);
   });
@@ -750,12 +751,13 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     if (!resume) return c.json({ detail: 'Candidate not found' }, 404);
     // 1) AI 结果改为通过
     await setResumeAiResult(db, id, '通过', 'HR 手动推送：AI 初筛不通过后人工改为通过');
-    // 2) 推送到业务链接（复用统一推送服务，正常发送飞书卡片）
+    // 2) 推送到业务链接（复用统一推送服务，正常发送飞书卡片；position 可选：指定岗位推送）
     const result = await pushResumesToBusinessScreening(db, deps, {
       ids: [id],
       expiresInDays: body?.expires_in_days,
       silent: body?.silent === true,
       createdBy: user.email || user.full_name || 'system',
+      position: body?.position ? String(body.position).trim() : null,
     }, { origin: new URL(c.req.url).origin, user, env: c.env });
     const updated = (await deps.store.listResumesByIds(db, [id]))[0];
     return c.json({
@@ -1357,6 +1359,8 @@ export interface BusinessScreeningPushInput {
   tempLink?: boolean;
   batchId?: string | null;
   createdBy?: string;
+  /** 指定岗位推送：覆盖简历自身岗位，按该岗位对应面试官/业务推送（不修改简历岗位字段） */
+  position?: string | null;
 }
 
 export interface BusinessScreeningPushResponse {
@@ -1401,10 +1405,14 @@ export async function pushResumesToBusinessScreening(
   const nowIso = deps.now();
   const resumes = await deps.store.listResumesByIds(db, ids);
   const resumesById = new Map(resumes.map((resume) => [resume.id, resume]));
+  // 指定岗位推送：把目标岗位加入查询并按该岗位覆盖分组（不改简历岗位字段）
+  const requestedPosition = input.position ? text(input.position) : '';
   const rawPositionTitles = uniqueStrings(resumes.map((resume) => text(resume.mapped_position) || text(resume.position_applied)));
+  if (requestedPosition) rawPositionTitles.push(requestedPosition);
   const mappings = await deps.store.listPositionMappings(db, rawPositionTitles);
   const standardByRaw = new Map(mappings.map((mapping) => [mapping.raw_name, mapping.mapped_name]));
   const resolveStandardTitle = (rawTitle: string): string => standardByRaw.get(rawTitle) || rawTitle;
+  const overrideTitle = requestedPosition ? resolveStandardTitle(requestedPosition) : '';
   const positionTitles = uniqueStrings(rawPositionTitles.map(resolveStandardTitle));
   const positions = await deps.store.listPositionsByTitles(db, positionTitles);
   const positionsByTitle = new Map(positions.map((position) => [position.title, position]));
@@ -1421,16 +1429,20 @@ export async function pushResumesToBusinessScreening(
       skipped.push({ id, reason: '简历不存在' });
       continue;
     }
-    const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
+    // 指定岗位时用覆盖副本参与分组（只影响本次推送，不落库）
+    const pushResume = overrideTitle
+      ? { ...resume, mapped_position: overrideTitle, position_applied: overrideTitle }
+      : resume;
+    const rawTitle = text(pushResume.mapped_position) || text(pushResume.position_applied);
     const positionTitle = resolveStandardTitle(rawTitle);
     const position = positionsByTitle.get(positionTitle);
-    const groups = groupEligibleResumesForPush([resume], positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
+    const groups = groupEligibleResumesForPush([pushResume], positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
     if (groups.size === 0) {
-      const reason = summarizeSkipReason(resume, position, interviewerDirectory, eligibilityOptions);
+      const reason = summarizeSkipReason(pushResume, position, interviewerDirectory, eligibilityOptions);
       skipped.push({ id, reason });
       continue;
     }
-    eligibleResumes.push(resume);
+    eligibleResumes.push(pushResume);
   }
 
   // 临时链接模式（模式 B）：直接放入用户指定简历，不做同名档案优选替换
