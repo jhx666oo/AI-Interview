@@ -1,0 +1,24 @@
+name = "ai-interview-automation-consumer"
+main = "src/interview-automation-consumer.ts"
+compatibility_date = "2024-12-01"
+
+# 非敏感配置。招聘日历 ID 必须在部署环境配置；未配置时作业会进入失败/人工处理，
+# 不会回退写入任意用户的 primary 日历。飞书/SMTP 密钥请单独设置到该 Worker。
+[vars]
+FRONTEND_BASE_URL = "https://ai-interview-88r.pages.dev"
+# FEISHU_RECRUITMENT_CALENDAR_ID = "cal_xxx"
+
+# 需要在该独立 Consumer 上单独配置的 secrets：
+# FEISHU_APP_ID、FEISHU_APP_SECRET，以及候选人邮件所需的 SMTP_* 配置。
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-interview-db"
+database_id = "3f82993e-210d-4b0b-9d83-4ed4be69724f"
+
+[[queues.consumers]]
+queue = "interview-automation"
+max_batch_size = 5
+max_batch_timeout = 5
+max_concurrency = 3
+max_retries = 0

@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ACTIVE_JOB_STATUSES,
   isTerminalJobStatus,
 } from '../src/resume-processing/types';
+import { processResume } from '../src/resume-processing/processor';
 import { claimJob, createOrGetActiveJob, updateJobAIDiagnostics, assertJobRunning, ResumeProcessingCancelledError, recoverStaleResumeProcessingJobs } from '../src/resume-processing/job-repository';
 
 describe('resume processing job status contract', () => {
@@ -16,6 +17,25 @@ describe('resume processing job status contract', () => {
 
   it('keeps queued and running as the only active job states', () => {
     expect(ACTIVE_JOB_STATUSES).toEqual(['queued', 'running']);
+  });
+});
+
+describe('screening completion hook', () => {
+  it('runs after AI screening is persisted so automation can enqueue safely', async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const onScreened = vi.fn(async () => undefined);
+    await processResume({ jobId: 'job-1', resumeId: 'resume-1' }, {
+      getResume: async () => ({ id: 'resume-1', raw_text: 'candidate resume text with enough characters', parsed_data: null, ai_evaluation: null }),
+      getText: async () => 'candidate resume text with enough characters',
+      extractFields: async () => ({ name: '候选人' }),
+      screen: async () => ({ screening_result: '通过', weighted_score: 80 }),
+      updateResume: async (_id, update) => { updates.push(update); },
+      setJobStep: async () => undefined,
+      assertJobRunning: async () => undefined,
+      onScreened,
+    });
+    expect(updates.some((update) => update.parse_status === 'ai_screened')).toBe(true);
+    expect(onScreened).toHaveBeenCalledWith(expect.objectContaining({ result: expect.objectContaining({ screening_result: '通过' }) }));
   });
 });
 

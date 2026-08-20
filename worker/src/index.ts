@@ -42,6 +42,7 @@ import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } fr
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './business-screening/token';
 import { syncAiResultToBusinessScreening, buildBusinessScreeningAutoLinkDeps } from './business-screening/auto-link';
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
+import { createInterviewAutomationRoutes } from './interview-automation/routes';
 import { createInterviewCalendarEvent, findFirstFreeInterviewSlot } from './interview-start/feishu-calendar';
 import { sendInterviewerInterviewReminder, sendFeishuTextMessage } from './interview-start/reminders';
 import {
@@ -93,6 +94,9 @@ import {
   toPublicRecruitingBoard as toPublicRecruitingBoardV2,
 } from './recruiting-operations/dashboard';
 import type { RecruitingBoard, RecruitingBoardPositionRow } from './recruiting-operations/dashboard';
+import { InterviewAutomationRepository } from './interview-automation/repository';
+import { enqueueInterviewAutomation } from './interview-automation/enqueue';
+import type { InterviewAutomationQueueMessage } from './interview-automation/types';
 
 export {
   getBoardFirstInterviewCount,
@@ -132,6 +136,9 @@ interface Env extends DashboardFeishuSourceEnv {
   CRON_SECRET?: string;
   RESUME_UPLOAD_API_KEY?: string; // 对外简历上传接口的 API Key（x-api-key header）
   RESUME_PROCESSING_QUEUE: Queue<ResumeProcessingQueueMessage>;
+  INTERVIEW_AUTOMATION_QUEUE?: Queue<InterviewAutomationQueueMessage>;
+  INTERVIEW_AUTOMATION_ENABLED?: string;
+  FEISHU_RECRUITMENT_CALENDAR_ID?: string;
 }
 
 // 飞书配置（非敏感 ID 类配置；appSecret 必须通过环境变量 FEISHU_APP_SECRET 提供：
@@ -1603,6 +1610,11 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
     const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).first() as any;
     return typeof row?.value === 'string' && row.value.trim() ? row.value.trim() : null;
   },
+  enqueueAutomation: async (env, input) => {
+    if (String(env.INTERVIEW_AUTOMATION_ENABLED || '').toLowerCase() !== 'true' || !env.INTERVIEW_AUTOMATION_QUEUE) return;
+    const repo = new InterviewAutomationRepository(env.DB, { uuid, now });
+    await enqueueInterviewAutomation(repo, env.INTERVIEW_AUTOMATION_QUEUE, input);
+  },
   // 公开页「重新解析」：凭链接 token 免登录触发 AI 重新评估（入队去重）
   enqueueResumeReprocess: async (env, resumeId) => enqueueResumeReprocess(env.DB, env.RESUME_PROCESSING_QUEUE, resumeId),
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
@@ -1635,6 +1647,12 @@ const interviewCardRoutes = createInterviewCardRoutes({
 });
 app.route('/', interviewCardRoutes);
 
+const interviewAutomationRoutes = createInterviewAutomationRoutes({
+  authMiddleware,
+  now,
+  uuid,
+});
+app.route('/', interviewAutomationRoutes);
 // API Key 飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（管理员配置）
 const BUSINESS_SCREENING_KEY_OWNER_SETTING = 'business_screening_key_owner';
 
@@ -8451,7 +8469,17 @@ app.get('/api/interviews/:id/questions', authMiddleware, async (c) => {
 
 app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
   const id = c.req.param('id');
-  await c.env.DB.prepare("UPDATE interviews SET status = 'in_progress', started_at = ? WHERE id = ?").bind(now(), id).run();
+  const current = await c.env.DB.prepare('SELECT id, status FROM interviews WHERE id = ?').bind(id).first() as any;
+  if (!current) return c.json({ detail: 'Interview not found' }, 404);
+  if (!['scheduled', 'notification_partial'].includes(String(current.status || ''))) {
+    return c.json({ detail: '仅已安排的面试可开始', code: 'INTERVIEW_NOT_SCHEDULED' }, 409);
+  }
+  const startedAt = now();
+  await c.env.DB.prepare(
+    "UPDATE interviews SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?",
+  ).bind(startedAt, startedAt, id).run();
+  const startedRow = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first();
+  return c.json(transformRow(startedRow));
 
   // ===== 开始面试联动流程：①飞书会议日程（自动创建会议链接）②候选人免登录详情链接 ③候选人邮件 =====
   const startFlow: {
@@ -8719,39 +8747,16 @@ app.post('/api/interviews/:id/cancel', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const interview = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first() as any;
   if (!interview) return c.json({ detail: 'Interview not found' }, 404);
-
-  await c.env.DB.prepare("UPDATE interviews SET status = 'cancelled' WHERE id = ?").bind(id).run();
-  // ... (rest of cancel logic)
-
-  await c.env.DB.prepare("UPDATE interviews SET status = 'cancelled' WHERE id = ?").bind(id).run();
-
-  // 若面试关联了人才库记录 → 删除人才库记录并同步飞书
-  const resumeId = interview.resume_id;
-  if (resumeId) {
-    const talent = await c.env.DB.prepare('SELECT * FROM talent_pool WHERE resume_id = ?').bind(resumeId).first() as any;
-    if (talent) {
-      const feishuRecordId = talent.feishu_record_id;
-      await c.env.DB.prepare('DELETE FROM talent_pool WHERE id = ?').bind(talent.id).run();
-
-      // 异步删除飞书多维表格记录
-      if (feishuRecordId) {
-        c.executionCtx.waitUntil((async () => {
-          try {
-            const token = await getFeishuToken(c.env);
-            await fetch(`https://open.feishu.cn/open-apis/bitable/v1/apps/${FEISHU_CONFIG.appToken}/tables/${FEISHU_CONFIG.talentTableId}/records/${feishuRecordId}`, {
-              method: 'DELETE',
-              headers: { 'Authorization': `Bearer ${token}` },
-            });
-            console.log(`[Cancel] 已同步删除飞书人才库记录: ${feishuRecordId}`);
-          } catch (e: any) {
-            console.error(`[Cancel] 同步删除飞书记录失败: ${e.message}`);
-          }
-        })());
-      }
-    }
+  if (interview.status === 'cancelled') {
+    return c.json({ ok: true, id, status: 'cancelled', already_cancelled: true });
   }
 
-  return c.json({ detail: 'Interview cancelled, talent pool record removed' });
+  // 取消只改变面试状态，保留人才库、候选人和历史事实，便于恢复与审计。
+  const updatedAt = now();
+  await c.env.DB.prepare(
+    "UPDATE interviews SET status = 'cancelled', updated_at = ? WHERE id = ?",
+  ).bind(updatedAt, id).run();
+  return c.json({ ok: true, id, status: 'cancelled' });
 });
 
 // 更新面试（编辑所有字段）
@@ -10897,6 +10902,8 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT",
     "ALTER TABLE positions ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE positions ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
+    // 面试自动化灰度开关：岗位 AI 初筛通过后是否自动进入业务筛选/面试推进
+    "ALTER TABLE positions ADD COLUMN auto_business_screening_enabled INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE interviews ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE interviews ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
     // 开始面试流程 - 飞书会议日程 + 候选人邮件
@@ -11795,7 +11802,7 @@ async function getValidUserAccessToken(env: Env, email: string): Promise<string 
   return refreshed?.access_token || null;
 }
 
-async function getFeishuToken(env: Env): Promise<string> {
+export async function getFeishuToken(env: Env): Promise<string> {
   // 先查 D1 缓存（飞书 token 有效期 2h，缓存 110min 留 10min buffer）
   try {
     const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind('feishu_token').first();
@@ -13041,7 +13048,7 @@ async function sendFeishuMessageToChat(token: string, chatId: string, cardConten
 }
 
 /** 发送消息给指定用户（通过 open_id） */
-async function sendFeishuMessageToUser(token: string, openId: string, cardContent: any): Promise<any> {
+export async function sendFeishuMessageToUser(token: string, openId: string, cardContent: any): Promise<any> {
   const resp = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },

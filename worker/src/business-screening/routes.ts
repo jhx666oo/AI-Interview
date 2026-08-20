@@ -261,7 +261,6 @@ export interface BusinessScreeningRouteStore {
   setBatchStatus(db: D1Database, batchId: string, status: 'active' | 'completed' | 'revoked' | 'expired'): Promise<void>;
   setBatchLastSentAt(db: D1Database, batchId: string, sentAt: string): Promise<void>;
   countPendingBatchItems(db: D1Database, batchId: string): Promise<number>;
-  getResumeFileBytes(env: any, resumeId: string): Promise<{ bytes: Uint8Array | null; fileName: string }>;
 }
 
 type HrUser = { id?: string; email?: string; role?: string; full_name?: string };
@@ -288,6 +287,7 @@ export interface BusinessScreeningRouteDeps {
   requireRole: (roles: string[]) => (c: any, next: any) => Promise<Response | void>;
   getCurrentUserToken: (env: any, email: string) => Promise<string | null>;
   sendFeishuMessageToUser: (token: string, openId: string, card: unknown) => Promise<unknown>;
+  getResumeFileBytes: (env: any, resumeId: string) => Promise<{ bytes: Uint8Array | null; fileName: string }>;
   recordResumeDecisionTimestamp: (db: D1Database, resumeId: string, action: 'approved' | 'rejected' | 'reset', timestamp?: string) => Promise<void>;
   now: () => string;
   uuid: () => string;
@@ -296,6 +296,7 @@ export interface BusinessScreeningRouteDeps {
   store: BusinessScreeningRouteStore;
   // API Key 身份的飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（未配置则无法发飞书，链接仍生成）
   resolveApiKeyOwnerEmail?: (env: any) => Promise<string | null>;
+  enqueueAutomation?: (env: any, input: { idempotencyKey: string; action: 'create_next_round'; resumeId: string; payload: Record<string, unknown> }) => Promise<unknown>;
   // 公开页「重新解析」：链接内简历信息未提取完整时，由业务方/面试官触发 AI 重新评估（入队去重）
   enqueueResumeReprocess?: (env: any, resumeId: string) => Promise<{ jobId: string; status: 'queued' | 'running'; queued: boolean }>;
 }
@@ -849,6 +850,15 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       return c.json({ detail: result.reason }, 409);
     }
 
+    if (result.status === 'passed' && result.applied && deps.enqueueAutomation) {
+      await deps.enqueueAutomation(c.env, {
+        idempotencyKey: `create-next-round:${resumeId}:r1`,
+        action: 'create_next_round',
+        resumeId,
+        payload: { round: 1, positionId: item.position_id || undefined, sourceBatchId: batch.id, sourceBatchItemId: item.id },
+      });
+    }
+
     const pendingCount = await deps.store.countPendingBatchItems(db, batch.id);
     if (pendingCount === 0) {
       await deps.store.setBatchStatus(db, batch.id, 'completed');
@@ -917,6 +927,19 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       if (result.applied) applied += 1;
       else if (result.idempotent) skipped += 1;
       else failed += 1;
+      if (status === 'passed' && result.applied && deps.enqueueAutomation) {
+        await deps.enqueueAutomation(c.env, {
+          idempotencyKey: `create-next-round:${item.resume_id}:r1`,
+          action: 'create_next_round',
+          resumeId: item.resume_id,
+          payload: {
+            round: 1,
+            positionId: item.position_id || undefined,
+            sourceBatchId: batch.id,
+            sourceBatchItemId: item.id,
+          },
+        });
+      }
     }
 
     const pendingCount = await deps.store.countPendingBatchItems(db, batch.id);
@@ -1136,7 +1159,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     if (!silent) {
       try {
         const pendingCount = await deps.store.countPendingBatchItems(db, nextBatchId);
-        await deps.sendFeishuMessageToUser(currentUserToken, batch.interviewer_open_id, buildFeishuCard({
+        await deps.sendFeishuMessageToUser(currentUserToken as string, batch.interviewer_open_id, buildFeishuCard({
           positionTitle,
           itemCount: pendingCount,
           url,

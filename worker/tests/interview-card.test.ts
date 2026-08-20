@@ -644,98 +644,16 @@ describe('GET /api/public/interview-card/:token/file', () => {
 });
 
 describe('POST /api/public/interview-card/:token/evaluate', () => {
-  async function createCard(h: ReturnType<typeof buildHarness>) {
-    const created = await (await h.app.request('/api/interview-card-links', {
+  it('任意公开 token 都返回 410，且不写入面试评价', async () => {
+    const h = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
+    const res = await h.app.request('/api/public/interview-card/ic-any/evaluate', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ resume_id: 'resume-1', candidate_name: '张三', position_applied: '前端工程师' }),
-    }, h.env)).json() as any;
-    return created.token as string;
-  }
-
-  it('一面评价：填写评价+通过 → 写 evaluation/result/status', async () => {
-    const h = buildHarness({
-      resumes: [sampleResume],
-      interviews: [sampleInterview({ result: 'pending', evaluation: '', status: 'scheduled' })],
-    });
-    const token = await createCard(h);
-    const res = await h.app.request(`/api/public/interview-card/${token}/evaluate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ evaluation: '一面：基础扎实，推荐进入二面', result: 'passed', round: 1 }),
+      body: JSON.stringify({ evaluation: 'x', result: 'passed' }),
     }, h.env);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(410);
     const body = await res.json();
-    expect(body.ok).toBe(true);
-    expect(body.detail).toContain('第1面');
-    const iv = h.db.interviews.find((r: any) => r.id === 'iv-1');
-    expect(iv.evaluation).toContain('基础扎实');
-    expect(iv.result).toBe('passed');
-    expect(iv.status).toBe('scheduled'); // 一面通过 → 待二面
-  });
-
-  it('一面评价：不通过 → status 置 completed', async () => {
-    const h = buildHarness({
-      resumes: [sampleResume],
-      interviews: [sampleInterview({ result: 'pending', evaluation: '', status: 'in_progress' })],
-    });
-    const token = await createCard(h);
-    const res = await h.app.request(`/api/public/interview-card/${token}/evaluate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ evaluation: '一面：不符合', result: 'failed', round: 1 }),
-    }, h.env);
-    expect(res.status).toBe(200);
-    const iv = h.db.interviews.find((r: any) => r.id === 'iv-1');
-    expect(iv.result).toBe('failed');
-    expect(iv.status).toBe('completed');
-  });
-
-  it('二面评价：一面通过后提交二面 → 写 evaluation2/result2/status2', async () => {
-    const h = buildHarness({
-      resumes: [sampleResume],
-      interviews: [sampleInterview({ result: 'passed', result2: 'pending', status2: 'pending', evaluation2: '' })],
-    });
-    const token = await createCard(h);
-    const res = await h.app.request(`/api/public/interview-card/${token}/evaluate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ evaluation: '二面：通过', result: 'passed', round: 2 }),
-    }, h.env);
-    expect(res.status).toBe(200);
-    const iv = h.db.interviews.find((r: any) => r.id === 'iv-1');
-    expect(iv.evaluation2).toContain('通过');
-    expect(iv.result2).toBe('passed');
-    expect(iv.status2).toBe('completed');
-  });
-
-  it('空评价且无结果 → 400；result 非法 → 400', async () => {
-    const h = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
-    const token = await createCard(h);
-    const empty = await h.app.request(`/api/public/interview-card/${token}/evaluate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ round: 1 }),
-    }, h.env);
-    expect(empty.status).toBe(400);
-    const bad = await h.app.request(`/api/public/interview-card/${token}/evaluate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ evaluation: 'x', result: 'maybe', round: 1 }),
-    }, h.env);
-    expect(bad.status).toBe(400);
-  });
-
-  it('未知 token → 404；过期链接 → 410', async () => {
-    const h = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
-    const notFound = await h.app.request('/api/public/interview-card/ic-unknown/evaluate', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ evaluation: 'x', result: 'passed' }),
-    }, h.env);
-    expect(notFound.status).toBe(404);
-
-    const h2 = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
-    const token = await createCard(h2);
-    h2.setNow('2026-10-01T00:00:00.000Z');
-    const expired = await h2.app.request(`/api/public/interview-card/${token}/evaluate`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ evaluation: 'x', result: 'passed' }),
-    }, h2.env);
-    expect(expired.status).toBe(410);
+    expect(body.code).toBe('PUBLIC_WRITE_DISABLED');
+    expect(h.db.interviews[0].evaluation).toBe(sampleInterview().evaluation);
   });
 });
 

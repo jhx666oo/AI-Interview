@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS positions (
   personalized_requirements TEXT DEFAULT '',
   capability_dimensions TEXT DEFAULT '[]',
   screening_rules TEXT DEFAULT '',
+  auto_business_screening_enabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -289,9 +290,72 @@ CREATE TABLE IF NOT EXISTS interviews (
   invite_token_hash TEXT DEFAULT '',
   invite_expires_at TEXT,
   invite_email_sent_at TEXT,
+  candidate_email TEXT DEFAULT '',
+  scheduled_start_at TEXT,
+  scheduled_end_at TEXT,
+  duration_minutes INTEGER NOT NULL DEFAULT 60,
+  timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+  schedule_status TEXT NOT NULL DEFAULT 'not_ready',
+  calendar_id TEXT DEFAULT '',
+  calendar_event_id TEXT DEFAULT '',
+  meeting_url TEXT DEFAULT '',
+  previous_interview_id TEXT,
+  next_interview_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  last_error_code TEXT DEFAULT '',
+  last_error_message TEXT DEFAULT '',
+  cancel_reason TEXT DEFAULT '',
+  cancelled_by TEXT DEFAULT '',
+  cancelled_at TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT
 );
+
+-- 0046_interview_automation_foundation
+CREATE TABLE IF NOT EXISTS interview_automation_jobs (
+  id TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  resume_id TEXT,
+  interview_id TEXT,
+  action TEXT NOT NULL CHECK (action IN (
+    'auto_business_screening','create_next_round','schedule','reschedule','cancel',
+    'notify_interviewer','notify_candidate','advance'
+  )),
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','succeeded','partial','failed','cancelled')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  next_retry_at TEXT,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  result_json TEXT NOT NULL DEFAULT '{}',
+  error_code TEXT DEFAULT '',
+  error_message TEXT DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_interview_jobs_status_retry ON interview_automation_jobs(status, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_interview_jobs_interview ON interview_automation_jobs(interview_id, created_at);
+
+CREATE TABLE IF NOT EXISTS interview_notifications (
+  id TEXT PRIMARY KEY,
+  interview_id TEXT NOT NULL,
+  channel TEXT NOT NULL CHECK (channel IN ('feishu_card','feishu_file','email')),
+  recipient_type TEXT NOT NULL CHECK (recipient_type IN ('primary_interviewer','secondary_interviewer','candidate','hr')),
+  recipient_id TEXT NOT NULL DEFAULT '',
+  template_key TEXT NOT NULL CHECK (template_key IN ('scheduled','reminder_30m','rescheduled','cancelled')),
+  interview_version INTEGER NOT NULL,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','sent','failed','skipped','cancelled')),
+  external_message_id TEXT DEFAULT '',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT DEFAULT '',
+  sent_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_interview_notifications_interview ON interview_notifications(interview_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_interview_notifications_status ON interview_notifications(status, updated_at);
 
 -- Interview Panels
 CREATE TABLE IF NOT EXISTS interview_panels (
@@ -760,6 +824,9 @@ CREATE INDEX IF NOT EXISTS idx_interviews_position ON interviews(position_id);
 CREATE INDEX IF NOT EXISTS idx_interviews_interviewer ON interviews(interviewer_id);
 CREATE INDEX IF NOT EXISTS idx_interviews_status ON interviews(status);
 CREATE INDEX IF NOT EXISTS idx_interviews_resume ON interviews(resume_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_resume_round_active
+  ON interviews(resume_id, round)
+  WHERE COALESCE(resume_id, '') <> '' AND status <> 'cancelled';
 CREATE INDEX IF NOT EXISTS idx_interviews_created ON interviews(created_at DESC);
 
 -- offers 高频查询字段

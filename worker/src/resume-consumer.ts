@@ -16,6 +16,9 @@ import { ResumeSearchDocumentGenerator } from './resume-search/document-generato
 import { ResumeSearchServiceImpl } from './resume-search/search-service';
 import { R2ArtifactStore } from './resume-storage/r2-artifact-store';
 import { aiScreeningResultFromScore } from './ai-screening-result';
+import { InterviewAutomationRepository } from './interview-automation/repository';
+import { enqueueInterviewAutomation } from './interview-automation/enqueue';
+import type { InterviewAutomationQueueMessage } from './interview-automation/types';
 
 export class RetryableResumeError extends Error {
   constructor(public readonly code: string, message?: string) {
@@ -135,7 +138,36 @@ type ConsumerEnv = {
   R2_ARTIFACT_READ?: string;
   R2_ARTIFACT_WRITE?: string;
   RESUME_PROCESSING_QUEUE: Queue<ResumeProcessingQueueMessage>;
+  INTERVIEW_AUTOMATION_QUEUE?: Queue<InterviewAutomationQueueMessage>;
+  INTERVIEW_AUTOMATION_ENABLED?: string;
 };
+
+function isAiPassed(value: unknown): boolean {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'passed' || normalized === 'pass' || normalized === '通过' || normalized.includes('通过');
+}
+
+async function enqueueAutoBusinessScreeningIfEnabled(
+  env: ConsumerEnv,
+  resume: any,
+  result: Record<string, unknown>,
+): Promise<void> {
+  if (String(env.INTERVIEW_AUTOMATION_ENABLED || '').toLowerCase() !== 'true') return;
+  if (!env.INTERVIEW_AUTOMATION_QUEUE || !isAiPassed(result.screening_result)) return;
+  const position = resume.position_id
+    ? await env.DB.prepare('SELECT id, title, auto_business_screening_enabled FROM positions WHERE id = ? LIMIT 1').bind(resume.position_id).first<any>()
+    : await env.DB.prepare('SELECT id, title, auto_business_screening_enabled FROM positions WHERE title = ? LIMIT 1')
+      .bind(String(resume.mapped_position || resume.position_applied || '').trim()).first<any>();
+  if (!position || Number(position.auto_business_screening_enabled || 0) !== 1) return;
+  const repo = new InterviewAutomationRepository(env.DB, { uuid: () => crypto.randomUUID(), now: () => new Date().toISOString() });
+  const version = String(resume.ai_result_version || resume.updated_at || 'latest');
+  await enqueueInterviewAutomation(repo, env.INTERVIEW_AUTOMATION_QUEUE, {
+    idempotencyKey: `auto-business-screening:${resume.id}:${version}`,
+    action: 'auto_business_screening',
+    resumeId: String(resume.id),
+    payload: { positionId: position.id, positionTitle: position.title, screeningVersion: version },
+  });
+}
 
 function cleanBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '');
@@ -563,6 +595,8 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       return enrichedEvaluation;
     },
 
+    onScreened: ({ resume, result }) => enqueueAutoBusinessScreeningIfEnabled(env, resume, result),
+
     updateResume: (id, update) => updateResume(env.DB, id, update),
     setJobStep: async (jobId, step) => {
       await env.DB.prepare("UPDATE resume_processing_jobs SET step=?, updated_at=? WHERE id=? AND status='running'")
@@ -826,6 +860,7 @@ async function processWithR2(env: ConsumerEnv, message: ResumeQueueMessage): Pro
       }
       return enrichedEvaluation;
     },
+    onScreened: ({ resume, result }) => enqueueAutoBusinessScreeningIfEnabled(env, resume, result),
     updateResume: (id, update) => updateResume(env.DB, id, update),
     setJobStep: async (jobId, step) => {
       await env.DB.prepare("UPDATE resume_processing_jobs SET step=?, updated_at=? WHERE id=? AND status='running'")

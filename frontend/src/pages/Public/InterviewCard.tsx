@@ -1,11 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Spin, Tag, Progress, Descriptions, Button, Form, Input, Radio, message, Modal, DatePicker } from 'antd';
-import dayjs, { type Dayjs } from 'dayjs';
+import { Spin, Tag, Progress, Descriptions, Button } from 'antd';
 import {
   CalendarOutlined, ClockCircleOutlined, EnvironmentOutlined, TeamOutlined,
   UserOutlined, FileTextOutlined, CheckCircleOutlined,
-  HistoryOutlined, CommentOutlined, DownloadOutlined, PhoneOutlined, EditOutlined, SyncOutlined,
+  HistoryOutlined, CommentOutlined, DownloadOutlined, PhoneOutlined,
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -254,203 +253,24 @@ function resolveTargetRound(iv: InterviewCardPublicInterview): 1 | 2 | null {
   return 1;
 }
 
-/** 面试安排：展示面试时间并支持面试官修改（空闲时段点选 + 可手填，interview-invite 功能迁移） */
-function RescheduleSection({
-  interviews, token, onSubmitted,
-}: {
-  interviews: InterviewCardPublicInterview[];
-  token: string;
-  onSubmitted: () => void;
-}) {
-  const [modalOpen, setModalOpen] = useState(false);
-  const [slots, setSlots] = useState<Array<{ start: string; end: string }>>([]);
-  const [slotLoading, setSlotLoading] = useState(false);
-  const [slotReason, setSlotReason] = useState<string | null>(null);
-  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
-  const [customTime, setCustomTime] = useState<Dayjs | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const primary = interviews[0];
-  if (!primary) return null;
-  const currentTime = primary.interview_time || null;
-
-  const openReschedule = async () => {
-    setModalOpen(true);
-    setSelectedSlot(null);
-    setCustomTime(null);
-    setSlotReason(null);
-    setSlotLoading(true);
-    try {
-      const res = await request.get(`/public/interview-card/${token}/slots`);
-      setSlots(res?.slots || []);
-      if (res?.reason) setSlotReason(res.reason);
-    } catch {
-      setSlots([]);
-      setSlotReason('空闲时段加载失败，可手动选择下方时间');
-    } finally {
-      setSlotLoading(false);
-    }
-  };
-
-  const submitReschedule = async () => {
-    const picked = selectedSlot || (customTime ? customTime.format('YYYY-MM-DD HH:mm') : '');
-    if (!picked) {
-      message.warning('请选择一个空闲时段或手动填写时间');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await request.post(`/public/interview-card/${token}/reschedule`, {
-        interview_time: picked,
-      });
-      message.success(`面试时间已更新为 ${res?.interview_time || picked}`);
-      setModalOpen(false);
-      onSubmitted();
-    } catch (e: any) {
-      message.error(e?.response?.data?.detail || '修改失败，请重试');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div style={sectionCardStyle}>
-      <div style={sectionTitleStyle}>
-        <CalendarOutlined style={{ color: '#2563EB' }} /> 面试安排
-        <span style={{ fontSize: 12, fontWeight: 400, color: '#94A3B8' }}>面试官可修改时间</span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ fontSize: 14, color: '#0F172A', fontWeight: 500 }}>
-          <ClockCircleOutlined style={{ marginRight: 6, color: '#64748B' }} />
-          {currentTime || '待定'}
-        </div>
-        <Button size="small" icon={<EditOutlined />} onClick={openReschedule}>修改时间</Button>
-      </div>
-
-      <Modal
-        title="修改面试时间"
-        open={modalOpen}
-        onOk={submitReschedule}
-        onCancel={() => setModalOpen(false)}
-        confirmLoading={submitting}
-        okText="保存修改"
-        cancelText="取消"
-        width={520}
-      >
-        <div style={{ fontSize: 13, color: '#64748B', marginBottom: 12 }}>
-          以下为主面试官未来两个工作日的空闲时段（自动跳过周末与午休），也可手动填写：
-        </div>
-        {slotLoading ? (
-          <div style={{ textAlign: 'center', padding: '20px 0', color: '#94A3B8' }}>正在查询面试官空闲时段...</div>
-        ) : slots.length > 0 ? (
-          <Radio.Group
-            value={selectedSlot}
-            onChange={(e) => { setSelectedSlot(e.target.value); setCustomTime(null); }}
-            style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}
-          >
-            {slots.map((s) => (
-              <Radio key={s.start} value={s.start} style={{ lineHeight: '28px' }}>
-                {s.start} ~ {s.end}
-              </Radio>
-            ))}
-          </Radio.Group>
-        ) : (
-          <div style={{ color: '#d46b08', fontSize: 13, marginBottom: 12 }}>
-            {slotReason || '暂无推荐空闲时段'}
-          </div>
-        )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
-          <span style={{ fontSize: 13, color: '#64748B', whiteSpace: 'nowrap' }}>或手动填写：</span>
-          <DatePicker
-            showTime={{ format: 'HH:mm', minuteStep: 30 }}
-            format="YYYY-MM-DD HH:mm"
-            value={customTime}
-            onChange={(v) => { setCustomTime(v); if (v) setSelectedSlot(null); }}
-            placeholder="选择日期与时间"
-            style={{ width: 240 }}
-            allowClear
-          />
-        </div>
-        <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 12 }}>
-          保存后系统面试时间与飞书会议日程将同步更新。
-        </div>
-      </Modal>
-    </div>
-  );
-}
-
 /** 面试评价（面试官在卡片链接内填写一面/二面评价与结果） */
 function EvaluationSection({
-  interviews, token, onSubmitted,
+  interviews,
 }: {
   interviews: InterviewCardPublicInterview[];
-  token: string;
-  onSubmitted: () => void;
 }) {
-  const [form] = Form.useForm();
-  const [submitting, setSubmitting] = useState(false);
-
   const primary = interviews[0];
   if (!primary || !primary.id) return null;
-
   const targetRound = resolveTargetRound(primary);
-  if (targetRound === null) {
-    return (
-      <div style={sectionCardStyle}>
-        <div style={sectionTitleStyle}><CommentOutlined /> 面试评价</div>
-        <div style={{ fontSize: 13, color: '#94A3B8', textAlign: 'center', padding: '8px 0' }}>
-          该候选人各轮面试评价已完成
-        </div>
-      </div>
-    );
-  }
-
-  const submit = async () => {
-    try {
-      const values = await form.validateFields();
-      setSubmitting(true);
-      await request.post(`/public/interview-card/${token}/evaluate`, {
-        evaluation: values.evaluation || '',
-        result: values.result || '',
-        round: targetRound,
-      });
-      message.success(`第${targetRound}面评价已提交`);
-      form.resetFields();
-      onSubmitted();
-    } catch (e: any) {
-      if (e?.errorFields) return;
-      message.error(e?.response?.data?.detail || '提交失败，请重试');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <div style={sectionCardStyle}>
       <div style={sectionTitleStyle}>
         <CommentOutlined style={{ color: '#2563EB' }} /> 面试评价
-        <span style={{ fontSize: 12, fontWeight: 400, color: '#94A3B8' }}>第{targetRound}面（填写后自动保存）</span>
       </div>
-      <Form form={form} layout="vertical" requiredMark={false}>
-        <Form.Item
-          name="evaluation"
-          label={`第${targetRound}面评价`}
-          rules={[{ required: true, message: `请填写第${targetRound}面评价` }]}
-        >
-          <Input.TextArea rows={5} placeholder={`请填写对候选人的第${targetRound}面评价：岗位匹配、核心能力、稳定性等...`} maxLength={2000} showCount />
-        </Form.Item>
-        <Form.Item
-          name="result"
-          label={`第${targetRound}面结果`}
-          rules={[{ required: true, message: '请选择面试结果' }]}
-        >
-          <Radio.Group>
-            <Radio value="passed"><span style={{ color: '#10B981' }}>通过</span></Radio>
-            <Radio value="failed"><span style={{ color: '#EF4444' }}>不通过</span></Radio>
-          </Radio.Group>
-        </Form.Item>
-        <Button type="primary" loading={submitting} onClick={submit}>提交第{targetRound}面评价</Button>
-      </Form>
+      <div style={{ fontSize: 13, color: '#64748B', lineHeight: 1.8 }}>
+        {targetRound === null ? '该候选人各轮面试评价已完成。' : `当前为第${targetRound}面，评价请登录系统后在面试管理页提交。`}
+        <br />公开链接仅用于查看候选人资料、面试信息和历史记录。
+      </div>
     </div>
   );
 }
@@ -514,25 +334,6 @@ const InterviewCard: React.FC = () => {
   const [data, setData] = useState<InterviewCardView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reparsing, setReparsing] = useState(false);
-
-  // 重新解析：简历信息未提取完整时，凭公开链接 token 触发 AI 重新评估（入队去重）
-  const handleReparse = async () => {
-    if (!data?.candidate?.resume_id || reparsing) return;
-    setReparsing(true);
-    try {
-      const res = await request.post(`/public/interview-card/${token}/reparse`, {}) as { queued?: boolean };
-      if (res.queued === false) {
-        message.info('该简历正在重新解析中，请稍后刷新页面查看');
-      } else {
-        message.success('已提交重新解析，通常 1-2 分钟完成，请稍后刷新本页查看');
-      }
-    } catch (e: any) {
-      message.error(e?.response?.data?.detail || '重新解析失败，请稍后重试');
-    } finally {
-      setReparsing(false);
-    }
-  };
 
   const loadData = React.useCallback(async (silent?: boolean) => {
     try {
@@ -675,22 +476,7 @@ const InterviewCard: React.FC = () => {
 
       {/* 候选人档案（Descriptions，与简历详情页字段一致） */}
       <div style={sectionCardStyle}>
-        <div style={{ ...sectionTitleStyle, justifyContent: 'space-between' }}>
-          <span><UserOutlined /> 候选人档案</span>
-          {candidate.resume_id ? (
-            <span>
-              <Button
-                size="small"
-                icon={<SyncOutlined />}
-                loading={reparsing}
-                onClick={handleReparse}
-                title="简历信息未提取完整时，点击重新解析（AI 重新评估，通常 1-2 分钟）"
-              >
-                重新解析
-              </Button>
-            </span>
-          ) : null}
-        </div>
+        <div style={sectionTitleStyle}><UserOutlined /> 候选人档案</div>
         <Descriptions column={isMobileLayout ? 1 : 2} bordered size="small">
           <Descriptions.Item label="应聘岗位">{positionTitle}</Descriptions.Item>
           <Descriptions.Item label="学历">{profile?.highestDegree || '未识别'}</Descriptions.Item>
@@ -779,14 +565,11 @@ const InterviewCard: React.FC = () => {
         </div>
       )}
 
-      {/* 面试安排（展示时间 + 面试官修改入口） */}
-      <RescheduleSection interviews={interviews} token={token} onSubmitted={() => loadData(true)} />
-
       {/* 面试情况（辅助信息） */}
       <InterviewRoundsSection interviews={interviews} />
 
       {/* 面试评价（面试官在链接内填写） */}
-      <EvaluationSection interviews={interviews} token={token} onSubmitted={() => loadData(true)} />
+      <EvaluationSection interviews={interviews} />
 
       {/* 备注 */}
       <RemarksSection candidate={candidate} />

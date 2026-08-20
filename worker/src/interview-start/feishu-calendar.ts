@@ -1,7 +1,7 @@
 /**
  * 飞书日历日程创建（供「开始面试」流程使用）。
  *
- * 使用应用身份（tenant_access_token）在应用主日历（calendar_id = primary）上创建日程，
+ * 使用应用身份（tenant_access_token）在招聘日历上创建日程，
  * 通过 vchat.vc_type = 'vc' 让飞书自动生成原生视频会议，日程读回 vchat.meeting_url 作为入会链接。
  * 可选添加面试官为日程参与人（需应用开启机器人能力，失败不阻塞主流程）。
  *
@@ -14,9 +14,12 @@ export interface FeishuCalendarEnv {
   DB: D1Database;
   FEISHU_APP_ID?: string;
   FEISHU_APP_SECRET?: string;
+  FEISHU_RECRUITMENT_CALENDAR_ID?: string;
 }
 
 export interface InterviewCalendarEventInput {
+  /** 显式招聘日历 ID；未传时兼容历史 primary 日历。 */
+  calendarId?: string;
   summary: string;
   description: string;
   /** 开始时间（秒级时间戳） */
@@ -43,6 +46,17 @@ export interface FeishuCalendarDeps {
 
 const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+function calendarEventBase(calendarId: string): string {
+  return `${FEISHU_BASE}/calendar/v4/calendars/${encodeURIComponent(calendarId)}/events`;
+}
+
+function calendarEventUrl(calendarId: string, eventId?: string): string {
+  const base = calendarEventBase(calendarId);
+  return eventId
+    ? `${base}/${encodeURIComponent(eventId)}?user_id_type=open_id`
+    : `${base}?user_id_type=open_id`;
+}
 
 /** 获取 tenant_access_token（带 D1 缓存），逻辑与 feishu-link.ts 保持一致 */
 export async function getTenantAccessToken(
@@ -320,6 +334,7 @@ export async function createInterviewCalendarEvent(
     : await getTenantAccessToken(env, fallbackAppId, fetchImpl);
 
   const timezone = input.timezone || 'Asia/Shanghai';
+  const calendarId = String(input.calendarId || env.FEISHU_RECRUITMENT_CALENDAR_ID || 'primary').trim() || 'primary';
   const body = {
     summary: input.summary,
     description: input.description,
@@ -330,7 +345,7 @@ export async function createInterviewCalendarEvent(
   };
 
   const created = await feishuRequest(
-    `${FEISHU_BASE}/calendar/v4/calendars/primary/events?user_id_type=open_id`,
+    calendarEventUrl(calendarId),
     { method: 'POST', body: JSON.stringify(body) },
     token,
     fetchImpl,
@@ -346,7 +361,7 @@ export async function createInterviewCalendarEvent(
     // 创建响应未带会议链接 → 读一次日程详情（视频会议链接由飞书异步生成，读取兜底）
     try {
       const detail = await feishuRequest(
-        `${FEISHU_BASE}/calendar/v4/calendars/primary/events/${encodeURIComponent(eventId)}?user_id_type=open_id`,
+        calendarEventUrl(calendarId, eventId),
         { method: 'GET' },
         token,
         fetchImpl,
@@ -362,7 +377,7 @@ export async function createInterviewCalendarEvent(
   if (openIds.length > 0) {
     try {
       await feishuRequest(
-        `${FEISHU_BASE}/calendar/v4/calendars/primary/events/${encodeURIComponent(eventId)}/attendees?user_id_type=open_id`,
+        `${calendarEventBase(calendarId)}/${encodeURIComponent(eventId)}/attendees?user_id_type=open_id`,
         {
           method: 'POST',
           body: JSON.stringify({ attendees: openIds.map((openId) => ({ type: 'user', user_id: openId })), need_notification: true }),
@@ -386,7 +401,7 @@ export async function createInterviewCalendarEvent(
 export async function updateInterviewCalendarEventTime(
   env: FeishuCalendarEnv,
   eventId: string,
-  input: { startTimestamp: number; endTimestamp: number; timezone?: string },
+  input: { startTimestamp: number; endTimestamp: number; timezone?: string; calendarId?: string },
   deps: FeishuCalendarDeps = {},
   fallbackAppId?: string,
 ): Promise<{ ok: boolean; error?: string }> {
@@ -401,9 +416,10 @@ export async function updateInterviewCalendarEventTime(
     return { ok: false, error: e?.message || '获取飞书凭证失败' };
   }
   const timezone = input.timezone || 'Asia/Shanghai';
+  const calendarId = String(input.calendarId || env.FEISHU_RECRUITMENT_CALENDAR_ID || 'primary').trim() || 'primary';
   try {
     await feishuRequest(
-      `${FEISHU_BASE}/calendar/v4/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      calendarEventUrl(calendarId, eventId),
       {
         method: 'PATCH',
         body: JSON.stringify({
@@ -419,4 +435,19 @@ export async function updateInterviewCalendarEventTime(
   } catch (e: any) {
     return { ok: false, error: e?.message || '更新飞书日程失败' };
   }
+}
+
+/** 删除招聘日历上的日程；保留 D1 中的外部 ID 供审计。 */
+export async function deleteInterviewCalendarEvent(
+  env: FeishuCalendarEnv,
+  calendarId: string,
+  eventId: string,
+  deps: FeishuCalendarDeps = {},
+): Promise<void> {
+  const fetchImpl = deps.fetchImpl || fetch;
+  const timeoutMs = deps.timeoutMs || DEFAULT_TIMEOUT_MS;
+  const token = deps.getTenantToken
+    ? await deps.getTenantToken(env)
+    : await getTenantAccessToken(env, undefined, fetchImpl);
+  await feishuRequest(calendarEventUrl(calendarId, eventId), { method: 'DELETE' }, token, fetchImpl, timeoutMs);
 }

@@ -40,6 +40,7 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 | **响应式管理页面** | ✅ 已完成 | 宽表格页面按容器宽度切换大屏表格、中屏双列卡片、小屏单列卡片；保留分页、全选、行选择、操作按钮与详情展开 |
 | **仪表盘岗位明细** | ✅ 已完成 | 小屏支持按事业部折叠/展开，保留岗位详情、一面/二面/三面通过、Offer、入职与合计数据 |
 | **重复分页修复** | ✅ 已完成 | 自定义 `SimplePagination` 页面关闭 Ant Design 内置分页，避免出现两套翻页控件 |
+| **面试自动化闭环** | 🧪 本地实施分支 | AI 初筛→业务筛选→待安排面试→飞书日程/通知→评价→下一轮；D1 作业与通知可追踪、去重、重试，生产开关默认关闭 |
 | **业务简历推送与筛选** | ✅ 已完成 | HR 批量推送 → 面试官专属链接 → 业务筛选入库/不入库 → 回写简历主流程；同一面试官跨岗位、跨重复提醒复用同一链接 |
 | **批量重新评估** | ✅ 已上线 | AI 工具支持“全部重评”和“重评未评估/失败简历”，按当前用户可见范围创建批次并异步入队 |
 | **重评进度与停止处理** | ✅ 已上线 | 展示完成数、排队数、评估中数量、当前候选人、失败项和进度条；支持停止批次并保留已完成结果 |
@@ -49,6 +50,16 @@ AI Interview 是一个面向招聘团队的全链路智能招聘管理系统，�
 | **生产发布链路** | ✅ 运行中 | GitHub Actions 自动执行 D1 migration、Cloudflare Pages、API Worker、Resume Consumer Worker 和健康检查 |
 
 仪表盘 v3 的字段、统计集合和转化率公式见 [`docs/dashboard-migration/data-contract.md`](docs/dashboard-migration/data-contract.md)。
+
+### 面试自动化闭环（一期）
+
+- 业务筛选通过后幂等创建待安排的一面；一面通过后创建待安排的二面。
+- HR 确认时间后，由 Cloudflare Queue 异步创建飞书招聘日程，通知面试官并发送候选人邮件。
+- 每轮面试独立记录，自动化作业和每个通知通道均支持查询、去重、失败重试和人工接管。
+- 公开面试卡片与候选人邀请页为受限只读；评价、改期和取消必须登录并经过权限校验。
+- 全局 `INTERVIEW_AUTOMATION_ENABLED` 和岗位 `auto_business_screening_enabled` 默认关闭；生产启用前必须完成数据审计、预览验收和灰度观察。
+- 需求文档：[`docs/superpowers/specs/2026-08-20-interview-automation-closed-loop-requirements.md`](docs/superpowers/specs/2026-08-20-interview-automation-closed-loop-requirements.md)
+- 执行计划：[`docs/superpowers/plans/2026-08-20-interview-automation-closed-loop.md`](docs/superpowers/plans/2026-08-20-interview-automation-closed-loop.md)
 
 ### 当前项目进度（2026-08-19）
 

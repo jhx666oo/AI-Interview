@@ -10,6 +10,8 @@ FEISHU_DASHBOARD_ZHIPEI_VIEW_ID = "vew2ViJain"
 FEISHU_DASHBOARD_YANGLAO_APP_TOKEN = "Z0X7bzVHoaE4essOK1tc7Xcencb"
 FEISHU_DASHBOARD_YANGLAO_TABLE_ID = "tbl4UKBczcKlKgtk"
 FEISHU_DASHBOARD_YANGLAO_VIEW_ID = "vew33IcH5s"
+# 面试自动化灰度总开关：保持关闭，完成预览和数据审计后再按岗位开启。
+INTERVIEW_AUTOMATION_ENABLED = "false"
 
 # ⚠️ 敏感配置请通过 `npx wrangler secret put` 设置，不要直接写在文件里
 # 已通过 wrangler secret 或 Dashboard 环境变量设置的配置：
@@ -36,6 +38,10 @@ database_id = "3f82993e-210d-4b0b-9d83-4ed4be69724f"
 [[queues.producers]]
 binding = "RESUME_PROCESSING_QUEUE"
 queue = "resume-processing"
+
+[[queues.producers]]
+binding = "INTERVIEW_AUTOMATION_QUEUE"
+queue = "interview-automation"
 
 # Cron triggers - 北京时间 9:00 提醒待审核候选人；18:00（UTC 10:00）生成并推送日报；23:55 生成招聘看板快照
 [triggers]

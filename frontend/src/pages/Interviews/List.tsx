@@ -7,7 +7,7 @@ import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
   BellOutlined, DownloadOutlined, TeamOutlined, UserOutlined, CloudUploadOutlined, PlusOutlined, DeleteOutlined,
-  HomeOutlined, LinkOutlined, CopyOutlined
+  HomeOutlined, LinkOutlined, CopyOutlined, ClockCircleOutlined
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
@@ -22,6 +22,10 @@ const { Text } = Typography;
 // =================== 统一候选人面试管理 ===================
 
 const interviewStatusConfig: Record<string, { color: string; text: string }> = {
+  awaiting_schedule: { color: 'warning', text: '待确认时间' },
+  schedule_queued: { color: 'processing', text: '安排处理中' },
+  notification_partial: { color: 'warning', text: '部分通知失败' },
+  manual_review: { color: 'error', text: '待人工处理' },
   scheduled: { color: 'processing', text: '待面试' },
   completed: { color: 'success', text: '已完成' },
   cancelled: { color: 'default', text: '已取消' },
@@ -423,12 +427,27 @@ const InterviewsList: React.FC = () => {
         interviewTime = values.interview_date.format('YYYY-MM-DD');
       }
 
-      await request.post('/interviews/create-from-talent', buildCreateFromTalentPayload({
-        record: scheduleRecord,
-        values,
-        defaults: scheduleDefaults,
-        interviewTime,
-      }));
+      if (scheduleRecord.interview_id) {
+        if (!values.interview_date || !values.interview_time) {
+          message.error('自动化安排面试必须填写日期和时间');
+          return;
+        }
+        const localStart = `${values.interview_date.format('YYYY-MM-DD')}T${values.interview_time.format('HH:mm')}:00+08:00`;
+        await request.post(`/interviews/${scheduleRecord.interview_id}/schedule`, {
+          start_at: new Date(localStart).toISOString(),
+          duration_minutes: 60,
+          interview_type: 'video',
+          location: values.interview_location || '',
+          timezone: 'Asia/Shanghai',
+        });
+      } else {
+        await request.post('/interviews/create-from-talent', buildCreateFromTalentPayload({
+          record: scheduleRecord,
+          values,
+          defaults: scheduleDefaults,
+          interviewTime,
+        }));
+      }
       message.success(`已安排面试：${name}`);
       setScheduleModalVisible(false);
       setScheduleDefaults(null);
@@ -532,6 +551,45 @@ const InterviewsList: React.FC = () => {
   const [cardLinkLoading, setCardLinkLoading] = useState(false);
   // 进入面试管理页时预取的固定链接：resume_id -> { url, expires_at }，一个简历一个固定链接
   const [cardLinks, setCardLinks] = useState<Record<string, { url: string; expires_at: string }>>({});
+
+  // 自动化作业状态与失败通知重试
+  const [automationVisible, setAutomationVisible] = useState(false);
+  const [automationLoading, setAutomationLoading] = useState(false);
+  const [automationRecord, setAutomationRecord] = useState<MergedRow | null>(null);
+  const [automationData, setAutomationData] = useState<{ jobs: any[]; notifications: any[] }>({ jobs: [], notifications: [] });
+  const [retryingNotification, setRetryingNotification] = useState<string | null>(null);
+
+  const handleViewAutomation = async (record: MergedRow) => {
+    if (!record.interview_id) return;
+    setAutomationRecord(record);
+    setAutomationVisible(true);
+    setAutomationLoading(true);
+    try {
+      const res = await request.get(`/interviews/${record.interview_id}/automation`) as any;
+      setAutomationData({
+        jobs: Array.isArray(res.jobs) ? res.jobs : [],
+        notifications: Array.isArray(res.notifications) ? res.notifications : [],
+      });
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '读取自动化状态失败');
+    } finally {
+      setAutomationLoading(false);
+    }
+  };
+
+  const handleRetryNotification = async (notificationId: string) => {
+    if (!automationRecord?.interview_id) return;
+    setRetryingNotification(notificationId);
+    try {
+      await request.post(`/interviews/${automationRecord.interview_id}/retry`, { notification_id: notificationId });
+      message.success('重试任务已提交');
+      await handleViewAutomation(automationRecord);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '提交重试失败');
+    } finally {
+      setRetryingNotification(null);
+    }
+  };
 
   const getCardLinkFullUrl = (urlPath: string) => {
     // 生产域名固定，本地开发用当前 origin
@@ -724,7 +782,8 @@ const InterviewsList: React.FC = () => {
     {
       title: '操作', align: 'center' as const, key: 'action', width: 380,
       render: (_: any, r: MergedRow) => {
-        const canSchedule = r.talent_status === 'approved' && !r.interview_id;
+        const canSchedule = r.talent_status === 'approved'
+          && (!r.interview_id || ['awaiting_schedule', 'manual_review'].includes(r.interview_status));
         // 未评过 → 提醒一面
         const canRemind1 = r.interview_id && (!r.result || r.result === 'pending');
         // 一面已过，二面未评 → 提醒二面
@@ -761,6 +820,9 @@ const InterviewsList: React.FC = () => {
             <Space size={2} wrap style={{ marginLeft: 'auto', justifyContent: 'flex-end' }}>
               {canView && (
                 <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
+              )}
+              {r.interview_id && (
+                <Button size="small" icon={<ClockCircleOutlined />} onClick={() => handleViewAutomation(r)}>自动化状态</Button>
               )}
               <Tooltip title="面试卡片：该简历的固定链接（进入面试管理自动生成，30 天有效，进入本页自动续期）">
                 <Button size="small" icon={<LinkOutlined />} loading={cardLinkLoading} disabled={!!cardLinkLoading} onClick={() => handleGenCardLink(r)}>面试卡片</Button>
@@ -970,6 +1032,41 @@ const InterviewsList: React.FC = () => {
           onFocus={(e) => e.target.select()}
           addonAfter={<CopyOutlined style={{ cursor: 'pointer' }} onClick={handleCopyCardLink} />}
         />
+      </ResponsiveModal>
+      {/* 面试自动化状态 */}
+      <ResponsiveModal
+        title={`自动化状态 - ${automationRecord?.candidate_name || ''}`}
+        open={automationVisible}
+        onCancel={() => setAutomationVisible(false)}
+        footer={<Button onClick={() => setAutomationVisible(false)}>关闭</Button>}
+        width={700}
+      >
+        {automationLoading ? <div style={{ padding: 24, textAlign: 'center' }}>加载中...</div> : (
+          <Space orientation="vertical" style={{ width: '100%' }}>
+            <Text strong>异步作业</Text>
+            {automationData.jobs.length === 0 ? <Text type="secondary">暂无自动化作业</Text> : automationData.jobs.map((job: any) => (
+              <Card size="small" key={job.id}>
+                <Space wrap>
+                  <Tag>{job.action}</Tag>
+                  <Tag color={job.status === 'succeeded' ? 'success' : job.status === 'failed' ? 'error' : 'processing'}>{job.status}</Tag>
+                  {job.error_message && <Text type="danger">{job.error_message}</Text>}
+                </Space>
+              </Card>
+            ))}
+            <Text strong>通知投递</Text>
+            {automationData.notifications.length === 0 ? <Text type="secondary">暂无通知记录</Text> : automationData.notifications.map((notification: any) => (
+              <Card size="small" key={notification.id}>
+                <Space wrap>
+                  <Tag>{notification.channel}</Tag>
+                  <Tag>{notification.recipient_type}</Tag>
+                  <Tag color={notification.status === 'sent' ? 'success' : notification.status === 'failed' ? 'error' : 'processing'}>{notification.status}</Tag>
+                  {notification.status === 'failed' && <Button size="small" loading={retryingNotification === notification.id} onClick={() => handleRetryNotification(notification.id)}>重试</Button>}
+                </Space>
+                {notification.last_error && <div style={{ color: '#ff4d4f', marginTop: 4 }}>{notification.last_error}</div>}
+              </Card>
+            ))}
+          </Space>
+        )}
       </ResponsiveModal>
       {/* 新建面试弹窗 */}
       <ResponsiveModal
