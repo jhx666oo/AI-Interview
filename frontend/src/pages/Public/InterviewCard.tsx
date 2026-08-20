@@ -429,7 +429,7 @@ const InterviewCard: React.FC = () => {
           <Button type="primary" icon={<DownloadOutlined />} href={downloadUrl} target="_blank">下载原件</Button>
         )}
       </div>
-      <div style={{ flex: 1, background: '#F1F5F9', minHeight: isMobileLayout ? undefined : 0 }}>
+      <div style={{ flex: 1, background: '#F1F5F9', minHeight: isMobileLayout ? undefined : 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {hasResumeFile ? (
           <DynamicPdfViewer pdfUrl={pdfUrl} />
         ) : (
