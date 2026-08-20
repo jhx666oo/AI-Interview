@@ -64,17 +64,20 @@ jobs:
 
       - name: Ensure Pages production branch is main
         # 修复：wrangler pages deploy 只有命中项目 production branch 才会更新生产域名。
-        # 直接调 Cloudflare Pages API 把 production_branch 强制设为 main
-        # （wrangler pages project update 在部分版本语法不稳定，故用原生 API）。
+        # 直接调 Cloudflare Pages API 把 production_branch 强制设为 main，并校验响应成功
+        # （若 token 缺 Pages 项目编辑权限，PATCH 会失败，此时必须显式报警）。
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          curl -sS -X PATCH \
+          resp=$(curl -sS -X PATCH \
             "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/ai-interview" \
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"production_branch":"main"}'
+            -d '{"production_branch":"main"}')
+          echo "$resp" | head -c 400; echo
+          echo "$resp" | grep -q '"success":true' \
+            || { echo "❌ PATCH 设置 production_branch 失败（token 可能缺 Pages 项目编辑权限）"; exit 1; }
 
       - name: Deploy to ai-interview
         uses: cloudflare/wrangler-action@v3
@@ -87,20 +90,40 @@ jobs:
       - name: Verify production health
         run: curl --fail --retry 3 --retry-delay 5 https://ai-interview-88r.pages.dev/health
 
-      - name: Verify production Functions 已更新（新端点不得 404）
-        # 历史问题：pages deploy 成功但生产 Functions 仍跑旧版。
-        # available-slots 是新代码才有的路由；不带 token 请求应返回 401/400（JSON），
-        # 若返回 404 说明线上 Functions 未生效，直接失败报警。
+      - name: Verify production Functions 已更新（有效 JWT 探测 available-slots）
+        # 注意：全局 authMiddleware 会对 /api/* 直接返回 401，未认证探测无法区分版本，
+        # 必须用 SECRET_KEY 签发的有效 JWT 请求新端点，200=新版已生效，否则失败报警。
+        env:
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
         run: |
+          token=$(node -e "
+            const crypto = require('crypto');
+            const b64u = (s) => Buffer.from(s).toString('base64url');
+            const header = b64u(JSON.stringify({alg:'HS256',typ:'JWT'}));
+            const payload = b64u(JSON.stringify({sub:'admin@example.com',exp:Math.floor(Date.now()/1000)+3600}));
+            const data = header+'.'+payload;
+            const sig = crypto.createHmac('sha256', process.env.SECRET_KEY).update(data).digest('base64url');
+            process.stdout.write(data+'.'+sig);
+          ")
           code=$(curl -s -o /tmp/avail.txt -w "%{http_code}" --retry 3 --retry-delay 5 \
+            -H "Authorization: Bearer $token" \
             "https://ai-interview-88r.pages.dev/api/interviews/available-slots?interviewer=test")
-          echo "available-slots HTTP $code"
+          echo "available-slots(带有效JWT) HTTP $code"
           head -c 200 /tmp/avail.txt; echo
-          if [ "$code" = "404" ]; then
-            echo "❌ 生产 Functions 仍是旧版（available-slots 404），部署未生效，请检查 Cloudflare Pages 控制台"
+          if [ "$code" != "200" ]; then
+            echo "❌ 生产 Functions 仍是旧版（expected 200），部署未生效，请检查 Cloudflare Pages 控制台"
             exit 1
           fi
           echo "✅ 生产 Functions 已包含新端点"
+
+      - name: 诊断 Pages 部署记录（定位 production 指向）
+        # 列出该 Pages 项目全部部署，确认 production 是否指向本次 main 部署
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: pages deployment list --project-name ai-interview
 
   worker-resume-consumer:
     name: Deploy Resume Consumer Worker
