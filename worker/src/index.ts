@@ -5590,6 +5590,48 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
       'UPDATE interviews SET interview_time = ?, meeting_link = ?, feishu_event_id = ?, updated_at = ? WHERE id = ?',
     ).bind(timeLabel, meetingLink, eventId, now(), id).run();
 
+    // 完整流程（异步）：提醒面试官（带简历链接）+ 发候选人邮件（含会议链接）
+    const currentUser = c.get('user') as { email?: string; full_name?: string } | undefined;
+    const operatorName = currentUser?.full_name || currentUser?.email || '系统';
+    c.executionCtx.waitUntil((async () => {
+      try {
+        const ctx = await loadInterviewStartContext(db, id);
+        if (ctx) {
+          const userToken = currentUser?.email ? await getValidUserAccessToken(c.env, currentUser.email) : null;
+          const reminder = await sendInterviewerInterviewReminder(c.env, db, id, {
+            userToken: userToken || await getFeishuToken(c.env),
+            operatorName,
+            userEmail: currentUser?.email,
+          }, {
+            now, uuid, hashPublicToken, getResumeFileBytes,
+            getBotToken: getFeishuToken,
+            refreshUserToken: async (email: string) => {
+              const refreshed = await refreshUserAccessToken(c.env, email);
+              return refreshed?.access_token || null;
+            },
+          });
+          console.log(`[schedule-direct] 面试官提醒 ${reminder.ok ? '已发送' : '未发送: ' + reminder.reason}`);
+          if (ctx.candidateEmail && meetingLink) {
+            const smtpRow = await db.prepare(
+              'SELECT smtp_host, smtp_port, smtp_username, smtp_password, mail_from, mail_from_name, mail_enabled FROM system_configs ORDER BY updated_at DESC LIMIT 1',
+            ).first() as any;
+            if (isSmtpConfigured(smtpRow)) {
+              const configRow = await db.prepare('SELECT mail_from_name FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+              const result = await sendCandidateInterviewEmail(db, {
+                ctx,
+                meetingUrl: meetingLink,
+                fromName: (configRow?.mail_from_name && String(configRow.mail_from_name).trim()) || '招聘系统',
+                nowIso: now(),
+              });
+              console.log(`[schedule-direct] 候选人邮件 ${result.status}${result.status === 'sent' ? ` -> ${result.to}` : `: ${result.reason}`}`);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.error(`[schedule-direct] 后续流程异常: ${e?.message || e}`);
+      }
+    })());
+
     return c.json({ ok: true, interview_time: timeLabel, meeting_link: meetingLink, calendar_event_id: eventId });
   } catch (e: any) {
     console.error(`[schedule-direct] 直连安排日程失败: ${e?.message || e}`);
