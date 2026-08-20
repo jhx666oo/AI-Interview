@@ -141,6 +141,20 @@ export async function deriveInterviewCardToken(cardId: string): Promise<string> 
   return `${TOKEN_PREFIX}${base64Url.slice(0, 28)}`;
 }
 
+/**
+ * 由简历 id 确定性派生公开 token（一个简历固定一个链接）：
+ * token 与随机卡片 id 无关，同一份简历无论何时、经哪个入口创建，链接都恒定一致。
+ * 用于「进入面试管理即有固定链接、点击卡片只是打开链接而非生成」的语义。
+ */
+export async function deriveResumeInterviewCardToken(resumeId: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`interview-card-resume::${resumeId}`));
+  const bytes = new Uint8Array(digest);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const base64Url = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return `${TOKEN_PREFIX}${base64Url.slice(0, 28)}`;
+}
+
 export interface InterviewCardCreateInput {
   resumeId?: string;
   candidateName?: string;
@@ -159,8 +173,11 @@ export interface InterviewCardCreateResult {
 
 /**
  * 生成或复用某候选人的面试卡片链接（服务层，路由与面试提醒推送共用）。
- * 同一候选人已有链接时复用同一条记录并顺延 7 天（URL 由 id 确定性派生，保持稳定）；
- * 无则新建。resume_id 与 candidate_name 至少提供其一。
+ * 一个简历固定一个链接：
+ * - 有 resume_id：严格按简历维度唯一（不因姓名相同而合并），新链接 token 由 resume_id
+ *   确定性派生（URL 与卡片 id 无关、永不漂移）；已存在则复用同一条并顺延 7 天。
+ * - 无 resume_id（手动面试等）：按姓名+岗位兜底复用，URL 由卡片 id 派生保持稳定。
+ * resume_id 与 candidate_name 至少提供其一。
  */
 export async function createOrReuseInterviewCardLink(
   db: D1Database,
@@ -177,25 +194,79 @@ export async function createOrReuseInterviewCardLink(
   const nowIso = deps.now();
   const expiresAt = addDays(nowIso, LINK_TTL_DAYS);
 
-  const existing = await findLinkByIdentifier(db, { resumeId, candidateName, positionApplied });
+  // —— 简历维度固定链接：有 resume_id 时严格按简历唯一（一个简历一个链接）——
+  if (resumeId) {
+    const existing = (await db.prepare(
+      `SELECT * FROM ${CARD_TABLE} WHERE resume_id = ? ORDER BY created_at DESC LIMIT 1`,
+    ).bind(resumeId).first()) as InterviewCardLinkRow | null;
+    if (existing) {
+      // 复用：刷新有效期并回填缺失的标识字段（URL 由既有 id 派生，保持不变）
+      await db.prepare(
+        `UPDATE ${CARD_TABLE}
+         SET status = 'active', expires_at = ?, updated_at = ?,
+             candidate_name = COALESCE(?, candidate_name),
+             position_applied = COALESCE(?, position_applied)
+         WHERE id = ?`,
+      ).bind(
+        expiresAt, nowIso,
+        candidateName || null,
+        positionApplied || null,
+        existing.id,
+      ).run();
+      const token = await resolveRowToken(existing, deps);
+      return {
+        id: existing.id,
+        token,
+        url: `/interview-card/${token}`,
+        expires_at: expiresAt,
+        status: 'active',
+        reused: true,
+      };
+    }
+
+    // 新建：token 由 resume_id 确定性派生，同一份简历永远同一链接
+    const id = deps.uuid();
+    const token = await deriveResumeInterviewCardToken(resumeId);
+    const tokenHash = await deps.hashPublicToken(token);
+    await db.prepare(
+      `INSERT INTO ${CARD_TABLE} (id, resume_id, candidate_name, position_applied, token_hash, status, expires_at, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+    ).bind(
+      id,
+      resumeId,
+      candidateName || null,
+      positionApplied || null,
+      tokenHash,
+      expiresAt,
+      input.createdBy || '',
+      nowIso,
+      nowIso,
+    ).run();
+
+    return {
+      id,
+      token,
+      url: `/interview-card/${token}`,
+      expires_at: expiresAt,
+      status: 'active',
+      reused: false,
+    };
+  }
+
+  // —— 无 resume_id（手动面试等）：姓名+岗位兜底复用，URL 由卡片 id 派生保持稳定 ——
+  const existing = await findLinkByName(db, { candidateName, positionApplied });
   if (existing) {
-    // 复用时回填缺失的标识字段（如先按姓名创建、后带 resume_id 复用），
-    // 保证后续任意一种标识都能命中同一条记录 → 同一个人的链接恒定一致。
     await db.prepare(
       `UPDATE ${CARD_TABLE}
        SET status = 'active', expires_at = ?, updated_at = ?,
-           resume_id = COALESCE(?, resume_id),
-           candidate_name = COALESCE(?, candidate_name),
            position_applied = COALESCE(?, position_applied)
        WHERE id = ?`,
     ).bind(
       expiresAt, nowIso,
-      resumeId || null,
-      candidateName || null,
       positionApplied || null,
       existing.id,
     ).run();
-    const token = await deriveInterviewCardToken(existing.id);
+    const token = await resolveRowToken(existing, deps);
     return {
       id: existing.id,
       token,
@@ -214,7 +285,7 @@ export async function createOrReuseInterviewCardLink(
      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
   ).bind(
     id,
-    resumeId || null,
+    null,
     candidateName || null,
     positionApplied || null,
     tokenHash,
@@ -236,22 +307,29 @@ export async function createOrReuseInterviewCardLink(
 
 const CARD_TABLE = 'interview_card_links';
 
-async function findLinkByIdentifier(
-  db: D1Database,
-  identifier: { resumeId?: string; candidateName?: string; positionApplied?: string },
-): Promise<InterviewCardLinkRow | null> {
-  // 查找顺序保证「同一个人（候选人）恒定同一条链接」：
-  // 1) resume_id（权威标识）→ 2) 姓名+岗位 → 3) 仅姓名
-  // 兜底链覆盖：重复上传多份简历（不同 resume_id）、手动面试无简历、
-  // 入口标识不全（提醒推送带 resume_id，前端按钮可能只带姓名）等场景。
-  const resumeId = text(identifier.resumeId);
+/**
+ * 反推一行记录当前应使用的 token（与 DB 中已存 token_hash 保持一致）：
+ * - 新方案（有 resume_id）：token = deriveResumeInterviewCardToken(resume_id)，创建/复用 URL 恒定一致；
+ * - 旧方案（历史行或纯姓名行）：token = deriveInterviewCardToken(id)；
+ * 通过比对存储的 token_hash 区分，避免历史行在复用/列表展示时 URL 漂移。
+ */
+async function resolveRowToken(
+  row: InterviewCardLinkRow,
+  deps: { hashPublicToken: (token: string) => Promise<string> },
+): Promise<string> {
+  const resumeId = text(row.resume_id);
   if (resumeId) {
-    const row = (await db.prepare(
-      `SELECT * FROM ${CARD_TABLE} WHERE resume_id = ? ORDER BY created_at DESC LIMIT 1`,
-    ).bind(resumeId).first()) as InterviewCardLinkRow | null;
-    if (row) return row;
+    const resumeToken = await deriveResumeInterviewCardToken(resumeId);
+    if (row.token_hash === await deps.hashPublicToken(resumeToken)) return resumeToken;
   }
+  return deriveInterviewCardToken(row.id);
+}
 
+/** 仅按姓名（+岗位）查找既有链接：用于无 resume_id 的手动面试等场景 */
+async function findLinkByName(
+  db: D1Database,
+  identifier: { candidateName?: string; positionApplied?: string },
+): Promise<InterviewCardLinkRow | null> {
   const name = text(identifier.candidateName);
   if (!name) return null;
   const position = text(identifier.positionApplied);
@@ -298,6 +376,40 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
     }
   });
 
+  // ==================== 批量确保面试卡片链接（登录态，面试管理页进入时调用） ====================
+  // body: { items: [{ resume_id, candidate_name?, position_applied? }] }
+  // 为每份简历确保存在固定链接：已有则复用并续期（URL 不变），没有则按简历 id 确定性派生创建。
+  // 这样「进入面试管理即有固定链接」，前端点击卡片只是打开链接、不再实时生成。
+  app.post('/api/interview-card-links/batch', deps.authMiddleware, async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const rawItems = Array.isArray(body?.items) ? body.items : [];
+    const db = c.env.DB as D1Database;
+    const actor = (c.get('user') as any)?.full_name || (c.get('user') as any)?.email || '';
+    const items: any[] = [];
+    const errors: any[] = [];
+    for (const raw of rawItems) {
+      const resumeId = text(raw?.resume_id);
+      if (!resumeId) continue;
+      try {
+        const result = await createOrReuseInterviewCardLink(db, {
+          resumeId,
+          candidateName: text(raw?.candidate_name) || undefined,
+          positionApplied: text(raw?.position_applied) || undefined,
+          createdBy: actor,
+        }, deps);
+        items.push({
+          resume_id: resumeId,
+          url: result.url,
+          expires_at: result.expires_at,
+          reused: result.reused,
+        });
+      } catch (e: any) {
+        errors.push({ resume_id: resumeId, detail: e?.message || '生成失败' });
+      }
+    }
+    return c.json({ items, errors });
+  });
+
   // ==================== 查询候选人已有面试卡片链接（登录态） ====================
   // query: ?resume_id= / ?candidate_name= / ?position_applied=
   app.get('/api/interview-card-links', deps.authMiddleware, async (c) => {
@@ -330,7 +442,7 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
         created_at: row.created_at,
         last_accessed_at: row.last_accessed_at,
         active,
-        url: active ? `/interview-card/${await deriveInterviewCardToken(row.id)}` : null,
+        url: active ? `/interview-card/${await resolveRowToken(row as InterviewCardLinkRow, deps)}` : null,
       });
     }
     return c.json({ items });

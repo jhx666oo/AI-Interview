@@ -343,6 +343,31 @@ const InterviewsList: React.FC = () => {
       }
 
       setData(filtered);
+
+      // 面试卡片固定链接预取：进入面试管理即确保每份简历都有固定链接（已有则复用续期），
+      // 点击「面试卡片」直接打开，不再实时生成
+      const linkItems = new Map<string, { candidate_name: string; position_applied: string }>();
+      for (const row of filtered) {
+        if (!row.resume_id || linkItems.has(row.resume_id)) continue;
+        linkItems.set(row.resume_id, {
+          candidate_name: row.candidate_name,
+          position_applied: row.position_applied || row.position || row.standard_position || '',
+        });
+      }
+      if (linkItems.size > 0) {
+        try {
+          const batch = await request.post('/interview-card-links/batch', {
+            items: [...linkItems].map(([resume_id, info]) => ({ resume_id, ...info })),
+          }) as { items?: Array<{ resume_id: string; url: string; expires_at: string }> };
+          const next: Record<string, { url: string; expires_at: string }> = {};
+          for (const item of batch.items || []) {
+            if (item?.resume_id && item.url) next[item.resume_id] = { url: item.url, expires_at: item.expires_at || '' };
+          }
+          setCardLinks(next);
+        } catch {
+          // 链接预取失败不影响列表展示，点击卡片时再按需创建
+        }
+      }
     } catch {
       message.error('加载数据失败');
     } finally {
@@ -536,6 +561,8 @@ const InterviewsList: React.FC = () => {
   const [cardLinkUrl, setCardLinkUrl] = useState('');
   const [cardLinkExpires, setCardLinkExpires] = useState('');
   const [cardLinkLoading, setCardLinkLoading] = useState(false);
+  // 进入面试管理页时预取的固定链接：resume_id -> { url, expires_at }，一个简历一个固定链接
+  const [cardLinks, setCardLinks] = useState<Record<string, { url: string; expires_at: string }>>({});
 
   const getCardLinkFullUrl = (urlPath: string) => {
     // 生产域名固定，本地开发用当前 origin
@@ -544,6 +571,16 @@ const InterviewsList: React.FC = () => {
   };
 
   const handleGenCardLink = async (record: MergedRow) => {
+    // 每份简历的固定链接在进入面试管理页时已预取，直接打开即可（无需实时生成）
+    const prefetched = record.resume_id ? cardLinks[record.resume_id] : undefined;
+    if (prefetched?.url) {
+      setCardLinkRecord(record);
+      setCardLinkUrl(getCardLinkFullUrl(prefetched.url));
+      setCardLinkExpires(prefetched.expires_at || '');
+      setCardLinkVisible(true);
+      return;
+    }
+    // 手动创建的面试（无简历关联）回退为按姓名生成/复用
     try {
       setCardLinkLoading(true);
       const res = await request.post('/interview-card-links', {
@@ -555,7 +592,6 @@ const InterviewsList: React.FC = () => {
       setCardLinkUrl(getCardLinkFullUrl(res.url));
       setCardLinkExpires(res.expires_at || '');
       setCardLinkVisible(true);
-      message.success(res.reused ? '已复用该候选人已有的面试卡片链接' : '面试卡片链接已生成');
     } catch (e: any) {
       message.error(e.response?.data?.detail || '生成失败');
     } finally {
@@ -740,7 +776,7 @@ const InterviewsList: React.FC = () => {
               {canView && (
                 <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewEval(r)}>查看评价</Button>
               )}
-              <Tooltip title="面试卡片：汇总该候选人面试情况的可分享链接（7 天有效）">
+              <Tooltip title="面试卡片：该简历的固定链接（进入面试管理自动生成，7 天有效，进入本页自动续期）">
                 <Button size="small" icon={<LinkOutlined />} loading={cardLinkLoading} disabled={!!cardLinkLoading} onClick={() => handleGenCardLink(r)}>面试卡片</Button>
               </Tooltip>
               <Tooltip title="下载简历"><Button size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(r)} /></Tooltip>
@@ -958,10 +994,10 @@ const InterviewsList: React.FC = () => {
         width={560}
       >
         <div style={{ marginBottom: 12, fontSize: 13, color: '#475569', lineHeight: 1.8 }}>
-          <div>该链接汇总了候选人的简历档案、各轮面试情况、评分评价、备注与进度时间线，可分享给业务方或面试官查看。</div>
+          <div>该链接为该简历的固定链接，汇总了候选人简历档案、各轮面试情况、评分评价、备注与进度时间线，可分享给业务方或面试官查看。</div>
           <div style={{ marginTop: 4 }}>
-            {cardLinkExpires ? `链接有效期至 ${new Date(cardLinkExpires).toLocaleDateString('zh-CN')}（7 天），过期后需重新生成。` : ''}
-            重新生成不会改变链接地址。
+            {cardLinkExpires ? `当前有效期至 ${new Date(cardLinkExpires).toLocaleDateString('zh-CN')}，进入面试管理页会自动续期 7 天。` : ''}
+            链接地址固定不变。
           </div>
         </div>
         <Input

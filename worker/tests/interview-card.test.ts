@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInterviewCardRoutes, createOrReuseInterviewCardLink, deriveInterviewCardToken, type InterviewCardRouteDeps } from '../src/interview-card/routes';
+import { createInterviewCardRoutes, createOrReuseInterviewCardLink, deriveInterviewCardToken, deriveResumeInterviewCardToken, type InterviewCardRouteDeps } from '../src/interview-card/routes';
 import { hashPublicToken } from '../src/business-screening/token';
 
 /**
@@ -29,17 +29,24 @@ class FakeD1 {
   }
 
   private async execute(sql: string, params: any[], method: 'first' | 'all' | 'run'): Promise<any> {
-    if (sql.includes("SET status = 'active'") && sql.includes('COALESCE(?, resume_id)')) {
-      // 复用链接：刷新有效期并回填缺失的标识字段（与生产 SQL 的 COALESCE 语义一致）
-      const [expiresAt, updatedAt, resumeId, candidateName, positionApplied, id] = params;
-      const row = this.links.find((r) => r.id === id);
+    if (sql.includes('UPDATE interview_card_links') && sql.includes("SET status = 'active'")) {
+      // 复用链接：刷新有效期并回填标识字段（与生产 SQL 语义一致）
+      // resume 复用: bind(expiresAt, updatedAt, candidateName, positionApplied, id)
+      // 姓名复用:   bind(expiresAt, updatedAt, positionApplied, id)
+      const resumeReuse = sql.includes('candidate_name = COALESCE');
+      const row = resumeReuse
+        ? this.links.find((r) => r.id === params[4])
+        : this.links.find((r) => r.id === params[3]);
       if (row) {
         row.status = 'active';
-        row.expires_at = expiresAt;
-        row.updated_at = updatedAt;
-        if (resumeId) row.resume_id = resumeId;
-        if (candidateName) row.candidate_name = candidateName;
-        if (positionApplied) row.position_applied = positionApplied;
+        row.expires_at = params[0];
+        row.updated_at = params[1];
+        if (resumeReuse) {
+          if (params[2]) row.candidate_name = params[2];
+          if (params[3]) row.position_applied = params[3];
+        } else if (params[2]) {
+          row.position_applied = params[2];
+        }
       }
       return { meta: { changes: row ? 1 : 0 } };
     }
@@ -246,38 +253,66 @@ describe('createOrReuseInterviewCardLink service', () => {
       .rejects.toThrow('至少提供一个');
   });
 
-  it('keeps ONE link per person across different resume ids (duplicate uploads)', async () => {
+  it('gives EACH resume its own fixed link (one resume one link, duplicate uploads do not merge)', async () => {
     const h = buildHarness({ resumes: [sampleResume] });
     const svc = { now: () => '2026-08-19T00:00:00.000Z', uuid: () => 'svc-a', hashPublicToken };
-    // 第一份简历生成
+    // 第一份简历生成链接
     const first = await createOrReuseInterviewCardLink(h.db, {
       resumeId: 'resume-1', candidateName: '张三', positionApplied: '前端工程师',
     }, svc);
-    // 同一人第二份简历（重复上传，不同 resume_id）：姓名+岗位兜底命中同一条
+    // 同一人第二份简历（重复上传，不同 resume_id）：每份简历各自独立固定链接
     const second = await createOrReuseInterviewCardLink(h.db, {
       resumeId: 'resume-1-dup', candidateName: '张三', positionApplied: '前端工程师',
     }, svc);
-    expect(second.reused).toBe(true);
-    expect(second.url).toBe(first.url);
-    expect(h.db.links).toHaveLength(1);
+    expect(second.reused).toBe(false);
+    expect(second.url).not.toBe(first.url);
+    expect(h.db.links).toHaveLength(2);
+    // 每份简历的链接由各自 resume_id 确定性派生，恒定不变
+    expect(first.token).toBe(await deriveResumeInterviewCardToken('resume-1'));
+    expect(second.token).toBe(await deriveResumeInterviewCardToken('resume-1-dup'));
+    // 再次调用各自复用同一条
+    const again = await createOrReuseInterviewCardLink(h.db, {
+      resumeId: 'resume-1-dup', candidateName: '张三',
+    }, svc);
+    expect(again.reused).toBe(true);
+    expect(again.url).toBe(second.url);
+    expect(h.db.links).toHaveLength(2);
   });
 
-  it('keeps ONE link per person when created by name only and later reused with a resume id', async () => {
+  it('keeps manual (no resume) and resume-based entries on separate fixed links', async () => {
     const h = buildHarness({ resumes: [sampleResume] });
-    const svc = { now: () => '2026-08-19T00:00:00.000Z', uuid: () => 'svc-b', hashPublicToken };
+    const svcName = { now: () => '2026-08-19T00:00:00.000Z', uuid: () => 'svc-b1', hashPublicToken };
+    const svcResume = { now: () => '2026-08-19T01:00:00.000Z', uuid: () => 'svc-b2', hashPublicToken };
     // 手动面试（无简历关联）：仅按姓名创建
     const byName = await createOrReuseInterviewCardLink(h.db, {
       candidateName: '张三',
-    }, svc);
-    // 之后提醒推送带 resume_id：resume_id 未命中 → 仅姓名兜底命中同一条，并回填 resume_id
+    }, svcName);
+    // 之后该候选人有了简历：简历维度创建自己独立的固定链接（由 resume_id 派生）
     const withResume = await createOrReuseInterviewCardLink(h.db, {
       resumeId: 'resume-1', candidateName: '张三', positionApplied: '前端工程师',
-    }, svc);
-    expect(withResume.reused).toBe(true);
-    expect(withResume.url).toBe(byName.url);
-    expect(h.db.links).toHaveLength(1);
-    expect(h.db.links[0].resume_id).toBe('resume-1');
-    expect(h.db.links[0].position_applied).toBe('前端工程师');
+    }, svcResume);
+    expect(withResume.reused).toBe(false);
+    expect(withResume.url).not.toBe(byName.url);
+    expect(withResume.token).toBe(await deriveResumeInterviewCardToken('resume-1'));
+    expect(h.db.links).toHaveLength(2);
+    expect(h.db.links.find((r) => r.resume_id === 'resume-1')?.candidate_name).toBe('张三');
+    // 姓名入口再调用不再新建，复用已存在的同名人记录（取最新一条）
+    const byNameAgain = await createOrReuseInterviewCardLink(h.db, {
+      candidateName: '张三',
+    }, svcName);
+    expect(byNameAgain.reused).toBe(true);
+    expect(h.db.links).toHaveLength(2);
+  });
+});
+
+describe('deriveResumeInterviewCardToken', () => {
+  it('derives a deterministic token from the resume id (one resume one fixed link)', async () => {
+    const t1 = await deriveResumeInterviewCardToken('resume-1');
+    const t2 = await deriveResumeInterviewCardToken('resume-1');
+    const t3 = await deriveResumeInterviewCardToken('resume-2');
+    expect(t1).toMatch(/^ic-[A-Za-z0-9_-]{28}$/);
+    expect(t2).toBe(t1);
+    expect(t3).not.toBe(t1);
   });
 });
 
@@ -343,6 +378,52 @@ describe('POST /api/interview-card-links', () => {
       body: JSON.stringify({}),
     }, h.env);
     expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /api/interview-card-links/batch', () => {
+  it('ensures a fixed link for every resume and reuses the same URL on subsequent calls', async () => {
+    const h = buildHarness({ resumes: [sampleResume] });
+    const first = await (await h.app.request('/api/interview-card-links/batch', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [
+        { resume_id: 'resume-1', candidate_name: '张三', position_applied: '前端工程师' },
+        { resume_id: 'resume-2', candidate_name: '李四', position_applied: '后端工程师' },
+        { resume_id: '' }, // 无简历 id 的条目被跳过
+      ] }),
+    }, h.env)).json();
+    expect(first.items).toHaveLength(2);
+    expect(first.errors).toHaveLength(0);
+    const byResume = new Map(first.items.map((it: any) => [it.resume_id, it]));
+    expect(byResume.get('resume-1').reused).toBe(false);
+    expect(byResume.get('resume-2').reused).toBe(false);
+    expect(byResume.get('resume-1').url).toBe(`/interview-card/${await deriveResumeInterviewCardToken('resume-1')}`);
+    expect(h.db.links).toHaveLength(2);
+
+    const second = await (await h.app.request('/api/interview-card-links/batch', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [
+        { resume_id: 'resume-1', candidate_name: '张三', position_applied: '前端工程师' },
+        { resume_id: 'resume-2', candidate_name: '李四', position_applied: '后端工程师' },
+      ] }),
+    }, h.env)).json();
+    expect(second.items.every((it: any) => it.reused)).toBe(true);
+    expect(second.items.map((it: any) => it.url)).toEqual(first.items.map((it: any) => it.url));
+    expect(h.db.links).toHaveLength(2);
+  });
+
+  it('creates one fixed link per resume even when candidate names collide', async () => {
+    const h = buildHarness();
+    const res = await (await h.app.request('/api/interview-card-links/batch', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [
+        { resume_id: 'resume-a', candidate_name: '张三', position_applied: '前端工程师' },
+        { resume_id: 'resume-b', candidate_name: '张三', position_applied: '前端工程师' },
+      ] }),
+    }, h.env)).json();
+    expect(res.items).toHaveLength(2);
+    expect(res.items[0].url).not.toBe(res.items[1].url);
+    expect(h.db.links).toHaveLength(2);
   });
 });
 
