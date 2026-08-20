@@ -14365,12 +14365,30 @@ app.post('/api/admin/reset-resumes-pending-interview', businessScreeningAuthMidd
         WHERE id IN (${placeholders})`,
     ).bind(nowIso, ...ids).run();
 
+    // 删除关联面试记录（按 resume_id 与候选人姓名匹配），面试管理页回到「待安排面试」初始状态
+    const nameRows = await db.prepare(
+      `SELECT candidate_name FROM resumes WHERE id IN (${placeholders}) AND candidate_name IS NOT NULL AND candidate_name != ''`,
+    ).bind(...ids).all();
+    const names = [...new Set((nameRows.results || []).map((r: any) => String(r.candidate_name)))];
+    let deletedInterviews = 0;
+    const delIv = await db.prepare(
+      `DELETE FROM interviews WHERE resume_id IN (${placeholders})`,
+    ).bind(...ids).run();
+    deletedInterviews += delIv.meta?.changes ?? 0;
+    if (names.length > 0) {
+      const namePh = names.map(() => '?').join(',');
+      const delIvName = await db.prepare(
+        `DELETE FROM interviews WHERE candidate_name IN (${namePh})`,
+      ).bind(...names).run();
+      deletedInterviews += delIvName.meta?.changes ?? 0;
+    }
+
     await logOperation(c.env, {
       action: 'admin.reset_resumes_pending_interview',
       actor: (c.get('user') as any)?.email || 'api-key',
-      detail: JSON.stringify({ ids, removed_items: del.meta?.changes ?? 0 }),
+      detail: JSON.stringify({ ids, removed_items: del.meta?.changes ?? 0, deleted_interviews: deletedInterviews }),
     });
-    return c.json({ ok: true, reset: ids.length, removed_items: del.meta?.changes ?? 0 });
+    return c.json({ ok: true, reset: ids.length, removed_items: del.meta?.changes ?? 0, deleted_interviews: deletedInterviews });
   } catch (e: any) {
     return c.json({ ok: false, detail: `重置失败: ${e?.message || e}` }, 500);
   }
