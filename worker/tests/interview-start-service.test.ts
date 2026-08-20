@@ -191,7 +191,7 @@ describe('sendCandidateInterviewEmail', () => {
 
   it('无邮箱 → skipped 并给出原因', async () => {
     const result = await sendCandidateInterviewEmail(fakeD1({}), {
-      ctx: { ...baseCtx, candidateEmail: null }, meetingUrl: null, inviteUrl: 'https://x/i', fromName: '招聘系统', nowIso: NOW,
+      ctx: { ...baseCtx, candidateEmail: null }, meetingUrl: null, fromName: '招聘系统', nowIso: NOW,
     });
     expect(result.status).toBe('skipped');
     expect(result.reason).toContain('邮箱');
@@ -199,7 +199,7 @@ describe('sendCandidateInterviewEmail', () => {
 
   it('SMTP 未配置 → skipped', async () => {
     const result = await sendCandidateInterviewEmail(fakeD1({ configs: [{}] }), {
-      ctx: baseCtx, meetingUrl: null, inviteUrl: 'https://x/i', fromName: '招聘系统', nowIso: NOW,
+      ctx: baseCtx, meetingUrl: null, fromName: '招聘系统', nowIso: NOW,
     });
     expect(result.status).toBe('skipped');
     expect(result.reason).toContain('SMTP');
@@ -212,7 +212,7 @@ describe('sendCandidateInterviewEmail', () => {
     const sent: any[] = [];
     const replies = ['220 ready', '250 ok', '334 VXNlcm5hbWU6', '334 UGFzc3dvcmQ6', '235 ok', '250 ok', '250 ok', '354 go', '250 queued', '221 bye'];
     const result = await sendCandidateInterviewEmail(db, {
-      ctx: baseCtx, meetingUrl: 'https://vc.feishu.cn/j/abc', inviteUrl: 'https://x/i', fromName: 'XX招聘', nowIso: NOW,
+      ctx: baseCtx, meetingUrl: 'https://vc.feishu.cn/j/abc', fromName: 'XX招聘', nowIso: NOW,
     }, {
       openTransport: async () => ({
         writeLine: async (line: string) => { sent.push(line); },
@@ -241,7 +241,9 @@ describe('sendCandidateInterviewEmail', () => {
     if (buffer) { try { decodedParts.push(Buffer.from(buffer, 'base64').toString('utf8')); } catch { /* ignore */ } }
     const decoded = decodedParts.join('\n');
     expect(decoded).toContain('vc.feishu.cn/j/abc');
-    expect(decoded).toContain('https://x/i');
+    // 邮件只含会议链接，不附带候选人免登录详情链接
+    expect(decoded).not.toContain('ii-');
+    expect(decoded).not.toContain('interview-invite');
     // 记录 invite_email_sent_at
     const update = (db as any).updates.find((u: any) => u.sql.includes('invite_email_sent_at'));
     expect(update).toBeTruthy();
@@ -253,7 +255,7 @@ describe('sendCandidateInterviewEmail', () => {
       configs: [{ smtp_host: 'a', smtp_port: 465, smtp_username: 'b', smtp_password: 'c', mail_from: 'd@e.com', mail_from_name: 'n', mail_enabled: 1 }],
     });
     const result = await sendCandidateInterviewEmail(db, {
-      ctx: baseCtx, meetingUrl: null, inviteUrl: 'https://x/i', fromName: 'n', nowIso: NOW,
+      ctx: baseCtx, meetingUrl: null, fromName: 'n', nowIso: NOW,
     }, {
       openTransport: async () => ({
         writeLine: async () => {},
@@ -272,21 +274,23 @@ describe('buildInterviewInvitationEmail', () => {
     const email = buildInterviewInvitationEmail({
       candidateName: '张三', positionName: '前端工程师', timeLabel: '2026-08-20 14:00 ~ 15:00',
       interviewTypeLabel: '线上面试', location: null, interviewerName: '李四',
-      meetingUrl: 'https://vc.feishu.cn/j/abc', inviteUrl: 'https://x/i/ii-token', fromName: 'XX招聘',
+      meetingUrl: 'https://vc.feishu.cn/j/abc', fromName: 'XX招聘',
     });
     expect(email.subject).toContain('张三');
     expect(email.subject).toContain('前端工程师');
     expect(email.html).toContain('https://vc.feishu.cn/j/abc');
-    expect(email.html).toContain('https://x/i/ii-token');
+    expect(email.html).not.toContain('ii-token');
+    expect(email.html).not.toContain('interview-invite');
     expect(email.html).toContain('李四');
     expect(email.html).toContain('提前 10 分钟');
-    expect(email.text).toContain('https://x/i/ii-token');
+    expect(email.text).toContain('https://vc.feishu.cn/j/abc');
+    expect(email.text).not.toContain('ii-token');
     expect(email.text).toContain('张三');
   });
 
   it('无会议链接时给出行外提示', () => {
     const email = buildInterviewInvitationEmail({
-      candidateName: '张三', positionName: 'P', timeLabel: 'T', meetingUrl: null, inviteUrl: 'https://x/i', fromName: 'F',
+      candidateName: '张三', positionName: 'P', timeLabel: 'T', meetingUrl: null, fromName: 'F',
     });
     expect(email.html).toContain('会议链接将另行提供');
   });

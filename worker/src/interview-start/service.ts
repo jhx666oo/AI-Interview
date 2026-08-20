@@ -196,7 +196,6 @@ export type CandidateEmailStatus =
 export interface SendCandidateEmailInput {
   ctx: InterviewStartContext;
   meetingUrl: string | null;
-  inviteUrl: string;
   fromName: string;
   nowIso: string;
 }
@@ -226,7 +225,6 @@ export async function sendCandidateInterviewEmail(
     location: text(ctx.interview.interview_location) || null,
     interviewerName: text(ctx.interview.primary_interviewer) || text(ctx.interview.interviewer) || null,
     meetingUrl: input.meetingUrl,
-    inviteUrl: input.inviteUrl,
     fromName: input.fromName,
   });
   try {

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Table, Button, Space, message, Tag, Modal, Select, Input, Form, Popconfirm,
-  Radio, Typography, Card, Tooltip, DatePicker
+  Typography, Card, Tooltip, DatePicker
 } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
 import {
@@ -17,7 +17,6 @@ import { ResponsiveDataView } from '../../components/Responsive';
 import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
 import { buildCreateFromTalentPayload, resolveScheduleInterviewerDefaults } from './interviewerDefaults';
 
-const { TextArea } = Input;
 const { Text } = Typography;
 
 // =================== 统一候选人面试管理 ===================
@@ -190,12 +189,6 @@ const InterviewsList: React.FC = () => {
       setDeletingId(null);
     }
   };
-  const [evalModalVisible, setEvalModalVisible] = useState(false);
-  const [evalRecord, setEvalRecord] = useState<MergedRow | null>(null);
-  const [evalRound, setEvalRound] = useState<1 | 2>(1);
-  const [evalForm] = Form.useForm();
-  const [evalSubmitting, setEvalSubmitting] = useState(false);
-
   // 按钮加载态
   const [reminderLoading, setReminderLoading] = useState<string | null>(null);
   const [onboardingLoading, setOnboardingLoading] = useState<string | null>(null);
@@ -448,42 +441,6 @@ const InterviewsList: React.FC = () => {
     document.body.removeChild(a);
   };
 
-  // == 评价 ==
-  const handleEvalRound1 = (record: MergedRow) => {
-    setEvalRecord(record);
-    setEvalRound(1);
-    evalForm.resetFields();
-    setEvalModalVisible(true);
-  };
-
-  const handleEvalRound2 = (record: MergedRow) => {
-    setEvalRecord(record);
-    setEvalRound(2);
-    evalForm.resetFields();
-    setEvalModalVisible(true);
-  };
-
-  const handleSubmitEval = async () => {
-    try {
-      const values = await evalForm.validateFields();
-      setEvalSubmitting(true);
-      await request.post(`/interviews/${evalRecord!.interview_id}/evaluate`, {
-        evaluation: values.evaluation || '',
-        result: values.result || '',
-        round: evalRound,
-      });
-      message.success(`第${evalRound}面评价已提交`);
-      setEvalModalVisible(false);
-      fetchMergedData();
-    } catch (e: any) {
-      if (e.response) {
-        message.error(e.response.data?.detail || '提交失败');
-      }
-    } finally {
-      setEvalSubmitting(false);
-    }
-  };
-
   // == 批量删除 ==
   const handleBatchDelete = () => {
     if (selectedRowKeys.length === 0) {
@@ -725,18 +682,30 @@ const InterviewsList: React.FC = () => {
       }
     },
     {
+      title: '面试链接', key: 'interview_link', width: 104,
+      render: (_: any, r: MergedRow) => {
+        const path = r.resume_id ? cardLinks[r.resume_id]?.url : undefined;
+        if (!path) return <span style={{ color: '#999', fontSize: 12 }}>—</span>;
+        const full = getCardLinkFullUrl(path);
+        return (
+          <Space size={2}>
+            <Typography.Link href={full} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>打开</Typography.Link>
+            <Button
+              size="small" type="text" icon={<CopyOutlined />}
+              onClick={() => { navigator.clipboard.writeText(full).then(() => message.success('链接已复制')).catch(() => message.success(`链接：${full}`)); }}
+            />
+          </Space>
+        );
+      }
+    },
+    {
       title: '操作', align: 'center' as const, key: 'action', width: 380,
       render: (_: any, r: MergedRow) => {
         const canSchedule = r.talent_status === 'approved' && !r.interview_id;
-        // 未评过 → 提醒一面 + 一面评价 同时出现
+        // 未评过 → 提醒一面
         const canRemind1 = r.interview_id && (!r.result || r.result === 'pending');
-        // 一面已过，二面未评 → 提醒二面 + 二面评价 同时出现
+        // 一面已过，二面未评 → 提醒二面
         const canRemind2 = r.interview_id && r.result === 'passed'
-          && (!r.result2 || r.result2 === 'pending');
-        // 无一面结果 → 一面评价（与提醒一面同时出现）
-        const canEval1 = r.interview_id && (!r.result || r.result === 'pending');
-        // 一面已过，二面无结果 → 二面评价（与提醒二面同时出现）
-        const canEval2 = r.interview_id && r.result === 'passed'
           && (!r.result2 || r.result2 === 'pending');
         // 有评价 → 查看
         const canView = r.interview_id && (r.evaluation || r.evaluation2);
@@ -750,7 +719,7 @@ const InterviewsList: React.FC = () => {
 
         return (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            {/* 左侧：流程操作（安排/提醒/评价/入职） */}
+            {/* 左侧：流程操作（安排/提醒/入职） */}
             <Space size={2} wrap style={{ justifyContent: 'flex-start' }}>
               {canSchedule && (
                 <Button type="primary" size="small" icon={<BellOutlined />} onClick={() => handleOpenSchedule(r)}>安排面试</Button>
@@ -758,14 +727,8 @@ const InterviewsList: React.FC = () => {
               {canRemind1 && (
                 <Button type="primary" size="small" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv1)}>提醒一面</Button>
               )}
-              {canEval1 && (
-                <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound1(r)}>一面评价</Button>
-              )}
               {canRemind2 && (
                 <Button type="primary" size="small" icon={<BellOutlined />} loading={reminderLoading === r.id} disabled={!!reminderLoading} onClick={() => handleSendReminder(r, iv2)}>提醒二面</Button>
-              )}
-              {canEval2 && (
-                <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => handleEvalRound2(r)}>二面评价</Button>
               )}
               {canSendToOnboarding && (
                 <Button type="primary" size="small" icon={<HomeOutlined />} loading={onboardingLoading === r.id} onClick={() => handleSendToOnboarding(r)}>发起入职</Button>
@@ -894,33 +857,6 @@ const InterviewsList: React.FC = () => {
           </Form.Item>
           <Form.Item name="secondary_interviewer" label="二面面试官（可选）">
             <Input placeholder="输入二面面试官姓名（可选）" />
-          </Form.Item>
-        </Form>
-      </ResponsiveModal>
-
-      {/* 评价弹窗 */}
-      <ResponsiveModal
-        title={`填写第${evalRound}面评价 - ${evalRecord?.candidate_name || ''}`}
-        open={evalModalVisible}
-        onOk={handleSubmitEval}
-        onCancel={() => setEvalModalVisible(false)}
-        confirmLoading={evalSubmitting}
-        okText={`提交第${evalRound}面评价`}
-        width={520}
-      >
-        <Form form={evalForm} layout="vertical">
-          <Form.Item
-            name="evaluation"
-            label={`第${evalRound}面评价`}
-            rules={[{ required: true, message: `请填写第${evalRound}面评价` }]}
-          >
-            <TextArea rows={6} placeholder={`请填写面试官对候选人的第${evalRound}面评价...`} />
-          </Form.Item>
-          <Form.Item name="result" label={`第${evalRound}面结果`} rules={[{ required: true, message: '请选择面试结果' }]}>
-            <Radio.Group>
-              <Radio value="passed"><span style={{ color: '#52c41a' }}>✅ 通过</span></Radio>
-              <Radio value="failed"><span style={{ color: '#ff4d4f' }}>❌ 不通过</span></Radio>
-            </Radio.Group>
           </Form.Item>
         </Form>
       </ResponsiveModal>

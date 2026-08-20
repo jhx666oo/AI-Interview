@@ -42,7 +42,8 @@ import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } fr
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './business-screening/token';
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
 import { createInterviewStartRoutes } from './interview-start/routes';
-import { createInterviewCalendarEvent } from './interview-start/feishu-calendar';
+import { createInterviewCalendarEvent, findFirstFreeInterviewSlot } from './interview-start/feishu-calendar';
+import { sendInterviewerInterviewReminder } from './interview-start/reminders';
 import {
   ensureInterviewInvite,
   frontendBaseUrl,
@@ -8420,6 +8421,13 @@ app.post('/api/resumes/:id/transfer', authMiddleware, async (c) => {
 
 // ==================== Interview Actions ====================
 
+/** 秒级时间戳 → 北京时间「YYYY-MM-DD HH:mm」（interview_time 存储口径） */
+function formatBeijingSlot(ts: number): string {
+  const d = new Date(ts * 1000 + 8 * 3600_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
 app.get('/api/interviews/:id/questions', authMiddleware, async (c) => {
   const row = await c.env.DB.prepare('SELECT questions FROM interviews WHERE id = ?').bind(c.req.param('id')).first();
   if (!row) return c.json({ detail: 'Not found' }, 404);
@@ -8440,6 +8448,7 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
     email_status: 'queued' | 'skipped';
     email_detail: string;
     invite_url: string | null;
+    card_link: string | null;
     warnings: string[];
   } = {
     meeting_link: null,
@@ -8448,6 +8457,7 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
     email_status: 'skipped',
     email_detail: '',
     invite_url: null,
+    card_link: null,
     warnings: [],
   };
 
@@ -8461,7 +8471,39 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
       startFlow.meeting_link = existingMeetingLink;
     } else {
       try {
-        const timeframe = resolveEventTimeframe(startCtx.interview);
+        // 面试时段：优先按主面试官当天空闲匹配（上班 9:30-18:30、午休 11:30-13:30、时长 1 小时）。
+        // 找到新空闲段则写回 interview_time（系统展示/候选人邮件同步新时间）；
+        // 找不到 / 主面试官无 open_id / 查询失败 → 回退原定时间并告警。
+        const primaryName = String(startCtx.interview.primary_interviewer || '').trim()
+          || String(startCtx.interview.interviewer || '').trim();
+        let timeframe = resolveEventTimeframe(startCtx.interview);
+        if (primaryName) {
+          try {
+            const primaryOpenId = await resolveExactInterviewerOpenId(c.env.DB as D1Database, primaryName);
+            if (primaryOpenId) {
+              const freeSlotTs = await findFirstFreeInterviewSlot({
+                token: await getFeishuToken(c.env),
+                openId: primaryOpenId,
+                fromTs: Math.floor(Date.now() / 1000),
+                durationMinutes: 60,
+              });
+              if (freeSlotTs) {
+                const startLabel = formatBeijingSlot(freeSlotTs);
+                const endLabel = formatBeijingSlot(freeSlotTs + 3600);
+                timeframe = { startTs: freeSlotTs, endTs: freeSlotTs + 3600, timeLabel: `${startLabel} ~ ${endLabel}` };
+                if (startLabel !== String(startCtx.interview.interview_time || '').trim()) {
+                  await c.env.DB.prepare('UPDATE interviews SET interview_time = ?, updated_at = ? WHERE id = ?')
+                    .bind(startLabel, now(), id).run();
+                  startFlow.warnings.push(`主面试官在预定时间无空档，已按空闲时间将面试调整为 ${startLabel}`);
+                }
+              } else {
+                startFlow.warnings.push('主面试官今日工作时段内无连续 1 小时空档，已按原定时间安排，请与面试官确认');
+              }
+            }
+          } catch (e: any) {
+            startFlow.warnings.push(`空闲时间查询失败，已按原定时间安排：${e?.message || e}`);
+          }
+        }
         // 日程参与人：主/副面试官（解析到飞书 open_id 才邀请，失败不阻塞）
         const attendeeNames = [...new Set(
           [String(startCtx.interview.primary_interviewer || '').trim(), String(startCtx.interview.secondary_interviewer || '').trim()].filter(Boolean),
@@ -8525,7 +8567,6 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
               const result = await sendCandidateInterviewEmail(c.env.DB as D1Database, {
                 ctx: startCtx,
                 meetingUrl: startFlow.meeting_link,
-                inviteUrl,
                 fromName,
                 nowIso: now(),
               });
@@ -8543,6 +8584,51 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
     } catch (e: any) {
       startFlow.warnings.push(`候选人邀请链接生成失败：${e?.message || e}`);
     }
+
+    // 4) 面试卡片固定链接（一个简历一个链接，供面试官提醒 / 面试管理列展示 / 前端弹窗）
+    try {
+      const cfgRow = await c.env.DB.prepare('SELECT frontend_url FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+      const cardBaseUrl = frontendBaseUrl(cfgRow?.frontend_url);
+      const card = await createOrReuseInterviewCardLink(c.env.DB as D1Database, {
+        resumeId: String(startCtx.interview.resume_id || '').trim() || undefined,
+        candidateName: startCtx.candidateName !== '候选人' ? startCtx.candidateName : undefined,
+        positionApplied: startCtx.positionName !== '应聘岗位' ? startCtx.positionName : undefined,
+        createdBy: (c.get('user') as any)?.full_name || (c.get('user') as any)?.email || 'system',
+      }, { now, uuid, hashPublicToken });
+      startFlow.card_link = `${cardBaseUrl}${card.url}`;
+    } catch (e: any) {
+      startFlow.warnings.push(`面试卡片链接生成失败：${e?.message || e}`);
+    }
+
+    // 5) 面试官提醒①：创建日程后给主面试官发面试提醒（卡片 + 简历 + 卡片链接）（异步）
+    const reminderUser = c.get('user') as { email?: string; full_name?: string } | undefined;
+    c.executionCtx.waitUntil((async () => {
+      try {
+        const userToken = reminderUser?.email
+          ? await getValidUserAccessToken(c.env, reminderUser.email)
+          : null;
+        const result = await sendInterviewerInterviewReminder(c.env, c.env.DB as D1Database, id, {
+          userToken: userToken || await getFeishuToken(c.env),
+          operatorName: reminderUser?.full_name || reminderUser?.email || '系统',
+          userEmail: reminderUser?.email,
+        }, {
+          now, uuid, hashPublicToken,
+          getResumeFileBytes,
+          getBotToken: getFeishuToken,
+          refreshUserToken: async (email: string) => {
+            const refreshed = await refreshUserAccessToken(c.env, email);
+            return refreshed?.access_token || null;
+          },
+        });
+        if (!result.ok) {
+          console.warn(`[InterviewStart] 面试官提醒未发送: ${result.reason || '未知原因'}`);
+        } else {
+          console.log(`[InterviewStart] 面试官提醒已发送 ${result.interviewerName} card=${result.cardSent} file=${result.fileSent} link=${result.cardLinkUrl || '-'}`);
+        }
+      } catch (e: any) {
+        console.error(`[InterviewStart] 面试官提醒异常: ${e?.message || e}`);
+      }
+    })());
   }
 
   const row = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first() as any;
@@ -13966,6 +14052,118 @@ app.post('/api/admin/migrate/file-sha256', async (c) => {
 });
 
 
+// ==================== 管理端点：简历邮箱回填 ====================
+// 从简历文本提取邮箱回填 resumes.email（parsed_data.email 优先，其次原文正则提取）。
+// 鉴权：JWT admin 或长期 API Key（x-api-key）。幂等，可重复执行。支持 ?limit=（默认 1000，上限 5000）。
+const RESUME_EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+
+function extractResumeEmail(row: any): string {
+  try {
+    const parsed = typeof row.parsed_data === 'string' ? JSON.parse(row.parsed_data) : row.parsed_data;
+    if (parsed && typeof parsed.email === 'string') {
+      const m = parsed.email.trim().match(RESUME_EMAIL_RE);
+      if (m) return m[0];
+    }
+  } catch { /* 解析失败走原文提取 */ }
+  const textSource = [row.resume_markdown, row.raw_text, row.ocr_markdown].filter((v) => v).join('\n');
+  const m = textSource.match(RESUME_EMAIL_RE);
+  return m ? m[0] : '';
+}
+
+app.post('/api/admin/backfill-resume-emails', businessScreeningAuthMiddleware, async (c) => {
+  try {
+    const rawLimit = Number(c.req.query('limit') || 1000);
+    const limit = Math.max(1, Math.min(Number.isFinite(rawLimit) ? rawLimit : 1000, 5000));
+    const idRows = await c.env.DB.prepare(
+      "SELECT id FROM resumes WHERE email IS NULL OR email = '' LIMIT ?",
+    ).bind(limit).all();
+    const ids = (idRows.results || []).map((r: any) => String(r.id));
+    if (ids.length === 0) return c.json({ ok: true, candidates: 0, updated: 0, missing: 0 });
+
+    let updated = 0;
+    let missing = 0;
+    const nowIso = now();
+    for (let i = 0; i < ids.length; i += 90) {
+      const chunk = ids.slice(i, i + 90);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = await c.env.DB.prepare(
+        `SELECT id, raw_text, resume_markdown, ocr_markdown, parsed_data FROM resumes WHERE id IN (${placeholders})`,
+      ).bind(...chunk).all();
+      for (const row of (rows.results || []) as any[]) {
+        const email = extractResumeEmail(row);
+        if (email) {
+          await c.env.DB.prepare('UPDATE resumes SET email = ?, updated_at = ? WHERE id = ?')
+            .bind(email, nowIso, String(row.id)).run();
+          updated += 1;
+        } else {
+          missing += 1;
+        }
+      }
+    }
+    await logOperation(c.env, {
+      action: 'admin.backfill_resume_emails',
+      actor: (c.get('user') as any)?.email || 'api-key',
+      detail: JSON.stringify({ candidates: ids.length, updated, missing }),
+    });
+    return c.json({ ok: true, candidates: ids.length, updated, missing });
+  } catch (e: any) {
+    return c.json({ ok: false, detail: `回填失败: ${e?.message || e}` }, 500);
+  }
+});
+
+
+/**
+ * 解析「YYYY-MM-DD HH:mm」（北京时间，interview_time 存储口径）→ 毫秒时间戳。
+ * 解析失败返回 null。
+ */
+function parseBeijingInterviewTime(value: string): number | null {
+  const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!m) return null;
+  const ts = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00+08:00`);
+  return Number.isNaN(ts) ? null : ts;
+}
+
+/**
+ * 面试前 30 分钟提醒（cron 每 5 分钟调用）：
+ * 面试开始时间在 [now+25min, now+35min]、状态 scheduled、未发过提醒的面试，
+ * 给主面试官发面试提醒（卡片 + 简历 PDF + 面试卡片链接）。
+ * 无论发送结果如何都标记 interview_reminder_sent_at，避免每 5 分钟重复尝试同一场。
+ */
+async function runUpcomingInterviewReminders(env: Env, db: D1Database): Promise<{ reminded: number; handled: number }> {
+  const nowMs = Date.now();
+  const rows = (await db.prepare(
+    "SELECT id, interview_time FROM interviews WHERE status = 'scheduled' AND interview_reminder_sent_at IS NULL AND interview_time IS NOT NULL AND interview_time != ''",
+  ).all()).results || [];
+
+  let reminded = 0;
+  let handled = 0;
+  const markedAt = new Date(nowMs).toISOString();
+  for (const row of rows) {
+    const startTs = parseBeijingInterviewTime(String(row.interview_time || ''));
+    if (!startTs) continue;
+    const aheadMs = startTs - nowMs;
+    if (aheadMs < 25 * 60_000 || aheadMs > 35 * 60_000) continue;
+    handled += 1;
+    try {
+      const result = await sendInterviewerInterviewReminder(env, db, String(row.id), {
+        userToken: await getFeishuToken(env),
+        operatorName: '系统',
+      }, { now, uuid, hashPublicToken, getResumeFileBytes, getBotToken: getFeishuToken });
+      if (result.ok) {
+        reminded += 1;
+        console.log(`[cron:interview-upcoming] 已提醒 ${row.id} -> ${result.interviewerName} card=${result.cardSent} file=${result.fileSent}`);
+      } else {
+        console.warn(`[cron:interview-upcoming] 提醒未发送 ${row.id}: ${result.reason || '未知原因'}`);
+      }
+    } catch (e: any) {
+      console.error(`[cron:interview-upcoming] 提醒异常 ${row.id}: ${e?.message || e}`);
+    }
+    await db.prepare('UPDATE interviews SET interview_reminder_sent_at = ?, updated_at = ? WHERE id = ?')
+      .bind(markedAt, markedAt, row.id).run().catch(() => {});
+  }
+  return { reminded, handled };
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(event: any, env: any, ctx: any) {
@@ -14014,6 +14212,18 @@ export default {
             console.error(`[cron:daily-report] delivery failed report_id=${error.reportId}: ${error.message}`);
           }
           throw error;
+        }
+      })());
+      return;
+    }
+
+    if (event.cron === '*/5 * * * *') {
+      ctx.waitUntil((async () => {
+        try {
+          const result = await runUpcomingInterviewReminders(env, env.DB);
+          if (result.handled > 0) console.log(`[cron:interview-upcoming] handled=${result.handled} reminded=${result.reminded}`);
+        } catch (error) {
+          console.error('[cron:interview-upcoming] failed', error);
         }
       })());
       return;

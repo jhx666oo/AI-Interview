@@ -1,7 +1,8 @@
 /**
  * 候选人面试邀请邮件模板（「开始面试」流程发送）。
- * 内容包含：面试时间 / 岗位 / 形式 / 地点 / 面试官、视频会议链接、
- * 候选人面试详情免登录链接。中文、简单内联样式，兼容主流邮箱客户端。
+ * 内容包含：面试时间 / 岗位 / 形式 / 地点 / 面试官、视频会议链接。
+ * 中文、简单内联样式，兼容主流邮箱客户端。
+ * 注意：邮件只含会议链接，不附带候选人免登录详情链接（该链接是面试官协作/评价用的）。
  */
 
 export interface InterviewInvitationEmailInput {
@@ -15,8 +16,6 @@ export interface InterviewInvitationEmailInput {
   interviewerName?: string | null;
   /** 视频会议入会链接 */
   meetingUrl?: string | null;
-  /** 候选人面试详情免登录链接 */
-  inviteUrl: string;
   /** 发件方名称（如公司名/招聘系统名） */
   fromName: string;
 }
@@ -67,10 +66,6 @@ export function buildInterviewInvitationEmail(input: InterviewInvitationEmailInp
       <div style="font-size:14px;font-weight:600;color:#0F172A;">视频会议</div>
       ${meetingLine}
     </div>
-    <div style="margin-top:18px;">
-      <div style="font-size:14px;font-weight:600;color:#0F172A;">面试详情</div>
-      <p style="margin:4px 0 0;">${linkButton(input.inviteUrl, '查看面试详情')}</p>
-    </div>
     <div style="margin-top:20px;padding:12px 14px;background:#FFFBEB;border-radius:8px;font-size:13px;color:#92400E;line-height:1.7;">
       温馨提示：<br/>
       1. 请提前 10 分钟进入会议/到达面试地点，并准备好简历与相关材料；<br/>
@@ -90,8 +85,6 @@ export function buildInterviewInvitationEmail(input: InterviewInvitationEmailInp
     input.interviewerName ? `面试官：${input.interviewerName}` : '',
     '',
     input.meetingUrl ? `视频会议：${input.meetingUrl}` : '会议链接将另行提供，请保持电话畅通。',
-    '',
-    `面试详情：${input.inviteUrl}`,
     '',
     '温馨提示：请提前 10 分钟入场，如需调整时间请回复本邮件或联系 HR。',
   ].filter((line) => line !== '').join('\n');

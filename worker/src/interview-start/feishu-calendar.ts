@@ -118,6 +118,106 @@ function eventMeetingUrl(event: any): string | null {
 }
 
 /**
+ * 按公司上班时间切分当天可面试的工作窗口（北京时间）：
+ * 上午 09:30-11:30、下午 13:30-18:30（午休 11:30-13:30），
+ * 从 fromTs 起（已过的时间段直接跳过），返回可用的窗口列表。
+ * 单位：秒级时间戳。
+ */
+export function buildBeijingInterviewWindows(fromTs: number): Array<{ start: number; end: number }> {
+  // 秒级时间戳：当天 00:00 北京时间
+  const beijingDayStart = Math.floor(fromTs / 86_400) * 86_400 - 8 * 3600;
+  const morningStart = beijingDayStart + 9.5 * 3600;
+  const morningEnd = beijingDayStart + 11.5 * 3600;
+  const afternoonStart = beijingDayStart + 13.5 * 3600;
+  const afternoonEnd = beijingDayStart + 18.5 * 3600;
+  const windows: Array<{ start: number; end: number }> = [];
+  if (morningEnd > fromTs) windows.push({ start: Math.max(morningStart, fromTs), end: morningEnd });
+  if (afternoonEnd > fromTs) windows.push({ start: Math.max(afternoonStart, fromTs), end: afternoonEnd });
+  return windows;
+}
+
+export interface FreeSlotSearchInput {
+  /** tenant_access_token */
+  token: string;
+  /** 面试官 open_id */
+  openId: string;
+  /** 从该时刻起找（秒级时间戳） */
+  fromTs: number;
+  /** 面试时长（分钟），默认 60 */
+  durationMinutes?: number;
+}
+
+export interface FreeSlotSearchDeps {
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/**
+ * 在主面试官当天空闲时段中找第一个 ≥ 面试时长的空闲开始时刻（秒级时间戳）。
+ * 找不到 / freebusy 拉取失败 → 返回 null（调用方回退原定时间并告警）。
+ */
+export async function findFirstFreeInterviewSlot(
+  input: FreeSlotSearchInput,
+  deps: FreeSlotSearchDeps = {},
+): Promise<number | null> {
+  const fetchImpl = deps.fetchImpl || fetch;
+  const timeoutMs = deps.timeoutMs || DEFAULT_TIMEOUT_MS;
+  const durationMs = (input.durationMinutes || 60) * 60_000;
+  const windows = buildBeijingInterviewWindows(input.fromTs).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
+  if (windows.length === 0) return null;
+
+  let busy: Array<{ start: number; end: number }> = [];
+  try {
+    const resp = await feishuRequest(
+      `${FEISHU_BASE}/calendar/v4/freebusy/list`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          time_min: new Date(windows[0].start).toISOString(),
+          time_max: new Date(windows[windows.length - 1].end).toISOString(),
+          user_ids: [input.openId],
+        }),
+      },
+      input.token,
+      fetchImpl,
+      timeoutMs,
+    );
+    for (const item of (resp?.data?.freebusy_list || []) as any[]) {
+      for (const b of (item?.busy_items || []) as any[]) {
+        const s = Number(b?.start?.timestamp);
+        const e = Number(b?.end?.timestamp);
+        if (Number.isFinite(s) && Number.isFinite(e)) busy.push({ start: s * 1000, end: e * 1000 });
+      }
+    }
+  } catch {
+    return null; // 拉取忙碌失败 → 由调用方回退原定时间
+  }
+
+  // 合并重叠忙碌区间
+  busy.sort((a, b) => a.start - b.start);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const b of busy) {
+    const last = merged[merged.length - 1];
+    if (last && b.start <= last.end) last.end = Math.max(last.end, b.end);
+    else merged.push({ ...b });
+  }
+
+  // 在每个工作窗口内找第一个足够长的空闲段
+  for (const win of windows) {
+    let cursor = win.start;
+    for (const b of merged) {
+      if (b.end <= cursor) continue;
+      if (b.start >= win.end) break;
+      const busyStart = Math.max(b.start, win.start);
+      if (busyStart - cursor >= durationMs) return Math.floor(cursor / 1000);
+      cursor = Math.max(cursor, b.end);
+    }
+    if (win.end - cursor >= durationMs) return Math.floor(cursor / 1000);
+  }
+  return null;
+}
+
+/**
  * 创建带视频会议的面试日程。
  * 返回日程 ID 与入会链接；meetingUrl 可能为 null（飞书未同步出会议链接时），
  * 调用方应把它作为告警处理而不是失败。

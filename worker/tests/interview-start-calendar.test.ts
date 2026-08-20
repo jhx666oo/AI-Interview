@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInterviewCalendarEvent } from '../src/interview-start/feishu-calendar';
+import { createInterviewCalendarEvent, findFirstFreeInterviewSlot, buildBeijingInterviewWindows } from '../src/interview-start/feishu-calendar';
 
 /**
  * 飞书日历日程创建测试：
@@ -110,5 +110,90 @@ describe('createInterviewCalendarEvent', () => {
     await expect(createInterviewCalendarEvent({} as any, {
       summary: '面试', description: '', startTimestamp: 1, endTimestamp: 2,
     }, { fetchImpl, getTenantToken })).rejects.toThrow(/event_id/);
+  });
+});
+
+describe('buildBeijingInterviewWindows', () => {
+  // 2026-08-20 为星期四；北京时间 = UTC+8
+  const B = (h: number, m = 0) => Math.floor(Date.UTC(2026, 7, 20, h - 8, m) / 1000);
+
+  it('上午 10:00 → 剩余上午 + 下午两个窗口', () => {
+    const windows = buildBeijingInterviewWindows(B(10, 0));
+    expect(windows).toHaveLength(2);
+    expect(windows[0].start).toBe(B(10, 0));   // 从当前时刻起
+    expect(windows[0].end).toBe(B(11, 30));    // 上午截止 11:30
+    expect(windows[1].start).toBe(B(13, 30));  // 下午 13:30 起
+    expect(windows[1].end).toBe(B(18, 30));    // 18:30 结束
+  });
+
+  it('午休 12:00 → 只剩下午窗口', () => {
+    const windows = buildBeijingInterviewWindows(B(12, 0));
+    expect(windows).toHaveLength(1);
+    expect(windows[0].start).toBe(B(13, 30));
+    expect(windows[0].end).toBe(B(18, 30));
+  });
+
+  it('下班后 19:00 → 无窗口', () => {
+    expect(buildBeijingInterviewWindows(B(19, 0))).toHaveLength(0);
+  });
+
+  it('早上 9:00（上班前）→ 上午从 9:30 起', () => {
+    const windows = buildBeijingInterviewWindows(B(9, 0));
+    expect(windows[0].start).toBe(B(9, 30));
+  });
+});
+
+describe('findFirstFreeInterviewSlot', () => {
+  const B = (h: number, m = 0) => Math.floor(Date.UTC(2026, 7, 20, h - 8, m) / 1000);
+  const TOKEN = 'tenant-token-freebusy';
+
+  function busyFetch(busyItems: Array<{ s: number; e: number }>) {
+    return (async (url: any, init: any = {}) => {
+      expect(String(url)).toContain('/calendar/v4/freebusy/list');
+      expect(init.method).toBe('POST');
+      const body = JSON.parse(init.body);
+      expect(body.user_ids).toEqual(['ou_interviewer']);
+      const items = busyItems.map((b) => ({
+        start: { timestamp: String(b.s), timezone: 'Asia/Shanghai' },
+        end: { timestamp: String(b.e), timezone: 'Asia/Shanghai' },
+      }));
+      return new Response(JSON.stringify({ code: 0, msg: 'success', data: { freebusy_list: [{ user_id: 'ou_interviewer', busy_items: items }] } }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+  }
+
+  it('上午 10:00 开始，全天无忙碌 → 10:00 即可面试', async () => {
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(10, 0), durationMinutes: 60 }, { fetchImpl: busyFetch([]) });
+    expect(slot).toBe(B(10, 0));
+  });
+
+  it('上午 10:00-11:00 忙碌 → 上午剩余不足 1 小时，顺延到下午 13:30', async () => {
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(10, 0), durationMinutes: 60 }, {
+      fetchImpl: busyFetch([{ s: B(10, 0), e: B(11, 0) }]),
+    });
+    expect(slot).toBe(B(13, 30));
+  });
+
+  it('下午 14:00-16:30 忙碌 → 第一个空档在 16:30', async () => {
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(13, 30), durationMinutes: 60 }, {
+      fetchImpl: busyFetch([{ s: B(14, 0), e: B(16, 30) }]),
+    });
+    expect(slot).toBe(B(16, 30));
+  });
+
+  it('全天（9:30-18:30）忙碌 → 找不到返回 null', async () => {
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(9, 30), durationMinutes: 60 }, {
+      fetchImpl: busyFetch([{ s: B(9, 0), e: B(19, 0) }]),
+    });
+    expect(slot).toBeNull();
+  });
+
+  it('freebusy 接口报错 → 返回 null（调用方回退原定时间）', async () => {
+    const failFetch = (async () => new Response(JSON.stringify({ code: 99991662, msg: 'permission denied' }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(10, 0), durationMinutes: 60 }, { fetchImpl: failFetch });
+    expect(slot).toBeNull();
   });
 });
