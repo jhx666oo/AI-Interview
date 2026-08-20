@@ -1189,36 +1189,41 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
   // 归拢：把简历（含已业务决策的）加入指定批次，保留各自状态，供「AI 初筛通过表」链接展示完整简历集
   app.post('/api/resumes/business-screening/batches/:batchId/consolidate', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
-    const batchId = c.req.param('batchId');
-    const db = c.env.DB as D1Database;
-    const body = await c.req.json().catch(() => ({}));
-    const resumeIds = uniqueStrings(Array.isArray(body?.resume_ids) ? body.resume_ids : []);
-    if (resumeIds.length === 0) return c.json({ detail: 'resume_ids 不能为空' }, 400);
-    const batch = await deps.store.loadBatchById(db, batchId);
-    if (!batch) return c.json({ detail: 'Batch not found' }, 404);
+    try {
+      const batchId = c.req.param('batchId');
+      const db = c.env.DB as D1Database;
+      const body = await c.req.json().catch(() => ({}));
+      const resumeIds = uniqueStrings(Array.isArray(body?.resume_ids) ? body.resume_ids : []);
+      if (resumeIds.length === 0) return c.json({ detail: 'resume_ids 不能为空' }, 400);
+      const batch = await deps.store.loadBatchById(db, batchId);
+      if (!batch) return c.json({ detail: 'Batch not found' }, 404);
 
-    const nowIso = deps.now();
-    const rows = await db.prepare(
-      `SELECT id, business_screening_status, hr_disposition FROM resumes WHERE id IN (${resumeIds.map(() => '?').join(',')})`,
-    ).bind(...resumeIds).all();
+      const nowIso = deps.now();
+      const rows = await db.prepare(
+        `SELECT id, business_screening_status, hr_disposition FROM resumes WHERE id IN (${resumeIds.map(() => '?').join(',')})`,
+      ).bind(...resumeIds).all();
 
-    const items: CreateResumePushBatchItemInput[] = [];
-    const mapped: Array<{ resume_id: string; status: ResumePushBatchItemStatus }> = [];
-    for (const r of (rows.results || []) as any[]) {
-      const bs = String(r.business_screening_status || '');
-      const hr = String(r.hr_disposition || '');
-      let status: ResumePushBatchItemStatus = 'pending';
-      if (bs === 'passed') status = 'passed';
-      else if (bs === 'rejected' || hr === 'rejected') status = 'rejected';
-      items.push({ id: deps.uuid(), batchId, resumeId: r.id, status, createdAt: nowIso });
-      mapped.push({ resume_id: r.id, status });
+      const items: CreateResumePushBatchItemInput[] = [];
+      const mapped: Array<{ resume_id: string; status: ResumePushBatchItemStatus }> = [];
+      for (const r of (rows.results || []) as any[]) {
+        const bs = String(r.business_screening_status || '');
+        const hr = String(r.hr_disposition || '');
+        let status: ResumePushBatchItemStatus = 'pending';
+        if (bs === 'passed') status = 'passed';
+        else if (bs === 'rejected' || hr === 'rejected') status = 'rejected';
+        items.push({ id: deps.uuid(), batchId, resumeId: r.id, status, createdAt: nowIso });
+        mapped.push({ resume_id: r.id, status });
+      }
+      await insertResumePushBatchItemsIfAbsent(db, items);
+      for (const m of mapped) {
+        await db.prepare('UPDATE resumes SET business_screening_batch_id = ?, updated_at = ? WHERE id = ?')
+          .bind(batchId, nowIso, m.resume_id).run();
+      }
+      return c.json({ ok: true, consolidated: items.length, items: mapped });
+    } catch (e: any) {
+      console.error(`[business-screening] consolidate 失败: ${e?.message || e}\n${e?.stack || ''}`);
+      return c.json({ detail: `consolidate 失败: ${e?.message || e}`, stack: String(e?.stack || '').slice(0, 500) }, 500);
     }
-    await insertResumePushBatchItemsIfAbsent(db, items);
-    for (const m of mapped) {
-      await db.prepare('UPDATE resumes SET business_screening_batch_id = ?, updated_at = ? WHERE id = ?')
-        .bind(batchId, nowIso, m.resume_id).run();
-    }
-    return c.json({ ok: true, consolidated: items.length, items: mapped });
   });
 
   return app;
