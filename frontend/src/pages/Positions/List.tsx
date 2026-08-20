@@ -220,7 +220,7 @@ const PositionsList: React.FC = () => {
       setData(res);
       // 并行拉取业务推送链接（岗位维度固定链接）
       try {
-        const linkRes = await request.get('/api/positions/business-screening-links');
+        const linkRes = await request.get('/positions/business-screening-links');
         const map: Record<string, { url: string; interviewer: string; expires_at: string | null }> = {};
         for (const item of linkRes?.items || []) {
           if (item?.position_id && item?.url) {
