@@ -8502,7 +8502,7 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
                   startFlow.warnings.push(`已按主面试官空闲时间将面试调整为 ${startLabel}`);
                 }
               } else {
-                startFlow.warnings.push('主面试官未来两个工作日内无连续 1 小时空档，已按原定时间安排，请与面试官确认');
+                startFlow.warnings.push('主面试官未来两个工作日之后无连续 1 小时空档，已按原定时间安排，请与面试官确认');
               }
             }
           } catch (e: any) {

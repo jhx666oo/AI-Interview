@@ -122,33 +122,32 @@ describe('buildFutureInterviewWindows', () => {
   // 2026-08-20 为星期四；北京时间 = UTC+8
   const B = (day: number, h: number, m = 0) => Math.floor(Date.UTC(2026, 7, day, h - 8, m) / 1000);
 
-  it('周四起未来 2 个工作日 = 周五 + 下周一（跳过周末），每天两窗口', () => {
-    const windows = buildFutureInterviewWindows(B(20, 12, 0), 2);
-    expect(windows).toHaveLength(4);
-    expect(windows[0].start).toBe(B(21, 9, 30));  // 周五上午
-    expect(windows[0].end).toBe(B(21, 11, 30));
-    expect(windows[1].start).toBe(B(21, 13, 30)); // 周五下午
-    expect(windows[1].end).toBe(B(21, 18, 30));
-    expect(windows[2].start).toBe(B(24, 9, 30));  // 周一上午（跳过周六日）
-    expect(windows[3].start).toBe(B(24, 13, 30)); // 周一下午
+  it('周四起跳过 2 个工作日（周五、下周一），从下周二开始取 3 个工作日', () => {
+    const windows = buildFutureInterviewWindows(B(20, 12, 0));
+    expect(windows).toHaveLength(6); // 3 天 × 2 窗口
+    expect(windows[0].start).toBe(B(25, 9, 30));  // 周二上午
+    expect(windows[0].end).toBe(B(25, 11, 30));
+    expect(windows[1].start).toBe(B(25, 13, 30)); // 周二下午
+    expect(windows[2].start).toBe(B(26, 9, 30));  // 周三
+    expect(windows[4].start).toBe(B(27, 9, 30));  // 周四
   });
 
-  it('workdays=1 只取下一个工作日', () => {
-    const windows = buildFutureInterviewWindows(B(20, 12, 0), 1);
+  it('workdays=1 时只查第 3 个工作日', () => {
+    const windows = buildFutureInterviewWindows(B(20, 12, 0), 2, 1);
     expect(windows).toHaveLength(2);
-    expect(windows[0].start).toBe(B(21, 9, 30));
+    expect(windows[0].start).toBe(B(25, 9, 30));
   });
 
-  it('周五起未来 2 个工作日 = 下周一 + 下周二（跳过周末）', () => {
-    const windows = buildFutureInterviewWindows(B(21, 15, 0), 2);
+  it('skipWorkdays=0 时从明天开始（周五、下周一）', () => {
+    const windows = buildFutureInterviewWindows(B(20, 12, 0), 0, 2);
     expect(windows).toHaveLength(4);
-    expect(windows[0].start).toBe(B(24, 9, 30)); // 周一
-    expect(windows[2].start).toBe(B(25, 9, 30)); // 周二
+    expect(windows[0].start).toBe(B(21, 9, 30)); // 周五
+    expect(windows[2].start).toBe(B(24, 9, 30)); // 周一（跳过周末）
   });
 });
 
 describe('findFirstFreeInterviewSlot / listFreeInterviewSlots', () => {
-  // 2026-08-20 周四；未来 2 个工作日 = 8-21 周五、8-24 周一
+  // 2026-08-20 周四；跳过周五(8-21)、下周一(8-24)，从下周二(8-25)起取 3 个工作日
   const D = (day: number, h: number, m = 0) => Math.floor(Date.UTC(2026, 7, day, h - 8, m) / 1000);
   const TOKEN = 'tenant-token-freebusy';
 
@@ -168,28 +167,28 @@ describe('findFirstFreeInterviewSlot / listFreeInterviewSlots', () => {
     }) as unknown as typeof fetch;
   }
 
-  it('无忙碌 → 第一个空闲在次日（周五）09:30', async () => {
+  it('无忙碌 → 第一个空闲在跳过两天后的下周二 09:30', async () => {
     const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, { fetchImpl: busyFetch([]) });
-    expect(slot).toBe(D(21, 9, 30));
+    expect(slot).toBe(D(25, 9, 30));
   });
 
-  it('周五 09:30-11:30 忙碌 → 顺延到周五下午 13:30', async () => {
+  it('周二 09:30-11:30 忙碌 → 顺延到周二下午 13:30', async () => {
     const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, {
-      fetchImpl: busyFetch([{ s: D(21, 9, 0), e: D(21, 11, 30) }]),
+      fetchImpl: busyFetch([{ s: D(25, 9, 0), e: D(25, 11, 30) }]),
     });
-    expect(slot).toBe(D(21, 13, 30));
+    expect(slot).toBe(D(25, 13, 30));
   });
 
-  it('周五全天忙碌 → 跳过周末，落到下周一 09:30', async () => {
+  it('周二全天忙碌 → 落到周三 09:30', async () => {
     const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, {
-      fetchImpl: busyFetch([{ s: D(21, 9, 0), e: D(21, 19, 0) }]),
+      fetchImpl: busyFetch([{ s: D(25, 9, 0), e: D(25, 19, 0) }]),
     });
-    expect(slot).toBe(D(24, 9, 30));
+    expect(slot).toBe(D(26, 9, 30));
   });
 
-  it('两个候选工作日都全天忙碌 → 返回 null', async () => {
+  it('三个候选工作日都全天忙碌 → 返回 null', async () => {
     const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, {
-      fetchImpl: busyFetch([{ s: D(21, 9, 0), e: D(21, 19, 0) }, { s: D(24, 9, 0), e: D(24, 19, 0) }]),
+      fetchImpl: busyFetch([{ s: D(25, 9, 0), e: D(25, 19, 0) }, { s: D(26, 9, 0), e: D(26, 19, 0) }, { s: D(27, 9, 0), e: D(27, 19, 0) }]),
     });
     expect(slot).toBeNull();
   });
@@ -202,22 +201,21 @@ describe('findFirstFreeInterviewSlot / listFreeInterviewSlots', () => {
     expect(slot).toBeNull();
   });
 
-  it('listFreeInterviewSlots：无忙碌 → 两天每天 12 个时段（上午 3 + 下午 9）', async () => {
+  it('listFreeInterviewSlots：无忙碌 → 3 天每天 12 个时段（上午 3 + 下午 9）', async () => {
     const slots = await listFreeInterviewSlots({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, { fetchImpl: busyFetch([]) });
-    expect(slots).toHaveLength(24);
-    expect(slots[0].startTs).toBe(D(21, 9, 30));
-    expect(slots[0].endTs).toBe(D(21, 10, 30));
-    // 30 分钟粒度：上午 09:30/10:00/10:30，下午 13:30~17:30
-    expect(slots[2].startTs).toBe(D(21, 10, 30));
-    expect(slots[3].startTs).toBe(D(21, 13, 30));
+    expect(slots).toHaveLength(36);
+    expect(slots[0].startTs).toBe(D(25, 9, 30));
+    expect(slots[0].endTs).toBe(D(25, 10, 30));
+    expect(slots[2].startTs).toBe(D(25, 10, 30));
+    expect(slots[3].startTs).toBe(D(25, 13, 30));
   });
 
-  it('listFreeInterviewSlots：周五上午 09:30-10:30 忙碌 → 该时段被过滤', async () => {
+  it('listFreeInterviewSlots：周二上午 09:30-10:30 忙碌 → 该时段被过滤', async () => {
     const slots = await listFreeInterviewSlots({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, {
-      fetchImpl: busyFetch([{ s: D(21, 9, 30), e: D(21, 10, 30) }]),
+      fetchImpl: busyFetch([{ s: D(25, 9, 30), e: D(25, 10, 30) }]),
     });
-    expect(slots).toHaveLength(22); // 周五上午剩 10:30 一个（1 个）+ 周五下午 9 个 + 周一 12 个
-    expect(slots[0].startTs).toBe(D(21, 10, 30));
-    expect(slots.some((s) => s.startTs === D(21, 9, 30))).toBe(false);
+    expect(slots).toHaveLength(34); // 周二上午剩 10:30 一个（1 个）+ 周二下午 9 个 + 周三/周四各 12 个
+    expect(slots[0].startTs).toBe(D(25, 10, 30));
+    expect(slots.some((s) => s.startTs === D(25, 9, 30))).toBe(false);
   });
 });

@@ -119,26 +119,35 @@ function eventMeetingUrl(event: any): string | null {
 
 /**
  * 生成未来 N 个工作日的可面试工作窗口（北京时间）：
- * 从 fromTs 的次日开始，跳过周六/周日，每天两个窗口：
- * 上午 09:30-11:30、下午 13:30-18:30（午休 11:30-13:30 不算面试时间）。
+ * 从 fromTs 的次日开始，跳过周六/周日，先跳过 skipWorkdays 个工作日（默认 2，
+ * 即从未来第 3 个工作日开始），再取之后 workdays 个工作日（默认 3）。
+ * 每天两个窗口：上午 09:30-11:30、下午 13:30-18:30（午休 11:30-13:30 不算面试时间）。
  * 单位：秒级时间戳。
  */
-export function buildFutureInterviewWindows(fromTs: number, workdays = 2): Array<{ start: number; end: number }> {
+export function buildFutureInterviewWindows(fromTs: number, skipWorkdays = 2, workdays = 3): Array<{ start: number; end: number }> {
   const windows: Array<{ start: number; end: number }> = [];
   const daySec = 86_400;
   // 从 fromTs 所在天的次日 00:00（北京时间）起逐日检查
   let dayStart = Math.floor(fromTs / daySec) * daySec - 8 * 3600 + daySec; // 次日 00:00 北京时间
+  let skipped = 0;
   let found = 0;
   let guard = 0;
-  while (found < workdays && guard < 30) {
+  while (found < workdays && guard < 60) {
     guard += 1;
     // dayStart 为北京时间 00:00 的绝对秒，星期几需按北京时间判断（+8h 后取 UTC 星期）
     const dow = new Date((dayStart + 8 * 3600) * 1000).getUTCDay(); // 0=周日 6=周六
-    if (dow !== 0 && dow !== 6) {
-      windows.push({ start: dayStart + 9.5 * 3600, end: dayStart + 11.5 * 3600 });
-      windows.push({ start: dayStart + 13.5 * 3600, end: dayStart + 18.5 * 3600 });
-      found += 1;
+    if (dow === 0 || dow === 6) {
+      dayStart += daySec;
+      continue;
     }
+    if (skipped < skipWorkdays) {
+      skipped += 1;
+      dayStart += daySec;
+      continue;
+    }
+    windows.push({ start: dayStart + 9.5 * 3600, end: dayStart + 11.5 * 3600 });
+    windows.push({ start: dayStart + 13.5 * 3600, end: dayStart + 18.5 * 3600 });
+    found += 1;
     dayStart += daySec;
   }
   return windows;
@@ -153,7 +162,9 @@ export interface FreeSlotSearchInput {
   fromTs: number;
   /** 面试时长（分钟），默认 60 */
   durationMinutes?: number;
-  /** 覆盖的工作日数量（跳过周末），默认 2 */
+  /** 先跳过的工作日数量（默认 2，即从未来第 3 个工作日开始） */
+  skipWorkdays?: number;
+  /** 之后覆盖的工作日数量（跳过周末），默认 3 */
   workdays?: number;
 }
 
@@ -221,8 +232,9 @@ export async function findFirstFreeInterviewSlot(
   const fetchImpl = deps.fetchImpl || fetch;
   const timeoutMs = deps.timeoutMs || DEFAULT_TIMEOUT_MS;
   const durationMs = (input.durationMinutes || 60) * 60_000;
-  const workdays = input.workdays && input.workdays > 0 ? input.workdays : 2;
-  const windows = buildFutureInterviewWindows(input.fromTs, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
+  const skipWorkdays = input.skipWorkdays !== undefined && input.skipWorkdays >= 0 ? input.skipWorkdays : 2;
+  const workdays = input.workdays && input.workdays > 0 ? input.workdays : 3;
+  const windows = buildFutureInterviewWindows(input.fromTs, skipWorkdays, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
   if (windows.length === 0) return null;
 
   const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs);
@@ -255,8 +267,9 @@ export async function listFreeInterviewSlots(
   const fetchImpl = deps.fetchImpl || fetch;
   const timeoutMs = deps.timeoutMs || DEFAULT_TIMEOUT_MS;
   const durationMs = (input.durationMinutes || 60) * 60_000;
-  const workdays = input.workdays && input.workdays > 0 ? input.workdays : 2;
-  const windows = buildFutureInterviewWindows(input.fromTs, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
+  const skipWorkdays = input.skipWorkdays !== undefined && input.skipWorkdays >= 0 ? input.skipWorkdays : 2;
+  const workdays = input.workdays && input.workdays > 0 ? input.workdays : 3;
+  const windows = buildFutureInterviewWindows(input.fromTs, skipWorkdays, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
   if (windows.length === 0) return [];
 
   const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs);

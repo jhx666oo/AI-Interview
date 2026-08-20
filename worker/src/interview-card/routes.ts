@@ -723,7 +723,8 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
         openId,
         fromTs: Math.floor(Date.now() / 1000),
         durationMinutes: 60,
-        workdays: 2,
+        skipWorkdays: 2,
+        workdays: 3,
       });
       return c.json({
         ok: true,
