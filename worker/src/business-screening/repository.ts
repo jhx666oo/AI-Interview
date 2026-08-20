@@ -280,6 +280,40 @@ export async function revokeActiveBusinessScreeningBatchesForResume(
   ).bind(resumeId).run();
 }
 
+/**
+ * 把简历从业务筛选链接中移除（AI 结果变为不通过 / HR 手动淘汰时调用）：
+ * - 删除该简历在所有批次中尚未处理的条目（pending），已决条目保留历史；
+ * - 重置推送状态（hr_disposition / business_screening_status 等），允许之后再次推送；
+ * - 业务已进入终态（业务已通过/已淘汰/HR 淘汰/简历终态）时不重置，避免覆盖既有决策。
+ */
+export async function removeResumeFromBusinessScreeningBatches(
+  db: Db,
+  resumeId: string,
+  nowIso?: string,
+): Promise<{ removed: number }> {
+  const deleted = await db.prepare(
+    `DELETE FROM resume_push_batch_items
+      WHERE resume_id = ?
+        AND status = 'pending'`,
+  ).bind(resumeId).run();
+  const timestamp = nowIso || new Date().toISOString();
+  await db.prepare(
+    `UPDATE resumes
+        SET hr_disposition = 'pending',
+            business_screening_status = 'not_ready',
+            business_screening_batch_id = NULL,
+            business_screening_dispatch_group_id = NULL,
+            business_screened_at = NULL,
+            business_screened_by = NULL,
+            updated_at = ?
+      WHERE id = ?
+        AND business_screening_status IN ('not_ready', 'pending', '')
+        AND hr_disposition != 'rejected'
+        AND status NOT IN ('approved', 'rejected', 'completed')`,
+  ).bind(timestamp, resumeId).run();
+  return { removed: deleted.meta?.changes ?? 0 };
+}
+
 type CurrentResumeDecisionRow = {
   hr_disposition: string | null;
   business_screening_status: 'not_ready' | 'pending' | 'passed' | 'rejected' | null;

@@ -40,6 +40,7 @@ import { markUserTokenRefreshFailed, saveRefreshedUserToken } from './feishu-not
 import { ensureBusinessScreeningSchema } from './business-screening/repository';
 import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } from './business-screening/routes';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './business-screening/token';
+import { syncAiResultToBusinessScreening, buildBusinessScreeningAutoLinkDeps } from './business-screening/auto-link';
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
 import { createInterviewCalendarEvent, findFirstFreeInterviewSlot } from './interview-start/feishu-calendar';
 import { sendInterviewerInterviewReminder, sendFeishuTextMessage } from './interview-start/reminders';
@@ -1605,6 +1606,18 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
 });
 app.route('/', businessScreeningRoutes);
+
+// AI 初筛结果自动联动业务筛选（由简历处理队列在初筛完成后调用）：
+// 通过 → 自动推送到业务链接；不通过 → 自动从业务链接移除。失败不影响主流程。
+export async function autoLinkAiResultToBusinessScreening(env: any, resumeId: string): Promise<void> {
+  try {
+    const db = env?.DB as D1Database;
+    if (!db) return;
+    await syncAiResultToBusinessScreening(db, buildBusinessScreeningAutoLinkDeps(), resumeId);
+  } catch (error: any) {
+    console.error(`[auto-link] AI初筛业务联动失败 resume=${resumeId}: ${error?.message || error}`);
+  }
+}
 
 // 面试管理卡片：单个候选人面试情况汇总的免登录公开链接（固定 7 天有效，可撤销/续期）
 const interviewCardRoutes = createInterviewCardRoutes({

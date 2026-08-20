@@ -8,7 +8,7 @@ import { normalizeResumeFields } from './resume-processing/fields';
 import { logResumeProcessing, logResumeProcessingError } from './resume-processing/logging';
 import { assembleScreeningEvaluation, missingDimensionNames, normalizeDimensionScores, requireCompleteScreeningEvaluation, type DimensionScore } from './resume-processing/dimension-scores';
 import { buildScreeningRepairPrompt, parseStructuredOutput, type StructuredOutputFailureCode, type StructuredOutputResult } from './resume-processing/structured-output';
-import { callAI, callAIWithMetadata, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle } from './index';
+import { callAI, callAIWithMetadata, enrichScreeningEvaluation, extractJSON, getAIPrompt, getPositionContext, normalizeCapabilityDimensions, resolvePositionTitle, autoLinkAiResultToBusinessScreening } from './index';
 import { buildPositionScreeningContextText, buildPositionSpecificScreeningRule, buildScreeningRulesPrompt, WEIGHTED_SCREENING_DIMENSION_NAMES, WEIGHTED_SCREENING_PROMPT } from './resume-processing/weighted-screening';
 import { ArtifactRepository } from './resume-storage/artifact-repository';
 import { EventRepository } from './recruitment-events/repository';
@@ -884,6 +884,9 @@ export default {
         },
         async (jobId) => {
           await syncReprocessBatchItemByJob(env.DB, jobId, { status: 'completed', completed_at: new Date().toISOString() }).catch(() => undefined);
+          // AI 初筛结果自动联动业务筛选：通过 → 自动推送，不通过 → 自动从业务链接移除
+          // （失败不影响主流程，内部已 try/catch）
+          await autoLinkAiResultToBusinessScreening(env, resumeBody.resumeId).catch(() => undefined);
         },
         async (jobId, error) => {
           const errorCode = (error as any)?.code || 'PROCESSING_FAILED';

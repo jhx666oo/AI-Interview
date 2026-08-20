@@ -398,6 +398,24 @@ function buildHarness(options?: {
         if (batch?.status === 'active') batch.status = 'revoked';
       }
     },
+    async removeResumeFromBusinessScreeningBatches(_db, resumeId) {
+      const before = batchItems.length;
+      for (let i = batchItems.length - 1; i >= 0; i -= 1) {
+        const item = batchItems[i];
+        if (item.resume_id === resumeId && item.status === 'pending') batchItems.splice(i, 1);
+      }
+      const resume = resumes.get(resumeId);
+      if (resume) {
+        const bs = resume.business_screening_status;
+        if (!bs || bs === 'not_ready' || bs === 'pending') {
+          resume.hr_disposition = 'pending';
+          resume.business_screening_status = 'not_ready';
+          resume.business_screening_batch_id = null;
+          resume.business_screening_dispatch_group_id = null;
+        }
+      }
+      return { removed: before - batchItems.length };
+    },
     async setBatchStatus(_db, batchId, status) {
       const batch = batches.get(batchId);
       if (batch) batch.status = status;
@@ -527,7 +545,31 @@ function buildHarness(options?: {
                   resume.updated_at = updatedAt;
                   return { meta: { changes: 1 } };
                 }
+                if (sql.includes('UPDATE resumes') && sql.includes('SET screening_result = ?')) {
+                  // setResumeAiResult：翻转 AI 初筛结果（manual-push / eliminate）
+                  const [result, aiReview, aiEvaluation, updatedAt, resumeId] = values;
+                  const resume = resumes.get(resumeId as string);
+                  if (resume) {
+                    resume.screening_result = result as string;
+                    if (aiReview) resume.ai_review = aiReview as string;
+                    if (aiEvaluation) resume.ai_evaluation = aiEvaluation as string;
+                    resume.updated_at = updatedAt as string;
+                  }
+                  return { meta: { changes: resume ? 1 : 0 } };
+                }
                 return { meta: { changes: 1 } };
+              },
+              async first() {
+                if (sql.includes('SELECT ai_review')) {
+                  const resume = resumes.get(values[0] as string);
+                  return resume
+                    ? { ai_review: resume.ai_review ?? null, ai_evaluation: resume.ai_evaluation ?? null }
+                    : null;
+                }
+                return null;
+              },
+              async all() {
+                return { results: [] };
               },
             };
           },
@@ -3175,5 +3217,162 @@ describe('business screening routes', () => {
     expect(sentMessages).toHaveLength(1);
     expect((sentMessages[0].card as any).elements[1].actions[0].url)
       .toBe('https://ai-interview-88r.pages.dev/business-screening/expired-resend-token');
+  });
+});
+
+describe('manual-push / eliminate（AI 结果与业务链接联动）', () => {
+  it('manual-push 把 AI 不通过改为通过并推送到业务链接', async () => {
+    const { request, resumes } = buildHarness({
+      positions: [{ id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '', responsible_person: '张三' }],
+      resumes: [{
+        id: 'resume-manual-push',
+        candidate_name: '候选人乙',
+        email: 'yi@example.com',
+        screening_result: '不通过',
+        status: 'pending_review',
+        stage: 'screening',
+        hr_disposition: 'pending',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'not_ready',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/resume-manual-push/business-screening/manual-push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ai_result).toBe('通过');
+    expect(body.pushed).toEqual(['resume-manual-push']);
+    expect(body.ok).toBe(true);
+    expect(resumes.get('resume-manual-push')).toMatchObject({
+      screening_result: '通过',
+      hr_disposition: 'pushed',
+      business_screening_status: 'pending',
+    });
+  });
+
+  it('eliminate 把 AI 通过改为不通过并从业务链接移除、可再次推送', async () => {
+    const { request, resumes, batchItems, batches } = buildHarness({
+      positions: [{ id: 'position-1', title: '标准运营', primary_interviewer: '张三', secondary_interviewer: '', responsible_person: '张三' }],
+      resumes: [{
+        id: 'resume-eliminate',
+        candidate_name: '候选人丙',
+        email: 'bing@example.com',
+        screening_result: '通过',
+        status: 'pending_review',
+        stage: 'screening',
+        hr_disposition: 'pushed',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'pending',
+        business_screening_batch_id: 'batch-elim',
+        business_screening_dispatch_group_id: 'dg-elim',
+      }],
+      initialBatches: [{
+        id: 'batch-elim',
+        interviewer_id: 'user-zhang',
+        interviewer_name: '张三',
+        interviewer_open_id: 'ou_zhang',
+        token_hash: 'hash-elim',
+        expires_at: '2026-08-19T00:00:00.000Z',
+        status: 'active',
+        created_by: 'hr@example.com',
+        created_at: '2026-08-12T00:00:00.000Z',
+        last_sent_at: null,
+        scope_key: 'ou_zhang',
+        rawToken: 'elim-token',
+      }],
+      initialItems: [{
+        id: 'item-elim',
+        batch_id: 'batch-elim',
+        resume_id: 'resume-eliminate',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T00:00:00.000Z',
+        candidate_name: '候选人丙',
+        mapped_position: '标准运营',
+        hr_disposition: 'pushed',
+        business_screening_status: 'pending',
+      }],
+    });
+
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/resume-eliminate/business-screening/eliminate', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.removed).toBe(1);
+    expect(body.ai_result).toBe('不通过');
+    expect(resumes.get('resume-eliminate')).toMatchObject({
+      screening_result: '不通过',
+      hr_disposition: 'pending',
+      business_screening_status: 'not_ready',
+    });
+    // 未决条目已从批次移除，批次本身仍有效
+    expect(batchItems.filter((item) => item.resume_id === 'resume-eliminate')).toHaveLength(0);
+    expect(batches.get('batch-elim')?.status).toBe('active');
+
+    // 淘汰后可再次手动推送（AI 不通过 → 通过 → 推送）
+    const rePush = await request('https://ai-interview-88r.pages.dev/api/resumes/resume-eliminate/business-screening/manual-push', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(rePush.status).toBe(200);
+    const reBody = await rePush.json();
+    expect(reBody.pushed).toEqual(['resume-eliminate']);
+    expect(resumes.get('resume-eliminate')).toMatchObject({ screening_result: '通过', hr_disposition: 'pushed' });
+  });
+
+  it('eliminate 对业务已终态的简历不改动推送状态', async () => {
+    const { request, resumes } = buildHarness({
+      resumes: [{
+        id: 'resume-terminal',
+        candidate_name: '候选人丁',
+        screening_result: '通过',
+        status: 'approved',
+        stage: 'talent_pool',
+        hr_disposition: 'pushed',
+        mapped_position: '标准运营',
+        position_applied: '标准运营',
+        business_screening_status: 'passed',
+      }],
+    });
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/resume-terminal/business-screening/eliminate', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.ai_result).toBe('不通过');
+    // 业务已通过为终态：只翻转 AI 结果，不重置推送状态
+    expect(resumes.get('resume-terminal')).toMatchObject({
+      screening_result: '不通过',
+      hr_disposition: 'pushed',
+      business_screening_status: 'passed',
+      status: 'approved',
+    });
+  });
+
+  it('manual-push / eliminate 对不存在的简历返回 404', async () => {
+    const { request } = buildHarness();
+    const push = await request('https://ai-interview-88r.pages.dev/api/resumes/not-exist/business-screening/manual-push', {
+      method: 'POST', headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    expect(push.status).toBe(404);
+    const elim = await request('https://ai-interview-88r.pages.dev/api/resumes/not-exist/business-screening/eliminate', {
+      method: 'POST', headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    expect(elim.status).toBe(404);
   });
 });

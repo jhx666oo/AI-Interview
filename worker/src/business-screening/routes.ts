@@ -610,200 +610,19 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     if (ids.length === 0) {
       return c.json({ detail: 'ids must contain at least one resume id' }, 400);
     }
-    const hasTitle = body !== null
-      && typeof body === 'object'
-      && Object.prototype.hasOwnProperty.call(body, 'title');
-    const requestedTitle = hasTitle
-      ? normalizeBusinessScreeningTitle(body.title) || DEFAULT_BUSINESS_SCREENING_TITLE
-      : undefined;
-    const hasSubtitle = body !== null
-      && typeof body === 'object'
-      && Object.prototype.hasOwnProperty.call(body, 'subtitle');
-    const requestedSubtitle = hasSubtitle ? text(body.subtitle) || null : undefined;
-    // 历史兼容参数：当前普通推送已允许任意 AI 结果，temp_link 不再额外改变推送资格
-    const tempLink = body?.temp_link === true;
-    // 静默生成：只生成链接，不自动发送飞书卡片给面试官/业务方（业务方在链接内操作才是推送行为）
-    const silent = body?.silent === true;
-
-    const db = c.env.DB as D1Database;
-    const nowIso = deps.now();
     const user = ((c as any).get('user') || {}) as HrUser;
-    const resumes = await deps.store.listResumesByIds(db, ids);
-    const resumesById = new Map(resumes.map((resume) => [resume.id, resume]));
-    const rawPositionTitles = uniqueStrings(resumes.map((resume) => text(resume.mapped_position) || text(resume.position_applied)));
-    const mappings = await deps.store.listPositionMappings(db, rawPositionTitles);
-    const standardByRaw = new Map(mappings.map((mapping) => [mapping.raw_name, mapping.mapped_name]));
-    const resolveStandardTitle = (rawTitle: string): string => standardByRaw.get(rawTitle) || rawTitle;
-    const positionTitles = uniqueStrings(rawPositionTitles.map(resolveStandardTitle));
-    const positions = await deps.store.listPositionsByTitles(db, positionTitles);
-    const positionsByTitle = new Map(positions.map((position) => [position.title, position]));
-    const responsibleNames = uniqueStrings(positions.flatMap((position) => [position.responsible_person]));
-    const interviewerDirectoryRows = await deps.store.listInterviewerDirectory(db, responsibleNames);
-    const interviewerDirectory = new Map(interviewerDirectoryRows.map((entry) => [entry.name, entry]));
-
-    const skipped: Array<{ id: string; reason: string }> = [];
-    const eligibleResumes: BusinessScreeningResumeRecord[] = [];
-    const eligibilityOptions = tempLink ? { skipAiCheck: true, skipPushStateCheck: true } : undefined;
-    for (const id of ids) {
-      const resume = resumesById.get(id);
-      if (!resume) {
-        skipped.push({ id, reason: '简历不存在' });
-        continue;
-      }
-      const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
-      const positionTitle = resolveStandardTitle(rawTitle);
-      const position = positionsByTitle.get(positionTitle);
-      const groups = groupEligibleResumesForPush([resume], positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
-      if (groups.size === 0) {
-        const reason = summarizeSkipReason(resume, position, interviewerDirectory, eligibilityOptions);
-        skipped.push({ id, reason });
-        continue;
-      }
-      eligibleResumes.push(resume);
-    }
-
-    // 临时链接模式（模式 B）：直接放入用户指定简历，不做同名档案优选替换
-    // （优选替换在无责任人的同名岗位组合下会异常，且临时链接本就不需要）
-    const eligible = tempLink
-      ? eligibleResumes
-      : await optimizeResumesForProfile(db, eligibleResumes, resolveStandardTitle);
-    const grouped = groupEligibleResumesForPush(eligible, positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
-    const sender = await resolveSenderEmail(c, user, deps);
-    const currentUserToken = sender.email ? await deps.getCurrentUserToken(c.env, sender.email) : null;
-    const keyNoSenderReason = user.id === 'api-key' && !sender.email ? sender.reason : null;
-    const pushedResumeIds = uniqueStrings([...grouped.values()].flatMap((group) => group.resumes.map((resume) => resume.id)));
-    const failed: Array<{ interviewer: string; reason: string }> = [];
-    const batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number; expiresAt: string | null; title?: string; subtitle?: string }> = [];
-    const dispatchGroupId = deps.uuid();
-
-    for (const group of grouped.values()) {
-      // 固定业务范围改为“面试官”：同一面试官跨岗位、跨多次推送复用同一个有效链接，
-      // 简历只追加到同一批次；批次过期后才创建新周期链接。
-      const scopeKey = group.interviewer.openId;
-      // 临时链接模式（模式 B）：默认每次生成独立新批次/新链接（内容=当次范围），
-      // 不复用 scope 固定批次，避免与推送链接内容互相污染；
-      // 支持 body.batch_id 显式指定追加到某批次（大批量分批归拢同一链接用）。
-      let existing: ResumePushBatchRow | null = null;
-      const appendTo = typeof body?.batch_id === 'string' && body.batch_id.trim()
-        ? body.batch_id.trim()
-        : null;
-      if (appendTo) {
-        existing = await deps.store.loadBatchById(db, appendTo);
-      } else if (!tempLink) {
-        existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
-        // 兼容已上线的旧批次：旧版 scope_key 为“岗位::面试官”，仍沿用其原链接，
-        // 后续新批次才统一写入面试官 scope。
-        if (!existing) {
-          existing = await deps.store.loadBatchByInterviewer(db, group.interviewer.openId, nowIso);
-        }
-        if (!existing) {
-          existing = await deps.store.loadLatestBatchByInterviewer(db, group.interviewer.openId);
-        }
-      }
-      const tokenScopeKey = existing?.scope_key?.trim() || scopeKey;
-      const itemCreatedAt = deps.now();
-      const expiresAt = resolveExpiresAt(nowIso, body.expires_in_days);
-      const batchTitle = requestedTitle ?? existing?.batch_title ?? null;
-      const batchSubtitle = requestedSubtitle ?? existing?.batch_subtitle ?? null;
-
-      let batchId: string;
-      if (existing) {
-        batchId = existing.id;
-        // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
-        await deps.store.resetBatchActive(db, batchId);
-        await deps.store.refreshBatchExpiry(db, batchId, expiresAt);
-        await deps.store.updateBatchPresentation(db, batchId, {
-          title: requestedTitle,
-          subtitle: requestedSubtitle,
-        });
-      } else {
-        batchId = deps.uuid();
-      }
-      // 链接由 scope + batchId 确定：有效期内复用同一批次 → 同一链接；过期新建批次 → 新链接
-      const issued = await deps.createScopePublicToken(tokenScopeKey, batchId);
-      const url = `${new URL(c.req.url).origin}/business-screening/${issued.token}`;
-      const items: CreateResumePushBatchItemInput[] = group.resumes.map((resume) => {
-        const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
-        const standardTitle = resolveStandardTitle(rawTitle);
-        return {
-          id: deps.uuid(),
-          batchId,
-          resumeId: resume.id,
-          positionId: resume.position_id || positionsByTitle.get(standardTitle)?.id || null,
-          createdAt: itemCreatedAt,
-          dispatchGroupId,
-        };
-      });
-
-      if (existing) {
-        await deps.store.appendBatchItemsIfAbsent(db, items);
-      } else {
-        await deps.store.createBatch(db, {
-          id: batchId,
-          interviewerId: group.interviewer.userId || null,
-          interviewerName: group.interviewer.name,
-          interviewerOpenId: group.interviewer.openId,
-          tokenHash: issued.tokenHash,
-          expiresAt,
-          createdBy: user.email || 'system',
-          createdAt: nowIso,
-          lastSentAt: null,
-          dispatchGroupId,
-          batchTitle,
-          batchSubtitle,
-          scopeKey,
-        }, items);
-      }
-      await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId, dispatchGroupId);
-      const pendingCount = await deps.store.countPendingBatchItems(db, batchId);
-
-      batches.push({
-        batchId,
-        interviewer: group.interviewer.name,
-        url,
-        itemCount: items.length,
-        expiresAt,
-        title: batchTitle || undefined,
-        subtitle: batchSubtitle || undefined,
-      });
-
-      if (!silent) {
-        if (!currentUserToken) {
-          failed.push({
-            interviewer: group.interviewer.name,
-            reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
-          });
-          continue;
-        }
-
-        try {
-          const positionTitle = group.positionTitles.length === 1
-            ? group.positionTitles[0]
-            : `多个岗位（${group.positionTitles.length}个）`;
-          await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
-            positionTitle,
-            itemCount: pendingCount,
-            url,
-          }));
-          await deps.store.setBatchLastSentAt(db, batchId, deps.now());
-        } catch (error) {
-          failed.push({
-            interviewer: group.interviewer.name,
-            reason: error instanceof Error ? error.message : '业务筛选链接发送失败',
-          });
-        }
-      }
-    }
-
-    return c.json({
-      ok: failed.length === 0,
-      pushed: pushedResumeIds,
-      skipped,
-      failed,
-      batches,
-    });
+    const result = await pushResumesToBusinessScreening(c.env.DB as D1Database, deps, {
+      ids,
+      expiresInDays: body?.expires_in_days,
+      silent: body?.silent === true,
+      title: body?.title,
+      subtitle: body?.subtitle,
+      tempLink: body?.temp_link === true,
+      batchId: body?.batch_id,
+      createdBy: user.email || 'system',
+    }, { origin: new URL(c.req.url).origin, user, env: c.env });
+    return c.json(result);
   });
-
   app.post('/api/resumes/:id/business-screening/reject', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     const id = c.req.param('id');
     const body = await c.req.json().catch(() => ({}));
@@ -854,6 +673,50 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       business_screening_status: updated?.business_screening_status || 'not_ready',
     });
   });
+
+  // ==================== 手动推送：AI 不通过 → 改为通过并推送到业务链接 ====================
+  app.post('/api/resumes/:id/business-screening/manual-push', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
+    const id = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+    const db = c.env.DB as D1Database;
+    const user = ((c as any).get('user') || {}) as HrUser;
+    const resume = (await deps.store.listResumesByIds(db, [id]))[0];
+    if (!resume) return c.json({ detail: 'Candidate not found' }, 404);
+    // 1) AI 结果改为通过
+    await setResumeAiResult(db, id, '通过', 'HR 手动推送：AI 初筛不通过后人工改为通过');
+    // 2) 推送到业务链接（复用统一推送服务，正常发送飞书卡片）
+    const result = await pushResumesToBusinessScreening(db, deps, {
+      ids: [id],
+      expiresInDays: body?.expires_in_days,
+      silent: body?.silent === true,
+      createdBy: user.email || user.full_name || 'system',
+    }, { origin: new URL(c.req.url).origin, user, env: c.env });
+    const updated = (await deps.store.listResumesByIds(db, [id]))[0];
+    return c.json({
+      ...result,
+      ai_result: updated?.screening_result || '通过',
+      business_screening_status: updated?.business_screening_status || 'pending',
+    });
+  });
+
+  // ==================== 手动淘汰：AI 通过 → 改为不通过并从业务链接移除 ====================
+  app.post('/api/resumes/:id/business-screening/eliminate', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
+    const id = c.req.param('id');
+    const db = c.env.DB as D1Database;
+    const resume = (await deps.store.listResumesByIds(db, [id]))[0];
+    if (!resume) return c.json({ detail: 'Candidate not found' }, 404);
+    await setResumeAiResult(db, id, '不通过', 'HR 手动淘汰：AI 初筛通过后人工改为不通过');
+    const { removed } = await deps.store.removeResumeFromBusinessScreeningBatches(db, id, deps.now());
+    const updated = (await deps.store.listResumesByIds(db, [id]))[0];
+    return c.json({
+      ok: true,
+      removed,
+      ai_result: updated?.screening_result || '不通过',
+      hr_disposition: updated?.hr_disposition || 'pending',
+      business_screening_status: updated?.business_screening_status || 'not_ready',
+    });
+  });
+
 
   app.get('/api/public/business-screening/:token', async (c) => {
     const tokenHash = await hashPublicToken(c.req.param('token'));
@@ -1211,6 +1074,319 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
   return app;
 }
+
+// 档案优选：仅完成 AI 初筛、缺结构化档案的简历（重复上传场景），
+// 自动替换为同名、AI 初筛通过、同标准岗位且档案最全的另一条简历，
+// 保证业务筛选链接推送的是有候选人档案的那条；替换后按 id 去重防重复。
+async function optimizeResumesForProfile(
+  db: D1Database,
+  deps: Pick<BusinessScreeningRouteDeps, 'store'>,
+  resumes: BusinessScreeningResumeRecord[],
+  resolveStandardTitle: (rawTitle: string) => string,
+): Promise<BusinessScreeningResumeRecord[]> {
+  const profileMissing = resumes.filter((resume) => !hasResumeProfile(resume));
+  if (profileMissing.length === 0) return resumes;
+  const names = uniqueStrings(profileMissing.map((resume) => text(resume.candidate_name)));
+  if (names.length === 0) return resumes;
+  const sameNameRows = await deps.store.findSameNameProfiles(db, names);
+  const replacementByOriginal = new Map<string, string>();
+  const replacementIds = new Set<string>();
+  for (const resume of profileMissing) {
+    const name = text(resume.candidate_name);
+    if (!name) continue;
+    const candidates = sameNameRows
+      .filter((row) => row.id !== resume.id && text(row.candidate_name) === name)
+      .filter((row) => text(row.screening_result) === '通过');
+    const best = pickBestSameNameProfile(candidates);
+    if (!best) continue;
+    // 必须是同一标准岗位（保证责任人一致），避免同名不同岗张冠李戴
+    const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
+    const bestTitle = text(best.mapped_position) || text(best.position_applied);
+    if (resolveStandardTitle(rawTitle) !== resolveStandardTitle(bestTitle)) continue;
+    replacementByOriginal.set(resume.id, best.id);
+    replacementIds.add(best.id);
+  }
+  if (replacementIds.size === 0) return resumes;
+  const replacementRows = await deps.store.listResumesByIds(db, [...replacementIds]);
+  const replacementById = new Map(replacementRows.map((row) => [row.id, row]));
+  const seen = new Set<string>();
+  const optimized: BusinessScreeningResumeRecord[] = [];
+  for (const resume of resumes) {
+    const replacementId = replacementByOriginal.get(resume.id);
+    const chosen = replacementId ? (replacementById.get(replacementId) || resume) : resume;
+    if (seen.has(chosen.id)) continue;
+    seen.add(chosen.id);
+    optimized.push(chosen);
+  }
+  return optimized;
+}
+
+/**
+ * 手动覆盖 AI 初筛结果（通过/不通过）：更新 screening_result 列，
+ * 并同步 ai_review / ai_evaluation JSON 内的 screening_result / screening_reason，保持口径一致。
+ */
+async function setResumeAiResult(
+  db: D1Database,
+  resumeId: string,
+  result: '通过' | '不通过',
+  reason?: string,
+): Promise<void> {
+  const row = await db.prepare('SELECT ai_review, ai_evaluation FROM resumes WHERE id = ?')
+    .bind(resumeId).first<{ ai_review: string | null; ai_evaluation: string | null }>();
+  const patch = (raw: unknown): string | null => {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    try {
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== 'object') return null;
+      obj.screening_result = result;
+      if (reason) obj.screening_reason = reason;
+      return JSON.stringify(obj);
+    } catch { return null; }
+  };
+  const aiReview = patch(row?.ai_review);
+  const aiEvaluation = patch(row?.ai_evaluation);
+  await db.prepare(
+    `UPDATE resumes
+        SET screening_result = ?,
+            ai_review = COALESCE(?, ai_review),
+            ai_evaluation = COALESCE(?, ai_evaluation),
+            updated_at = ?
+      WHERE id = ?`,
+  ).bind(result, aiReview, aiEvaluation, new Date().toISOString(), resumeId).run();
+}
+
+export interface BusinessScreeningPushInput {
+  ids: string[];
+  expiresInDays?: unknown;
+  /** 静默：只生成链接并加入批次，不发送飞书卡片 */
+  silent?: boolean;
+  /** 仅新建批次时发送飞书卡片（AI 自动推送用：追加到已有批次不重复打扰） */
+  notifyNewBatchOnly?: boolean;
+  title?: string | null;
+  subtitle?: string | null;
+  tempLink?: boolean;
+  batchId?: string | null;
+  createdBy?: string;
+}
+
+export interface BusinessScreeningPushResponse {
+  ok: boolean;
+  pushed: string[];
+  skipped: Array<{ id: string; reason: string }>;
+  failed: Array<{ interviewer: string; reason: string }>;
+  batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number; expiresAt: string | null; title?: string; subtitle?: string }>;
+}
+
+/**
+ * 统一业务筛选推送服务：把一批简历按面试官分组推送到业务筛选链接（复用固定批次/链接）。
+ * 供三处复用：手动推送端点、AI 初筛通过自动推送、HR 手动把不通过改为通过后的推送。
+ */
+export async function pushResumesToBusinessScreening(
+  db: D1Database,
+  deps: BusinessScreeningRouteDeps,
+  input: BusinessScreeningPushInput,
+  context: { origin: string; user: HrUser | null; env: any },
+): Promise<BusinessScreeningPushResponse> {
+  const ids = uniqueStrings(input.ids);
+  if (ids.length === 0) {
+    return { ok: true, pushed: [], skipped: [], failed: [], batches: [] };
+  }
+  const requestedTitle = input.title !== undefined && input.title !== null
+    ? normalizeBusinessScreeningTitle(input.title) || DEFAULT_BUSINESS_SCREENING_TITLE
+    : undefined;
+  const requestedSubtitle = input.subtitle !== undefined && input.subtitle !== null
+    ? text(input.subtitle) || null
+    : undefined;
+  // 历史兼容参数：当前普通推送已允许任意 AI 结果，temp_link 不再额外改变推送资格
+  const tempLink = input.tempLink === true;
+  // 静默生成：只生成链接，不自动发送飞书卡片给面试官/业务方
+  const silent = input.silent === true;
+  // 仅新建批次时发送卡片（AI 自动推送：追加到已有批次不重复打扰）
+  const notifyNewBatchOnly = input.notifyNewBatchOnly === true;
+  const appendTo = typeof input.batchId === 'string' && input.batchId.trim()
+    ? input.batchId.trim()
+    : null;
+  const user: HrUser = context.user || { id: 'system', email: '', role: 'system', full_name: '系统自动' };
+
+  const nowIso = deps.now();
+  const resumes = await deps.store.listResumesByIds(db, ids);
+  const resumesById = new Map(resumes.map((resume) => [resume.id, resume]));
+  const rawPositionTitles = uniqueStrings(resumes.map((resume) => text(resume.mapped_position) || text(resume.position_applied)));
+  const mappings = await deps.store.listPositionMappings(db, rawPositionTitles);
+  const standardByRaw = new Map(mappings.map((mapping) => [mapping.raw_name, mapping.mapped_name]));
+  const resolveStandardTitle = (rawTitle: string): string => standardByRaw.get(rawTitle) || rawTitle;
+  const positionTitles = uniqueStrings(rawPositionTitles.map(resolveStandardTitle));
+  const positions = await deps.store.listPositionsByTitles(db, positionTitles);
+  const positionsByTitle = new Map(positions.map((position) => [position.title, position]));
+  const responsibleNames = uniqueStrings(positions.flatMap((position) => [position.responsible_person]));
+  const interviewerDirectoryRows = await deps.store.listInterviewerDirectory(db, responsibleNames);
+  const interviewerDirectory = new Map(interviewerDirectoryRows.map((entry) => [entry.name, entry]));
+
+  const skipped: Array<{ id: string; reason: string }> = [];
+  const eligibleResumes: BusinessScreeningResumeRecord[] = [];
+  const eligibilityOptions = tempLink ? { skipAiCheck: true, skipPushStateCheck: true } : undefined;
+  for (const id of ids) {
+    const resume = resumesById.get(id);
+    if (!resume) {
+      skipped.push({ id, reason: '简历不存在' });
+      continue;
+    }
+    const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
+    const positionTitle = resolveStandardTitle(rawTitle);
+    const position = positionsByTitle.get(positionTitle);
+    const groups = groupEligibleResumesForPush([resume], positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
+    if (groups.size === 0) {
+      const reason = summarizeSkipReason(resume, position, interviewerDirectory, eligibilityOptions);
+      skipped.push({ id, reason });
+      continue;
+    }
+    eligibleResumes.push(resume);
+  }
+
+  // 临时链接模式（模式 B）：直接放入用户指定简历，不做同名档案优选替换
+  // （优选替换在无责任人的同名岗位组合下会异常，且临时链接本就不需要）
+  const eligible = tempLink
+    ? eligibleResumes
+    : await optimizeResumesForProfile(db, deps, eligibleResumes, resolveStandardTitle);
+  const grouped = groupEligibleResumesForPush(eligible, positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
+  const sender = await resolveSenderEmail(context.env, user, deps);
+  const currentUserToken = sender.email ? await deps.getCurrentUserToken(context.env, sender.email) : null;
+  const keyNoSenderReason = user.id === 'api-key' && !sender.email ? sender.reason : null;
+  const pushedResumeIds = uniqueStrings([...grouped.values()].flatMap((group) => group.resumes.map((resume) => resume.id)));
+  const failed: Array<{ interviewer: string; reason: string }> = [];
+  const batches: Array<{ batchId: string; interviewer: string; url: string; itemCount: number; expiresAt: string | null; title?: string; subtitle?: string }> = [];
+  const dispatchGroupId = deps.uuid();
+
+  for (const group of grouped.values()) {
+    // 固定业务范围改为“面试官”：同一面试官跨岗位、跨多次推送复用同一个有效链接，
+    // 简历只追加到同一批次；批次过期后才创建新周期链接。
+    const scopeKey = group.interviewer.openId;
+    // 临时链接模式（模式 B）：默认每次生成独立新批次/新链接（内容=当次范围），
+    // 不复用 scope 固定批次，避免与推送链接内容互相污染；
+    // 支持 input.batchId 显式指定追加到某批次（大批量分批归拢同一链接用）。
+    let existing: ResumePushBatchRow | null = null;
+    if (appendTo) {
+      existing = await deps.store.loadBatchById(db, appendTo);
+    } else if (!tempLink) {
+      existing = await deps.store.loadBatchByScope(db, scopeKey, nowIso);
+      // 兼容已上线的旧批次：旧版 scope_key 为“岗位::面试官”，仍沿用其原链接，
+      // 后续新批次才统一写入面试官 scope。
+      if (!existing) {
+        existing = await deps.store.loadBatchByInterviewer(db, group.interviewer.openId, nowIso);
+      }
+      if (!existing) {
+        existing = await deps.store.loadLatestBatchByInterviewer(db, group.interviewer.openId);
+      }
+    }
+    const tokenScopeKey = existing?.scope_key?.trim() || scopeKey;
+    const itemCreatedAt = deps.now();
+    const expiresAt = resolveExpiresAt(nowIso, input.expiresInDays);
+    const batchTitle = requestedTitle ?? existing?.batch_title ?? null;
+    const batchSubtitle = requestedSubtitle ?? existing?.batch_subtitle ?? null;
+    const isNewBatch = !existing;
+
+    let batchId: string;
+    if (existing) {
+      batchId = existing.id;
+      // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
+      await deps.store.resetBatchActive(db, batchId);
+      await deps.store.refreshBatchExpiry(db, batchId, expiresAt);
+      await deps.store.updateBatchPresentation(db, batchId, {
+        title: requestedTitle,
+        subtitle: requestedSubtitle,
+      });
+    } else {
+      batchId = deps.uuid();
+    }
+    // 链接由 scope + batchId 确定：有效期内复用同一批次 → 同一链接；过期新建批次 → 新链接
+    const issued = await deps.createScopePublicToken(tokenScopeKey, batchId);
+    const url = `${context.origin}/business-screening/${issued.token}`;
+    const items: CreateResumePushBatchItemInput[] = group.resumes.map((resume) => {
+      const rawTitle = text(resume.mapped_position) || text(resume.position_applied);
+      const standardTitle = resolveStandardTitle(rawTitle);
+      return {
+        id: deps.uuid(),
+        batchId,
+        resumeId: resume.id,
+        positionId: resume.position_id || positionsByTitle.get(standardTitle)?.id || null,
+        createdAt: itemCreatedAt,
+        dispatchGroupId,
+      };
+    });
+
+    if (existing) {
+      await deps.store.appendBatchItemsIfAbsent(db, items);
+    } else {
+      await deps.store.createBatch(db, {
+        id: batchId,
+        interviewerId: group.interviewer.userId || null,
+        interviewerName: group.interviewer.name,
+        interviewerOpenId: group.interviewer.openId,
+        tokenHash: issued.tokenHash,
+        expiresAt,
+        createdBy: input.createdBy || user.email || 'system',
+        createdAt: nowIso,
+        lastSentAt: null,
+        dispatchGroupId,
+        batchTitle,
+        batchSubtitle,
+        scopeKey,
+      }, items);
+    }
+    await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId, dispatchGroupId);
+    const pendingCount = await deps.store.countPendingBatchItems(db, batchId);
+
+    batches.push({
+      batchId,
+      interviewer: group.interviewer.name,
+      url,
+      itemCount: items.length,
+      expiresAt,
+      title: batchTitle || undefined,
+      subtitle: batchSubtitle || undefined,
+    });
+
+    const shouldSendCard = !silent && (!notifyNewBatchOnly || isNewBatch);
+    if (shouldSendCard) {
+      if (!currentUserToken) {
+        // 登录态/API Key 手动推送：记录失败原因；系统自动推送：静默跳过
+        if (user.id && user.id !== 'system') {
+          failed.push({
+            interviewer: group.interviewer.name,
+            reason: keyNoSenderReason || '当前账号未授权飞书身份，无法发送业务筛选链接',
+          });
+        }
+        continue;
+      }
+
+      try {
+        const positionTitle = group.positionTitles.length === 1
+          ? group.positionTitles[0]
+          : `多个岗位（${group.positionTitles.length}个）`;
+        await deps.sendFeishuMessageToUser(currentUserToken, group.interviewer.openId, buildFeishuCard({
+          positionTitle,
+          itemCount: pendingCount,
+          url,
+        }));
+        await deps.store.setBatchLastSentAt(db, batchId, deps.now());
+      } catch (error) {
+        failed.push({
+          interviewer: group.interviewer.name,
+          reason: error instanceof Error ? error.message : '业务筛选链接发送失败',
+        });
+      }
+    }
+  }
+
+  return {
+    ok: failed.length === 0,
+    pushed: pushedResumeIds,
+    skipped,
+    failed,
+    batches,
+  };
+}
+
 
 async function queryAll<T>(db: D1Database, sql: string, values: unknown[]): Promise<T[]> {
   const result = await db.prepare(sql).bind(...values).all<T>();
