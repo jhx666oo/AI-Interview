@@ -609,6 +609,48 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     }
   });
 
+  // 岗位管理页：按岗位查业务推送链接（每岗位取最近一条活跃批次，固定链接一人/一岗位维度）
+  app.get('/api/positions/business-screening-links', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
+    try {
+      const db = c.env.DB as D1Database;
+      const nowIso = deps.now();
+      const origin = new URL(c.req.url).origin;
+      const positionIds = uniqueStrings(String(c.req.query('position_ids') || '').split(',').map((s) => s.trim()).filter(Boolean));
+      const sql = `
+        SELECT bi.position_id, b.id AS batch_id, b.scope_key, b.interviewer_name,
+               b.status, b.expires_at, b.created_at
+          FROM resume_push_batch_items bi
+          JOIN resume_push_batches b ON b.id = bi.batch_id
+         WHERE bi.position_id IS NOT NULL AND bi.position_id != ''
+           AND b.scope_key IS NOT NULL AND b.scope_key != ''
+           AND b.status IN ('active', 'completed')
+           AND (b.expires_at IS NULL OR b.expires_at > ?)
+         ${positionIds.length ? `AND bi.position_id IN (${positionIds.map(() => '?').join(',')})` : ''}
+         ORDER BY b.created_at DESC`;
+      const binds: any[] = [nowIso, ...positionIds];
+      const rows = await db.prepare(sql).bind(...binds).all();
+      const latestByPosition = new Map<string, any>();
+      for (const row of (rows.results || []) as any[]) {
+        if (!latestByPosition.has(row.position_id)) latestByPosition.set(row.position_id, row);
+      }
+      const items: any[] = [];
+      for (const [positionId, row] of latestByPosition) {
+        const issued = await deps.createScopePublicToken(row.scope_key, row.batch_id);
+        items.push({
+          position_id: positionId,
+          url: `${origin}/business-screening/${issued.token}`,
+          batch_id: row.batch_id,
+          interviewer: row.interviewer_name || '',
+          expires_at: row.expires_at || null,
+        });
+      }
+      return c.json({ ok: true, total: items.length, items });
+    } catch (e: any) {
+      console.error(`[business-screening] 按岗位查询推送链接失败: ${e.message}`);
+      return c.json({ detail: '查询失败: ' + e.message }, 500);
+    }
+  });
+
   app.post('/api/resumes/business-screening/push', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const ids = uniqueStrings(Array.isArray(body?.ids) ? body.ids : []);
