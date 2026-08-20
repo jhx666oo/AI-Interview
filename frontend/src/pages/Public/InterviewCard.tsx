@@ -6,8 +6,6 @@ import {
   UserOutlined, FileTextOutlined, CheckCircleOutlined,
   HistoryOutlined, CommentOutlined, DownloadOutlined, PhoneOutlined, SyncOutlined,
 } from '@ant-design/icons';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import request from '../../utils/request';
 import { useViewportWidth } from '../../components/Layout/responsive';
 import {
@@ -460,7 +458,6 @@ const InterviewCard: React.FC = () => {
   const suggestedQuestions = asDisplayTextList((aiReviewObject as any).suggested_questions);
   const matchedSkills = asDisplayTextList((aiReviewObject as any).skill_match?.matched);
   const skillGaps = asDisplayTextList((aiReviewObject as any).skill_match?.gaps);
-  const ocrText = candidate.ocr_markdown || candidate.raw_text || candidate.resume_markdown || '';
 
   const pdfUrl = `/api/public/interview-card/${token}/file?preview=1`;
   const downloadUrl = `/api/public/interview-card/${token}/file`;
@@ -636,19 +633,6 @@ const InterviewCard: React.FC = () => {
               {skillGaps.map((s, i) => <Tag key={`g${i}`} color="orange" style={{ margin: 0 }}>待验证：{s}</Tag>)}
             </div>
           )}
-        </div>
-      )}
-
-      {/* 简历文本识别（OCR Markdown，与简历详情页一致） */}
-      {ocrText && (
-        <div style={sectionCardStyle}>
-          <div style={sectionTitleStyle}>
-            <FileTextOutlined style={{ color: '#6366F1' }} /> 简历文本识别
-            <span style={{ fontSize: 12, fontWeight: 400, color: '#94A3B8' }}>OCR 结构化文本</span>
-          </div>
-          <div style={{ background: '#F8FAFC', padding: '16px 20px', borderRadius: 12, border: '1px solid #E2E8F0', maxHeight: 480, overflow: 'auto', fontSize: 13 }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{ocrText.substring(0, 100000)}</ReactMarkdown>
-          </div>
         </div>
       )}
 
