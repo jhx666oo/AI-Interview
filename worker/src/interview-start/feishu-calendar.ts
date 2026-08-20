@@ -341,7 +341,8 @@ export async function createInterviewCalendarEvent(
     start_time: { timestamp: String(Math.floor(input.startTimestamp)), timezone },
     end_time: { timestamp: String(Math.floor(input.endTimestamp)), timezone },
     vchat: { vc_type: 'vc' },
-    reminders: [{ minutes: 15 }],
+    // 面试前 30 分钟提醒（纯飞书 HTTP：日程 reminder 通知参与者=面试官）
+    reminders: [{ minutes: 30 }],
   };
 
   const created = await feishuRequest(
