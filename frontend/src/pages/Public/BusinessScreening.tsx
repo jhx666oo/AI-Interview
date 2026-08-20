@@ -782,7 +782,7 @@ const BusinessScreeningPage: React.FC = () => {
                         <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                           <span className="business-screening-position" style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14, overflowWrap: 'anywhere' }}>{activeResume.position}</span>
                           {activeResume.education ? <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>{activeResume.education}</span> : null}
-                          {activeResume.workExperience ? <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>{activeResume.workExperience}</span> : null}
+                          {activeResume.profile?.recentCompany ? <span style={{ borderRadius: 999, background: '#f1f5f9', color: '#334155', padding: '6px 12px', fontSize: 14 }}>{activeResume.profile.recentCompany}</span> : null}
                         </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -846,7 +846,9 @@ const BusinessScreeningPage: React.FC = () => {
                       </div>
                       <div>
                         <div style={{ color: '#64748b', fontSize: 13 }}>工作经验</div>
-                        <div>{activeResume.workExperience || '未提供'}</div>
+                        <div>
+                          {[activeResume.profile?.recentCompany, activeResume.profile?.currentTitle].filter(Boolean).join(' · ') || '未提供'}
+                        </div>
                       </div>
                       <div>
                         <div style={{ color: '#64748b', fontSize: 13 }}>处理时间</div>
