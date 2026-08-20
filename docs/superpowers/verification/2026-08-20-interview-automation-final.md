@@ -8,6 +8,7 @@
 
 - 前端：43 个测试文件、198 个测试通过；`npm run build`（TypeScript、Vite、Pages `_worker.js`）通过。
 - Worker：88 个测试文件、685 个测试通过；自动化 consumer 独立 esbuild bundle 通过。
+- Worker 全量 `npx tsc --noEmit` 仍返回非零，错误集中在既有 `index.ts`/旧 Hono 路由的 `c.env` 类型、ArrayBuffer 类型和旧仓库接口；本次新增自动化模块无过滤命中错误，且已由 consumer bundle 和定向测试覆盖。
 - 新增数据兼容工具：`scripts/audit_interview_rounds.sql` 只读；`scripts/backfill_interview_rounds.py` 默认 JSONL/dry-run，`--emit-sql` 才输出可审阅 SQL。
 - 新增漏斗口径：`FunnelQuery.computeInterviewStatuses()` 将待安排、已安排、已完成、通过/失败、人工处理和部分通知失败分开统计。
 
