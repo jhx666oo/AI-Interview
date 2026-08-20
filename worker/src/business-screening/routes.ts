@@ -1225,6 +1225,26 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         mapped.push({ resume_id: r.id, status });
       }
       await insertResumePushBatchItemsIfAbsent(db, items);
+      // upsert：更新已存在条目状态（INSERT OR IGNORE 不会更新，导致已决策简历状态停留在旧值）
+      if (items.length > 0) {
+        const CHUNK = 10;
+        for (let start = 0; start < items.length; start += CHUNK) {
+          const chunk = items.slice(start, start + CHUNK);
+          const cols = '(id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)';
+          const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+          const values: unknown[] = [];
+          for (const item of chunk) {
+            values.push(
+              item.id, item.batchId, item.resumeId, item.positionId || null, item.status || 'pending',
+              item.remark || null, item.processedAt || null, item.createdAt || nowIso, item.dispatchGroupId || null,
+            );
+          }
+          await db.prepare(
+            `INSERT INTO resume_push_batch_items ${cols} VALUES ${placeholders}
+             ON CONFLICT(batch_id, resume_id) DO UPDATE SET status = excluded.status, processed_at = excluded.processed_at`,
+          ).bind(...values).run();
+        }
+      }
       for (const m of mapped) {
         await db.prepare('UPDATE resumes SET business_screening_batch_id = ?, updated_at = ? WHERE id = ?')
           .bind(batchId, nowIso, m.resume_id).run();
