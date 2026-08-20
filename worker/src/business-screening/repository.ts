@@ -217,7 +217,9 @@ export async function markResumesPushed(
               business_screening_batch_id = ?,
               business_screening_dispatch_group_id = ?,
               updated_at = ?
-        WHERE id IN (${placeholders})`,
+        WHERE id IN (${placeholders})
+          AND COALESCE(status, '') NOT IN ('approved', 'rejected')
+          AND COALESCE(business_screening_status, '') NOT IN ('passed', 'rejected')`,
     ).bind(...values).run();
   }
 }

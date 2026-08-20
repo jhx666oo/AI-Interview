@@ -1200,7 +1200,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
 
       const nowIso = deps.now();
       const rows = await db.prepare(
-        `SELECT id, business_screening_status, hr_disposition FROM resumes WHERE id IN (${resumeIds.map(() => '?').join(',')})`,
+        `SELECT id, business_screening_status, hr_disposition, status FROM resumes WHERE id IN (${resumeIds.map(() => '?').join(',')})`,
       ).bind(...resumeIds).all();
 
       const items: CreateResumePushBatchItemInput[] = [];
@@ -1208,8 +1208,9 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       for (const r of (rows.results || []) as any[]) {
         const bs = String(r.business_screening_status || '');
         const hr = String(r.hr_disposition || '');
+        const st = String(r.status || '');
         let status: ResumePushBatchItemStatus = 'pending';
-        if (bs === 'passed') status = 'passed';
+        if (bs === 'passed' || (hr === 'pushed' && st === 'approved')) status = 'passed';
         else if (bs === 'rejected' || hr === 'rejected') status = 'rejected';
         items.push({
           id: deps.uuid(),
