@@ -663,9 +663,9 @@ const InterviewsList: React.FC = () => {
     },
     {
       title: '一面面试官', dataIndex: 'primary_interviewer', key: 'primary_interviewer', width: 84, ellipsis: { showTitle: false },
-      render: (v: string, r: MergedRow) => {
+      render: (v: string, r?: MergedRow) => {
         // 未填写时自动展示岗位管理配置的一面面试官（按岗位名称匹配）
-        const auto = resolveScheduleInterviewerDefaults({ standard_position: r.standard_position, position_applied: r.position_applied || r.position }, positions);
+        const auto = resolveScheduleInterviewerDefaults({ standard_position: r?.standard_position, position_applied: r?.position_applied || r?.position }, positions);
         const display = v || auto.interviewerName || '待分配';
         const fromPosition = !v && auto.matchedPositionTitle;
         return (
@@ -677,8 +677,8 @@ const InterviewsList: React.FC = () => {
     },
     {
       title: '二面面试官', dataIndex: 'secondary_interviewer', key: 'secondary_interviewer', width: 84, ellipsis: { showTitle: false },
-      render: (v: string, r: MergedRow) => {
-        const auto = resolveScheduleInterviewerDefaults({ standard_position: r.standard_position, position_applied: r.position_applied || r.position }, positions);
+      render: (v: string, r?: MergedRow) => {
+        const auto = resolveScheduleInterviewerDefaults({ standard_position: r?.standard_position, position_applied: r?.position_applied || r?.position }, positions);
         const display = v || auto.secondaryInterviewer || '-';
         const fromPosition = !v && auto.matchedPositionTitle;
         return (
@@ -834,8 +834,8 @@ const InterviewsList: React.FC = () => {
             subtitle: record => [record.standard_position || record.position_applied || record.position, record.education, record.city, record.interview_time].filter(Boolean).join(' · '),
             status: record => (columns[5] as any).render(null, record),
             fields: [
-              { key: 'primary_interviewer', label: '一面面试官', level: 'detail', render: record => (columns[7] as any).render(record.primary_interviewer) },
-              { key: 'secondary_interviewer', label: '二面面试官', level: 'detail', render: record => (columns[8] as any).render(record.secondary_interviewer) },
+              { key: 'primary_interviewer', label: '一面面试官', level: 'detail', render: record => (columns[7] as any).render(record.primary_interviewer, record) },
+              { key: 'secondary_interviewer', label: '二面面试官', level: 'detail', render: record => (columns[8] as any).render(record.secondary_interviewer, record) },
               { key: 'result1', label: '一面结果', level: 'detail', render: record => (columns[9] as any).render(null, record) },
               { key: 'result2', label: '二面结果', level: 'detail', render: record => (columns[10] as any).render(null, record) },
               { key: 'talent_status', label: '候选人状态', level: 'detail', render: record => record.talent_status || '-' },
