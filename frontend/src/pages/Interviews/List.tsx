@@ -163,7 +163,22 @@ const InterviewsList: React.FC = () => {
     // 岗位配置的面试官自动同步：优先已有岗位列表，缺失时先拉取再匹配（同安排面试弹窗）
     let positionList = positions;
     if (positionList.length === 0) positionList = await fetchPositions();
-    setEditDefaults(resolveScheduleInterviewerDefaults(record, positionList));
+    const defaults = resolveScheduleInterviewerDefaults(record, positionList);
+    setEditDefaults(defaults);
+    // 打开弹窗前直接填值（同安排面试弹窗模式，避免 afterOpenChange 挂载时序问题导致默认值丢失）
+    editForm.resetFields();
+    editForm.setFieldsValue({
+      position_applied: record.position_applied || record.position || '',
+      primary_interviewer: record.primary_interviewer || record.interviewer || defaults.interviewerName || '',
+      secondary_interviewer: record.secondary_interviewer || defaults.secondaryInterviewer || '',
+      interview_time: record.interview_time ? record.interview_time.substring(0, 16) : '',
+      interview_location: record.interview_location || '',
+      status: record.interview_status || 'scheduled',
+      evaluation: record.evaluation || '',
+      evaluation2: record.evaluation2 || '',
+      result: record.result || 'pending',
+      result2: record.result2 || 'pending',
+    });
     setEditModalVisible(true);
   };
 
@@ -177,8 +192,9 @@ const InterviewsList: React.FC = () => {
       if (editRecord.interview_id) {
         await request.put(`/interviews/${editRecord.interview_id}`, values);
       } else {
-        // 无面试记录时创建新的（带上候选人姓名）
-        await request.post('/interviews', { ...values, candidate_name: editRecord.candidate_name, status: values.status || 'scheduled' });
+        // 无面试记录时创建「待安排」面试（awaiting_schedule），不直接置为已安排；
+        // 之后用「安排面试」按钮选时间走完整自动化流程（建会议+通知候选人）
+        await request.post('/interviews', { ...values, candidate_name: editRecord.candidate_name, status: 'awaiting_schedule' });
       }
       message.success('已保存');
       setEditModalVisible(false);
@@ -449,12 +465,30 @@ const InterviewsList: React.FC = () => {
           timezone: 'Asia/Shanghai',
         });
       } else {
-        await request.post('/interviews/create-from-talent', buildCreateFromTalentPayload({
+        // 无面试记录：先创建「待安排」面试，再立即触发自动化安排（建会议链接 + 面试官卡片附简历 + 候选人邮件）
+        if (!values.interview_date || !values.interview_time) {
+          message.error('自动化安排面试必须填写日期和时间');
+          return;
+        }
+        const created = await request.post('/interviews/create-from-talent', buildCreateFromTalentPayload({
           record: scheduleRecord,
           values,
           defaults: scheduleDefaults,
           interviewTime,
-        }));
+        })) as any;
+        const interviewId = created?.id || created?.interview_id;
+        if (interviewId) {
+          const localStart = `${values.interview_date.format('YYYY-MM-DD')}T${values.interview_time.format('HH:mm')}:00+08:00`;
+          await request.post(`/interviews/${interviewId}/schedule`, {
+            start_at: new Date(localStart).toISOString(),
+            duration_minutes: 60,
+            interview_type: 'video',
+            location: values.interview_location || '',
+            timezone: 'Asia/Shanghai',
+          });
+        } else {
+          message.warning('面试记录已创建但未获取到 ID，自动化排期未触发，可在面试管理重新安排');
+        }
       }
       message.success(`已安排面试：${name}`);
       setScheduleModalVisible(false);

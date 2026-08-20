@@ -43,7 +43,7 @@ import { createPublicToken, createScopePublicToken, hashPublicToken } from './bu
 import { syncAiResultToBusinessScreening, buildBusinessScreeningAutoLinkDeps } from './business-screening/auto-link';
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
 import { createInterviewAutomationRoutes } from './interview-automation/routes';
-import { createInterviewCalendarEvent, findFirstFreeInterviewSlot } from './interview-start/feishu-calendar';
+import { createInterviewCalendarEvent, findFirstFreeInterviewSlot, listFreeInterviewSlots } from './interview-start/feishu-calendar';
 import { sendInterviewerInterviewReminder, sendFeishuTextMessage } from './interview-start/reminders';
 import {
   frontendBaseUrl,
@@ -5249,11 +5249,37 @@ async function findPositionByName(db: any, positionName: unknown): Promise<any |
   ).bind(mappedName).first();
 }
 
+// 安排面试：查一面面试官未来空闲时段（供弹窗推荐，自动定日程）
+app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
+  try {
+    const interviewer = String(c.req.query('interviewer') || '').trim();
+    if (!interviewer) return c.json({ ok: true, slots: [], reason: '请先选择一面面试官' });
+    const openId = await resolveExactInterviewerOpenId(c.env.DB as D1Database, interviewer);
+    if (!openId) return c.json({ ok: true, slots: [], reason: `面试官「${interviewer}」未绑定飞书身份，暂无法推荐空闲时段` });
+    const token = await getFeishuToken(c.env);
+    const slots = await listFreeInterviewSlots({
+      token,
+      openId,
+      fromTs: Math.floor(Date.now() / 1000),
+      durationMinutes: 60,
+      skipWorkdays: 2,
+      workdays: 3,
+    });
+    return c.json({
+      ok: true,
+      interviewer,
+      slots: slots.map((s) => ({ start: formatBeijingSlot(s.startTs), end: formatBeijingSlot(s.endTs) })),
+    });
+  } catch (e: any) {
+    return c.json({ ok: true, slots: [], reason: `空闲时段查询失败：${e?.message || e}` });
+  }
+});
+
 // 从人才库创建面试（人才库"面试"按钮调用）
 app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
   try {
     const body = await c.req.json();
-    const { candidate_name, position_applied, city, feishu_record_id, interviewer_name, secondary_interviewer } = body;
+    const { candidate_name, position_applied, city, feishu_record_id, interviewer_name, secondary_interviewer, interview_time } = body;
     const currentUser = c.get('user');
 
     if (!candidate_name) {
@@ -5360,7 +5386,7 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
 
     await c.env.DB.prepare(
       `INSERT INTO interviews (id, resume_id, candidate_name, interviewer, position_id, position_applied, status, created_at, comments, primary_interviewer, secondary_interviewer)
-       VALUES (?, ?, ?, ?, ?, ?, 'scheduled', datetime('now'), ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, 'awaiting_schedule', datetime('now'), ?, ?, ?)`
     ).bind(
       interviewId,
       feishu_record_id || '',
@@ -5396,7 +5422,7 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
           }
 
           cardElements.push(
-            { tag: 'div', text: { tag: 'lark_md', content: `${operatorName} 为你安排了面试，请及时查看候选人简历，面试结束后在系统内填写评价。` } },
+            { tag: 'div', text: { tag: 'lark_md', content: `${operatorName} 为候选人安排了面试，请留意后续会议邀请，及时查看候选人简历，面试结束后在系统内填写评价。` } },
             { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🔍 查看候选人' }, type: 'primary', url: `https://ai-interview-88r.pages.dev/talent-pool` }] },
             { tag: 'note', elements: [{ tag: 'plain_text', content: `${operatorName} | AI 智能面试系统` }] }
           );
@@ -8784,11 +8810,14 @@ app.put('/api/interviews/:id', authMiddleware, async (c) => {
   return c.json(iv ? transformRow(iv) : null);
 });
 
-// 手动新建面试
+// 手动新建面试（status 默认 scheduled；编辑弹窗对未安排候选人传 awaiting_schedule 表示「待安排」）
 app.post('/api/interviews', authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const id = crypto.randomUUID();
   const time = body.interview_time || '';
+  const status = ['scheduled', 'awaiting_schedule', 'manual_review'].includes(String(body.status || ''))
+    ? String(body.status)
+    : 'scheduled';
   let position: any = null;
   try {
     position = await findPositionByName(c.env.DB, body.position_applied);
@@ -8800,7 +8829,7 @@ app.post('/api/interviews', authMiddleware, async (c) => {
   ).bind(id, body.candidate_name || '', position?.id || '', position?.title || body.position_applied || '',
     assignment.interviewer, assignment.primaryInterviewer,
     assignment.secondaryInterviewer,
-    time, body.interview_location || '', 'scheduled', now()).run();
+    time, body.interview_location || '', status, now()).run();
   // 埋点：面试安排创建
   await logOperation(c.env, {
     action: 'interview.create',
@@ -14331,64 +14360,76 @@ app.post('/api/admin/reparse-work-experience', businessScreeningAuthMiddleware, 
 });
 
 // ==================== 管理端点：简历重置为待安排面试 ====================
-// 把简历恢复到「待安排面试」初始阶段：status/stage=pending_interview，
+// 把简历恢复到「已入库待安排面试」初始阶段：status=approved（已入库，前端「安排面试」按钮可点）、stage=talent_pool，
 // 业务筛选状态重置为 not_ready、hr_disposition=pending、清空批次关联，
-// 并从所有业务筛选批次移除该简历的条目（AI 初筛结果 screening_result 保持不变）。
+// 并从所有业务筛选批次移除该简历的条目、删除关联面试记录（AI 初筛结果 screening_result 保持不变）。
+// ids 内部按 90 分批执行（D1 单语句绑定参数上限 100）。
 // 鉴权：JWT admin 或长期 API Key（x-api-key）。
 app.post('/api/admin/reset-resumes-pending-interview', businessScreeningAuthMiddleware, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const ids = Array.isArray(body?.ids) ? body.ids.map((s: unknown) => String(s).trim()).filter(Boolean) : [];
-    if (ids.length === 0) return c.json({ detail: 'ids 不能为空' }, 400);
+    const allIds = Array.isArray(body?.ids) ? body.ids.map((s: unknown) => String(s).trim()).filter(Boolean) : [];
+    if (allIds.length === 0) return c.json({ detail: 'ids 不能为空' }, 400);
 
     const nowIso = now();
-    const placeholders = ids.map(() => '?').join(',');
     const db = c.env.DB as D1Database;
-
-    // 从所有业务筛选批次移除该简历条目（含已决策记录）
-    const del = await db.prepare(
-      `DELETE FROM resume_push_batch_items WHERE resume_id IN (${placeholders})`,
-    ).bind(...ids).run();
-
-    // 重置为待安排面试初始阶段
-    await db.prepare(
-      `UPDATE resumes
-          SET status = 'pending_interview',
-              stage = 'pending_interview',
-              business_screening_status = 'not_ready',
-              hr_disposition = 'pending',
-              business_screening_batch_id = NULL,
-              business_screening_dispatch_group_id = NULL,
-              business_screened_at = NULL,
-              business_screened_by = '',
-              updated_at = ?
-        WHERE id IN (${placeholders})`,
-    ).bind(nowIso, ...ids).run();
-
-    // 删除关联面试记录（按 resume_id 与候选人姓名匹配），面试管理页回到「待安排面试」初始状态
-    const nameRows = await db.prepare(
-      `SELECT candidate_name FROM resumes WHERE id IN (${placeholders}) AND candidate_name IS NOT NULL AND candidate_name != ''`,
-    ).bind(...ids).all();
-    const names = [...new Set((nameRows.results || []).map((r: any) => String(r.candidate_name)))];
+    let removedItems = 0;
     let deletedInterviews = 0;
-    const delIv = await db.prepare(
-      `DELETE FROM interviews WHERE resume_id IN (${placeholders})`,
-    ).bind(...ids).run();
-    deletedInterviews += delIv.meta?.changes ?? 0;
-    if (names.length > 0) {
-      const namePh = names.map(() => '?').join(',');
-      const delIvName = await db.prepare(
-        `DELETE FROM interviews WHERE candidate_name IN (${namePh})`,
-      ).bind(...names).run();
-      deletedInterviews += delIvName.meta?.changes ?? 0;
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < allIds.length; i += 90) chunks.push(allIds.slice(i, i + 90));
+
+    for (const ids of chunks) {
+      const placeholders = ids.map(() => '?').join(',');
+
+      // 从所有业务筛选批次移除该简历条目（含已决策记录）
+      const del = await db.prepare(
+        `DELETE FROM resume_push_batch_items WHERE resume_id IN (${placeholders})`,
+      ).bind(...ids).run();
+      removedItems += del.meta?.changes ?? 0;
+
+      // 重置为已入库待安排面试初始阶段（approved 使面试管理「安排面试」按钮可用）
+      await db.prepare(
+        `UPDATE resumes
+            SET status = 'approved',
+                stage = 'talent_pool',
+                business_screening_status = 'not_ready',
+                hr_disposition = 'pending',
+                business_screening_batch_id = NULL,
+                business_screening_dispatch_group_id = NULL,
+                business_screened_at = NULL,
+                business_screened_by = '',
+                updated_at = ?
+          WHERE id IN (${placeholders})`,
+      ).bind(nowIso, ...ids).run();
+
+      // 删除关联面试记录（按 resume_id 与候选人姓名匹配），面试管理页回到「待安排面试」初始状态
+      const nameRows = await db.prepare(
+        `SELECT candidate_name FROM resumes WHERE id IN (${placeholders}) AND candidate_name IS NOT NULL AND candidate_name != ''`,
+      ).bind(...ids).all();
+      const names = [...new Set((nameRows.results || []).map((r: any) => String(r.candidate_name)))];
+      const delIv = await db.prepare(
+        `DELETE FROM interviews WHERE resume_id IN (${placeholders})`,
+      ).bind(...ids).run();
+      deletedInterviews += delIv.meta?.changes ?? 0;
+      if (names.length > 0) {
+        for (let j = 0; j < names.length; j += 90) {
+          const nameChunk = names.slice(j, j + 90);
+          const namePh = nameChunk.map(() => '?').join(',');
+          const delIvName = await db.prepare(
+            `DELETE FROM interviews WHERE candidate_name IN (${namePh})`,
+          ).bind(...nameChunk).run();
+          deletedInterviews += delIvName.meta?.changes ?? 0;
+        }
+      }
     }
 
     await logOperation(c.env, {
       action: 'admin.reset_resumes_pending_interview',
       actor: (c.get('user') as any)?.email || 'api-key',
-      detail: JSON.stringify({ ids, removed_items: del.meta?.changes ?? 0, deleted_interviews: deletedInterviews }),
+      detail: JSON.stringify({ ids: allIds, removed_items: removedItems, deleted_interviews: deletedInterviews }),
     });
-    return c.json({ ok: true, reset: ids.length, removed_items: del.meta?.changes ?? 0, deleted_interviews: deletedInterviews });
+    return c.json({ ok: true, reset: allIds.length, removed_items: removedItems, deleted_interviews: deletedInterviews });
   } catch (e: any) {
     return c.json({ ok: false, detail: `重置失败: ${e?.message || e}` }, 500);
   }
