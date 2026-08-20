@@ -200,7 +200,7 @@ async function fetchMergedBusy(
         body: JSON.stringify({
           time_min: toFeishuBeijingIso(windows[0].start),
           time_max: toFeishuBeijingIso(windows[windows.length - 1].end),
-          user_ids: [openId],
+          user_id: openId,
         }),
       },
       token,
