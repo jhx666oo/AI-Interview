@@ -251,6 +251,14 @@ const InterviewScore: React.FC = () => {
                 </Typography.Link>
               </div>
             )}
+            {flow.card_link && (
+              <div>
+                面试卡片链接（看简历/填评价）：
+                <Typography.Link href={flow.card_link} target="_blank" style={{ wordBreak: 'break-all' }}>
+                  {flow.card_link}
+                </Typography.Link>
+              </div>
+            )}
             <div>邮件通知：{emailText}</div>
             {Array.isArray(flow.warnings) && flow.warnings.length > 0 && (
               <div style={{ color: '#d46b08' }}>
