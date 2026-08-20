@@ -1447,7 +1447,8 @@ export async function pushResumesToBusinessScreening(
 
   // 临时链接模式（模式 B）：直接放入用户指定简历，不做同名档案优选替换
   // （优选替换在无责任人的同名岗位组合下会异常，且临时链接本就不需要）
-  const eligible = tempLink
+  // 指定岗位推送（overrideTitle）：同名优选会从 DB 重查替换行导致岗位覆盖丢失，直接按指定岗位分组
+  const eligible = (tempLink || overrideTitle)
     ? eligibleResumes
     : await optimizeResumesForProfile(db, deps, eligibleResumes, resolveStandardTitle);
   const grouped = groupEligibleResumesForPush(eligible, positions, interviewerDirectoryRows, resolveStandardTitle, eligibilityOptions);
