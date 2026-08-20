@@ -8438,7 +8438,17 @@ app.get('/api/interviews/:id/questions', authMiddleware, async (c) => {
 
 app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
   const id = c.req.param('id');
-  await c.env.DB.prepare("UPDATE interviews SET status = 'in_progress', started_at = ? WHERE id = ?").bind(now(), id).run();
+  const current = await c.env.DB.prepare('SELECT id, status FROM interviews WHERE id = ?').bind(id).first() as any;
+  if (!current) return c.json({ detail: 'Interview not found' }, 404);
+  if (!['scheduled', 'notification_partial'].includes(String(current.status || ''))) {
+    return c.json({ detail: '仅已安排的面试可开始', code: 'INTERVIEW_NOT_SCHEDULED' }, 409);
+  }
+  const startedAt = now();
+  await c.env.DB.prepare(
+    "UPDATE interviews SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?",
+  ).bind(startedAt, startedAt, id).run();
+  const startedRow = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first();
+  return c.json(transformRow(startedRow));
 
   // ===== 开始面试联动流程：①飞书会议日程（自动创建会议链接）②候选人免登录详情链接 ③候选人邮件 =====
   const startFlow: {
