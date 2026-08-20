@@ -166,6 +166,8 @@ const InterviewsList: React.FC = () => {
     try {
       const values = await editForm.validateFields();
       setEditSubmitting(true);
+      // 原面试状态为空时不要提交 status，避免编辑面试官/时间时被强制置为 scheduled（误触发安排面试）
+      if (!editRecord.interview_status) delete values.status;
       if (editRecord.interview_id) {
         await request.put(`/interviews/${editRecord.interview_id}`, values);
       } else {
@@ -1133,7 +1135,7 @@ const InterviewsList: React.FC = () => {
             editForm.resetFields();
             editForm.setFieldsValue({
               position_applied: editRecord.position_applied || editRecord.position || '',
-              primary_interviewer: editRecord.primary_interviewer || '',
+              primary_interviewer: editRecord.primary_interviewer || editRecord.interviewer || '',
               secondary_interviewer: editRecord.secondary_interviewer || '',
               interview_time: editRecord.interview_time ? editRecord.interview_time.substring(0, 16) : '',
               interview_location: editRecord.interview_location || '',

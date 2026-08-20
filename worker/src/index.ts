@@ -14278,6 +14278,52 @@ app.post('/api/admin/reparse-work-experience', businessScreeningAuthMiddleware, 
   }
 });
 
+// ==================== 管理端点：简历重置为待安排面试 ====================
+// 把简历恢复到「待安排面试」初始阶段：status/stage=pending_interview，
+// 业务筛选状态重置为 not_ready、hr_disposition=pending、清空批次关联，
+// 并从所有业务筛选批次移除该简历的条目（AI 初筛结果 screening_result 保持不变）。
+// 鉴权：JWT admin 或长期 API Key（x-api-key）。
+app.post('/api/admin/reset-resumes-pending-interview', businessScreeningAuthMiddleware, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const ids = Array.isArray(body?.ids) ? body.ids.map((s: unknown) => String(s).trim()).filter(Boolean) : [];
+    if (ids.length === 0) return c.json({ detail: 'ids 不能为空' }, 400);
+
+    const nowIso = now();
+    const placeholders = ids.map(() => '?').join(',');
+    const db = c.env.DB as D1Database;
+
+    // 从所有业务筛选批次移除该简历条目（含已决策记录）
+    const del = await db.prepare(
+      `DELETE FROM resume_push_batch_items WHERE resume_id IN (${placeholders})`,
+    ).bind(...ids).run();
+
+    // 重置为待安排面试初始阶段
+    await db.prepare(
+      `UPDATE resumes
+          SET status = 'pending_interview',
+              stage = 'pending_interview',
+              business_screening_status = 'not_ready',
+              hr_disposition = 'pending',
+              business_screening_batch_id = NULL,
+              business_screening_dispatch_group_id = NULL,
+              business_screened_at = NULL,
+              business_screened_by = '',
+              updated_at = ?
+        WHERE id IN (${placeholders})`,
+    ).bind(nowIso, ...ids).run();
+
+    await logOperation(c.env, {
+      action: 'admin.reset_resumes_pending_interview',
+      actor: (c.get('user') as any)?.email || 'api-key',
+      detail: JSON.stringify({ ids, removed_items: del.meta?.changes ?? 0 }),
+    });
+    return c.json({ ok: true, reset: ids.length, removed_items: del.meta?.changes ?? 0 });
+  } catch (e: any) {
+    return c.json({ ok: false, detail: `重置失败: ${e?.message || e}` }, 500);
+  }
+});
+
 
 /**
  * 解析「YYYY-MM-DD HH:mm」（北京时间，interview_time 存储口径）→ 毫秒时间戳。
