@@ -64,13 +64,17 @@ jobs:
 
       - name: Ensure Pages production branch is main
         # 修复：wrangler pages deploy 只有命中项目 production branch 才会更新生产域名。
-        # 若项目 production branch 被改动过，--branch main 会落到 preview，CI 仍显示成功但生产不生效。
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: frontend
-          command: pages project update ai-interview --production-branch=main
+        # 直接调 Cloudflare Pages API 把 production_branch 强制设为 main
+        # （wrangler pages project update 在部分版本语法不稳定，故用原生 API）。
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          curl -sS -X PATCH \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/ai-interview" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"production_branch":"main"}'
 
       - name: Deploy to ai-interview
         uses: cloudflare/wrangler-action@v3
