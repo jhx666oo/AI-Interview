@@ -320,8 +320,8 @@ async function processWithD1(env: ConsumerEnv, message: ResumeQueueMessage): Pro
     },
     extractFields: async (text) => {
       const extractPrompt = await getAIPrompt(env as any, 'resume_extract_fields', {
-        system: '你是简历字段提取助手，只返回 JSON。',
-        user: '从以下简历提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。找不到填 null；skills、certifications、work_experience、education 使用数组。\n\n{resume_text}'
+        system: '你是专业的简历字段提取助手，只返回 JSON 对象，不要输出其他任何内容，不要用 markdown 代码块包裹。工作经历必须完整提取、不得省略。',
+        user: '从以下简历文本中提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。\n\n提取规则：\n- email：提取候选人的电子邮箱地址，简历中没有邮箱则填 null；\n- work_experience：数组，每个元素包含 { company, title, duration, description, achievements }；必须完整提取简历中出现的每一段工作经历，不得省略任何公司或时间段；description 保留职责与成果细节（含项目成果、数据指标），内容过长时用 AI 压缩概括，但不得丢失关键职责与成果，禁止只写公司名；\n- skills、certifications、education 使用数组；\n- 其余字段找不到时填 null。\n\n只返回 JSON 对象。\n\n{resume_text}'
       });
       const userText = extractPrompt.user.replace('{resume_text}', text);
       const response = await callAI(env as any, extractPrompt.system, userText, undefined, {

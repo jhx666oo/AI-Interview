@@ -9632,8 +9632,8 @@ app.post('/api/settings/prompts/seed-defaults', authMiddleware, async (c) => {
       user: '请评价以下代码：\n\n{resume_text}\n\n请从代码质量、算法思路、时间复杂度、改进建议等方面评价。'
     },
     resume_extract_fields: {
-      system: '你是简历字段提取助手，只返回 JSON。',
-      user: '从以下简历提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。找不到填 null；skills、certifications、work_experience、education 使用数组。\n\n{resume_text}'
+      system: '你是专业的简历字段提取助手，只返回 JSON 对象，不要输出其他任何内容，不要用 markdown 代码块包裹。工作经历必须完整提取、不得省略。',
+      user: '从以下简历文本中提取字段并严格使用这些英文键：name, phone, email, gender, birthday, highest_degree, school, major, years_of_experience, recent_company, current_position, skills, certifications, self_evaluation, work_experience, education。\n\n提取规则：\n- email：提取候选人的电子邮箱地址，简历中没有邮箱则填 null；\n- work_experience：数组，每个元素包含 { company, title, duration, description, achievements }；必须完整提取简历中出现的每一段工作经历，不得省略任何公司或时间段；description 保留职责与成果细节（含项目成果、数据指标），内容过长时用 AI 压缩概括，但不得丢失关键职责与成果，禁止只写公司名；\n- skills、certifications、education 使用数组；\n- 其余字段找不到时填 null。\n\n只返回 JSON 对象。\n\n{resume_text}'
     },
     resume_screening: {
       system: `你是资深招聘评估AI，只返回JSON。${WEIGHTED_SCREENING_PROMPT}`,
@@ -14199,6 +14199,83 @@ app.post('/api/admin/ai-extract-emails', businessScreeningAuthMiddleware, async 
     return c.json({ ok: true, candidates: items.length, extracted, none, failed, results });
   } catch (e: any) {
     return c.json({ ok: false, detail: `AI 提取失败: ${e?.message || e}` }, 500);
+  }
+});
+
+
+// ==================== 管理端点：重新提取工作经历 ====================
+// 用系统 LLM（callAI，走系统设置多槽位配置，失败自动降级）从简历文本重新提取完整工作经历
+// （不省略职责与成果细节，过长时 AI 压缩概括），回填 parsed_data.work_experience 与 work_experience 列。
+// 用于修复历史简历工作经历被省略（只提取到公司名）的问题。鉴权：JWT admin 或长期 API Key（x-api-key）。
+// 幂等可重复执行。请求体：{ resume_id: string } 或 { resume_ids: string[] }（单次最多 50 份）。
+const WORK_EXPERIENCE_EXTRACT_SYSTEM_PROMPT = '你是专业的简历工作经历提取助手，只返回 JSON 对象，不要输出其他任何内容，不要用 markdown 代码块包裹。';
+const WORK_EXPERIENCE_EXTRACT_USER_PROMPT = `从以下简历文本中提取所有工作经历，严格只返回 JSON 对象：
+{"work_experience": [{"company": "公司名称", "title": "职位", "duration": "起止时间", "description": "职责与成果描述（保留关键职责、项目成果、数据指标；内容过长时用 AI 压缩概括，但不得丢失关键信息）", "achievements": "主要成果"}]}
+
+要求：
+1. 覆盖简历中出现的每一段工作经历，不得遗漏任何公司或时间段；
+2. description 必须保留职责与成果细节，禁止只写公司名；
+3. 找不到的字段填空字符串；简历中没有工作经历时返回 {"work_experience": []}；
+4. 只输出 JSON 对象。
+
+简历文本：
+{resume_text}`;
+
+app.post('/api/admin/reparse-work-experience', businessScreeningAuthMiddleware, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const ids = Array.isArray(body.resume_ids) && body.resume_ids.length > 0
+      ? body.resume_ids.map((v: unknown) => String(v)).slice(0, 50)
+      : (body.resume_id ? [String(body.resume_id)] : []);
+    if (ids.length === 0) return c.json({ detail: 'resume_id 或 resume_ids 必填' }, 400);
+
+    const nowIso = now();
+    const results: any[] = [];
+    for (const id of ids) {
+      try {
+        const row: any = await c.env.DB.prepare(
+          'SELECT id, parsed_data, resume_markdown, raw_text, ocr_markdown FROM resumes WHERE id = ?',
+        ).bind(id).first();
+        if (!row) { results.push({ id, error: 'resume not found' }); continue; }
+        const text = [row.resume_markdown, row.raw_text, row.ocr_markdown]
+          .filter((v: unknown) => v && String(v).trim())
+          .join('\n').trim();
+        if (!text) { results.push({ id, error: 'no resume text' }); continue; }
+        const snippet = text.slice(0, 30000);
+        const response = await callAI(
+          c.env,
+          WORK_EXPERIENCE_EXTRACT_SYSTEM_PROMPT,
+          WORK_EXPERIENCE_EXTRACT_USER_PROMPT.replace('{resume_text}', snippet),
+          undefined,
+          { structured: true, temperature: 0, maxTokens: 8192 },
+        );
+        const block = response.match(/\{[\s\S]*?\}/);
+        if (!block) { results.push({ id, error: 'AI response not JSON' }); continue; }
+        const json = JSON.parse(block[0]);
+        const workExperience = Array.isArray(json.work_experience) ? json.work_experience : [];
+        let existing: Record<string, unknown> = {};
+        try { existing = typeof row.parsed_data === 'string' ? JSON.parse(row.parsed_data) : (row.parsed_data || {}); } catch {}
+        const merged = { ...existing, work_experience: workExperience };
+        await c.env.DB.prepare('UPDATE resumes SET parsed_data = ?, work_experience = ?, updated_at = ? WHERE id = ?')
+          .bind(JSON.stringify(merged), JSON.stringify(workExperience), nowIso, id).run();
+        results.push({
+          id,
+          work_experience_count: workExperience.length,
+          companies: workExperience.map((w: any) => String(w?.company || '').trim()).filter(Boolean),
+          companies_with_description: workExperience.filter((w: any) => w?.description && String(w.description).trim()).length,
+        });
+      } catch (e: any) {
+        results.push({ id, error: String(e?.message || e).slice(0, 200) });
+      }
+    }
+    await logOperation(c.env, {
+      action: 'admin.reparse_work_experience',
+      actor: (c.get('user') as any)?.email || 'api-key',
+      detail: JSON.stringify({ ids, results }),
+    });
+    return c.json({ ok: true, results });
+  } catch (e: any) {
+    return c.json({ ok: false, detail: `重新提取工作经历失败: ${e?.message || e}` }, 500);
   }
 });
 
