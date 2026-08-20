@@ -1485,7 +1485,11 @@ export async function pushResumesToBusinessScreening(
     const tokenScopeKey = existing?.scope_key?.trim() || scopeKey;
     const itemCreatedAt = deps.now();
     const expiresAt = resolveExpiresAt(nowIso, input.expiresInDays);
-    const batchTitle = requestedTitle ?? existing?.batch_title ?? null;
+    // 标题随本次推送岗位变化：单岗位用岗位名，多岗位用「多个岗位（N个）」（与飞书卡片标题一致）
+    const positionTitleForCard = group.positionTitles.length === 1
+      ? group.positionTitles[0]
+      : `多个岗位（${group.positionTitles.length}个）`;
+    const batchTitle = requestedTitle ?? positionTitleForCard ?? existing?.batch_title ?? null;
     const batchSubtitle = requestedSubtitle ?? existing?.batch_subtitle ?? null;
     const isNewBatch = !existing;
 
@@ -1495,9 +1499,10 @@ export async function pushResumesToBusinessScreening(
       // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
       await deps.store.resetBatchActive(db, batchId);
       await deps.store.refreshBatchExpiry(db, batchId, expiresAt);
+      // 追加已有批次也随本次岗位更新标题，保证链接页面与飞书卡片标题一致
       await deps.store.updateBatchPresentation(db, batchId, {
-        title: requestedTitle,
-        subtitle: requestedSubtitle,
+        title: requestedTitle ?? positionTitleForCard,
+        subtitle: requestedSubtitle ?? null,
       });
     } else {
       batchId = deps.uuid();

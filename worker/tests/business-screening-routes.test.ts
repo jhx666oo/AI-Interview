@@ -1253,7 +1253,7 @@ describe('business screening routes', () => {
     });
   });
 
-  it('defaults to no custom title when push omits it', async () => {
+  it('defaults the batch title to the pushed position when push omits custom title', async () => {
     const { request, batches } = buildHarness();
 
     const pushResp = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
@@ -1263,10 +1263,11 @@ describe('business screening routes', () => {
     });
     expect(pushResp.status).toBe(200);
     const batch = [...batches.values()][0];
-    expect(batch.batch_title).toBeNull();
+    // 标题随本次推送岗位变化（默认取岗位名），subtitle 保持为空
+    expect(batch.batch_title).toBe('标准运营');
     expect(batch.batch_subtitle).toBeNull();
     const json = await pushResp.json() as any;
-    expect(json.batches[0]).not.toHaveProperty('title');
+    expect(json.batches[0].title).toBe('标准运营');
     expect(json.batches[0]).not.toHaveProperty('subtitle');
   });
 
@@ -1323,7 +1324,7 @@ describe('business screening routes', () => {
     });
   });
 
-  it('does not clear an existing title when the next push omits title', async () => {
+  it('updates the batch title to the pushed position when the next push omits title', async () => {
     const { request, resumes } = buildHarness({ apiKeyOwnerEmail: 'hr@example.com' });
     const first = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
       method: 'POST',
@@ -1350,9 +1351,10 @@ describe('business screening routes', () => {
       body: JSON.stringify({ ids: ['resume-2'] }),
     });
 
+    // 标题随本次推送岗位更新为「标准运营」（与飞书卡片标题一致）
     const publicResponse = await request(`https://ai-interview-88r.pages.dev/api/public/business-screening/${token}`);
     await expect(publicResponse.json()).resolves.toMatchObject({
-      batch: { title: 'AI 初筛通过表' },
+      batch: { title: '标准运营' },
     });
   });
 
