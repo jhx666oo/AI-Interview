@@ -1832,9 +1832,9 @@ const handleUploadClick = () => {
                           {tag.label}
                         </Tag>
                       ))}
-                      {hasGateResults && gateRows.map((gate) => (
-                        <Tag key={gate.key} color={gate.passed ? 'green' : 'red'} style={{ margin: 0 }}>
-                          {gate.passed ? `${gate.label}已通过` : gate.reason}
+                      {hasGateResults && gateRows.filter((gate) => !gate.passed).map((gate) => (
+                        <Tag key={gate.key} color="red" style={{ margin: 0 }}>
+                          {gate.reason}
                         </Tag>
                       ))}
                       {hardResult?.passed === false && (
