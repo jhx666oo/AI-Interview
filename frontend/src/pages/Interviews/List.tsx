@@ -96,6 +96,8 @@ const InterviewsList: React.FC = () => {
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [createForm] = Form.useForm();
   const [creating, setCreating] = useState(false);
+  // 新建面试弹窗里按岗位自动匹配的面试官（供提示展示）
+  const [createDefaults, setCreateDefaults] = useState<{ matchedPositionTitle?: string } | null>(null);
 
   const applyCreatePositionDefaults = () => {
     const positionName = createForm.getFieldValue('position_applied');
@@ -103,12 +105,16 @@ const InterviewsList: React.FC = () => {
       standard_position: positionName,
       position_applied: positionName,
     }, positions);
-    if (!defaults.matchedPositionTitle) return;
+    if (!defaults.matchedPositionTitle) {
+      setCreateDefaults(null);
+      return;
+    }
     createForm.setFieldsValue({
       interviewer_name: defaults.interviewerName || undefined,
       secondary_interviewer: defaults.secondaryInterviewer || undefined,
       position_applied: defaults.matchedPositionTitle,
     });
+    setCreateDefaults({ matchedPositionTitle: defaults.matchedPositionTitle });
   };
 
   // 编辑面试状态
@@ -207,14 +213,17 @@ const InterviewsList: React.FC = () => {
     try {
       const response = await request.get('/positions');
       const items = Array.isArray(response) ? response : (response?.positions || []);
-      setPositions(items.map((item: any) => ({
+      const mapped = items.map((item: any) => ({
         id: item.id,
         title: item.title,
         primary_interviewer: item.primary_interviewer,
         secondary_interviewer: item.secondary_interviewer,
-      })));
+      }));
+      setPositions(mapped);
+      return mapped;
     } catch {
       setPositions([]);
+      return [];
     }
   }, []);
 
@@ -385,10 +394,13 @@ const InterviewsList: React.FC = () => {
   };
 
   // == 安排面试 ==
-  const handleOpenSchedule = (record: MergedRow) => {
+  const handleOpenSchedule = async (record: MergedRow) => {
     setScheduleRecord(record);
     scheduleForm.resetFields();
-    const defaults = resolveScheduleInterviewerDefaults(record, positions);
+    // 岗位配置的面试官自动同步：优先已有岗位列表，缺失时先拉取再匹配，减少手动填写
+    let positionList = positions;
+    if (positionList.length === 0) positionList = await fetchPositions();
+    const defaults = resolveScheduleInterviewerDefaults(record, positionList);
     setScheduleDefaults(defaults);
     scheduleForm.setFieldsValue({
       interviewer_name: defaults.interviewerName || undefined,
@@ -651,19 +663,30 @@ const InterviewsList: React.FC = () => {
     },
     {
       title: '一面面试官', dataIndex: 'primary_interviewer', key: 'primary_interviewer', width: 84, ellipsis: { showTitle: false },
-      render: (v: string) => (
-        <Tooltip title={v || ''}>
-          <span>{v || '-'}</span>
-        </Tooltip>
-      ),
+      render: (v: string, r: MergedRow) => {
+        // 未填写时自动展示岗位管理配置的一面面试官（按岗位名称匹配）
+        const auto = resolveScheduleInterviewerDefaults({ standard_position: r.standard_position, position_applied: r.position_applied || r.position }, positions);
+        const display = v || auto.interviewerName || '待分配';
+        const fromPosition = !v && auto.matchedPositionTitle;
+        return (
+          <Tooltip title={fromPosition ? `已按岗位「${auto.matchedPositionTitle}」自动匹配` : (v || '')}>
+            <span>{display}</span>
+          </Tooltip>
+        );
+      },
     },
     {
       title: '二面面试官', dataIndex: 'secondary_interviewer', key: 'secondary_interviewer', width: 84, ellipsis: { showTitle: false },
-      render: (v: string) => (
-        <Tooltip title={v || ''}>
-          <span>{v || '-'}</span>
-        </Tooltip>
-      ),
+      render: (v: string, r: MergedRow) => {
+        const auto = resolveScheduleInterviewerDefaults({ standard_position: r.standard_position, position_applied: r.position_applied || r.position }, positions);
+        const display = v || auto.secondaryInterviewer || '-';
+        const fromPosition = !v && auto.matchedPositionTitle;
+        return (
+          <Tooltip title={fromPosition ? `已按岗位「${auto.matchedPositionTitle}」自动匹配` : (v || '')}>
+            <span>{display}</span>
+          </Tooltip>
+        );
+      },
     },
     {
       title: '一面结果', key: 'result1', width: 70,
@@ -858,6 +881,11 @@ const InterviewsList: React.FC = () => {
           <Form.Item name="secondary_interviewer" label="二面面试官（可选）">
             <Input placeholder="输入二面面试官姓名（可选）" />
           </Form.Item>
+          {scheduleDefaults?.matchedPositionTitle ? (
+            <div style={{ marginTop: -8, marginBottom: 8, color: '#1677ff', fontSize: 12 }}>
+              已按岗位「{scheduleDefaults.matchedPositionTitle}」自动匹配岗位管理的面试官（可修改）
+            </div>
+          ) : null}
         </Form>
       </ResponsiveModal>
 
@@ -967,6 +995,11 @@ const InterviewsList: React.FC = () => {
           <Form.Item name="secondary_interviewer" label="二面面试官（可选）">
             <Input placeholder="输入二面面试官姓名（可选）" />
           </Form.Item>
+          {createDefaults?.matchedPositionTitle ? (
+            <div style={{ marginTop: -8, marginBottom: 8, color: '#1677ff', fontSize: 12 }}>
+              已按岗位「{createDefaults.matchedPositionTitle}」自动匹配岗位管理的面试官（可修改）
+            </div>
+          ) : null}
           <Form.Item name="interview_date" label="面试日期">
             <DatePicker style={{ width: '100%' }} placeholder="选择面试日期（可选）" />
           </Form.Item>
