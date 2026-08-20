@@ -73,4 +73,11 @@ describe('public business screening page contract', () => {
     expect(source).toContain('disabled={!selectable}');
     expect(source).toContain('请先勾选要处理的候选人');
   });
+
+  it('offers a re-parse action for missing resume info (public token scoped)', () => {
+    expect(source).toContain('重新解析');
+    expect(source).toContain('`/public/business-screening/${token}/resumes/${resumeId}/reparse`');
+    expect(source).toContain('handleReparse');
+    expect(source).toContain('该简历暂无结构化档案');
+  });
 });

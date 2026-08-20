@@ -2,13 +2,13 @@ import { expect, it } from 'vitest';
 import { getReminderFeedback } from './reminderFeedback';
 
 it('reports complete delivery by the current Feishu user', () => {
-  expect(getReminderFeedback({ card_sent: true, file_sent: true, sent_as: 'hr@example.com' }))
-    .toEqual({ type: 'success', content: '已用你的飞书账号提醒面试官，并发送简历 PDF' });
+  expect(getReminderFeedback({ ok: true, card_sent: true, card_link: 'https://example.com/card', sent_as: 'hr@example.com' }))
+    .toEqual({ type: 'success', content: '已用你的飞书账号提醒面试官（含面试卡片链接）' });
 });
 
-it('returns a warning when the card arrived but the PDF failed', () => {
-  expect(getReminderFeedback({ card_sent: true, file_sent: false, warning: 'PDF 上传失败' }))
-    .toEqual({ type: 'warning', content: '卡片已发送，但简历 PDF 未发送：PDF 上传失败' });
+it('keeps card delivery successful when an optional attachment warning is present', () => {
+  expect(getReminderFeedback({ card_sent: true, warning: 'PDF 上传失败' }))
+    .toEqual({ type: 'success', content: '已用你的飞书账号提醒面试官（含面试卡片链接）' });
 });
 
 it('asks the current user to authorize Feishu', () => {
@@ -16,12 +16,9 @@ it('asks the current user to authorize Feishu', () => {
     .toEqual({ type: 'warning', content: '请先在个人设置中完成飞书授权，再发送面试提醒' });
 });
 
-it('preserves partial success when authorization expires after the card was sent', () => {
-  expect(getReminderFeedback({ need_feishu_auth: true, card_sent: true, file_sent: false }))
-    .toEqual({
-      type: 'warning',
-      content: '面试提醒卡片已发送；飞书授权已失效，简历 PDF 未发送。请重新授权，勿重复发送整条提醒',
-    });
+it('requires authorization before sending even if a previous card flag is present', () => {
+  expect(getReminderFeedback({ need_feishu_auth: true, card_sent: true }))
+    .toEqual({ type: 'warning', content: '请先在个人设置中完成飞书授权，再发送面试提醒' });
 });
 
 it('reports the actionable interviewer binding message', () => {

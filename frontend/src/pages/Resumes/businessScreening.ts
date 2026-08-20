@@ -50,6 +50,7 @@ export function inferBusinessScreeningStatus(record: ResumeBusinessScreeningReco
 }
 
 export function getBusinessScreeningActions(record: ResumeBusinessScreeningRecord): BusinessScreeningActions {
+  const aiResult = clean(record.screening_result); // '通过' | '不通过' | ''
   const businessStatus = inferBusinessScreeningStatus(record);
   const tags: BusinessScreeningTag[] = [];
 
@@ -64,12 +65,18 @@ export function getBusinessScreeningActions(record: ResumeBusinessScreeningRecor
   const isTerminalStatus = record.status === 'approved' || record.status === 'rejected' || record.status === 'completed';
   const isHrRejected = clean(record.hr_disposition) === 'rejected' || record.status === 'rejected';
   const isHrPushed = clean(record.hr_disposition) === 'pushed';
-  const canPush = businessStatus === 'not_ready' && !isTerminalStatus && !isHrRejected && !isHrPushed;
-  const canReject = businessStatus !== 'pending' && !isTerminalStatus;
+  // 规则（与后端 AI 结果 ↔ 业务链接联动一致）：
+  // - AI 不通过（或未初筛）→ 「推送」：改为 AI 通过并推送到业务链接
+  // - AI 通过 → 「淘汰」：改为 AI 不通过并从业务链接移除（可再次推送）
+  // 业务已进入终态（已通过/已淘汰/HR 淘汰）或已推送时不提供对应入口。
+  const canPush = aiResult !== '通过' && !isHrPushed && businessStatus === 'not_ready' && !isTerminalStatus && !isHrRejected;
+  const canEliminate = aiResult === '通过'
+    && (businessStatus === 'not_ready' || businessStatus === 'pending')
+    && !isTerminalStatus && !isHrRejected;
 
   return {
     primary: canPush ? { key: 'push', label: '推送' } : null,
-    secondary: canReject ? { key: 'reject', label: '淘汰' } : null,
+    secondary: canEliminate ? { key: 'reject', label: '淘汰' } : null,
     tags,
   };
 }

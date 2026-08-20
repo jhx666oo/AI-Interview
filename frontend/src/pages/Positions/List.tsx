@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Table, Button, Space, message, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Tooltip, Popover, Typography, Drawer, Descriptions, Divider, Progress, Badge, Spin, Popconfirm, Alert, Checkbox, Collapse, Switch } from 'antd';
 import SimplePagination from '../../components/SimplePagination';
-import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, GlobalOutlined, StopOutlined, RobotOutlined, SyncOutlined, AppstoreOutlined, MinusCircleOutlined, RadarChartOutlined, MergeCellsOutlined, CopyOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOwner } from '../../contexts/OwnerContext';
@@ -95,6 +95,8 @@ const defaultCapabilityDimensions = (): CapabilityDimensionValue[] => [
 const PositionsList: React.FC = () => {
   const [data, setData] = useState<Position[]>([]);
   const [loading, setLoading] = useState(false);
+  // 业务推送链接（岗位维度，来自 resume_push_batches，一个岗位一条固定链接）
+  const [businessLinks, setBusinessLinks] = useState<Record<string, { url: string; interviewer: string; expires_at: string | null }>>({});
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -216,6 +218,19 @@ const PositionsList: React.FC = () => {
           }
       });
       setData(res);
+      // 并行拉取业务推送链接（岗位维度固定链接）
+      try {
+        const linkRes = await request.get('/api/positions/business-screening-links');
+        const map: Record<string, { url: string; interviewer: string; expires_at: string | null }> = {};
+        for (const item of linkRes?.items || []) {
+          if (item?.position_id && item?.url) {
+            map[item.position_id] = { url: item.url, interviewer: item.interviewer || '', expires_at: item.expires_at || null };
+          }
+        }
+        setBusinessLinks(map);
+      } catch {
+        // 链接拉取失败不影响岗位列表
+      }
     } catch (error) {
       message.error('获取岗位列表失败');
     } finally {
@@ -832,6 +847,30 @@ const PositionsList: React.FC = () => {
       key: 'created_at',
       width: 110,
       render: (date: string) => <span style={{ color: '#64748B', fontSize: 13 }}>{new Date(date).toLocaleDateString()}</span>
+    },
+    {
+      title: '业务链接', key: 'business_link', width: 120,
+      render: (_: any, record: Position) => {
+        const link = businessLinks[record.id];
+        if (!link?.url) {
+          return (
+            <Tooltip title="推送给业务方后自动生成该岗位的固定链接">
+              <span style={{ color: '#999', fontSize: 12 }}>—</span>
+            </Tooltip>
+          );
+        }
+        return (
+          <Space size={2}>
+            <Tooltip title={link.interviewer ? `面试官：${link.interviewer}` : '推送给业务方的固定链接'}>
+              <Typography.Link href={link.url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>打开</Typography.Link>
+            </Tooltip>
+            <Button
+              size="small" type="text" icon={<CopyOutlined />}
+              onClick={() => { navigator.clipboard.writeText(link.url).then(() => message.success('链接已复制')).catch(() => message.success(`链接：${link.url}`)); }}
+            />
+          </Space>
+        );
+      }
     },
     {
       title: '操作', align: 'center' as const,

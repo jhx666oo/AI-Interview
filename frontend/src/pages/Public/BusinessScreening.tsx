@@ -293,6 +293,7 @@ const BusinessScreeningPage: React.FC = () => {
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<'approve' | 'reject' | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState<'approve' | 'reject' | null>(null);
+  const [reparsingId, setReparsingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string>('');
   const [downloading, setDownloading] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -481,6 +482,27 @@ const BusinessScreeningPage: React.FC = () => {
         }
       },
     });
+  };
+
+  // 重新解析：简历信息未提取完整时，凭公开链接 token 触发 AI 重新评估（入队去重）
+  const handleReparse = async (resumeId: string) => {
+    if (!token || reparsingId) return;
+    setReparsingId(resumeId);
+    try {
+      const res = await request.post(`/public/business-screening/${token}/resumes/${resumeId}/reparse`, {}) as {
+        queued?: boolean;
+        status?: string;
+      };
+      if (res.queued === false) {
+        message.info('该简历正在重新解析中，请稍后刷新页面查看');
+      } else {
+        message.success('已提交重新解析，通常 1-2 分钟完成，请稍后刷新本页查看');
+      }
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '重新解析失败，请稍后重试');
+    } finally {
+      setReparsingId(null);
+    }
   };
 
   const handleDecision = async (action: 'approve' | 'reject') => {
@@ -785,6 +807,26 @@ const BusinessScreeningPage: React.FC = () => {
                           <FileTextOutlined style={{ color: '#6366F1' }} />
                           预览简历
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => handleReparse(activeResume.id)}
+                          disabled={reparsingId === activeResume.id}
+                          title="简历信息未提取完整时，点击重新解析（AI 重新评估，通常 1-2 分钟）"
+                          style={{
+                            borderRadius: 8,
+                            border: '1px solid #fde68a',
+                            background: reparsingId === activeResume.id ? '#fef9c3' : '#fffbeb',
+                            padding: '6px 10px',
+                            fontSize: 13,
+                            cursor: reparsingId === activeResume.id ? 'default' : 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            color: '#92400e',
+                          }}
+                        >
+                          {reparsingId === activeResume.id ? '解析中...' : '重新解析'}
+                        </button>
                         <span style={{ color: activeResume.status === 'passed' ? '#15803d' : activeResume.status === 'rejected' ? '#b91c1c' : '#1d4ed8', fontWeight: 600 }}>
                           {STATUS_LABELS[activeResume.status]}
                         </span>
@@ -817,8 +859,27 @@ const BusinessScreeningPage: React.FC = () => {
                       <ProfileDescriptions profile={activeResume.profile} />
                     ) : (
                       <div style={{ marginTop: 20, border: '1px dashed #cbd5e1', borderRadius: 12, padding: 14, background: '#f8fafc', color: '#64748b', fontSize: 13, lineHeight: 1.7 }}>
-                        该简历暂无结构化档案（可能仅完成 AI 初筛、未生成字段解析）。可点击右上角「预览简历」查看简历原文；
-                        如需生成档案，请联系 HR 在简历管理中对这位候选人执行「重新评估」。
+                        该简历暂无结构化档案（可能仅完成 AI 初筛、未生成字段解析）。
+                        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleReparse(activeResume.id)}
+                            disabled={reparsingId === activeResume.id}
+                            style={{
+                              borderRadius: 8,
+                              border: '1px solid #f59e0b',
+                              background: reparsingId === activeResume.id ? '#fef3c7' : '#fff7ed',
+                              color: '#9a3412',
+                              padding: '6px 12px',
+                              fontSize: 13,
+                              fontWeight: 600,
+                              cursor: reparsingId === activeResume.id ? 'default' : 'pointer',
+                            }}
+                          >
+                            {reparsingId === activeResume.id ? '解析中...' : '重新解析'}
+                          </button>
+                          <span style={{ fontSize: 12.5 }}>点击后系统将对该简历重新执行 AI 解析（通常 1-2 分钟完成），完成后刷新本页查看。</span>
+                        </div>
                       </div>
                     )}
 

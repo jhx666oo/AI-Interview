@@ -10,8 +10,6 @@
 import { buildInterviewInvitationEmail, type BuiltEmail } from './email-template';
 import { loadSmtpConfig, sendSmtpMail, type SmtpDeps } from './smtp';
 
-const INVITE_TTL_DAYS = 7;
-const TOKEN_PREFIX = 'ii-';
 export const DEFAULT_FRONTEND_URL = 'https://ai-interview-88r.pages.dev';
 
 export interface InterviewStartInterview {
@@ -26,8 +24,6 @@ export interface InterviewStartInterview {
   primary_interviewer?: string | null;
   secondary_interviewer?: string | null;
   meeting_link?: string | null;
-  invite_token_hash?: string | null;
-  invite_expires_at?: string | null;
   status?: string | null;
   round?: number | null;
 }
@@ -127,58 +123,6 @@ export function interviewTypeLabel(interview: InterviewStartInterview): string {
   if (type === 'video' || type === 'online' || type === 'remote') return '线上面试';
   if (type === 'phone') return '电话面试';
   return type || '线上面试';
-}
-
-// ==================== 候选人免登录详情链接 ====================
-
-/** 由面试 id 确定性派生候选人邀请 token（与业务筛选/面试卡片同机制） */
-export async function deriveInterviewInviteToken(interviewId: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`interview-invite::${interviewId}`));
-  const bytes = new Uint8Array(digest);
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const base64Url = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-  return `${TOKEN_PREFIX}${base64Url.slice(0, 28)}`;
-}
-
-function addDays(nowIso: string, days: number): string {
-  const date = new Date(nowIso);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString();
-}
-
-export interface InterviewInviteLink {
-  token: string;
-  url: string;
-  expiresAt: string;
-  reused: boolean;
-}
-
-export interface InterviewInviteDeps {
-  now: () => string;
-  hashPublicToken: (token: string) => Promise<string>;
-}
-
-/** 生成或续期候选人面试详情免登录链接（同一面试 URL 恒定，复用时顺延 7 天） */
-export async function ensureInterviewInvite(
-  db: D1Database,
-  interview: InterviewStartInterview,
-  deps: InterviewInviteDeps,
-): Promise<InterviewInviteLink> {
-  const token = await deriveInterviewInviteToken(interview.id);
-  const tokenHash = await deps.hashPublicToken(token);
-  const nowIso = deps.now();
-  const existingHash = text(interview.invite_token_hash);
-  const existingExpiry = text(interview.invite_expires_at);
-  const stillValid = existingHash === tokenHash && existingExpiry > nowIso;
-
-  const expiresAt = stillValid ? existingExpiry : addDays(nowIso, INVITE_TTL_DAYS);
-  if (!stillValid) {
-    await db.prepare(
-      'UPDATE interviews SET invite_token_hash = ?, invite_expires_at = ?, updated_at = ? WHERE id = ?',
-    ).bind(tokenHash, expiresAt, nowIso, interview.id).run();
-  }
-  return { token, url: `/interview-invite/${token}`, expiresAt, reused: stillValid };
 }
 
 export function frontendBaseUrl(frontendUrl: unknown): string {

@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { hashPublicToken } from '../src/business-screening/token';
 import {
-  deriveInterviewInviteToken,
-  ensureInterviewInvite,
   frontendBaseUrl,
   interviewTypeLabel,
   loadInterviewStartContext,
@@ -13,7 +11,7 @@ import {
 import { buildInterviewInvitationEmail } from '../src/interview-start/email-template';
 
 /**
- * 「开始面试」服务层测试：免登录邀请 token 派生/续期、面试时间解析（北京时间）、
+ * 「开始面试」服务层测试：面试时间解析（北京时间）、
  * 上下文加载（候选人邮箱兜底）、候选人邮件状态、邮件模板内容。
  */
 
@@ -47,63 +45,6 @@ function fakeD1(rows: { interviews?: any[]; resumes?: any[]; configs?: any[]; up
 }
 
 const NOW = '2026-08-19T04:00:00.000Z'; // 北京时间 12:00
-
-describe('deriveInterviewInviteToken / ensureInterviewInvite', () => {
-  it('token 确定性派生（ii- 前缀，28 位 base64url）', async () => {
-    const t1 = await deriveInterviewInviteToken('itv-1');
-    const t2 = await deriveInterviewInviteToken('itv-1');
-    const t3 = await deriveInterviewInviteToken('itv-2');
-    expect(t1).toBe(t2);
-    expect(t1).not.toBe(t3);
-    expect(t1.startsWith('ii-')).toBe(true);
-    expect(t1.length).toBe(31);
-    expect(t1).toMatch(/^ii-[A-Za-z0-9_-]+$/);
-  });
-
-  it('首次生成：写入哈希并顺延 7 天', async () => {
-    const db = fakeD1({});
-    const interview: InterviewStartInterview = { id: 'itv-1' };
-    const invite = await ensureInterviewInvite(db, interview, { now: () => NOW, hashPublicToken });
-
-    const token = await deriveInterviewInviteToken('itv-1');
-    expect(invite.token).toBe(token);
-    expect(invite.url).toBe(`/interview-invite/${token}`);
-    expect(invite.reused).toBe(false);
-    expect(invite.expiresAt).toBe('2026-08-26T04:00:00.000Z');
-
-    const update = (db as any).updates[0];
-    expect(update.sql).toContain('invite_token_hash');
-    expect(update.params[0]).toBe(await hashPublicToken(token));
-  });
-
-  it('有效期内复用：不更新、URL 恒定', async () => {
-    const db = fakeD1({});
-    const token = await deriveInterviewInviteToken('itv-1');
-    const interview: InterviewStartInterview = {
-      id: 'itv-1',
-      invite_token_hash: await hashPublicToken(token),
-      invite_expires_at: '2026-08-25T00:00:00.000Z',
-    };
-    const invite = await ensureInterviewInvite(db, interview, { now: () => NOW, hashPublicToken });
-    expect(invite.reused).toBe(true);
-    expect(invite.expiresAt).toBe('2026-08-25T00:00:00.000Z');
-    expect((db as any).updates.length).toBe(0);
-  });
-
-  it('过期后重新生成并续期 7 天', async () => {
-    const db = fakeD1({});
-    const token = await deriveInterviewInviteToken('itv-1');
-    const interview: InterviewStartInterview = {
-      id: 'itv-1',
-      invite_token_hash: await hashPublicToken(token),
-      invite_expires_at: '2026-08-10T00:00:00.000Z', // 已过期
-    };
-    const invite = await ensureInterviewInvite(db, interview, { now: () => NOW, hashPublicToken });
-    expect(invite.reused).toBe(false);
-    expect(invite.expiresAt).toBe('2026-08-26T04:00:00.000Z');
-    expect((db as any).updates.length).toBe(1);
-  });
-});
 
 describe('resolveEventTimeframe（北京时间口径）', () => {
   it('裸 "YYYY-MM-DD HH:mm" 按 +08:00 解析', () => {

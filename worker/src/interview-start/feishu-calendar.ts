@@ -133,29 +133,45 @@ function eventMeetingUrl(event: any): string | null {
 
 /**
  * 生成未来 N 个工作日的可面试工作窗口（北京时间）：
- * 从 fromTs 的次日开始，跳过周六/周日，每天两个窗口：
- * 上午 09:30-11:30、下午 13:30-18:30（午休 11:30-13:30 不算面试时间）。
+ * 从 fromTs 的次日开始，跳过周六/周日，先跳过 skipWorkdays 个工作日（默认 2，
+ * 即从未来第 3 个工作日开始），再取之后 workdays 个工作日（默认 3）。
+ * 每天两个窗口：上午 09:30-11:30、下午 13:30-18:30（午休 11:30-13:30 不算面试时间）。
  * 单位：秒级时间戳。
  */
-export function buildFutureInterviewWindows(fromTs: number, workdays = 2): Array<{ start: number; end: number }> {
+export function buildFutureInterviewWindows(fromTs: number, skipWorkdays = 2, workdays = 3): Array<{ start: number; end: number }> {
   const windows: Array<{ start: number; end: number }> = [];
   const daySec = 86_400;
   // 从 fromTs 所在天的次日 00:00（北京时间）起逐日检查
   let dayStart = Math.floor(fromTs / daySec) * daySec - 8 * 3600 + daySec; // 次日 00:00 北京时间
+  let skipped = 0;
   let found = 0;
   let guard = 0;
-  while (found < workdays && guard < 30) {
+  while (found < workdays && guard < 60) {
     guard += 1;
     // dayStart 为北京时间 00:00 的绝对秒，星期几需按北京时间判断（+8h 后取 UTC 星期）
     const dow = new Date((dayStart + 8 * 3600) * 1000).getUTCDay(); // 0=周日 6=周六
-    if (dow !== 0 && dow !== 6) {
-      windows.push({ start: dayStart + 9.5 * 3600, end: dayStart + 11.5 * 3600 });
-      windows.push({ start: dayStart + 13.5 * 3600, end: dayStart + 18.5 * 3600 });
-      found += 1;
+    if (dow === 0 || dow === 6) {
+      dayStart += daySec;
+      continue;
     }
+    if (skipped < skipWorkdays) {
+      skipped += 1;
+      dayStart += daySec;
+      continue;
+    }
+    windows.push({ start: dayStart + 9.5 * 3600, end: dayStart + 11.5 * 3600 });
+    windows.push({ start: dayStart + 13.5 * 3600, end: dayStart + 18.5 * 3600 });
+    found += 1;
     dayStart += daySec;
   }
   return windows;
+}
+
+/** 毫秒时间戳 → 北京时间带时区 ISO8601（飞书 freebusy time_min/time_max 要求带时区，UTC Z 格式会 190002） */
+function toFeishuBeijingIso(ms: number): string {
+  const d = new Date(ms + 8 * 3600_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00+08:00`;
 }
 
 export interface FreeSlotSearchInput {
@@ -167,13 +183,17 @@ export interface FreeSlotSearchInput {
   fromTs: number;
   /** 面试时长（分钟），默认 60 */
   durationMinutes?: number;
-  /** 覆盖的工作日数量（跳过周末），默认 2 */
+  /** 先跳过的工作日数量（默认 2，即从未来第 3 个工作日开始） */
+  skipWorkdays?: number;
+  /** 之后覆盖的工作日数量（跳过周末），默认 3 */
   workdays?: number;
 }
 
 export interface FreeSlotSearchDeps {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** freebusy 查询失败时的错误回调（用于调用方提示权限/接口问题） */
+  onBusyError?: (message: string) => void;
 }
 
 /** 拉取 openId 在 windows 覆盖范围内的忙碌区间并合并重叠，失败返回 null */
@@ -183,6 +203,7 @@ async function fetchMergedBusy(
   windows: Array<{ start: number; end: number }>,
   fetchImpl: typeof fetch,
   timeoutMs: number,
+  onBusyError?: (message: string) => void,
 ): Promise<Array<{ start: number; end: number }> | null> {
   let busy: Array<{ start: number; end: number }> = [];
   try {
@@ -191,9 +212,9 @@ async function fetchMergedBusy(
       {
         method: 'POST',
         body: JSON.stringify({
-          time_min: new Date(windows[0].start).toISOString(),
-          time_max: new Date(windows[windows.length - 1].end).toISOString(),
-          user_ids: [openId],
+          time_min: toFeishuBeijingIso(windows[0].start),
+          time_max: toFeishuBeijingIso(windows[windows.length - 1].end),
+          user_id: openId,
         }),
       },
       token,
@@ -207,7 +228,13 @@ async function fetchMergedBusy(
         if (Number.isFinite(s) && Number.isFinite(e)) busy.push({ start: s * 1000, end: e * 1000 });
       }
     }
-  } catch {
+  } catch (error) {
+    // 不吞错：记录原因并回调，调用方据此区分「freebusy 失败」与「真无空闲」
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      console.error(`[freebusy] 查询失败: ${message}`);
+    } catch { /* logging must never break */ }
+    try { onBusyError?.(message); } catch { /* callback must never break */ }
     return null;
   }
   busy.sort((a, b) => a.start - b.start);
@@ -235,11 +262,12 @@ export async function findFirstFreeInterviewSlot(
   const fetchImpl = deps.fetchImpl || fetch;
   const timeoutMs = deps.timeoutMs || DEFAULT_TIMEOUT_MS;
   const durationMs = (input.durationMinutes || 60) * 60_000;
-  const workdays = input.workdays && input.workdays > 0 ? input.workdays : 2;
-  const windows = buildFutureInterviewWindows(input.fromTs, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
+  const skipWorkdays = input.skipWorkdays !== undefined && input.skipWorkdays >= 0 ? input.skipWorkdays : 2;
+  const workdays = input.workdays && input.workdays > 0 ? input.workdays : 3;
+  const windows = buildFutureInterviewWindows(input.fromTs, skipWorkdays, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
   if (windows.length === 0) return null;
 
-  const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs);
+  const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs, deps.onBusyError);
   if (!merged) return null;
 
   // 在每个工作窗口内找第一个足够长的空闲段
@@ -269,11 +297,12 @@ export async function listFreeInterviewSlots(
   const fetchImpl = deps.fetchImpl || fetch;
   const timeoutMs = deps.timeoutMs || DEFAULT_TIMEOUT_MS;
   const durationMs = (input.durationMinutes || 60) * 60_000;
-  const workdays = input.workdays && input.workdays > 0 ? input.workdays : 2;
-  const windows = buildFutureInterviewWindows(input.fromTs, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
+  const skipWorkdays = input.skipWorkdays !== undefined && input.skipWorkdays >= 0 ? input.skipWorkdays : 2;
+  const workdays = input.workdays && input.workdays > 0 ? input.workdays : 3;
+  const windows = buildFutureInterviewWindows(input.fromTs, skipWorkdays, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
   if (windows.length === 0) return [];
 
-  const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs);
+  const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs, deps.onBusyError);
   if (!merged) return [];
 
   const slots: Array<{ startTs: number; endTs: number }> = [];

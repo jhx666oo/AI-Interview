@@ -7,7 +7,7 @@ import {
 } from './businessScreening';
 
 describe('resume business screening helpers', () => {
-  it('shows push and reject actions for AI-passed resumes that are not yet pushed', () => {
+  it('shows 淘汰 for AI-passed resumes that are not yet pushed (AI 通过自动进链接，提供撤回)', () => {
     const actions = getBusinessScreeningActions({
       status: 'pending_review',
       screening_result: '通过',
@@ -15,12 +15,12 @@ describe('resume business screening helpers', () => {
       business_screening_status: 'not_ready',
     });
 
-    expect(actions.primary?.label).toBe('推送');
-    expect(actions.secondary?.label).toBe('淘汰');
+    expect(actions.primary).toBeNull();
+    expect(actions.secondary).toEqual({ key: 'reject', label: '淘汰' });
     expect(actions.tags).toEqual([]);
   });
 
-  it('shows waiting state after HR push and hides the old primary action', () => {
+  it('shows 淘汰 while waiting for business screening after AI-passed auto-push', () => {
     const actions = getBusinessScreeningActions({
       status: 'pending_review',
       screening_result: '通过',
@@ -29,7 +29,7 @@ describe('resume business screening helpers', () => {
     });
 
     expect(actions.primary).toBeNull();
-    expect(actions.secondary).toBeNull();
+    expect(actions.secondary).toEqual({ key: 'reject', label: '淘汰' });
     expect(actions.tags.map((tag) => tag.label)).toContain('待业务筛选');
   });
 
@@ -42,7 +42,7 @@ describe('resume business screening helpers', () => {
     });
 
     expect(actions.primary).toEqual({ key: 'push', label: '推送' });
-    expect(actions.secondary).toEqual({ key: 'reject', label: '淘汰' });
+    expect(actions.secondary).toBeNull();
   });
 
   it('shows push for resumes without an AI screening result', () => {
@@ -115,7 +115,7 @@ describe('resume business screening helpers', () => {
     })).toBe('not_ready');
   });
 
-  it('shows the push action when an unpushed resume has a stale pending marker', () => {
+  it('shows 淘汰 for an unpushed AI-passed resume with a stale pending marker', () => {
     const actions = getBusinessScreeningActions({
       status: 'pending_review',
       screening_result: '通过',
@@ -123,7 +123,8 @@ describe('resume business screening helpers', () => {
       business_screening_status: 'pending',
     });
 
-    expect(actions.primary).toEqual({ key: 'push', label: '推送' });
+    expect(actions.primary).toBeNull();
+    expect(actions.secondary).toEqual({ key: 'reject', label: '淘汰' });
     expect(actions.tags).toEqual([]);
   });
 

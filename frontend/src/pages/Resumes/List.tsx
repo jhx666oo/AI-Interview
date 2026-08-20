@@ -926,16 +926,33 @@ const ResumesList: React.FC = () => {
 
   const handleReject = async (record: any) => {
     const previous = businessScreeningState[record.id];
+    // 乐观更新：AI 结果改为不通过，并从业务链接移除（软操作，可再次推送）
     setData(prev => prev.map(item =>
-      item.id === record.id ? { ...item, status: 'rejected', hr_disposition: 'rejected', business_screening_status: previous?.hr_disposition === 'pushed' ? 'rejected' : 'not_ready' } : item
+      item.id === record.id ? { ...item, screening_result: '不通过', hr_disposition: 'pending', business_screening_status: 'not_ready' } : item
     ));
     mergeBusinessScreeningState([record.id], {
-      hr_disposition: 'rejected',
-      business_screening_status: previous?.hr_disposition === 'pushed' ? 'rejected' : 'not_ready',
+      hr_disposition: 'pending',
+      business_screening_status: 'not_ready',
     });
     try {
-      await request.post(`/resumes/${record.id}/business-screening/reject`, { comment: 'HR淘汰' });
-      message.success(`${record.candidate_name} 已淘汰`);
+      const res = await request.post(`/resumes/${record.id}/business-screening/eliminate`, {}) as {
+        ai_result?: string;
+        hr_disposition?: string;
+        business_screening_status?: string;
+      };
+      setData(prev => prev.map(item =>
+        item.id === record.id ? {
+          ...item,
+          screening_result: res.ai_result || '不通过',
+          hr_disposition: res.hr_disposition || 'pending',
+          business_screening_status: (res.business_screening_status as any) || 'not_ready',
+        } : item
+      ));
+      mergeBusinessScreeningState([record.id], {
+        hr_disposition: res.hr_disposition || 'pending',
+        business_screening_status: ((res.business_screening_status || 'not_ready') as any),
+      });
+      message.success(`${record.candidate_name} 已淘汰（AI 结果改为不通过，已移出业务链接）`);
     } catch (error: any) {
       message.error(error?.response?.data?.detail || '淘汰失败');
       persistBusinessScreeningState({
@@ -943,7 +960,7 @@ const ResumesList: React.FC = () => {
         ...(previous ? { [record.id]: previous } : {}),
       });
       setData(prev => prev.map(item =>
-        item.id === record.id ? { ...item, status: record.status, ...(previous || {}) } : item
+        item.id === record.id ? { ...item, ...(previous || {}) } : item
       ));
     }
   };
@@ -1028,18 +1045,21 @@ const ResumesList: React.FC = () => {
     }
     Modal.confirm({
       title: '确认批量淘汰',
-      content: `确定要淘汰选中的 ${selectedRowKeys.length} 份简历吗？`,
+      content: `确定要淘汰选中的 ${selectedRowKeys.length} 份简历吗？淘汰后 AI 结果改为不通过，并从业务筛选链接中移除（可再次推送）。`,
       okText: '确认',
       cancelText: '取消',
       okType: 'danger',
       onOk: async () => {
         try {
+          // 软淘汰：AI 结果 → 不通过，并从业务筛选链接移除
           await Promise.all(selectedRowKeys.map(id =>
-            request.post(`/resumes/${id}/business-screening/reject`, { comment: '批量淘汰' })
+            request.post(`/resumes/${id}/business-screening/eliminate`, {})
           ));
-          mergeBusinessScreeningState(selectedRowKeys.map(String), { hr_disposition: 'rejected' });
-          setData(prev => prev.map(item => selectedRowKeys.includes(item.id) ? { ...item, status: 'rejected', hr_disposition: 'rejected' } : item));
-          message.success(`成功淘汰 ${selectedRowKeys.length} 份简历`);
+          mergeBusinessScreeningState(selectedRowKeys.map(String), { hr_disposition: 'pending', business_screening_status: 'not_ready' });
+          setData(prev => prev.map(item => selectedRowKeys.includes(item.id)
+            ? { ...item, screening_result: '不通过', hr_disposition: 'pending', business_screening_status: 'not_ready' }
+            : item));
+          message.success(`成功淘汰 ${selectedRowKeys.length} 份简历（AI 结果改为不通过，已移出业务链接）`);
           setSelectedRowKeys([]);
           fetchResumes();
         } catch (error) {
@@ -1106,11 +1126,25 @@ const ResumesList: React.FC = () => {
 
   const handlePush = async (record: any) => {
     try {
-      const res = await request.post('/resumes/business-screening/push', { ids: [record.id], expires_in_days: pushExpiry }) as BusinessScreeningPushResult;
+      // 手动推送：AI 不通过 → 改为通过并推送到业务链接（后端一个接口完成）
+      const res = await request.post(`/resumes/${record.id}/business-screening/manual-push`, { expires_in_days: pushExpiry }) as BusinessScreeningPushResult & {
+        ai_result?: string;
+        business_screening_status?: string;
+      };
       const pushedIds = Array.isArray(res.pushed) ? res.pushed : [];
       if (pushedIds.includes(record.id)) {
-        mergeBusinessScreeningState([record.id], { hr_disposition: 'pushed', business_screening_status: 'pending' });
-        setData(prev => prev.map(item => item.id === record.id ? { ...item, hr_disposition: 'pushed', business_screening_status: 'pending' } : item));
+        setData(prev => prev.map(item => item.id === record.id ? {
+          ...item,
+          screening_result: res.ai_result || '通过',
+          hr_disposition: 'pushed',
+          business_screening_status: res.business_screening_status || 'pending',
+        } : item));
+        mergeBusinessScreeningState([record.id], {
+          hr_disposition: 'pushed',
+          business_screening_status: res.business_screening_status === 'passed' || res.business_screening_status === 'rejected'
+            ? res.business_screening_status
+            : 'pending',
+        });
       }
       storePushResult(res);
       message.success(summarizePushResult(res));

@@ -1,6 +1,12 @@
 import { Hono } from 'hono';
 import { buildPublicProfile, type BusinessScreeningPublicProfile } from '../business-screening/routes';
 import { hashPublicToken } from '../business-screening/token';
+import {
+  getTenantAccessToken,
+  listFreeInterviewSlots,
+  updateInterviewCalendarEventTime,
+} from '../interview-start/feishu-calendar';
+import { resolveExactInterviewerOpenId } from '../feishu-notifications/reminder-source';
 
 /**
  * 面试管理卡片（Interview Card Link）
@@ -8,6 +14,7 @@ import { hashPublicToken } from '../business-screening/token';
  * 机制与业务筛选链接一致：token 确定性派生（SHA-256('interview-card::' + id)）、
  * DB 只存哈希、固定 30 天有效、可撤销、可续期。
  * 面向受众：业务方/用人部门查看面试进度、面试官之间协作查看。
+ * 这是面试管理唯一链接：看简历、填评价、改面试时间都在这里。
  */
 
 const LINK_TTL_DAYS = 30;
@@ -33,6 +40,10 @@ export interface InterviewCardRouteDeps {
   uuid: () => string;
   hashPublicToken: (token: string) => Promise<string>;
   getResumeFileBytes: (env: any, resumeId: string) => Promise<{ bytes: Uint8Array | null; fileName: string }>;
+  // 公开页「重新解析」：卡片页简历信息未提取完整时，面试官可触发 AI 重新评估（入队去重）
+  enqueueResumeReprocess?: (env: any, resumeId: string) => Promise<{ jobId: string; status: 'queued' | 'running'; queued: boolean }>;
+  /** 飞书应用 ID（fallback：Pages 环境变量 FEISHU_APP_ID 缺失时用于获取 tenant token） */
+  appId?: string;
 }
 
 /** 公开页透出的面试记录（不含联系方式与敏感内部字段） */
@@ -108,6 +119,21 @@ export interface InterviewCardPublicView {
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+/** 秒级时间戳 → 北京时间「YYYY-MM-DD HH:mm」（interview_time 存储口径） */
+function formatBeijing(ts: number): string {
+  const d = new Date(ts * 1000 + 8 * 3600_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+/** 解析「YYYY-MM-DD HH:mm」（北京时间）→ 毫秒时间戳，非法返回 null */
+function parseBeijingTime(value: string): number | null {
+  const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const ts = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00+08:00`);
+  return Number.isNaN(ts) ? null : ts;
 }
 
 function parseJsonObject<T>(value: unknown): T | null {
@@ -619,6 +645,118 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
     }, 410);
   });
 
+  // ==================== 公开读取：推荐空闲面试时段（改时间用，interview-invite 功能迁移） ====================
+  // 返回主面试官未来 2 个工作日的空闲 1 小时时段（跳过周末、避开午休），30 分钟粒度
+  app.get('/api/public/interview-card/:token/slots', async (c) => {
+    const token = c.req.param('token');
+    const tokenHash = await deps.hashPublicToken(token);
+    const db = c.env.DB as D1Database;
+    const row = (await db.prepare(
+      `SELECT * FROM ${cardTable} WHERE token_hash = ?`,
+    ).bind(tokenHash).first()) as InterviewCardLinkRow | null;
+    if (!row) return c.json({ detail: 'Not found' }, 404);
+    if (!isActiveLink(row, deps.now())) return c.json({ detail: 'Link unavailable' }, 410);
+
+    // 面试官：优先简历维度，缺失时按候选人姓名兜底（手动创建的面试无 resume_id）
+    let resumeRow: any = null;
+    if (text(row.resume_id)) {
+      resumeRow = await db.prepare('SELECT primary_interviewer, interviewer FROM interviews WHERE resume_id = ? ORDER BY COALESCE(round, 99) ASC LIMIT 1').bind(row.resume_id).first();
+    }
+    if (!resumeRow && text(row.candidate_name)) {
+      resumeRow = await db.prepare('SELECT primary_interviewer, interviewer FROM interviews WHERE candidate_name = ? ORDER BY COALESCE(round, 99) ASC LIMIT 1').bind(text(row.candidate_name)).first();
+    }
+    const primaryName = text(resumeRow?.primary_interviewer) || text(resumeRow?.interviewer);
+    if (!primaryName) return c.json({ ok: true, slots: [], reason: '面试未配置面试官' });
+
+    const openId = await resolveExactInterviewerOpenId(db, primaryName);
+    if (!openId) return c.json({ ok: true, slots: [], reason: `面试官「${primaryName}」未绑定飞书身份，暂无法推荐空闲时段` });
+
+    try {
+      const feishuToken = await getTenantAccessToken(c.env, deps.appId);
+      let busyError: string | null = null;
+      const slots = await listFreeInterviewSlots({
+        token: feishuToken,
+        openId,
+        fromTs: Math.floor(Date.now() / 1000),
+        durationMinutes: 60,
+        skipWorkdays: 2,
+        workdays: 3,
+      }, {
+        onBusyError: (message: string) => { busyError = message; },
+      });
+      return c.json({
+        ok: true,
+        interviewer: primaryName,
+        slots: slots.map((s) => ({ start: formatBeijing(s.startTs), end: formatBeijing(s.endTs) })),
+        reason: slots.length === 0
+          ? (busyError ? `空闲时段查询失败：${busyError}` : '未来两个工作日之后未找到空闲时段')
+          : undefined,
+      });
+    } catch (e: any) {
+      return c.json({ ok: true, slots: [], reason: `空闲时段查询失败：${e?.message || e}` });
+    }
+  });
+
+  // ==================== 公开写入：改面试时间（同步飞书日程，interview-invite 功能迁移） ====================
+  // body: { interview_time: "YYYY-MM-DD HH:mm" }（北京时间）
+  app.post('/api/public/interview-card/:token/reschedule', async (c) => {
+    const token = c.req.param('token');
+    const tokenHash = await deps.hashPublicToken(token);
+    const db = c.env.DB as D1Database;
+    const row = (await db.prepare(
+      `SELECT * FROM ${cardTable} WHERE token_hash = ?`,
+    ).bind(tokenHash).first()) as InterviewCardLinkRow | null;
+    if (!row) return c.json({ detail: 'Not found' }, 404);
+    if (!isActiveLink(row, deps.now())) return c.json({ detail: 'Link unavailable' }, 410);
+
+    const body = await c.req.json().catch(() => ({}));
+    const interviewTime = text(body.interview_time);
+    const startMs = parseBeijingTime(interviewTime);
+    if (!startMs) return c.json({ detail: '面试时间格式应为 YYYY-MM-DD HH:mm' }, 400);
+    if (startMs < Date.now() - 5 * 60_000) return c.json({ detail: '面试时间不能早于当前时间' }, 400);
+
+    // 找到该候选人关联的面试记录（优先简历维度，缺失时按姓名兜底，取第一条）
+    let interview: any = null;
+    if (text(row.resume_id)) {
+      interview = await db.prepare(
+        `SELECT * FROM interviews WHERE resume_id = ?
+         ORDER BY COALESCE(round, 99) ASC, COALESCE(interview_time, started_at, created_at) ASC LIMIT 1`,
+      ).bind(row.resume_id).first();
+    }
+    if (!interview && text(row.candidate_name)) {
+      interview = await db.prepare(
+        `SELECT * FROM interviews WHERE candidate_name = ?
+         ORDER BY COALESCE(round, 99) ASC, COALESCE(interview_time, started_at, created_at) ASC LIMIT 1`,
+      ).bind(text(row.candidate_name)).first();
+    }
+    if (!interview) return c.json({ detail: '该候选人暂无可调整的面试记录' }, 404);
+
+    const nowIso = deps.now();
+    await db.prepare('UPDATE interviews SET interview_time = ?, updated_at = ? WHERE id = ?')
+      .bind(interviewTime, nowIso, interview.id).run();
+
+    // 同步飞书日程（已有日程才更新；失败仅提示，不阻断改时间）
+    let calendarSynced = false;
+    let calendarWarning: string | null = null;
+    const eventId = text(interview.feishu_event_id);
+    if (eventId) {
+      const startTs = Math.floor(startMs / 1000);
+      const result = await updateInterviewCalendarEventTime(c.env, eventId, {
+        startTimestamp: startTs,
+        endTimestamp: startTs + 3600,
+      }, {}, deps.appId);
+      calendarSynced = result.ok;
+      if (!result.ok) calendarWarning = result.error || '飞书日程时间更新失败，请稍后在面试管理页确认';
+    }
+
+    return c.json({
+      ok: true,
+      interview_time: interviewTime,
+      calendar_synced: calendarSynced,
+      calendar_warning: calendarWarning,
+    });
+  });
+
   // ==================== 公开读取：免登录预览/下载候选人简历 PDF ====================
   // 与业务筛选文件端点同机制：?preview=1 inline 预览 / 默认 attachment 下载
   app.get('/api/public/interview-card/:token/file', async (c) => {
@@ -656,6 +794,43 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
         'Cache-Control': 'private, max-age=300',
       },
     });
+  });
+
+  // 公开「重新解析」：卡片页简历信息未提取完整时，面试官可触发 AI 重新评估（免登录，凭链接 token 校验）
+  app.post('/api/public/interview-card/:token/reparse', async (c) => {
+    const tokenHash = await deps.hashPublicToken(c.req.param('token'));
+    const db = c.env.DB as D1Database;
+    const row = (await db.prepare(
+      `SELECT * FROM ${CARD_TABLE} WHERE token_hash = ?`,
+    ).bind(tokenHash).first()) as InterviewCardLinkRow | null;
+    if (!row) return c.json({ detail: 'Not found' }, 404);
+    if (!isActiveLink(row, deps.now())) return c.json({ detail: 'Link unavailable' }, 410);
+
+    // 与公开读取一致的简历解析：优先 resume_id，缺失时按姓名兜底
+    let resumeId = text(row.resume_id);
+    if (!resumeId) {
+      const candidateName = text(row.candidate_name);
+      if (!candidateName) return c.json({ detail: 'Not found' }, 404);
+      const resumeRow = await db.prepare(
+        'SELECT id FROM resumes WHERE candidate_name = ? ORDER BY created_at DESC LIMIT 1',
+      ).bind(candidateName).first();
+      resumeId = resumeRow?.id || '';
+    }
+    if (!resumeId) return c.json({ detail: 'Not found' }, 404);
+    if (!deps.enqueueResumeReprocess) return c.json({ detail: '重新解析暂不可用，请联系 HR' }, 503);
+
+    try {
+      const result = await deps.enqueueResumeReprocess(c.env, resumeId);
+      return c.json({
+        ok: true,
+        resume_id: resumeId,
+        job_id: result.jobId,
+        queued: result.queued,
+        status: result.status,
+      });
+    } catch (e: any) {
+      return c.json({ detail: e?.message || '重新解析失败' }, 500);
+    }
   });
 
   return app;
