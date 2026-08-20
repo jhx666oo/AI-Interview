@@ -16,7 +16,7 @@ import { useOwner } from '../../contexts/OwnerContext';
 import { getReminderFeedback, type ReminderDeliveryResponse } from './reminderFeedback';
 import { ResponsiveDataView } from '../../components/Responsive';
 import { ResponsiveModal } from '../../components/Responsive/ResponsiveModal';
-import { buildCreateFromTalentPayload, resolveScheduleInterviewerDefaults } from './interviewerDefaults';
+import { buildCreateFromTalentPayload, resolveScheduleInterviewerDefaults, resolveScheduleInterviewerPrefill } from './interviewerDefaults';
 
 const { Text } = Typography;
 
@@ -435,16 +435,15 @@ const InterviewsList: React.FC = () => {
     if (positionList.length === 0) positionList = await fetchPositions();
     const defaults = resolveScheduleInterviewerDefaults(record, positionList);
     setScheduleDefaults(defaults);
-    scheduleForm.setFieldsValue({
-      interviewer_name: defaults.interviewerName || undefined,
-      secondary_interviewer: defaults.secondaryInterviewer || undefined,
-    });
+    // 弹窗面试官初始值：优先记录已安排的面试官（避免岗位自动匹配覆盖实际安排的面试官）
+    const prefill = resolveScheduleInterviewerPrefill(record, defaults);
+    scheduleForm.setFieldsValue(prefill);
     setScheduleModalVisible(true);
 
     // 自动查一面面试官未来空闲时段 → 推荐定日程（点选或自动选中第一个）
     setAvailableSlots([]);
     setSlotReason(null);
-    const interviewerName = defaults.interviewerName || record.interviewer || record.primary_interviewer || '';
+    const interviewerName = record.primary_interviewer || record.interviewer || defaults.interviewerName || '';
     if (interviewerName) {
       setSlotLoading(true);
       try {

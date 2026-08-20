@@ -70,3 +70,25 @@ export function buildCreateFromTalentPayload(input: {
     secondary_interviewer: secondaryInterviewer,
   };
 }
+
+type InterviewerPrefillRecord = {
+  primary_interviewer?: string | null;
+  secondary_interviewer?: string | null;
+  interviewer?: string | null;
+};
+
+/**
+ * 计算「安排面试」弹窗的面试官初始值。
+ * 优先级：记录已安排的面试官（primary/secondary）> 岗位配置的默认面试官。
+ * 修复：此前弹窗直接用岗位匹配结果覆盖了记录已有面试官，导致弹窗与列表展示不一致
+ * （如周佳记录一面=金皓翔/二面=黄维，弹窗却显示岗位配置的魏秋柠/练童）。
+ */
+export function resolveScheduleInterviewerPrefill(
+  record: InterviewerPrefillRecord,
+  defaults?: { interviewerName?: string; secondaryInterviewer?: string } | null,
+): { interviewer_name?: string; secondary_interviewer?: string } {
+  return {
+    interviewer_name: clean(record.primary_interviewer) || clean(record.interviewer) || clean(defaults?.interviewerName) || undefined,
+    secondary_interviewer: clean(record.secondary_interviewer) || clean(defaults?.secondaryInterviewer) || undefined,
+  };
+}

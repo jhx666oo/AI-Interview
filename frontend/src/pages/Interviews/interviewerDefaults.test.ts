@@ -2,7 +2,38 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCreateFromTalentPayload,
   resolveScheduleInterviewerDefaults,
+  resolveScheduleInterviewerPrefill,
 } from './interviewerDefaults';
+
+describe('resolveScheduleInterviewerPrefill（弹窗面试官初始值）', () => {
+  it('优先记录已安排的面试官，其次才是岗位匹配的默认面试官', () => {
+    // 周佳场景：记录已有金皓翔/黄维，岗位默认是魏秋柠/练童 → 必须显示记录的
+    expect(resolveScheduleInterviewerPrefill({
+      primary_interviewer: '金皓翔',
+      secondary_interviewer: '黄维',
+    }, { interviewerName: '魏秋柠', secondaryInterviewer: '练童' })).toEqual({
+      interviewer_name: '金皓翔',
+      secondary_interviewer: '黄维',
+    });
+  });
+
+  it('记录面试官为空时回退岗位匹配的默认面试官', () => {
+    expect(resolveScheduleInterviewerPrefill({
+      primary_interviewer: '',
+      secondary_interviewer: '',
+    }, { interviewerName: '魏秋柠', secondaryInterviewer: '练童' })).toEqual({
+      interviewer_name: '魏秋柠',
+      secondary_interviewer: '练童',
+    });
+  });
+
+  it('没有默认值时保持为空', () => {
+    expect(resolveScheduleInterviewerPrefill({}, null)).toEqual({
+      interviewer_name: undefined,
+      secondary_interviewer: undefined,
+    });
+  });
+});
 
 describe('interviewer scheduling defaults', () => {
   const positions = [
