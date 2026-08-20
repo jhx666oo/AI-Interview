@@ -291,6 +291,53 @@ function buildHarness(options?: {
         });
       }
     },
+    async upsertBatchItems(_db, items) {
+      for (const item of items) {
+        const existing = batchItems.find((candidate) => candidate.batch_id === item.batchId && candidate.resume_id === item.resumeId);
+        if (existing) {
+          existing.status = item.status || existing.status;
+          existing.processed_at = item.processedAt ?? existing.processed_at;
+          continue;
+        }
+        const resume = resumes.get(item.resumeId);
+        batchItems.push({
+          id: item.id,
+          batch_id: item.batchId,
+          resume_id: item.resumeId,
+          position_id: item.positionId || null,
+          status: item.status || 'pending',
+          remark: item.remark || null,
+          processed_at: item.processedAt || null,
+          created_at: item.createdAt || '2026-08-12T12:00:00.000Z',
+          dispatch_group_id: item.dispatchGroupId,
+          candidate_name: resume?.candidate_name || null,
+          mapped_position: resume?.mapped_position || null,
+          position_applied: resume?.position_applied || null,
+          email: resume?.email || null,
+          contact: resume?.contact || null,
+          education: resume?.education || null,
+          work_experience: resume?.work_experience || null,
+          hr_disposition: resume?.hr_disposition || null,
+          business_screening_status: resume?.business_screening_status || null,
+          business_screening_remark: resume?.business_screening_remark || null,
+          business_screened_at: resume?.business_screened_at || null,
+          ocr_markdown: resume?.ocr_markdown || null,
+          raw_text: resume?.raw_text || null,
+          resume_markdown: resume?.resume_markdown || null,
+          ai_review: resume?.ai_review || null,
+          ai_evaluation: resume?.ai_evaluation || null,
+          match_score: resume?.match_score ?? null,
+          capability_scores: resume?.capability_scores || null,
+          hard_requirement_result: resume?.hard_requirement_result || null,
+          screening_result: resume?.screening_result || null,
+          parsed_data: resume?.parsed_data || null,
+          gender: resume?.gender || null,
+          birthday: resume?.birthday || null,
+          certifications: resume?.certifications || null,
+          self_evaluation: resume?.self_evaluation || null,
+        });
+      }
+    },
     async listBatchItems(_db, batchId) {
       return batchItems.filter((item) => item.batch_id === batchId).map((item) => ({ ...item }));
     },
@@ -428,6 +475,22 @@ function buildHarness(options?: {
     },
     async countPendingBatchItems(_db, batchId) {
       return batchItems.filter((item) => item.batch_id === batchId && item.status === 'pending').length;
+    },
+    async listAiPassedResumesByPositionTitles(_db, standardTitles) {
+      const titles = [...new Set((standardTitles || []).map((t) => String(t).trim()).filter(Boolean))];
+      if (titles.length === 0) return [];
+      // 反查 position_mappings：标准岗位名 → 原始岗位名
+      const rawNames = new Set<string>(titles);
+      for (const mapping of positionMappings) {
+        if (titles.includes(mapping.mapped_name)) rawNames.add(mapping.raw_name);
+      }
+      return [...resumes.values()]
+        .filter((resume) => String(resume.screening_result || '').trim() === '通过')
+        .filter((resume) => {
+          const raw = String(resume.mapped_position || resume.position_applied || '').trim();
+          return rawNames.has(raw);
+        })
+        .map((resume) => ({ ...resume }));
     },
   };
 
@@ -582,6 +645,7 @@ function buildHarness(options?: {
                       .filter((r: any) => ids.includes(String(r.id)))
                       .map((r: any) => ({
                         id: r.id,
+                        status: r.status ?? null,
                         business_screening_status: r.business_screening_status ?? null,
                         hr_disposition: r.hr_disposition ?? null,
                       })),
@@ -3559,5 +3623,94 @@ describe('POST /api/resumes/business-screening/batches/:batchId/consolidate', ()
     expect(byId['r-passed']).toBe('passed');
     expect(byId['r-rejected']).toBe('rejected');
     expect(byId['r-pending']).toBe('pending');
+  });
+
+  it('已入库但未标记 pushed 的 AI 通过简历归拢后映射为 passed（链接展示完整 AI 通过集）', async () => {
+    const h = buildHarness({
+      resumes: [
+        // 已入库（approved）但 hr_disposition 仍为 pending：历史上 HR 直接入库未走推送标记
+        { id: 'r-approved', candidate_name: '甲', position_applied: 'P', mapped_position: 'P', screening_result: '通过', business_screening_status: 'not_ready', hr_disposition: 'pending', status: 'approved' },
+        { id: 'r-pending', candidate_name: '乙', position_applied: 'P', mapped_position: 'P', screening_result: '通过', business_screening_status: 'pending', hr_disposition: 'pushed', status: 'pending_screening' },
+      ] as any,
+      initialBatches: [
+        { id: 'b-cons2', interviewer_id: 'u', interviewer_name: '魏秋柠', interviewer_open_id: 'ou_1', token_hash: 'h2', expires_at: '2099-01-01T00:00:00.000Z', status: 'active', created_by: 'x', created_at: '2026-08-12T00:00:00.000Z', scope_key: 'sk2' } as any,
+      ],
+    });
+    const res = await h.request('/api/resumes/business-screening/batches/b-cons2/consolidate', {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer hr-token' },
+      body: JSON.stringify({ resume_ids: ['r-approved', 'r-pending'] }),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    const body = JSON.parse(text);
+    const byId = Object.fromEntries(body.items.map((i: any) => [i.resume_id, i.status]));
+    expect(byId['r-approved']).toBe('passed');
+    expect(byId['r-pending']).toBe('pending');
+  });
+});
+
+describe('push 自动归拢该岗位 AI 通过全集（含已入库/已决策）', () => {
+  it('正式推送时自动把该岗位所有 AI 通过简历加入批次，已入库映射 passed、待处理映射 pending', async () => {
+    const h = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      resumes: [
+        // 本次推送的待处理简历
+        { id: 'r-push-1', candidate_name: '新待筛', position_applied: 'P', mapped_position: 'P', screening_result: '通过', status: 'pending_screening', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+        // 该岗位已入库的 AI 通过简历（不在本次 ids 中，应被自动归拢）
+        { id: 'r-approved-1', candidate_name: '已入库甲', position_applied: 'P', mapped_position: 'P', screening_result: '通过', status: 'approved', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+        { id: 'r-approved-2', candidate_name: '已入库乙', position_applied: 'P', mapped_position: 'P', screening_result: '通过', status: 'approved', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+        // 该岗位 AI 不通过的简历（不应进入链接）
+        { id: 'r-no-1', candidate_name: '不通过甲', position_applied: 'P', mapped_position: 'P', screening_result: '不通过', status: 'pending_screening', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+      ] as any,
+      positions: [{ id: 'position-1', title: 'P', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' }],
+      interviewerDirectory: [{ name: '张三', openId: 'ou_zhang', userId: 'user-zhang' }],
+    });
+    const res = await h.request('/api/resumes/business-screening/push', {
+      method: 'POST', headers: { authorization: 'Bearer hr-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['r-push-1'] }),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    const body = JSON.parse(text);
+    expect(body.ok).toBe(true);
+    expect(body.batches.length).toBe(1);
+    // 链接应包含 3 份 AI 通过简历（1 份本次推送 + 2 份自动归拢的已入库简历）
+    const url = body.batches[0].url;
+    const token = url.split('/').pop() as string;
+    const pub = await h.request(`/api/public/business-screening/${token}`);
+    const pubBody = JSON.parse(await pub.text());
+    expect(pub.status).toBe(200);
+    const byId = Object.fromEntries((pubBody.resumes || []).map((r: any) => [r.id, r.status]));
+    expect(byId['r-push-1']).toBe('pending');
+    expect(byId['r-approved-1']).toBe('passed');
+    expect(byId['r-approved-2']).toBe('passed');
+    expect(byId['r-no-1']).toBeUndefined();
+    expect((pubBody.resumes || []).length).toBe(3);
+  });
+
+  it('临时链接模式不自动归拢该岗位 AI 通过全集', async () => {
+    const h = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      resumes: [
+        { id: 'r-push-tmp', candidate_name: '临时筛', position_applied: 'P', mapped_position: 'P', screening_result: '通过', status: 'pending_screening', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+        { id: 'r-approved-tmp', candidate_name: '已入库丙', position_applied: 'P', mapped_position: 'P', screening_result: '通过', status: 'approved', hr_disposition: 'pending', business_screening_status: 'not_ready' },
+      ] as any,
+      positions: [{ id: 'position-1', title: 'P', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' }],
+      interviewerDirectory: [{ name: '张三', openId: 'ou_zhang', userId: 'user-zhang' }],
+    });
+    const res = await h.request('/api/resumes/business-screening/push', {
+      method: 'POST', headers: { authorization: 'Bearer hr-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: ['r-push-tmp'], temp_link: true }),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    const body = JSON.parse(text);
+    expect(body.batches.length).toBe(1);
+    const url = body.batches[0].url;
+    const token = url.split('/').pop() as string;
+    const pub = await h.request(`/api/public/business-screening/${token}`);
+    const pubBody = JSON.parse(await pub.text());
+    const ids = (pubBody.resumes || []).map((r: any) => r.id);
+    expect(ids).toEqual(['r-push-tmp']);
   });
 });

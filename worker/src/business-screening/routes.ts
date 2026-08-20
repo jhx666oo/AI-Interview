@@ -242,6 +242,8 @@ export interface BusinessScreeningRouteStore {
   ): Promise<void>;
   // 向批次追加简历条目（重复（batch,resume）自动忽略）
   appendBatchItemsIfAbsent(db: D1Database, items: CreateResumePushBatchItemInput[]): Promise<void>;
+  // 向批次写入条目：不存在插入、已存在（batch_id, resume_id）更新状态与处理时间（consolidate 归拢用）
+  upsertBatchItems(db: D1Database, items: CreateResumePushBatchItemInput[]): Promise<void>;
   listBatchItems(db: D1Database, batchId: string): Promise<BusinessScreeningBatchItemView[]>;
   loadBatchItem(db: D1Database, batchId: string, resumeId: string): Promise<BusinessScreeningBatchItemView | null>;
   recordDecision(
@@ -262,6 +264,12 @@ export interface BusinessScreeningRouteStore {
   setBatchStatus(db: D1Database, batchId: string, status: 'active' | 'completed' | 'revoked' | 'expired'): Promise<void>;
   setBatchLastSentAt(db: D1Database, batchId: string, sentAt: string): Promise<void>;
   countPendingBatchItems(db: D1Database, batchId: string): Promise<number>;
+  // 按标准岗位标题查询该岗位下所有 AI 初筛通过（screening_result='通过'）的简历
+  // （含已入库 approved / 已决策 passed/rejected / 待处理 pending），供 push 自动归拢链接展示完整 AI 通过简历集
+  listAiPassedResumesByPositionTitles(
+    db: D1Database,
+    standardTitles: string[],
+  ): Promise<BusinessScreeningResumeRecord[]>;
 }
 
 type HrUser = { id?: string; email?: string; role?: string; full_name?: string };
@@ -1205,59 +1213,11 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       const batch = await deps.store.loadBatchById(db, batchId);
       if (!batch) return c.json({ detail: 'Batch not found' }, 404);
 
-      const nowIso = deps.now();
       const rows = await db.prepare(
         `SELECT id, business_screening_status, hr_disposition, status FROM resumes WHERE id IN (${resumeIds.map(() => '?').join(',')})`,
       ).bind(...resumeIds).all();
-
-      const items: CreateResumePushBatchItemInput[] = [];
-      const mapped: Array<{ resume_id: string; status: ResumePushBatchItemStatus }> = [];
-      for (const r of (rows.results || []) as any[]) {
-        const bs = String(r.business_screening_status || '');
-        const hr = String(r.hr_disposition || '');
-        const st = String(r.status || '');
-        let status: ResumePushBatchItemStatus = 'pending';
-        if (bs === 'passed' || (hr === 'pushed' && st === 'approved')) status = 'passed';
-        else if (bs === 'rejected' || hr === 'rejected') status = 'rejected';
-        items.push({
-          id: deps.uuid(),
-          batchId,
-          resumeId: r.id,
-          positionId: null,
-          status,
-          remark: null,
-          processedAt: null,
-          createdAt: nowIso,
-          dispatchGroupId: null,
-        });
-        mapped.push({ resume_id: r.id, status });
-      }
-      await insertResumePushBatchItemsIfAbsent(db, items);
-      // upsert：更新已存在条目状态（INSERT OR IGNORE 不会更新，导致已决策简历状态停留在旧值）
-      if (items.length > 0) {
-        const CHUNK = 10;
-        for (let start = 0; start < items.length; start += CHUNK) {
-          const chunk = items.slice(start, start + CHUNK);
-          const cols = '(id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)';
-          const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
-          const values: unknown[] = [];
-          for (const item of chunk) {
-            values.push(
-              item.id, item.batchId, item.resumeId, item.positionId || null, item.status || 'pending',
-              item.remark || null, item.processedAt || null, item.createdAt || nowIso, item.dispatchGroupId || null,
-            );
-          }
-          await db.prepare(
-            `INSERT INTO resume_push_batch_items ${cols} VALUES ${placeholders}
-             ON CONFLICT(batch_id, resume_id) DO UPDATE SET status = excluded.status, processed_at = excluded.processed_at`,
-          ).bind(...values).run();
-        }
-      }
-      for (const m of mapped) {
-        await db.prepare('UPDATE resumes SET business_screening_batch_id = ?, updated_at = ? WHERE id = ?')
-          .bind(batchId, nowIso, m.resume_id).run();
-      }
-      return c.json({ ok: true, consolidated: items.length, items: mapped });
+      const mapped = await consolidateResumesIntoBatch(db, deps, batchId, (rows.results || []) as any[]);
+      return c.json({ ok: true, consolidated: mapped.length, items: mapped });
     } catch (e: any) {
       console.error(`[business-screening] consolidate 失败: ${e?.message || e}\n${e?.stack || ''}`);
       return c.json({ detail: `consolidate 失败: ${e?.message || e}` }, 500);
@@ -1265,6 +1225,47 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
   });
 
   return app;
+}
+
+// 归拢核心（consolidate 端点与 push 自动归拢复用）：
+// 把简历（含已业务决策/已入库的）加入指定批次，保留各自状态，供「AI 初筛通过表」链接展示完整简历集
+async function consolidateResumesIntoBatch(
+  db: D1Database,
+  deps: Pick<BusinessScreeningRouteDeps, 'uuid' | 'now' | 'store'>,
+  batchId: string,
+  resumeRows: Array<{ id: string; business_screening_status?: string | null; hr_disposition?: string | null; status?: string | null }>,
+): Promise<Array<{ resume_id: string; status: ResumePushBatchItemStatus }>> {
+  const nowIso = deps.now();
+  const items: CreateResumePushBatchItemInput[] = [];
+  const mapped: Array<{ resume_id: string; status: ResumePushBatchItemStatus }> = [];
+  for (const r of resumeRows) {
+    const bs = String(r.business_screening_status || '');
+    const hr = String(r.hr_disposition || '');
+    const st = String(r.status || '');
+    let status: ResumePushBatchItemStatus = 'pending';
+    if (bs === 'passed' || st === 'approved') status = 'passed';
+    else if (bs === 'rejected' || hr === 'rejected') status = 'rejected';
+    items.push({
+      id: deps.uuid(),
+      batchId,
+      resumeId: r.id,
+      positionId: null,
+      status,
+      remark: null,
+      processedAt: null,
+      createdAt: nowIso,
+      dispatchGroupId: null,
+    });
+    mapped.push({ resume_id: r.id, status });
+  }
+  if (items.length > 0) {
+    await deps.store.upsertBatchItems(db, items);
+  }
+  for (const m of mapped) {
+    await db.prepare('UPDATE resumes SET business_screening_batch_id = ?, updated_at = ? WHERE id = ?')
+      .bind(batchId, nowIso, m.resume_id).run();
+  }
+  return mapped;
 }
 
 // 档案优选：仅完成 AI 初筛、缺结构化档案的简历（重复上传场景），
@@ -1537,6 +1538,22 @@ export async function pushResumesToBusinessScreening(
       }, items);
     }
     await deps.store.markResumesPushed(db, group.resumes.map((resume) => resume.id), batchId, dispatchGroupId);
+    // 正式推送（非临时链接）：自动把该岗位全部 AI 通过简历（含已入库/已决策，按状态标记）归拢进链接，
+    // 保证业务链接展示该岗位完整 AI 通过简历集，而不是只放本次推送的待处理简历
+    if (!tempLink) {
+      try {
+        const aiPassedRows = await deps.store.listAiPassedResumesByPositionTitles(db, group.positionTitles);
+        if (aiPassedRows.length > 0) {
+          // 同名档案优选：与主推送一致（指定岗位推送时跳过，避免岗位覆盖被 DB 重查替换行丢失）
+          const optimized = (tempLink || overrideTitle)
+            ? aiPassedRows
+            : await optimizeResumesForProfile(db, deps, aiPassedRows, resolveStandardTitle);
+          await consolidateResumesIntoBatch(db, deps, batchId, optimized);
+        }
+      } catch (e) {
+        console.error(`[business-screening] push 自动归拢 AI 通过简历失败: ${e?.message || e}`);
+      }
+    }
     const pendingCount = await deps.store.countPendingBatchItems(db, batchId);
 
     batches.push({
@@ -1763,6 +1780,26 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
     async appendBatchItemsIfAbsent(db, items) {
       await insertResumePushBatchItemsIfAbsent(db, items);
     },
+    async upsertBatchItems(db, items) {
+      if (items.length === 0) return;
+      const CHUNK = 10;
+      for (let start = 0; start < items.length; start += CHUNK) {
+        const chunk = items.slice(start, start + CHUNK);
+        const cols = '(id, batch_id, resume_id, position_id, status, remark, processed_at, created_at, dispatch_group_id)';
+        const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+        const values: unknown[] = [];
+        for (const item of chunk) {
+          values.push(
+            item.id, item.batchId, item.resumeId, item.positionId || null, item.status || 'pending',
+            item.remark || null, item.processedAt || null, item.createdAt || new Date().toISOString(), item.dispatchGroupId || null,
+          );
+        }
+        await db.prepare(
+          `INSERT INTO resume_push_batch_items ${cols} VALUES ${placeholders}
+           ON CONFLICT(batch_id, resume_id) DO UPDATE SET status = excluded.status, processed_at = excluded.processed_at`,
+        ).bind(...values).run();
+      }
+    },
     async listBatchItems(db, batchId) {
       return queryAll<BusinessScreeningBatchItemView>(
         db,
@@ -1820,6 +1857,32 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
             AND ${visibleBatchItemClause}`,
       ).bind(batchId).first<{ count: number }>();
       return Number(row?.count || 0);
+    },
+    async listAiPassedResumesByPositionTitles(db, standardTitles) {
+      const titles = uniqueStrings(standardTitles);
+      if (titles.length === 0) return [];
+      // 反查 position_mappings：标准岗位名 → 原始岗位名（简历 mapped_position/position_applied 可能是原始名）
+      const mappings = await queryAll<{ raw_name: string; mapped_name: string }>(
+        db,
+        `SELECT raw_name, mapped_name
+           FROM position_mappings
+          WHERE mapped_name IN (${placeholders(titles.length)})`,
+        titles,
+      );
+      const rawNames = uniqueStrings([...titles, ...mappings.map((m) => m.raw_name)]);
+      if (rawNames.length === 0) return [];
+      const nameClause = `(r.mapped_position IN (${placeholders(rawNames.length)}) OR r.position_applied IN (${placeholders(rawNames.length)}))`;
+      return queryAll<BusinessScreeningResumeRecord>(
+        db,
+        `SELECT r.id, r.candidate_name, r.email, r.contact, r.screening_result, r.status, r.hr_disposition,
+                r.mapped_position, r.position_applied, r.position_id, r.business_screening_status,
+                r.business_screening_remark, r.business_screened_at, r.business_screened_by,
+                r.business_screening_batch_id, r.business_screening_dispatch_group_id, r.education, r.work_experience, r.hr_review, r.rejected_at
+           FROM resumes r
+          WHERE r.screening_result = '通过'
+            AND ${nameClause}`,
+        [...rawNames, ...rawNames],
+      );
     },
   };
 }
