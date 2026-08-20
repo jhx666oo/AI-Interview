@@ -80,5 +80,7 @@ export function buildBusinessScreeningStatusSqlClause(
 }
 
 export function buildBusinessScreeningBatchItemVisibilityClause(alias = 'r'): string {
-  return `${alias}.hr_disposition = 'pushed' AND COALESCE(${alias}.status, '') NOT IN ('approved', 'rejected')`;
+  // 放宽：批次内已推送的简历全部可见（含已入库/已淘汰的，前端按状态标记），
+  // 保证「AI 初筛通过表」链接能展示该岗位 AI 通过简历全集（待处理 + 已处理）
+  return `${alias}.hr_disposition = 'pushed'`;
 }
