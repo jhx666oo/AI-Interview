@@ -42,6 +42,7 @@ import { createBusinessScreeningRoutes, createD1BusinessScreeningRouteStore } fr
 import { createPublicToken, createScopePublicToken } from './business-screening/token';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
+import { createInterviewCardRoutes, ensureInterviewCard } from './interview-card/routes';
 import {
   assertDailyReportDate,
   claimScreeningQueueRecord,
@@ -1624,6 +1625,7 @@ const publicQueryRoutes = createPublicQueryRoutes({
   buildPersonResumeFilter,
 });
 app.route('/', publicQueryRoutes);
+app.route('/', createInterviewCardRoutes());
 
 // HR 权限隔离：非 admin 用户自动过滤为自己的数据
 function getOwnerName(c: any): string | null {
@@ -13247,12 +13249,25 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
     const resumeFile = resumeId
       ? await getResumeFileBytes(c.env, resumeId)
       : { bytes: null, fileName: 'resume.pdf' };
+    let detailUrl: string | undefined;
+    try {
+      const card = await ensureInterviewCard(c.env.DB, {
+        interviewId: id,
+        resumeId: resumeId || null,
+        createdBy: currentUser?.email || null,
+      });
+      detailUrl = `${new URL(c.req.url).origin}/interview-card/${encodeURIComponent(card.token)}`;
+    } catch (cardError: any) {
+      // A missing migration must not prevent the interviewer from receiving the core reminder.
+      console.error(`[interview-card] 创建详情链接失败: ${cardError?.message || cardError}`);
+    }
     const delivery = await deliverInterviewReminder({
       userToken,
       resourceToken,
       receiverOpenId: openId,
       view: buildInterviewReminderView(source),
       operatorName: currentUser?.full_name || currentUser?.email || '',
+      detailUrl,
       file: resumeFile.bytes ? { bytes: resumeFile.bytes, fileName: resumeFile.fileName } : undefined,
     }, {
       fetch,
@@ -13268,7 +13283,7 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       entityType: 'interview',
       entityId: id,
       actor: currentUser?.email,
-      detail: JSON.stringify({ card_sent: delivery.cardSent, file_sent: delivery.fileSent }),
+      detail: JSON.stringify({ card_sent: delivery.cardSent, file_sent: delivery.fileSent, detail_url: detailUrl || null }),
     });
 
     if (source.interview.secondary_interviewer === interviewerName) {
@@ -13280,6 +13295,7 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       ok: delivery.cardSent,
       card_sent: delivery.cardSent,
       file_sent: delivery.fileSent,
+      detail_url: detailUrl || null,
       sent_as: currentUser.email || '',
       warning: delivery.warning || (resumeFile.bytes ? null : '未找到可发送的简历 PDF'),
     });

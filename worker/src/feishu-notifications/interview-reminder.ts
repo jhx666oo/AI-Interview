@@ -26,6 +26,7 @@ export interface InterviewReminderDeliveryInput {
   receiverOpenId: string;
   view: InterviewReminderView;
   operatorName: string;
+  detailUrl?: string;
   file?: { bytes: Uint8Array; fileName: string };
 }
 
@@ -325,7 +326,7 @@ export function buildInterviewReminderView(
 
 export function buildInterviewReminderCard(
   view: InterviewReminderView,
-  options: { operatorName: string; attachmentAvailable: boolean },
+  options: { operatorName: string; attachmentAvailable: boolean; detailUrl?: string },
 ): FeishuCard {
   const age = view.age === null ? EMPTY_VALUE : `${view.age} 岁`;
   const attachment = options.attachmentAvailable
@@ -344,6 +345,15 @@ export function buildInterviewReminderCard(
       { tag: 'markdown', content: `**学历：** ${view.education}\n**年龄：** ${age}\n**性别：** ${view.gender}\n**城市：** ${view.city}` },
       { tag: 'hr' },
       { tag: 'markdown', content: `**AI 面试建议：**\n${view.aiAdvice}` },
+      ...(options.detailUrl ? [{
+        tag: 'action',
+        actions: [{
+          tag: 'button',
+          text: { tag: 'plain_text', content: '查看面试详情（一面/二面评价）' },
+          type: 'primary',
+          url: options.detailUrl,
+        }],
+      }] : []),
       { tag: 'note', elements: [{ tag: 'plain_text', content: `${attachment}｜操作人：${options.operatorName || EMPTY_VALUE}` }] },
     ],
   };
@@ -427,6 +437,7 @@ export async function deliverInterviewReminder(
     JSON.stringify(buildInterviewReminderCard(input.view, {
       operatorName: input.operatorName,
       attachmentAvailable: Boolean(fileKey),
+      detailUrl: input.detailUrl,
     })),
   );
 
