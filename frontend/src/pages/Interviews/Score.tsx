@@ -885,8 +885,8 @@ const InterviewScore: React.FC = () => {
            </Tag>
          )}
 
-         {/* 开始面试按钮 */}
-         {interview?.status === 'scheduled' && (
+         {/* 开始面试按钮（待安排/已安排均可开始：系统自动找面试官空闲时间订日程并发邮件/提醒） */}
+         {(interview?.status === 'awaiting_schedule' || interview?.status === 'scheduled') && (
            <Tooltip title="开始面试">
              <Button
                type="primary"

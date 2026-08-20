@@ -5460,7 +5460,8 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
         if (ctx) {
           // ① 提醒面试官：文本 + 面试卡片链接（链接内含候选人简历、可填评价）
           const userToken = currentUser?.email ? await getValidUserAccessToken(c.env, currentUser.email) : null;
-          const reminder = await sendInterviewerInterviewReminder(c.env, c.env.DB as D1Database, interviewId, {
+          const reminder = await sendInterviewerInterviewReminder(c.env, c.env.DB as D1Database, {
+            interviewId,
             userToken: userToken || await getFeishuToken(c.env),
             operatorName,
             userEmail: currentUser?.email,
@@ -5598,12 +5599,26 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
       if (!upd.ok) return c.json({ detail: upd.error || '更新飞书日程失败' }, 500);
     } else {
       // 无日程 → 直连飞书建会议
+      // 日程参与人：主/副面试官（解析到飞书 open_id 才邀请，失败不阻塞），
+      // 使日程自带的「面试前 30 分钟提醒」能触达面试官（第二次提醒）。
+      const attendeeNames = [...new Set(
+        [String(interview.primary_interviewer || '').trim(), String(interview.secondary_interviewer || '').trim()].filter(Boolean),
+      )];
+      const attendeeOpenIds: string[] = [];
+      for (const name of attendeeNames) {
+        try {
+          const openId = await resolveExactInterviewerOpenId(db, name);
+          if (openId) attendeeOpenIds.push(openId);
+        } catch (e: any) {
+          console.warn(`[schedule-direct] 面试官 ${name} 参与人解析失败，跳过: ${e?.message || e}`);
+        }
+      }
       const event = await createInterviewCalendarEvent(c.env, {
         summary: `面试 - ${interview.candidate_name || '候选人'} - ${interview.position_applied || '应聘岗位'} - 第${interview.round || 1}轮`,
         description: `候选人：${interview.candidate_name || ''}\n应聘岗位：${interview.position_applied || ''}\n面试时间：${timeLabel}\n由 AI-Interview 安排面试流程自动创建。`,
         startTimestamp: startTs,
         endTimestamp: endTs,
-        attendeeOpenIds: [],
+        attendeeOpenIds,
       }, {}, FEISHU_CONFIG.appId);
       eventId = event.eventId;
       meetingLink = event.meetingUrl || '';
@@ -5621,7 +5636,8 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
         const ctx = await loadInterviewStartContext(db, id);
         if (ctx) {
           const userToken = currentUser?.email ? await getValidUserAccessToken(c.env, currentUser.email) : null;
-          const reminder = await sendInterviewerInterviewReminder(c.env, db, id, {
+          const reminder = await sendInterviewerInterviewReminder(c.env, db, {
+            interviewId: id,
             userToken: userToken || await getFeishuToken(c.env),
             operatorName,
             userEmail: currentUser?.email,
@@ -8689,15 +8705,13 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const current = await c.env.DB.prepare('SELECT id, status FROM interviews WHERE id = ?').bind(id).first() as any;
   if (!current) return c.json({ detail: 'Interview not found' }, 404);
-  if (!['scheduled', 'notification_partial'].includes(String(current.status || ''))) {
-    return c.json({ detail: '仅已安排的面试可开始', code: 'INTERVIEW_NOT_SCHEDULED' }, 409);
+  if (!['awaiting_schedule', 'scheduled', 'notification_partial'].includes(String(current.status || ''))) {
+    return c.json({ detail: '仅待安排或已安排的面试可开始', code: 'INTERVIEW_NOT_SCHEDULED' }, 409);
   }
   const startedAt = now();
   await c.env.DB.prepare(
     "UPDATE interviews SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?",
   ).bind(startedAt, startedAt, id).run();
-  const startedRow = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first();
-  return c.json(transformRow(startedRow));
 
   // ===== 开始面试联动流程：①飞书会议日程（自动创建会议链接）②候选人免登录详情链接 ③候选人邮件 =====
   const startFlow: {
@@ -8860,7 +8874,8 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
         const userToken = reminderUser?.email
           ? await getValidUserAccessToken(c.env, reminderUser.email)
           : null;
-        const result = await sendInterviewerInterviewReminder(c.env, c.env.DB as D1Database, id, {
+        const result = await sendInterviewerInterviewReminder(c.env, c.env.DB as D1Database, {
+          interviewId: id,
           userToken: userToken || await getFeishuToken(c.env),
           operatorName: reminderUser?.full_name || reminderUser?.email || '系统',
           userEmail: reminderUser?.email,
@@ -8876,7 +8891,7 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
         if (!result.ok) {
           console.warn(`[InterviewStart] 面试官提醒未发送: ${result.reason || '未知原因'}`);
         } else {
-          console.log(`[InterviewStart] 面试官提醒已发送 ${result.interviewerName} card=${result.cardSent} file=${result.fileSent} link=${result.cardLinkUrl || '-'}`);
+          console.log(`[InterviewStart] 面试官提醒已发送 ${result.interviewerName} link=${result.cardLinkUrl || '-'}`);
         }
       } catch (e: any) {
         console.error(`[InterviewStart] 面试官提醒异常: ${e?.message || e}`);
@@ -14669,13 +14684,14 @@ async function runUpcomingInterviewReminders(env: Env, db: D1Database): Promise<
     if (aheadMs < 25 * 60_000 || aheadMs > 35 * 60_000) continue;
     handled += 1;
     try {
-      const result = await sendInterviewerInterviewReminder(env, db, String(row.id), {
+      const result = await sendInterviewerInterviewReminder(env, db, {
+        interviewId: String(row.id),
         userToken: await getFeishuToken(env),
         operatorName: '系统',
       }, { now, uuid, hashPublicToken, getResumeFileBytes, getBotToken: getFeishuToken });
       if (result.ok) {
         reminded += 1;
-        console.log(`[cron:interview-upcoming] 已提醒 ${row.id} -> ${result.interviewerName} card=${result.cardSent} file=${result.fileSent}`);
+        console.log(`[cron:interview-upcoming] 已提醒 ${row.id} -> ${result.interviewerName} link=${result.cardLinkUrl || '-'}`);
       } else {
         console.warn(`[cron:interview-upcoming] 提醒未发送 ${row.id}: ${result.reason || '未知原因'}`);
       }

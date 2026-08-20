@@ -184,6 +184,7 @@ export interface BusinessScreeningRouteStore {
   /** 岗位管理全部岗位（公开链接岗位 Tab 归一为标准岗位用） */
   listAllPositions(db: D1Database): Promise<Array<{ id: string; title: string }>>;
   listPositionMappings(db: D1Database, rawNames: string[]): Promise<Array<{ raw_name: string; mapped_name: string }>>;
+  listAllPositionMappings(db: D1Database): Promise<Array<{ raw_name: string; raw_names?: string | null; mapped_name: string }>>;
   listInterviewerDirectory(db: D1Database, names: string[]): Promise<Array<{ name: string; openId?: string | null; userId?: string | null }>>;
   // 按候选人姓名查所有简历的档案字段（同名兜底：公开页缺档案时借用系统内有解析数据的同名简历）
   findSameNameProfiles(
@@ -1514,9 +1515,11 @@ export async function pushResumesToBusinessScreening(
   const requestedPosition = input.position ? text(input.position) : '';
   const rawPositionTitles = uniqueStrings(resumes.map((resume) => text(resume.mapped_position) || text(resume.position_applied)));
   if (requestedPosition) rawPositionTitles.push(requestedPosition);
-  const mappings = await deps.store.listPositionMappings(db, rawPositionTitles);
-  const standardByRaw = new Map(mappings.map((mapping) => [mapping.raw_name, mapping.mapped_name]));
-  const resolveStandardTitle = (rawTitle: string): string => standardByRaw.get(rawTitle) || rawTitle;
+  // 别名感知的岗位映射：position_mappings.raw_names JSON 数组里的历史别名也能解析到标准岗位
+  // （仅按 raw_name 精确匹配会让「IoT产品经理（双休｜入职五险一金）」这类别名岗位解析失败，自动推送被静默跳过）
+  const mappingRows = await deps.store.listAllPositionMappings(db);
+  const mapping = buildPositionMappingFromRows(mappingRows);
+  const resolveStandardTitle = (rawTitle: string): string => resolveMappedPosition(mapping, rawTitle, '');
   const overrideTitle = requestedPosition ? resolveStandardTitle(requestedPosition) : '';
   const positionTitles = uniqueStrings(rawPositionTitles.map(resolveStandardTitle));
   const positions = await deps.store.listPositionsByTitles(db, positionTitles);
@@ -1767,6 +1770,13 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
           WHERE raw_name IN (${placeholders(rawNames.length)})`,
         rawNames,
       ) as Promise<Array<{ raw_name: string; mapped_name: string }>>;
+    },
+    async listAllPositionMappings(db) {
+      return queryAll(
+        db,
+        'SELECT raw_name, raw_names, mapped_name FROM position_mappings ORDER BY raw_name',
+        [],
+      ) as Promise<Array<{ raw_name: string; raw_names?: string | null; mapped_name: string }>>;
     },
     async listInterviewerDirectory(db, names) {
       const result: Array<{ name: string; openId?: string | null; userId?: string | null }> = [];

@@ -29,7 +29,7 @@ type BatchRow = {
 function buildHarness(options?: {
   resumes?: BusinessScreeningResumeRecord[];
   positions?: Array<{ id: string; title: string; primary_interviewer?: string; secondary_interviewer?: string; responsible_person?: string }>;
-  positionMappings?: Array<{ raw_name: string; mapped_name: string }>;
+  positionMappings?: Array<{ raw_name: string; raw_names?: string | null; mapped_name: string }>;
   interviewerDirectory?: Array<{ name: string; openId?: string | null; userId?: string | null }>;
   sendFailuresByOpenId?: Record<string, string>;
   initialBatches?: BatchRow[];
@@ -93,6 +93,9 @@ function buildHarness(options?: {
     async listPositionMappings(_db, rawNames) {
       const allowed = new Set(rawNames);
       return positionMappings.filter((mapping) => allowed.has(mapping.raw_name));
+    },
+    async listAllPositionMappings(_db) {
+      return positionMappings.map((mapping) => ({ ...mapping }));
     },
     async listInterviewerDirectory(_db, names) {
       return names
@@ -789,6 +792,53 @@ describe('business screening routes', () => {
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
       pushed: ['resume-ai-no', 'resume-unassessed'],
+      skipped: [],
+    });
+    expect(batches.size).toBe(1);
+  });
+
+  it('resolves resume position aliases from position_mappings.raw_names during push', async () => {
+    const { request, batches } = buildHarness({
+      apiKeyOwnerEmail: 'hr@example.com',
+      positions: [
+        { id: 'position-iot', title: '软件产品经理（智能硬件方向）', primary_interviewer: '魏秋柠', secondary_interviewer: '', responsible_person: '魏秋柠' },
+      ],
+      positionMappings: [
+        {
+          raw_name: 'IoT产品经理（双休）(A47147)',
+          raw_names: JSON.stringify(['IoT产品经理（双休｜入职五险一金）', 'IoT产品经理', '智能硬件产品经理']),
+          mapped_name: '软件产品经理（智能硬件方向）',
+        },
+      ],
+      interviewerDirectory: [
+        { name: '魏秋柠', openId: 'ou_wei', userId: 'user-wei' },
+      ],
+      resumes: [
+        {
+          id: 'resume-alias',
+          candidate_name: '别名岗位候选人',
+          screening_result: '通过',
+          status: 'pending_screening',
+          hr_disposition: 'pending',
+          mapped_position: 'IoT产品经理（双休｜入职五险一金）',
+          position_applied: 'IoT产品经理（双休｜入职五险一金）',
+          business_screening_status: 'not_ready',
+        },
+      ],
+    });
+    const response = await request('https://ai-interview-88r.pages.dev/api/resumes/business-screening/push', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer hr-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids: ['resume-alias'] }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      pushed: ['resume-alias'],
       skipped: [],
     });
     expect(batches.size).toBe(1);
