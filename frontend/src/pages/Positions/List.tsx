@@ -917,6 +917,19 @@ const PositionsList: React.FC = () => {
       { key: 'primaryInterviewer', label: '一面面试官', level: 'detail' as const, render: (record: Position) => record.primary_interviewer || '—' },
       { key: 'secondaryInterviewer', label: '二面面试官', level: 'detail' as const, render: (record: Position) => record.secondary_interviewer || '—' },
       { key: 'dimensions', label: '能力维度', level: 'detail' as const, render: (record: Position) => columns[9].render?.(undefined, record) },
+      { key: 'businessLink', label: '业务链接', level: 'detail' as const, render: (record: Position) => {
+        const link = businessLinks[record.id];
+        if (!link?.url) return <span style={{ color: '#999' }}>—</span>;
+        return (
+          <Space size={4}>
+            <Typography.Link href={link.url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>打开</Typography.Link>
+            <Button
+              size="small" type="text" icon={<CopyOutlined />}
+              onClick={() => { navigator.clipboard.writeText(link.url).then(() => message.success('链接已复制')).catch(() => message.success(`链接：${link.url}`)); }}
+            />
+          </Space>
+        );
+      } },
       { key: 'createdAt', label: '创建时间', level: 'detail' as const, render: (record: Position) => record.created_at ? new Date(record.created_at).toLocaleDateString() : '—' },
     ],
     actions: (record: Position) => (
