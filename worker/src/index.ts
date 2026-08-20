@@ -1598,6 +1598,54 @@ function requireRole(roles: string[]) {
   };
 }
 
+// 安排面试：查「面试官 + 操作人」未来公共空闲时段（供弹窗推荐，自动定日程）
+app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
+  try {
+    const interviewer = String(c.req.query('interviewer') || '').trim();
+    if (!interviewer) return c.json({ ok: true, slots: [], reason: '请先选择一面面试官' });
+    const db = c.env.DB as D1Database;
+    const openIds: string[] = [];
+    const names: string[] = [];
+    // 一面面试官
+    const interviewerOid = await resolveExactInterviewerOpenId(db, interviewer);
+    if (!interviewerOid) return c.json({ ok: true, slots: [], reason: `面试官「${interviewer}」未绑定飞书身份，暂无法推荐空闲时段` });
+    openIds.push(interviewerOid);
+    names.push(interviewer);
+    // 操作人（当前登录用户）
+    const me = ((c.get('user') as any)?.full_name || '').trim();
+    if (me && me !== interviewer) {
+      const myOid = await resolveExactInterviewerOpenId(db, me);
+      if (myOid) { openIds.push(myOid); names.push(me); }
+    }
+
+    const token = await getFeishuToken(c.env);
+    const fromTs = Math.floor(Date.now() / 1000);
+    // 查每个参与人的空闲，取交集（所有人都有空的时段才推荐）
+    const slotSets: Array<Map<number, { startTs: number; endTs: number }>> = [];
+    for (const oid of openIds) {
+      const slots = await listFreeInterviewSlots({
+        token,
+        openId: oid,
+        fromTs,
+        durationMinutes: 60,
+        skipWorkdays: 2,
+        workdays: 3,
+      });
+      slotSets.push(new Map(slots.map((s) => [s.startTs, s])));
+    }
+    const first = slotSets[0];
+    const common = [...first.values()].filter((s) => slotSets.every((set) => set.has(s.startTs))).sort((a, b) => a.startTs - b.startTs);
+
+    return c.json({
+      ok: true,
+      interviewer,
+      participants: names,
+      slots: common.map((s) => ({ start: formatBeijingSlot(s.startTs), end: formatBeijingSlot(s.endTs) })),
+    });
+  } catch (e: any) {
+    return c.json({ ok: true, slots: [], reason: `空闲时段查询失败：${e?.message || e}` });
+  }
+});
 const businessScreeningRoutes = createBusinessScreeningRoutes({
   authMiddleware: businessScreeningAuthMiddleware,
   requireRole,
@@ -5252,54 +5300,6 @@ async function findPositionByName(db: any, positionName: unknown): Promise<any |
   ).bind(mappedName).first();
 }
 
-// 安排面试：查「面试官 + 操作人」未来公共空闲时段（供弹窗推荐，自动定日程）
-app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin', 'hr']), async (c) => {
-  try {
-    const interviewer = String(c.req.query('interviewer') || '').trim();
-    if (!interviewer) return c.json({ ok: true, slots: [], reason: '请先选择一面面试官' });
-    const db = c.env.DB as D1Database;
-    const openIds: string[] = [];
-    const names: string[] = [];
-    // 一面面试官
-    const interviewerOid = await resolveExactInterviewerOpenId(db, interviewer);
-    if (!interviewerOid) return c.json({ ok: true, slots: [], reason: `面试官「${interviewer}」未绑定飞书身份，暂无法推荐空闲时段` });
-    openIds.push(interviewerOid);
-    names.push(interviewer);
-    // 操作人（当前登录用户）
-    const me = ((c.get('user') as any)?.full_name || '').trim();
-    if (me && me !== interviewer) {
-      const myOid = await resolveExactInterviewerOpenId(db, me);
-      if (myOid) { openIds.push(myOid); names.push(me); }
-    }
-
-    const token = await getFeishuToken(c.env);
-    const fromTs = Math.floor(Date.now() / 1000);
-    // 查每个参与人的空闲，取交集（所有人都有空的时段才推荐）
-    const slotSets: Array<Map<number, { startTs: number; endTs: number }>> = [];
-    for (const oid of openIds) {
-      const slots = await listFreeInterviewSlots({
-        token,
-        openId: oid,
-        fromTs,
-        durationMinutes: 60,
-        skipWorkdays: 2,
-        workdays: 3,
-      });
-      slotSets.push(new Map(slots.map((s) => [s.startTs, s])));
-    }
-    const first = slotSets[0];
-    const common = [...first.values()].filter((s) => slotSets.every((set) => set.has(s.startTs))).sort((a, b) => a.startTs - b.startTs);
-
-    return c.json({
-      ok: true,
-      interviewer,
-      participants: names,
-      slots: common.map((s) => ({ start: formatBeijingSlot(s.startTs), end: formatBeijingSlot(s.endTs) })),
-    });
-  } catch (e: any) {
-    return c.json({ ok: true, slots: [], reason: `空闲时段查询失败：${e?.message || e}` });
-  }
-});
 
 // 从人才库创建面试（人才库"面试"按钮调用）
 app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
