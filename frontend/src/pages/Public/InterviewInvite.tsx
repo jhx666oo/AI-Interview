@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { Spin, Tag, Button, Typography } from 'antd';
+import { Spin, Tag, Button, Typography, Modal, Radio, DatePicker, message } from 'antd';
+import dayjs, { type Dayjs } from 'dayjs';
 import {
   CalendarOutlined, ClockCircleOutlined, EnvironmentOutlined, VideoCameraOutlined,
-  UserOutlined, SafetyOutlined, LinkOutlined,
+  UserOutlined, SafetyOutlined, LinkOutlined, EditOutlined,
 } from '@ant-design/icons';
 import request from '../../utils/request';
 
@@ -60,25 +61,71 @@ const InterviewInvite: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await request.get(`/public/interview-invite/${token}`);
-        if (cancelled) return;
-        setData(res);
-      } catch (e: any) {
-        if (cancelled) return;
-        const status = e?.response?.status;
-        if (status === 404) setError('链接无效或不存在');
-        else if (status === 410) setError('链接已过期，请联系 HR 重新发送');
-        else setError('加载失败，请稍后重试');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+  const loadData = useCallback(async () => {
+    try {
+      const res = await request.get(`/public/interview-invite/${token}`);
+      setData(res);
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 404) setError('链接无效或不存在');
+      else if (status === 410) setError('链接已过期，请联系 HR 重新发送');
+      else setError('加载失败，请稍后重试');
+    } finally {
+      setLoading(false);
+    }
   }, [token]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // ===== 修改面试时间（面试官入口） =====
+  const [modalOpen, setModalOpen] = useState(false);
+  const [slots, setSlots] = useState<Array<{ start: string; end: string }>>([]);
+  const [slotLoading, setSlotLoading] = useState(false);
+  const [slotReason, setSlotReason] = useState<string | null>(null);
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [customTime, setCustomTime] = useState<Dayjs | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const openReschedule = async () => {
+    setModalOpen(true);
+    setSelectedSlot(null);
+    setCustomTime(null);
+    setSlotReason(null);
+    setSlotLoading(true);
+    try {
+      const res = await request.get(`/public/interview-invite/${token}/slots`);
+      setSlots(res?.slots || []);
+      if (res?.reason) setSlotReason(res.reason);
+    } catch {
+      setSlots([]);
+      setSlotReason('空闲时段加载失败，可手动选择下方时间');
+    } finally {
+      setSlotLoading(false);
+    }
+  };
+
+  const submitReschedule = async () => {
+    const picked = selectedSlot || (customTime ? customTime.format('YYYY-MM-DD HH:mm') : '');
+    if (!picked) {
+      message.warning('请选择一个空闲时段或手动填写时间');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await request.post(`/public/interview-invite/${token}/reschedule`, {
+        interview_time: picked,
+      });
+      message.success(`面试时间已更新为 ${res?.interview_time || picked}`);
+      setModalOpen(false);
+      await loadData();
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '修改失败，请重试');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -105,6 +152,7 @@ const InterviewInvite: React.FC = () => {
   const interviewerNames = [interview.primary_interviewer, interview.secondary_interviewer, interview.interviewer]
     .filter((name): name is string => Boolean(name && name.trim()));
   const uniqueInterviewers = [...new Set(interviewerNames)];
+  const currentTime = interview.interview_time ? dayjs(interview.interview_time, 'YYYY-MM-DD HH:mm') : null;
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(180deg,#EFF6FF 0%,#F8FAFC 240px,#F8FAFC 100%)', padding: '32px 16px' }}>
@@ -136,6 +184,7 @@ const InterviewInvite: React.FC = () => {
               <div style={infoLabelStyle}>面试时间</div>
               <div style={infoValueStyle}>{interview.interview_time || '待定（请与 HR 确认）'}</div>
             </div>
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={openReschedule}>修改</Button>
           </div>
           <div style={infoItemStyle}>
             <VideoCameraOutlined style={infoIconStyle} />
@@ -202,10 +251,60 @@ const InterviewInvite: React.FC = () => {
             <span style={{ fontWeight: 600 }}>温馨提示</span>
           </div>
           1. 请提前 10 分钟进入会议或到达面试地点，并准备好简历与相关材料；<br />
-          2. 如需调整面试时间，请联系 HR；<br />
+          2. 面试时间如需调整，面试官可点击上方「修改」选择空闲时段；<br />
           3. 本页面链接 7 天内有效，过期后请联系 HR 重新发送。
         </div>
       </div>
+
+      {/* 修改面试时间弹窗 */}
+      <Modal
+        title="修改面试时间"
+        open={modalOpen}
+        onOk={submitReschedule}
+        onCancel={() => setModalOpen(false)}
+        confirmLoading={submitting}
+        okText="保存修改"
+        cancelText="取消"
+        width={520}
+      >
+        <div style={{ fontSize: 13, color: '#64748B', marginBottom: 12 }}>
+          以下为主面试官未来两个工作日的空闲时段（自动跳过周末与午休），也可手动填写：
+        </div>
+        {slotLoading ? (
+          <div style={{ textAlign: 'center', padding: '20px 0', color: '#94A3B8' }}>正在查询面试官空闲时段...</div>
+        ) : slots.length > 0 ? (
+          <Radio.Group
+            value={selectedSlot}
+            onChange={(e) => { setSelectedSlot(e.target.value); setCustomTime(null); }}
+            style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}
+          >
+            {slots.map((s) => (
+              <Radio key={s.start} value={s.start} style={{ lineHeight: '28px' }}>
+                {s.start} ~ {s.end}
+              </Radio>
+            ))}
+          </Radio.Group>
+        ) : (
+          <div style={{ color: '#d46b08', fontSize: 13, marginBottom: 12 }}>
+            {slotReason || '暂无推荐空闲时段'}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+          <span style={{ fontSize: 13, color: '#64748B', whiteSpace: 'nowrap' }}>或手动填写：</span>
+          <DatePicker
+            showTime={{ format: 'HH:mm', minuteStep: 30 }}
+            format="YYYY-MM-DD HH:mm"
+            value={customTime}
+            onChange={(v) => { setCustomTime(v); if (v) setSelectedSlot(null); }}
+            placeholder="选择日期与时间"
+            style={{ width: 240 }}
+            allowClear
+          />
+        </div>
+        <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 12 }}>
+          保存后系统面试时间与飞书会议日程将同步更新。
+        </div>
+      </Modal>
     </div>
   );
 };

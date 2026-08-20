@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createInterviewCalendarEvent, findFirstFreeInterviewSlot, buildBeijingInterviewWindows } from '../src/interview-start/feishu-calendar';
+import {
+  createInterviewCalendarEvent,
+  findFirstFreeInterviewSlot,
+  listFreeInterviewSlots,
+  buildFutureInterviewWindows,
+} from '../src/interview-start/feishu-calendar';
 
 /**
  * 飞书日历日程创建测试：
@@ -113,38 +118,38 @@ describe('createInterviewCalendarEvent', () => {
   });
 });
 
-describe('buildBeijingInterviewWindows', () => {
+describe('buildFutureInterviewWindows', () => {
   // 2026-08-20 为星期四；北京时间 = UTC+8
-  const B = (h: number, m = 0) => Math.floor(Date.UTC(2026, 7, 20, h - 8, m) / 1000);
+  const B = (day: number, h: number, m = 0) => Math.floor(Date.UTC(2026, 7, day, h - 8, m) / 1000);
 
-  it('上午 10:00 → 剩余上午 + 下午两个窗口', () => {
-    const windows = buildBeijingInterviewWindows(B(10, 0));
+  it('周四起未来 2 个工作日 = 周五 + 下周一（跳过周末），每天两窗口', () => {
+    const windows = buildFutureInterviewWindows(B(20, 12, 0), 2);
+    expect(windows).toHaveLength(4);
+    expect(windows[0].start).toBe(B(21, 9, 30));  // 周五上午
+    expect(windows[0].end).toBe(B(21, 11, 30));
+    expect(windows[1].start).toBe(B(21, 13, 30)); // 周五下午
+    expect(windows[1].end).toBe(B(21, 18, 30));
+    expect(windows[2].start).toBe(B(24, 9, 30));  // 周一上午（跳过周六日）
+    expect(windows[3].start).toBe(B(24, 13, 30)); // 周一下午
+  });
+
+  it('workdays=1 只取下一个工作日', () => {
+    const windows = buildFutureInterviewWindows(B(20, 12, 0), 1);
     expect(windows).toHaveLength(2);
-    expect(windows[0].start).toBe(B(10, 0));   // 从当前时刻起
-    expect(windows[0].end).toBe(B(11, 30));    // 上午截止 11:30
-    expect(windows[1].start).toBe(B(13, 30));  // 下午 13:30 起
-    expect(windows[1].end).toBe(B(18, 30));    // 18:30 结束
+    expect(windows[0].start).toBe(B(21, 9, 30));
   });
 
-  it('午休 12:00 → 只剩下午窗口', () => {
-    const windows = buildBeijingInterviewWindows(B(12, 0));
-    expect(windows).toHaveLength(1);
-    expect(windows[0].start).toBe(B(13, 30));
-    expect(windows[0].end).toBe(B(18, 30));
-  });
-
-  it('下班后 19:00 → 无窗口', () => {
-    expect(buildBeijingInterviewWindows(B(19, 0))).toHaveLength(0);
-  });
-
-  it('早上 9:00（上班前）→ 上午从 9:30 起', () => {
-    const windows = buildBeijingInterviewWindows(B(9, 0));
-    expect(windows[0].start).toBe(B(9, 30));
+  it('周五起未来 2 个工作日 = 下周一 + 下周二（跳过周末）', () => {
+    const windows = buildFutureInterviewWindows(B(21, 15, 0), 2);
+    expect(windows).toHaveLength(4);
+    expect(windows[0].start).toBe(B(24, 9, 30)); // 周一
+    expect(windows[2].start).toBe(B(25, 9, 30)); // 周二
   });
 });
 
-describe('findFirstFreeInterviewSlot', () => {
-  const B = (h: number, m = 0) => Math.floor(Date.UTC(2026, 7, 20, h - 8, m) / 1000);
+describe('findFirstFreeInterviewSlot / listFreeInterviewSlots', () => {
+  // 2026-08-20 周四；未来 2 个工作日 = 8-21 周五、8-24 周一
+  const D = (day: number, h: number, m = 0) => Math.floor(Date.UTC(2026, 7, day, h - 8, m) / 1000);
   const TOKEN = 'tenant-token-freebusy';
 
   function busyFetch(busyItems: Array<{ s: number; e: number }>) {
@@ -163,28 +168,28 @@ describe('findFirstFreeInterviewSlot', () => {
     }) as unknown as typeof fetch;
   }
 
-  it('上午 10:00 开始，全天无忙碌 → 10:00 即可面试', async () => {
-    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(10, 0), durationMinutes: 60 }, { fetchImpl: busyFetch([]) });
-    expect(slot).toBe(B(10, 0));
+  it('无忙碌 → 第一个空闲在次日（周五）09:30', async () => {
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, { fetchImpl: busyFetch([]) });
+    expect(slot).toBe(D(21, 9, 30));
   });
 
-  it('上午 10:00-11:00 忙碌 → 上午剩余不足 1 小时，顺延到下午 13:30', async () => {
-    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(10, 0), durationMinutes: 60 }, {
-      fetchImpl: busyFetch([{ s: B(10, 0), e: B(11, 0) }]),
+  it('周五 09:30-11:30 忙碌 → 顺延到周五下午 13:30', async () => {
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, {
+      fetchImpl: busyFetch([{ s: D(21, 9, 0), e: D(21, 11, 30) }]),
     });
-    expect(slot).toBe(B(13, 30));
+    expect(slot).toBe(D(21, 13, 30));
   });
 
-  it('下午 14:00-16:30 忙碌 → 第一个空档在 16:30', async () => {
-    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(13, 30), durationMinutes: 60 }, {
-      fetchImpl: busyFetch([{ s: B(14, 0), e: B(16, 30) }]),
+  it('周五全天忙碌 → 跳过周末，落到下周一 09:30', async () => {
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, {
+      fetchImpl: busyFetch([{ s: D(21, 9, 0), e: D(21, 19, 0) }]),
     });
-    expect(slot).toBe(B(16, 30));
+    expect(slot).toBe(D(24, 9, 30));
   });
 
-  it('全天（9:30-18:30）忙碌 → 找不到返回 null', async () => {
-    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(9, 30), durationMinutes: 60 }, {
-      fetchImpl: busyFetch([{ s: B(9, 0), e: B(19, 0) }]),
+  it('两个候选工作日都全天忙碌 → 返回 null', async () => {
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, {
+      fetchImpl: busyFetch([{ s: D(21, 9, 0), e: D(21, 19, 0) }, { s: D(24, 9, 0), e: D(24, 19, 0) }]),
     });
     expect(slot).toBeNull();
   });
@@ -193,7 +198,26 @@ describe('findFirstFreeInterviewSlot', () => {
     const failFetch = (async () => new Response(JSON.stringify({ code: 99991662, msg: 'permission denied' }), {
       status: 200, headers: { 'Content-Type': 'application/json' },
     })) as unknown as typeof fetch;
-    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: B(10, 0), durationMinutes: 60 }, { fetchImpl: failFetch });
+    const slot = await findFirstFreeInterviewSlot({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, { fetchImpl: failFetch });
     expect(slot).toBeNull();
+  });
+
+  it('listFreeInterviewSlots：无忙碌 → 两天每天 12 个时段（上午 3 + 下午 9）', async () => {
+    const slots = await listFreeInterviewSlots({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, { fetchImpl: busyFetch([]) });
+    expect(slots).toHaveLength(24);
+    expect(slots[0].startTs).toBe(D(21, 9, 30));
+    expect(slots[0].endTs).toBe(D(21, 10, 30));
+    // 30 分钟粒度：上午 09:30/10:00/10:30，下午 13:30~17:30
+    expect(slots[2].startTs).toBe(D(21, 10, 30));
+    expect(slots[3].startTs).toBe(D(21, 13, 30));
+  });
+
+  it('listFreeInterviewSlots：周五上午 09:30-10:30 忙碌 → 该时段被过滤', async () => {
+    const slots = await listFreeInterviewSlots({ token: TOKEN, openId: 'ou_interviewer', fromTs: D(20, 12, 0), durationMinutes: 60 }, {
+      fetchImpl: busyFetch([{ s: D(21, 9, 30), e: D(21, 10, 30) }]),
+    });
+    expect(slots).toHaveLength(22); // 周五上午剩 10:30 一个（1 个）+ 周五下午 9 个 + 周一 12 个
+    expect(slots[0].startTs).toBe(D(21, 10, 30));
+    expect(slots.some((s) => s.startTs === D(21, 9, 30))).toBe(false);
   });
 });

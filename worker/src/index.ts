@@ -8494,10 +8494,10 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
                 if (startLabel !== String(startCtx.interview.interview_time || '').trim()) {
                   await c.env.DB.prepare('UPDATE interviews SET interview_time = ?, updated_at = ? WHERE id = ?')
                     .bind(startLabel, now(), id).run();
-                  startFlow.warnings.push(`主面试官在预定时间无空档，已按空闲时间将面试调整为 ${startLabel}`);
+                  startFlow.warnings.push(`已按主面试官空闲时间将面试调整为 ${startLabel}`);
                 }
               } else {
-                startFlow.warnings.push('主面试官今日工作时段内无连续 1 小时空档，已按原定时间安排，请与面试官确认');
+                startFlow.warnings.push('主面试官未来两个工作日内无连续 1 小时空档，已按原定时间安排，请与面试官确认');
               }
             }
           } catch (e: any) {

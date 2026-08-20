@@ -131,3 +131,95 @@ describe('GET /api/public/interview-invite/:token', () => {
     expect(res.status).toBe(410);
   });
 });
+
+describe('POST /api/public/interview-invite/:token/reschedule', () => {
+  async function makeHarness(overrides: any = {}) {
+    const interviewId = 'itv-rs';
+    const token = await tokenFor(interviewId);
+    const h = buildHarness([{
+      id: interviewId,
+      candidate_name: '张三',
+      interview_time: '2026-08-20 14:00',
+      primary_interviewer: '李四',
+      status: 'scheduled',
+      invite_token_hash: await hashPublicToken(token),
+      invite_expires_at: '2026-08-25T00:00:00.000Z',
+      ...overrides,
+    }]);
+    return { h, token };
+  }
+
+  it('有效 token + 合法未来时间 → 更新成功（无日程时不同步飞书）', async () => {
+    const { h, token } = await makeHarness();
+    const res = await h.app.request(`/api/public/interview-invite/${token}/reschedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '2026-08-21 10:00' }),
+    }, h.env as any);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.interview_time).toBe('2026-08-21 10:00');
+    expect(body.calendar_synced).toBe(false);
+  });
+
+  it('非法时间格式 → 400', async () => {
+    const { h, token } = await makeHarness();
+    const res = await h.app.request(`/api/public/interview-invite/${token}/reschedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '下周一下午' }),
+    }, h.env as any);
+    expect(res.status).toBe(400);
+  });
+
+  it('过去时间 → 400', async () => {
+    const { h, token } = await makeHarness();
+    const res = await h.app.request(`/api/public/interview-invite/${token}/reschedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '2020-01-01 09:00' }),
+    }, h.env as any);
+    expect(res.status).toBe(400);
+  });
+
+  it('过期链接 → 410', async () => {
+    const { h, token } = await makeHarness({ invite_expires_at: '2026-08-10T00:00:00.000Z' });
+    const res = await h.app.request(`/api/public/interview-invite/${token}/reschedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ interview_time: '2026-08-21 10:00' }),
+    }, h.env as any);
+    expect(res.status).toBe(410);
+  });
+});
+
+describe('GET /api/public/interview-invite/:token/slots', () => {
+  it('面试官未绑定飞书 → 返回空列表与原因', async () => {
+    const interviewId = 'itv-slots';
+    const token = await tokenFor(interviewId);
+    const h = buildHarness([{
+      id: interviewId,
+      candidate_name: '张三',
+      primary_interviewer: '李四',
+      invite_token_hash: await hashPublicToken(token),
+      invite_expires_at: '2026-08-25T00:00:00.000Z',
+    }]);
+    const res = await h.app.request(`/api/public/interview-invite/${token}/slots`, {}, h.env as any);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.slots).toEqual([]);
+    expect(body.reason).toContain('未绑定');
+  });
+
+  it('面试未配置面试官 → 返回原因', async () => {
+    const interviewId = 'itv-slots2';
+    const token = await tokenFor(interviewId);
+    const h = buildHarness([{
+      id: interviewId,
+      candidate_name: '张三',
+      invite_token_hash: await hashPublicToken(token),
+      invite_expires_at: '2026-08-25T00:00:00.000Z',
+    }]);
+    const body = await (await h.app.request(`/api/public/interview-invite/${token}/slots`, {}, h.env as any)).json();
+    expect(body.slots).toEqual([]);
+    expect(body.reason).toContain('未配置面试官');
+  });
+});
