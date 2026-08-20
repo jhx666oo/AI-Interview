@@ -42,6 +42,8 @@ export interface InterviewCardRouteDeps {
   getResumeFileBytes: (env: any, resumeId: string) => Promise<{ bytes: Uint8Array | null; fileName: string }>;
   // 公开页「重新解析」：卡片页简历信息未提取完整时，面试官可触发 AI 重新评估（入队去重）
   enqueueResumeReprocess?: (env: any, resumeId: string) => Promise<{ jobId: string; status: 'queued' | 'running'; queued: boolean }>;
+  /** 飞书应用 ID（fallback：Pages 环境变量 FEISHU_APP_ID 缺失时用于获取 tenant token） */
+  appId?: string;
 }
 
 /** 公开页透出的面试记录（不含联系方式与敏感内部字段） */
@@ -724,7 +726,7 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
     if (!openId) return c.json({ ok: true, slots: [], reason: `面试官「${primaryName}」未绑定飞书身份，暂无法推荐空闲时段` });
 
     try {
-      const feishuToken = await getTenantAccessToken(c.env);
+      const feishuToken = await getTenantAccessToken(c.env, deps.appId);
       let busyError: string | null = null;
       const slots = await listFreeInterviewSlots({
         token: feishuToken,
@@ -796,7 +798,7 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
       const result = await updateInterviewCalendarEventTime(c.env, eventId, {
         startTimestamp: startTs,
         endTimestamp: startTs + 3600,
-      }, {}, undefined);
+      }, {}, deps.appId);
       calendarSynced = result.ok;
       if (!result.ok) calendarWarning = result.error || '飞书日程时间更新失败，请稍后在面试管理页确认';
     }

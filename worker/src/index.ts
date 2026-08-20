@@ -1630,6 +1630,8 @@ const interviewCardRoutes = createInterviewCardRoutes({
   getResumeFileBytes,
   // 公开页「重新解析」：凭链接 token 免登录触发 AI 重新评估（入队去重）
   enqueueResumeReprocess: async (env, resumeId) => enqueueResumeReprocess(env.DB, env.RESUME_PROCESSING_QUEUE, resumeId),
+  // 飞书应用 ID fallback（Pages 环境变量缺失时 slots/reschedule 获取 tenant token 用）
+  appId: FEISHU_CONFIG.appId,
 });
 app.route('/', interviewCardRoutes);
 
