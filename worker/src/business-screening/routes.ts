@@ -609,7 +609,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     }
   });
 
-  // 岗位管理页：按岗位查业务推送链接（每岗位取最近一条活跃批次，固定链接一人/一岗位维度）
+  // 岗位管理页：按岗位查业务推送链接（每岗位一条固定链接，优先「AI 初筛通过」批次）
   app.get('/api/positions/business-screening-links', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     try {
       const db = c.env.DB as D1Database;
@@ -618,7 +618,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       const positionIds = uniqueStrings(String(c.req.query('position_ids') || '').split(',').map((s) => s.trim()).filter(Boolean));
       const sql = `
         SELECT bi.position_id, b.id AS batch_id, b.scope_key, b.interviewer_name,
-               b.status, b.expires_at, b.created_at
+               b.status, b.expires_at, b.created_at, b.batch_title, b.batch_subtitle
           FROM resume_push_batch_items bi
           JOIN resume_push_batches b ON b.id = bi.batch_id
          WHERE bi.position_id IS NOT NULL AND bi.position_id != ''
@@ -629,12 +629,22 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
          ORDER BY b.created_at DESC`;
       const binds: any[] = [nowIso, ...positionIds];
       const rows = await db.prepare(sql).bind(...binds).all();
-      const latestByPosition = new Map<string, any>();
+
+      // 按岗位分组；优先「AI 初筛通过」批次（title/subtitle 含 AI初筛通过 / AI 通过），
+      // 无匹配时回退该岗位最新一条活跃批次
+      const isAiPassBatch = (row: any) => {
+        const textSource = `${row.batch_title || ''} ${row.batch_subtitle || ''}`;
+        return /AI\s*初筛通过|AI\s*通过/i.test(textSource);
+      };
+      const byPosition = new Map<string, any[]>();
       for (const row of (rows.results || []) as any[]) {
-        if (!latestByPosition.has(row.position_id)) latestByPosition.set(row.position_id, row);
+        if (!byPosition.has(row.position_id)) byPosition.set(row.position_id, []);
+        byPosition.get(row.position_id)!.push(row);
       }
       const items: any[] = [];
-      for (const [positionId, row] of latestByPosition) {
+      for (const [positionId, candidates] of byPosition) {
+        const aiPass = candidates.filter(isAiPassBatch);
+        const row = aiPass.length > 0 ? aiPass[0] : candidates[0]; // 已按 created_at DESC 排序
         const issued = await deps.createScopePublicToken(row.scope_key, row.batch_id);
         items.push({
           position_id: positionId,
@@ -642,6 +652,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
           batch_id: row.batch_id,
           interviewer: row.interviewer_name || '',
           expires_at: row.expires_at || null,
+          title: row.batch_title || null,
+          ai_pass: aiPass.length > 0,
         });
       }
       return c.json({ ok: true, total: items.length, items });
