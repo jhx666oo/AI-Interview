@@ -116,7 +116,17 @@ function buildAiEvaluation(resume: Row | null): Record<string, any> | null {
 }
 
 export function deriveCurrentStatus(resume: Row | null, interviews: Row[]): { code: string; label: string; source: string; updated_at: string | null } {
-  if (!resume) return { code: 'unknown', label: '待定', source: 'interview', updated_at: null };
+  if (!resume) {
+    const interviewFailed = interviews.some((row) => row.result === 'failed' || row.result2 === 'failed' || row.status === 'failed');
+    if (interviewFailed) return { code: 'interview_failed', label: '面试未通过', source: 'interview', updated_at: interviews[0]?.updated_at || null };
+    if (interviews.some((row) => row.status === 'scheduled' || row.status === 'in_progress')) {
+      return { code: 'pending_interview', label: '待面试', source: 'interview', updated_at: interviews[0]?.updated_at || null };
+    }
+    if (interviews.some((row) => row.result === 'passed' || row.result2 === 'passed')) {
+      return { code: 'interview_passed', label: '面试通过', source: 'interview', updated_at: interviews[0]?.updated_at || null };
+    }
+    return { code: 'unknown', label: '待定', source: 'interview', updated_at: null };
+  }
   const hrDisposition = text(resume.hr_disposition).toLowerCase();
   const businessStatus = text(resume.business_screening_status).toLowerCase();
   const interviewFailed = interviews.some((row) => row.result === 'failed' || row.result2 === 'failed' || row.status === 'failed');

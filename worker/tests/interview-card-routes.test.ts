@@ -13,6 +13,12 @@ function makeDb(tables: Record<string, Row[]>) {
             if (sql.includes('FROM interview_cards')) {
               return rowsFor('interview_cards').find((row) => row.token_hash === params[0]) || null;
             }
+            if (sql.includes('FROM interview_card_links')) {
+              return rowsFor('interview_card_links').find((row) => row.token_hash === params[0]) || null;
+            }
+            if (sql.includes('FROM interviews') && sql.includes('candidate_name = ?')) {
+              return rowsFor('interviews').find((row) => row.candidate_name === params[0] && row.position_applied === params[1]) || null;
+            }
             if (sql.includes('FROM interviews') && sql.includes('WHERE id = ?')) {
               return rowsFor('interviews').find((row) => row.id === params[0]) || null;
             }
@@ -112,6 +118,29 @@ describe('public interview card routes', () => {
     const body = await response.json() as any;
     expect(body.candidate).toMatchObject({ candidate_name: '同名候选人', resume_id: null, resume_link_status: 'ambiguous' });
     expect(body.candidate.ai).toBeNull();
+  });
+
+  it('reads legacy interview_card_links rows so existing reminders stay valid', async () => {
+    const db = makeDb({
+      interview_cards: [],
+      interview_card_links: [{
+        id: 'legacy-card', token_hash: 'legacy-token-hash', resume_id: null,
+        candidate_name: '测试候选人', position_applied: '软件产品经理', status: 'active',
+        expires_at: '2099-01-01T00:00:00.000Z', created_at: '2026-08-19T00:00:00.000Z',
+      }],
+      interviews: [{
+        id: 'legacy-interview', candidate_name: '测试候选人', position_applied: '软件产品经理',
+        round: 1, interview_time: '2026-08-20 10:00', status: 'completed', result: 'failed',
+        evaluation: '历史链接评价',
+      }],
+    });
+    const response = await createInterviewCardRoutes({ hashToken: async () => 'legacy-token-hash' })
+      .fetch(new Request('https://worker.local/api/public/interview-card/legacy-token'), { DB: db } as any);
+    expect(response.status).toBe(200);
+    const body = await response.json() as any;
+    expect(body.candidate.candidate_name).toBe('测试候选人');
+    expect(body.interviews[0].evaluation).toBe('历史链接评价');
+    expect(body.candidate.current_status.label).toBe('面试未通过');
   });
 
   it('returns 410 for an expired card', async () => {
