@@ -75,9 +75,10 @@ jobs:
             -H "Authorization: Bearer ${CF_API_TOKEN}" \
             -H "Content-Type: application/json" \
             -d '{"production_branch":"main"}')
-          echo "$resp" | head -c 400; echo
-          echo "$resp" | grep -q '"success":true' \
+          echo "$resp" | head -c 800; echo
+          echo "$resp" | grep -qE '"success"[[:space:]]*:[[:space:]]*true' \
             || { echo "❌ PATCH 设置 production_branch 失败（token 可能缺 Pages 项目编辑权限）"; exit 1; }
+          echo "✅ production_branch 已确认"
 
       - name: Deploy to ai-interview
         uses: cloudflare/wrangler-action@v3
