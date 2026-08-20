@@ -29,9 +29,10 @@ describe('public business screening page contract', () => {
 
   it('renders a multi-position filter for a unified interviewer workbench', () => {
     expect(source).toContain('business-screening-position-filter');
-    expect(source).toContain('岗位筛选');
-    expect(source).toContain('togglePosition');
-    expect(source).toContain('待处理 {counts.pending} / 共 {counts.total}');
+    expect(source).toContain('<Tabs');
+    expect(source).toContain('handlePositionTabChange');
+    expect(source).toContain('ALL_POSITIONS_KEY');
+    expect(source).toContain('待处理 ${counts.pending} / 共 ${counts.total}');
     expect(source).toContain('filterBusinessScreeningResumes');
   });
 

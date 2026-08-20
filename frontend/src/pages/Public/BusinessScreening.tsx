@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Checkbox, Modal, Tag, Tooltip, message } from 'antd';
+import { Card, Checkbox, Modal, Tag, Tabs, Tooltip, message } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
 import {
@@ -384,6 +384,16 @@ const BusinessScreeningPage: React.FC = () => {
     () => getBusinessScreeningPositions(data?.resumes || []),
     [data],
   );
+  // 多岗位 Tab：`全部` 表示空集合（不筛选），其余每个岗位一个 Tab
+  const ALL_POSITIONS_KEY = '__all__';
+  const activePositionKey = useMemo(() => {
+    if (selectedPositions.size === 0) return ALL_POSITIONS_KEY;
+    if (selectedPositions.size === 1) return [...selectedPositions][0];
+    return ALL_POSITIONS_KEY;
+  }, [selectedPositions]);
+  const handlePositionTabChange = (key: string) => {
+    setSelectedPositions(key === ALL_POSITIONS_KEY ? new Set() : new Set([key]));
+  };
   const visibleResumes = useMemo(
     () => filterBusinessScreeningResumes(data?.resumes || [], new Set(selectedPositions)),
     [data, selectedPositions],
@@ -402,6 +412,14 @@ const BusinessScreeningPage: React.FC = () => {
     });
     return counts;
   }, [data]);
+  // 全部岗位汇总计数（「全部」Tab 显示）
+  const positionCountsAll = useMemo(() => {
+    const resumes = data?.resumes || [];
+    return {
+      total: resumes.length,
+      pending: resumes.filter((resume) => resume.status === 'pending').length,
+    };
+  }, [data]);
 
   useEffect(() => {
     if (!activeResumeId || visibleResumes.some((resume) => resume.id === activeResumeId)) return;
@@ -419,15 +437,6 @@ const BusinessScreeningPage: React.FC = () => {
     [pendingResumes, selectedIds],
   );
   const allSelected = pendingCount > 0 && selectedCount === pendingCount;
-
-  const togglePosition = (position: string, checked: boolean) => {
-    setSelectedPositions((current) => {
-      const next = current.size === 0 ? new Set(positionOptions) : new Set(current);
-      if (checked) next.add(position);
-      else next.delete(position);
-      return next.size === positionOptions.length ? new Set() : next;
-    });
-  };
 
   const toggleSelect = (resumeId: string) => {
     setSelectedIds((current) => {
@@ -660,37 +669,30 @@ const BusinessScreeningPage: React.FC = () => {
                 className="business-screening-position-filter"
                 style={{
                   marginTop: 10,
-                  padding: '8px 10px',
+                  padding: '2px 10px 0',
                   border: '1px solid #e2e8f0',
                   borderRadius: 10,
                   background: '#f8fafc',
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 8,
-                  flexWrap: 'wrap',
                 }}
               >
-                <span style={{ color: '#475569', fontSize: 12, lineHeight: '24px', fontWeight: 600, flexShrink: 0 }}>
-                  岗位筛选
-                </span>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', minWidth: 0 }}>
-                  {positionOptions.map((position) => {
-                    const counts = positionCounts.get(position) || { total: 0, pending: 0 };
-                    const checked = selectedPositions.size === 0 || selectedPositions.has(position);
-                    return (
-                      <Checkbox
-                        key={position}
-                        checked={checked}
-                        onChange={(event) => togglePosition(position, event.target.checked)}
-                        style={{ marginInlineStart: 0, marginInlineEnd: 4, color: '#334155', fontSize: 12 }}
-                      >
-                        <span style={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
-                          {position}（待处理 {counts.pending} / 共 {counts.total}）
-                        </span>
-                      </Checkbox>
-                    );
-                  })}
-                </div>
+                <Tabs
+                  size="small"
+                  activeKey={activePositionKey}
+                  onChange={handlePositionTabChange}
+                  items={[
+                    {
+                      key: ALL_POSITIONS_KEY,
+                      label: `全部（待处理 ${positionCountsAll.pending} / 共 ${positionCountsAll.total}）`,
+                    },
+                    ...positionOptions.map((position) => {
+                      const counts = positionCounts.get(position) || { total: 0, pending: 0 };
+                      return {
+                        key: position,
+                        label: `${position}（待处理 ${counts.pending} / 共 ${counts.total}）`,
+                      };
+                    }),
+                  ]}
+                />
               </div>
             ) : null}
           </div>
