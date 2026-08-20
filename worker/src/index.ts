@@ -14688,6 +14688,38 @@ async function runUpcomingInterviewReminders(env: Env, db: D1Database): Promise<
   return { reminded, handled };
 }
 
+// 线上保存面试官 open_id（来自飞书通讯录全量接口；batch-sync 部门接口覆盖不到的用这个补）
+// body: { items: [{ name, open_id }] } —— upsert 到 interviewer_mappings
+app.post('/api/admin/set-interviewer-openids', businessScreeningAuthMiddleware, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const items = Array.isArray(body?.items) ? body.items : [];
+    const db = c.env.DB as D1Database;
+    const ts = now();
+    let saved = 0;
+    const skipped: string[] = [];
+    for (const it of items) {
+      const name = String(it?.name || '').trim();
+      const openId = String(it?.open_id || '').trim();
+      if (!name || !openId || !/^ou_/.test(openId)) { skipped.push(name || '(空)'); continue; }
+      await db.prepare(
+        `INSERT INTO interviewer_mappings (id, name, open_id, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET open_id = excluded.open_id, updated_at = excluded.updated_at`,
+      ).bind(`im_${openId}`, name, openId, ts).run();
+      saved += 1;
+    }
+    await logOperation(c.env, {
+      action: 'admin.set_interviewer_openids',
+      actor: (c.get('user') as any)?.email || 'api-key',
+      detail: JSON.stringify({ items: items.length, saved, skipped }),
+    });
+    return c.json({ ok: true, total: items.length, saved, skipped });
+  } catch (e: any) {
+    return c.json({ ok: false, detail: `保存失败: ${e?.message || e}` }, 500);
+  }
+});
+
 export default {
   fetch: app.fetch,
   async scheduled(event: any, env: any, ctx: any) {
