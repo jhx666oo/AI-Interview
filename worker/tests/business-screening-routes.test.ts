@@ -575,6 +575,18 @@ function buildHarness(options?: {
                 return null;
               },
               async all() {
+                if (sql.includes('FROM resumes') && sql.includes('id IN')) {
+                  const ids = (values as unknown[]).map(String);
+                  return {
+                    results: [...resumes.values()]
+                      .filter((r: any) => ids.includes(String(r.id)))
+                      .map((r: any) => ({
+                        id: r.id,
+                        business_screening_status: r.business_screening_status ?? null,
+                        hr_disposition: r.hr_disposition ?? null,
+                      })),
+                  };
+                }
                 return { results: [] };
               },
             };
