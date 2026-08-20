@@ -87,6 +87,9 @@ function buildHarness(options?: {
       const allowed = new Set(titles);
       return positions.filter((position) => allowed.has(position.title));
     },
+    async listAllPositions(_db) {
+      return positions.map((position) => ({ id: position.id, title: position.title }));
+    },
     async listPositionMappings(_db, rawNames) {
       const allowed = new Set(rawNames);
       return positionMappings.filter((mapping) => allowed.has(mapping.raw_name));

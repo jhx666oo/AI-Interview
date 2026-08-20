@@ -18,6 +18,7 @@ import {
 } from './display-title';
 import { groupEligibleResumesForPush, isEligibleForPush, type PushEligibilityOptions } from './service';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './token';
+import { buildPositionMappingFromRows, positionNamesMatch, resolveMappedPosition } from '../position-mapping';
 import { buildBusinessScreeningBatchItemVisibilityClause } from '../resume-list/business-screening-status';
 import type {
   BusinessScreeningResume,
@@ -180,6 +181,8 @@ export function buildPublicProfile(
 export interface BusinessScreeningRouteStore {
   listResumesByIds(db: D1Database, ids: string[]): Promise<BusinessScreeningResumeRecord[]>;
   listPositionsByTitles(db: D1Database, titles: string[]): Promise<Array<{ id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null; responsible_person?: string | null }>>;
+  /** 岗位管理全部岗位（公开链接岗位 Tab 归一为标准岗位用） */
+  listAllPositions(db: D1Database): Promise<Array<{ id: string; title: string }>>;
   listPositionMappings(db: D1Database, rawNames: string[]): Promise<Array<{ raw_name: string; mapped_name: string }>>;
   listInterviewerDirectory(db: D1Database, names: string[]): Promise<Array<{ name: string; openId?: string | null; userId?: string | null }>>;
   // 按候选人姓名查所有简历的档案字段（同名兜底：公开页缺档案时借用系统内有解析数据的同名简历）
@@ -346,12 +349,21 @@ function isBatchAccessible(batch: ResumePushBatchRow, nowIso: string): { ok: tru
 // 业务筛选公开页透出的候选人信息：结构化档案 + 简历原文（截断）+ AI 评估字段
 const PUBLIC_RESUME_TEXT_LIMIT = 100000;
 
-function sanitizePublicItem(item: BusinessScreeningBatchItemView) {
+function sanitizePublicItem(
+  item: BusinessScreeningBatchItemView,
+  resolveStandard?: (rawTitle: string) => string,
+) {
   const rawText = text(item.ocr_markdown) || text(item.raw_text) || text(item.resume_markdown);
+  const rawPosition = text(item.mapped_position) || text(item.position_applied);
+  // 岗位只显示标准岗位（岗位管理里的岗位）：先按映射表/岗位名模糊匹配归一到标准岗位，
+  // 匹配不上或无岗位时归「未分配岗位」，避免显示简历原始岗位（带编号等）造成 Tab 杂乱
+  const position = resolveStandard
+    ? (resolveStandard(rawPosition) || '未分配岗位')
+    : (rawPosition || '未分配岗位');
   return {
     id: item.resume_id,
     candidateName: text(item.candidate_name) || '候选人',
-    position: text(item.mapped_position) || text(item.position_applied) || '未分配岗位',
+    position,
     education: text(item.education) || undefined,
     workExperience: text(item.work_experience) || undefined,
     status: item.status,
@@ -854,7 +866,20 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     }
 
     const items = await deps.store.listBatchItems(db, batch.id);
-    const sanitized = items.map(sanitizePublicItem);
+    // 岗位归一为标准岗位（岗位管理里的岗位）：映射表精确映射 + 全量岗位名模糊匹配，
+    // 使岗位 Tab 只出现标准岗位与「未分配岗位」，不显示简历原始岗位（带编号/别名）
+    const rawTitles = uniqueStrings(items.map((item) => text(item.mapped_position) || text(item.position_applied)));
+    const mappingRows = rawTitles.length > 0 ? await deps.store.listPositionMappings(db, rawTitles) : [];
+    const mapping = buildPositionMappingFromRows(mappingRows);
+    const allPositions = await deps.store.listAllPositions(db);
+    const resolveStandardPosition = (rawTitle: string): string => {
+      const raw = text(rawTitle);
+      if (!raw) return '';
+      const mapped = resolveMappedPosition(mapping, raw, '');
+      const byName = allPositions.find((position) => positionNamesMatch(position.title, mapped || raw));
+      return (byName?.title || mapped) || '';
+    };
+    const sanitized = items.map((item) => sanitizePublicItem(item, resolveStandardPosition));
     // 同名档案兜底：缺档案的候选人从系统内同名简历借用完整档案（重复上传/仅初筛未解析的场景）
     const missingNames = [...new Set(
       sanitized
@@ -1694,6 +1719,12 @@ export function createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenI
           WHERE title IN (${placeholders(titles.length)})`,
         titles,
       ) as Promise<Array<{ id: string; title: string; primary_interviewer?: string | null; secondary_interviewer?: string | null; responsible_person?: string | null }>>;
+    },
+    async listAllPositions(db) {
+      return queryAll(db,
+        'SELECT id, title FROM positions ORDER BY title',
+        [],
+      ) as Promise<Array<{ id: string; title: string }>>;
     },
     async listPositionMappings(db, rawNames) {
       if (rawNames.length === 0) return [];
