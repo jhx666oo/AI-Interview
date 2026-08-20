@@ -62,6 +62,16 @@ jobs:
       - name: Run pre-deploy checks
         run: node scripts/pre-deploy-check.mjs
 
+      - name: Ensure Pages production branch is main
+        # 修复：wrangler pages deploy 只有命中项目 production branch 才会更新生产域名。
+        # 若项目 production branch 被改动过，--branch main 会落到 preview，CI 仍显示成功但生产不生效。
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: pages project update ai-interview --production-branch=main
+
       - name: Deploy to ai-interview
         uses: cloudflare/wrangler-action@v3
         with:
@@ -72,6 +82,21 @@ jobs:
 
       - name: Verify production health
         run: curl --fail --retry 3 --retry-delay 5 https://ai-interview-88r.pages.dev/health
+
+      - name: Verify production Functions 已更新（新端点不得 404）
+        # 历史问题：pages deploy 成功但生产 Functions 仍跑旧版。
+        # available-slots 是新代码才有的路由；不带 token 请求应返回 401/400（JSON），
+        # 若返回 404 说明线上 Functions 未生效，直接失败报警。
+        run: |
+          code=$(curl -s -o /tmp/avail.txt -w "%{http_code}" --retry 3 --retry-delay 5 \
+            "https://ai-interview-88r.pages.dev/api/interviews/available-slots?interviewer=test")
+          echo "available-slots HTTP $code"
+          head -c 200 /tmp/avail.txt; echo
+          if [ "$code" = "404" ]; then
+            echo "❌ 生产 Functions 仍是旧版（available-slots 404），部署未生效，请检查 Cloudflare Pages 控制台"
+            exit 1
+          fi
+          echo "✅ 生产 Functions 已包含新端点"
 
   worker-resume-consumer:
     name: Deploy Resume Consumer Worker
