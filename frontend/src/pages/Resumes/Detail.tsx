@@ -702,6 +702,7 @@ const ResumeDetail: React.FC = () => {
                 ))}
               </Descriptions.Item>
             )}
+            <Descriptions.Item label="邮箱">{resume.email || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="电话">{resume.contact || parsedData.phone || '未识别'}</Descriptions.Item>
             <Descriptions.Item label="解析状态">{getParseStatusText(resume.parse_status)}</Descriptions.Item>
             <Descriptions.Item label="失败原因">{resume.parse_status === 'failed' ? (resume.parse_error || '未知') : '-'}</Descriptions.Item>

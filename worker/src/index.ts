@@ -14112,6 +14112,95 @@ app.post('/api/admin/backfill-resume-emails', businessScreeningAuthMiddleware, a
 });
 
 
+// ==================== 管理端点：AI 提取简历邮箱 ====================
+// 调用系统 LLM（callAI，走系统设置多槽位配置，失败自动降级）从简历文本提取邮箱回填 resumes.email。
+// 只处理 email 为空且 email_ai_checked_at 为空的简历；LLM 确认无邮箱也写入检查标记，避免反复调用浪费额度。
+// 幂等可重跑，支持 ?limit=（每批条数，默认 8，上限 20），内部并发 3。
+async function aiExtractEmailFromText(env: Env, row: any): Promise<string> {
+  try {
+    const parsed = typeof row.parsed_data === 'string' ? JSON.parse(row.parsed_data) : row.parsed_data;
+    if (parsed && typeof parsed.email === 'string') {
+      const m = parsed.email.trim().match(RESUME_EMAIL_RE);
+      if (m) return m[0];
+    }
+  } catch { /* 继续走 LLM */ }
+  const text = [row.resume_markdown, row.raw_text, row.ocr_markdown].filter((v) => v).join('\n');
+  if (!text.trim()) return '';
+  const snippet = text.slice(0, 6000);
+  try {
+    const out = await callAI(
+      env,
+      '你是一个简历解析助手。只输出一个 JSON 对象：{"email": "邮箱地址"}。若文本中不存在邮箱，email 必须是空字符串。不要输出任何其他内容、不要用 markdown 代码块包裹。',
+      `请从以下简历文本中提取邮箱地址（如不存在返回空字符串）：\n\n${snippet}`,
+    );
+    const block = out.match(/\{[\s\S]*?\}/);
+    if (block) {
+      const json = JSON.parse(block[0]);
+      if (json && typeof json.email === 'string') {
+        const email = json.email.trim();
+        if (email && RESUME_EMAIL_RE.test(email)) return email;
+      }
+    }
+  } catch { /* LLM 失败回退正则 */ }
+  const fallback = text.match(RESUME_EMAIL_RE);
+  return fallback ? fallback[0] : '';
+}
+
+app.post('/api/admin/ai-extract-emails', businessScreeningAuthMiddleware, async (c) => {
+  try {
+    const rawLimit = Number(c.req.query('limit') || 8);
+    const limit = Math.max(1, Math.min(Number.isFinite(rawLimit) ? rawLimit : 8, 20));
+    const rows = await c.env.DB.prepare(
+      `SELECT id, raw_text, resume_markdown, ocr_markdown, parsed_data FROM resumes
+       WHERE (email IS NULL OR email = '') AND (email_ai_checked_at IS NULL OR email_ai_checked_at = '')
+       LIMIT ?`,
+    ).bind(limit).all();
+    const items = (rows.results || []) as any[];
+    if (items.length === 0) return c.json({ ok: true, candidates: 0, extracted: 0, none: 0, failed: 0, results: [] });
+
+    const nowIso = now();
+    let extracted = 0;
+    let none = 0;
+    let failed = 0;
+    const results: any[] = [];
+    const queue = [...items];
+    const runWorker = async () => {
+      while (queue.length > 0) {
+        const row = queue.shift();
+        if (!row) return;
+        try {
+          const email = await aiExtractEmailFromText(c.env, row);
+          if (email) {
+            await c.env.DB.prepare('UPDATE resumes SET email = ?, email_ai_checked_at = ?, updated_at = ? WHERE id = ?')
+              .bind(email, nowIso, nowIso, String(row.id)).run();
+            extracted += 1;
+            results.push({ id: row.id, email });
+          } else {
+            await c.env.DB.prepare('UPDATE resumes SET email_ai_checked_at = ?, updated_at = ? WHERE id = ?')
+              .bind(nowIso, nowIso, String(row.id)).run();
+            none += 1;
+            results.push({ id: row.id, email: null });
+          }
+        } catch (e: any) {
+          failed += 1;
+          results.push({ id: row.id, email: null, error: String(e?.message || e).slice(0, 120) });
+        }
+      }
+    };
+    await Promise.all([runWorker(), runWorker(), runWorker()]);
+
+    await logOperation(c.env, {
+      action: 'admin.ai_extract_emails',
+      actor: (c.get('user') as any)?.email || 'api-key',
+      detail: JSON.stringify({ candidates: items.length, extracted, none, failed }),
+    });
+    return c.json({ ok: true, candidates: items.length, extracted, none, failed, results });
+  } catch (e: any) {
+    return c.json({ ok: false, detail: `AI 提取失败: ${e?.message || e}` }, 500);
+  }
+});
+
+
 /**
  * 解析「YYYY-MM-DD HH:mm」（北京时间，interview_time 存储口径）→ 毫秒时间戳。
  * 解析失败返回 null。

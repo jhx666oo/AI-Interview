@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS resumes (
   resume_ingest_key TEXT DEFAULT '',
   mineru_task_id TEXT DEFAULT '',
   mineru_status TEXT DEFAULT '',
+  email_ai_checked_at TEXT,                     -- AI 提取邮箱的检查标记（成功或确认无邮箱都会写入）
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
