@@ -14249,9 +14249,8 @@ app.post('/api/admin/reparse-work-experience', businessScreeningAuthMiddleware, 
           undefined,
           { structured: true, temperature: 0, maxTokens: 8192 },
         );
-        const block = response.match(/\{[\s\S]*?\}/);
-        if (!block) { results.push({ id, error: 'AI response not JSON' }); continue; }
-        const json = JSON.parse(block[0]);
+        const json = extractJSON(response);
+        if (!json || typeof json !== 'object') { results.push({ id, error: 'AI response not JSON' }); continue; }
         const workExperience = Array.isArray(json.work_experience) ? json.work_experience : [];
         let existing: Record<string, unknown> = {};
         try { existing = typeof row.parsed_data === 'string' ? JSON.parse(row.parsed_data) : (row.parsed_data || {}); } catch {}
