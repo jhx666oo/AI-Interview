@@ -1,4 +1,4 @@
-import type { FunnelMetrics, FunnelMetricsQuery, FunnelStageMetrics, CandidateStage } from './types';
+import type { FunnelMetrics, FunnelMetricsQuery, FunnelStageMetrics, CandidateStage, InterviewStatusMetrics } from './types';
 
 const FUNNEL_STAGES: CandidateStage[] = [
   'resume_received',
@@ -13,6 +13,41 @@ const FUNNEL_STAGES: CandidateStage[] = [
 
 export class FunnelQuery {
   constructor(private db: D1Database) {}
+
+  /**
+   * 返回面试自动化状态快照。awaiting_schedule 与 scheduled 分开统计，
+   * notification_partial/manual_review 只表示运行状态，不会制造漏斗事件。
+   */
+  async computeInterviewStatuses(positionId?: string): Promise<InterviewStatusMetrics> {
+    let sql = `
+      SELECT
+        SUM(CASE WHEN i.status = 'awaiting_schedule' THEN 1 ELSE 0 END) AS awaiting_schedule,
+        SUM(CASE WHEN i.schedule_status = 'scheduled' AND i.status <> 'cancelled' THEN 1 ELSE 0 END) AS scheduled,
+        SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN i.status = 'completed' AND i.result = 'passed' THEN 1 ELSE 0 END) AS passed,
+        SUM(CASE WHEN i.status = 'completed' AND i.result IN ('failed', 'rejected') THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN i.status = 'manual_review' THEN 1 ELSE 0 END) AS manual_review,
+        SUM(CASE WHEN i.status = 'notification_partial' THEN 1 ELSE 0 END) AS notification_partial
+      FROM interviews i
+      WHERE i.status <> 'cancelled'
+    `;
+    const params: string[] = [];
+    if (positionId) {
+      sql += ' AND i.position_id = ?';
+      params.push(positionId);
+    }
+    const row = await this.db.prepare(sql).bind(...params).first<any>();
+    const value = (key: string) => Number(row?.[key] || 0);
+    return {
+      awaitingSchedule: value('awaiting_schedule'),
+      scheduled: value('scheduled'),
+      completed: value('completed'),
+      passed: value('passed'),
+      failed: value('failed'),
+      manualReview: value('manual_review'),
+      notificationPartial: value('notification_partial'),
+    };
+  }
 
   async compute(query: FunnelMetricsQuery): Promise<FunnelMetrics> {
     if (query.mode === 'cohort') {

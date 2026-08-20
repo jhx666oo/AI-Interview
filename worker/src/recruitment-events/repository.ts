@@ -19,6 +19,7 @@ export class EventRepository {
     occurredAt?: string;
     actorUserId?: string;
     source?: string;
+    sourceRecordId?: string;
     dedupeKey: string;
     metadata?: Record<string, unknown>;
   }): Promise<boolean> {

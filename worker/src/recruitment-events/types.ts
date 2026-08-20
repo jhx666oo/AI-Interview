@@ -51,3 +51,14 @@ export interface FunnelMetrics {
   to?: string;
   computedAt: string;
 }
+
+/** 面试自动化状态不直接等同于漏斗事件，单独返回避免把待安排误计为已面试。 */
+export interface InterviewStatusMetrics {
+  awaitingSchedule: number;
+  scheduled: number;
+  completed: number;
+  passed: number;
+  failed: number;
+  manualReview: number;
+  notificationPartial: number;
+}

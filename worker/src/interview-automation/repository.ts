@@ -1,4 +1,5 @@
 import type { CreateJobInput, CreateRoundInput, InterviewAutomationStore } from './types';
+import { EventRepository } from '../recruitment-events/repository';
 
 function parseJson(value: unknown): Record<string, unknown> {
   if (typeof value !== 'string' || !value.trim()) return {};
@@ -158,6 +159,21 @@ export class InterviewAutomationRepository implements InterviewAutomationStore {
       `UPDATE interviews SET calendar_id = ?, calendar_event_id = ?, feishu_event_id = ?,
        meeting_url = ?, meeting_link = ?, schedule_status = 'scheduled', status = 'scheduled', updated_at = ? WHERE id = ?`,
     ).bind(calendarId, eventId, eventId, meetingUrl, meetingUrl, this.deps.now(), interviewId).run();
+    const interview = await this.loadInterview(interviewId);
+    if (interview?.resume_id) {
+      const events = new EventRepository(this.db);
+      await events.append({
+        resumeId: String(interview.resume_id),
+        positionId: interview.position_id || undefined,
+        stage: 'interview_scheduled',
+        action: 'interview.scheduled',
+        occurredAt: this.deps.now(),
+        source: 'interview-automation',
+        sourceRecordId: eventId,
+        dedupeKey: EventRepository.makeDedupeKey({ resumeId: String(interview.resume_id), stage: 'interview_scheduled', action: 'interview.scheduled', source: 'interview-automation', sourceRecordId: eventId }),
+        metadata: { interviewId, round: interview.round, calendarId },
+      });
+    }
   }
 
   async markScheduleCancelled(interviewId: string) {
@@ -235,6 +251,12 @@ export class InterviewAutomationRepository implements InterviewAutomationStore {
       `UPDATE interviews SET result = COALESCE(?, result), evaluation = COALESCE(?, evaluation),
        status = CASE WHEN ? IN ('passed', 'failed') THEN 'completed' ELSE status END, updated_at = ? WHERE id = ?`,
     ).bind(result, input.evaluation || null, result, now, interviewId).run();
+    if (row.resume_id && result) {
+      const events = new EventRepository(this.db);
+      const base = { resumeId: String(row.resume_id), positionId: row.position_id || undefined, occurredAt: now, source: 'interview-automation', sourceRecordId: interviewId, metadata: { interviewId, round: row.round } };
+      await events.append({ ...base, stage: 'interview_completed', action: 'interview.completed', dedupeKey: EventRepository.makeDedupeKey({ ...base, stage: 'interview_completed', action: 'interview.completed' }) });
+      await events.append({ ...base, stage: result === 'passed' ? 'interview_passed' : 'interview_failed', action: result === 'passed' ? 'interview.passed' : 'interview.failed', dedupeKey: EventRepository.makeDedupeKey({ ...base, stage: result === 'passed' ? 'interview_passed' : 'interview_failed', action: result === 'passed' ? 'interview.passed' : 'interview.failed' }) });
+    }
     return { ...row, ...input, result, actor_id: actorId };
   }
 }

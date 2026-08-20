@@ -824,6 +824,9 @@ CREATE INDEX IF NOT EXISTS idx_interviews_position ON interviews(position_id);
 CREATE INDEX IF NOT EXISTS idx_interviews_interviewer ON interviews(interviewer_id);
 CREATE INDEX IF NOT EXISTS idx_interviews_status ON interviews(status);
 CREATE INDEX IF NOT EXISTS idx_interviews_resume ON interviews(resume_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_resume_round_active
+  ON interviews(resume_id, round)
+  WHERE COALESCE(resume_id, '') <> '' AND status <> 'cancelled';
 CREATE INDEX IF NOT EXISTS idx_interviews_created ON interviews(created_at DESC);
 
 -- offers 高频查询字段

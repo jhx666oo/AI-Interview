@@ -20,6 +20,7 @@
 本需求已在 `codex/interview-automation-closed-loop` 分支完成本地一期实现：
 
 - 已实现：D1 作业/通知状态、Cloudflare Queue consumer、显式招聘日历、安排/改期/取消/评价 API、通知重试、自动业务筛选开关、业务通过后的待安排一面/二面、面试列表状态和自动化状态查看。
+- 已补齐：旧二面字段只读审计与离线回填工具、未取消轮次唯一索引、待安排/已安排/已完成等独立面试状态统计，以及面试排期/评价写入招聘事件的幂等记录。
 - 已验证：前端 43 个测试文件/198 个测试通过，Worker 85 个测试文件/679 个测试通过，前端构建和独立 consumer bundle 通过。
 - 尚未执行：生产 D1 migration、生产 Queue/consumer 部署、真实飞书/SMTP 端到端验收、历史二面数据审计与灰度。
 - 生产保护：全局 `INTERVIEW_AUTOMATION_ENABLED` 与岗位 `auto_business_screening_enabled` 默认关闭；未获得单独生产批准前不修改生产数据、不推送 `main`、不部署。
