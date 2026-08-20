@@ -620,26 +620,69 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
   });
 
   // 岗位管理页：按岗位查业务推送链接（每岗位一条固定链接，优先「AI 初筛通过」批次）
+  // 匹配方式：按该岗位（含 position_mappings 反查的原始岗位名）的 AI 通过简历所在活跃批次匹配，
+  // 而非 batch_items.position_id（该列可能为空或脏数据），保证链接准确对应岗位且包含岗位 AI 通过全集
   app.get('/api/positions/business-screening-links', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {
     try {
       const db = c.env.DB as D1Database;
       const nowIso = deps.now();
       const origin = new URL(c.req.url).origin;
       const positionIds = uniqueStrings(String(c.req.query('position_ids') || '').split(',').map((s) => s.trim()).filter(Boolean));
-      const sql = `
-        SELECT bi.position_id, b.id AS batch_id, b.scope_key, b.interviewer_name,
-               b.status, b.expires_at, b.created_at, b.batch_title, b.batch_subtitle
-          FROM resume_push_batch_items bi
-          JOIN resume_push_batches b ON b.id = bi.batch_id
-         WHERE bi.position_id IS NOT NULL AND bi.position_id != ''
-           AND b.scope_key IS NOT NULL AND b.scope_key != ''
-           AND b.status IN ('active', 'completed')
-           AND (b.expires_at IS NULL OR b.expires_at > ?)
-         ${positionIds.length ? `AND bi.position_id IN (${positionIds.map(() => '?').join(',')})` : ''}
-         ORDER BY b.created_at DESC`;
-      const binds: any[] = [nowIso, ...positionIds];
-      const rows = await db.prepare(sql).bind(...binds).all();
 
+      // 1) 查岗位标准标题
+      const positions = positionIds.length > 0
+        ? await queryAll<{ id: string; title: string }>(db, `SELECT id, title FROM positions WHERE id IN (${placeholders(positionIds.length)})`, positionIds)
+        : await queryAll<{ id: string; title: string }>(db, `SELECT id, title FROM positions`, []);
+      if (positions.length === 0) return c.json({ ok: true, total: 0, items: [] });
+      const titles = uniqueStrings(positions.map((p) => p.title));
+      // 2) 反查 position_mappings：标准岗位名 → 原始岗位名
+      const mappings = await queryAll<{ raw_name: string; mapped_name: string }>(
+        db,
+        `SELECT raw_name, mapped_name FROM position_mappings WHERE mapped_name IN (${placeholders(titles.length)})`,
+        titles,
+      );
+      const rawNamesByTitle = new Map<string, string[]>();
+      for (const t of titles) rawNamesByTitle.set(t, [t]);
+      for (const m of mappings) {
+        const list = rawNamesByTitle.get(m.mapped_name) || [];
+        if (!list.includes(m.raw_name)) list.push(m.raw_name);
+        rawNamesByTitle.set(m.mapped_name, list);
+      }
+      // 3) 查这些岗位下所有 AI 通过简历
+      const allRawNames = uniqueStrings([...rawNamesByTitle.values()].flat());
+      const resumeRows = allRawNames.length > 0
+        ? await queryAll<{ id: string; mapped_position: string | null; position_applied: string | null }>(
+            db,
+            `SELECT id, mapped_position, position_applied FROM resumes
+              WHERE screening_result = '通过'
+                AND (mapped_position IN (${placeholders(allRawNames.length)}) OR position_applied IN (${placeholders(allRawNames.length)}))`,
+            [...allRawNames, ...allRawNames],
+          )
+        : [];
+      // 简历 → 岗位：按原始名反查所属标准岗位（一条简历只归一个岗位，优先 mapped）
+      const resumePositionTitle = new Map<string, string>();
+      for (const r of resumeRows) {
+        const raw = String(r.mapped_position || r.position_applied || '').trim();
+        for (const [title, rawNames] of rawNamesByTitle) {
+          if (rawNames.includes(raw)) { resumePositionTitle.set(r.id, title); break; }
+        }
+      }
+      if (resumeRows.length === 0) return c.json({ ok: true, total: 0, items: [] });
+      // 4) 找这些简历所在的有效 scope 批次
+      const resumeIds = resumeRows.map((r) => r.id);
+      const batchRows = await queryAll<any>(
+        db,
+        `SELECT DISTINCT bi.resume_id, b.id AS batch_id, b.scope_key, b.interviewer_name,
+                b.status, b.expires_at, b.created_at, b.batch_title, b.batch_subtitle
+           FROM resume_push_batch_items bi
+           JOIN resume_push_batches b ON b.id = bi.batch_id
+          WHERE bi.resume_id IN (${placeholders(resumeIds.length)})
+            AND b.scope_key IS NOT NULL AND b.scope_key != ''
+            AND b.status IN ('active', 'completed')
+            AND (b.expires_at IS NULL OR b.expires_at > ?)
+          ORDER BY b.created_at DESC`,
+        [...resumeIds, nowIso],
+      );
       // 按岗位分组；优先「AI 初筛通过」批次（title/subtitle 含 AI初筛通过 / AI 通过），
       // 无匹配时回退该岗位最新一条活跃批次
       const isAiPassBatch = (row: any) => {
@@ -647,12 +690,16 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         return /AI\s*初筛通过|AI\s*通过/i.test(textSource);
       };
       const byPosition = new Map<string, any[]>();
-      for (const row of (rows.results || []) as any[]) {
-        if (!byPosition.has(row.position_id)) byPosition.set(row.position_id, []);
-        byPosition.get(row.position_id)!.push(row);
+      for (const row of (batchRows || []) as any[]) {
+        const title = resumePositionTitle.get(row.resume_id);
+        if (!title) continue;
+        if (!byPosition.has(title)) byPosition.set(title, []);
+        const existing = byPosition.get(title)!;
+        if (!existing.some((e) => e.batch_id === row.batch_id)) existing.push(row);
       }
       const items: any[] = [];
-      for (const [positionId, candidates] of byPosition) {
+      const positionIdByTitle = new Map(positions.map((p) => [p.title, p.id]));
+      for (const [title, candidates] of byPosition) {
         const aiPass = candidates.filter(isAiPassBatch);
         const row = aiPass.length > 0 ? aiPass[0] : candidates[0]; // 已按 created_at DESC 排序
         const issued = await deps.createScopePublicToken(row.scope_key, row.batch_id);
@@ -662,7 +709,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
           await deps.store.refreshBatchExpiry(db, row.batch_id, renewedExpiry);
         } catch { /* 续期失败不影响返回 */ }
         items.push({
-          position_id: positionId,
+          position_id: positionIdByTitle.get(title) || null,
           url: `${origin}/business-screening/${issued.token}`,
           batch_id: row.batch_id,
           interviewer: row.interviewer_name || '',

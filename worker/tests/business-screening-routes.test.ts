@@ -651,6 +651,65 @@ function buildHarness(options?: {
                       })),
                   };
                 }
+                if (sql.includes('FROM positions') && (sql.includes('WHERE id IN') || sql.includes('SELECT id, title FROM positions'))) {
+                  const allowedIds = (values as unknown[]).map(String).filter(Boolean);
+                  const rows = allowedIds.length > 0
+                    ? positions.filter((p: any) => allowedIds.includes(p.id))
+                    : positions;
+                  return { results: rows.map((p: any) => ({ id: p.id, title: p.title })) };
+                }
+                if (sql.includes('FROM position_mappings') && sql.includes('mapped_name IN')) {
+                  const allowedMapped = new Set((values as unknown[]).map(String));
+                  return {
+                    results: positionMappings
+                      .filter((m: any) => allowedMapped.has(m.mapped_name))
+                      .map((m: any) => ({ raw_name: m.raw_name, mapped_name: m.mapped_name })),
+                  };
+                }
+                if (sql.includes('FROM resumes') && sql.includes("screening_result = '通过'")) {
+                  const rawNames = new Set((values as unknown[]).map(String));
+                  return {
+                    results: [...resumes.values()]
+                      .filter((r: any) => String(r.screening_result || '').trim() === '通过')
+                      .filter((r: any) => {
+                        const raw = String(r.mapped_position || r.position_applied || '').trim();
+                        return rawNames.has(raw);
+                      })
+                      .map((r: any) => ({
+                        id: r.id,
+                        mapped_position: r.mapped_position ?? null,
+                        position_applied: r.position_applied ?? null,
+                      })),
+                  };
+                }
+                if (sql.includes('FROM resume_push_batch_items bi') && sql.includes('JOIN resume_push_batches')) {
+                  const resumeIds = new Set((values as unknown[]).map(String));
+                  const nowIso = String(values[values.length - 1] ?? '');
+                  const rows = batchItems
+                    .filter((item: any) => resumeIds.has(String(item.resume_id)))
+                    .filter((item: any) => {
+                      const batch = batches.get(item.batch_id);
+                      return batch
+                        && Boolean(batch.scope_key)
+                        && (batch.status === 'active' || batch.status === 'completed')
+                        && (batch.expires_at === null || batch.expires_at === undefined || batch.expires_at > nowIso);
+                    })
+                    .map((item: any) => {
+                      const batch = batches.get(item.batch_id)!;
+                      return {
+                        resume_id: item.resume_id,
+                        batch_id: item.batch_id,
+                        scope_key: batch.scope_key,
+                        interviewer_name: batch.interviewer_name,
+                        status: batch.status,
+                        expires_at: batch.expires_at,
+                        created_at: batch.created_at,
+                        batch_title: batch.batch_title ?? null,
+                        batch_subtitle: batch.batch_subtitle ?? null,
+                      };
+                    });
+                  return { results: rows };
+                }
                 return { results: [] };
               },
             };
@@ -3712,5 +3771,51 @@ describe('push 自动归拢该岗位 AI 通过全集（含已入库/已决策）
     const pubBody = JSON.parse(await pub.text());
     const ids = (pubBody.resumes || []).map((r: any) => r.id);
     expect(ids).toEqual(['r-push-tmp']);
+  });
+});
+
+describe('GET /api/positions/business-screening-links（岗位业务链接按 AI 通过简历匹配）', () => {
+  it('按岗位标题匹配批次（items.position_id 为空也能找到该岗位链接）', async () => {
+    const h = buildHarness({
+      resumes: [
+        // 护士岗位 AI 通过简历（position_id 为空，仅靠 mapped_position 关联）
+        { id: 'nurse-1', candidate_name: '护士甲', position_applied: '护士（入职五险一金）(A155143)', mapped_position: '护士（入职五险一金）(A155143)', screening_result: '通过', status: 'pending_screening', hr_disposition: 'pushed', business_screening_status: 'pending' },
+        { id: 'nurse-2', candidate_name: '护士乙', position_applied: '护士（入职五险一金）(A155143)', mapped_position: '护士（入职五险一金）(A155143)', screening_result: '通过', status: 'pending_screening', hr_disposition: 'pushed', business_screening_status: 'pending' },
+        // 软件产品经理岗位 AI 通过简历
+        { id: 'pm-1', candidate_name: '产品甲', position_applied: 'IoT产品经理', mapped_position: 'IoT产品经理', screening_result: '通过', status: 'pending_screening', hr_disposition: 'pushed', business_screening_status: 'pending' },
+      ] as any,
+      positions: [
+        { id: 'pos-nurse', title: '护士（入职五险一金）', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
+        { id: 'pos-pm', title: '软件产品经理（智能硬件方向）', primary_interviewer: '张三', secondary_interviewer: '李四', responsible_person: '张三' },
+      ],
+      positionMappings: [
+        { raw_name: '护士（入职五险一金）(A155143)', mapped_name: '护士（入职五险一金）' },
+        { raw_name: 'IoT产品经理', mapped_name: '软件产品经理（智能硬件方向）' },
+      ],
+      interviewerDirectory: [{ name: '张三', openId: 'ou_zhang', userId: 'user-zhang' }],
+      initialBatches: [
+        { id: 'b-nurse', interviewer_id: 'u', interviewer_name: '张三', interviewer_open_id: 'ou_zhang', token_hash: 'h-nurse', expires_at: '2099-01-01T00:00:00.000Z', status: 'active', created_by: 'x', created_at: '2026-08-12T00:00:00.000Z', scope_key: 'ou_zhang', rawToken: 'tkn-nurse', batch_title: '护士（入职五险一金）- AI 初筛通过表' } as any,
+        { id: 'b-pm', interviewer_id: 'u', interviewer_name: '张三', interviewer_open_id: 'ou_zhang', token_hash: 'h-pm', expires_at: '2099-01-01T00:00:00.000Z', status: 'active', created_by: 'x', created_at: '2026-08-12T00:00:00.000Z', scope_key: 'ou_zhang', rawToken: 'tkn-pm', batch_title: '软件产品经理（智能硬件方向）- AI 初筛通过表' } as any,
+      ],
+      initialItems: [
+        // 护士批次 items：position_id 为空（模拟历史数据）
+        { id: 'i-n1', batch_id: 'b-nurse', resume_id: 'nurse-1', position_id: null, status: 'pending', created_at: '2026-08-12T00:00:00.000Z', candidate_name: '护士甲', mapped_position: '护士（入职五险一金）(A155143)', position_applied: '护士（入职五险一金）(A155143)' } as any,
+        { id: 'i-n2', batch_id: 'b-nurse', resume_id: 'nurse-2', position_id: null, status: 'pending', created_at: '2026-08-12T00:00:00.000Z', candidate_name: '护士乙', mapped_position: '护士（入职五险一金）(A155143)', position_applied: '护士（入职五险一金）(A155143)' } as any,
+        // 软件产品经理批次 items：position_id 也为空
+        { id: 'i-p1', batch_id: 'b-pm', resume_id: 'pm-1', position_id: null, status: 'pending', created_at: '2026-08-12T00:00:00.000Z', candidate_name: '产品甲', mapped_position: 'IoT产品经理', position_applied: 'IoT产品经理' } as any,
+      ],
+    });
+    const res = await h.request('/api/positions/business-screening-links', {
+      method: 'GET', headers: { authorization: 'Bearer hr-token' },
+    });
+    expect(res.status).toBe(200);
+    const body = JSON.parse(await res.text());
+    expect(body.total).toBe(2);
+    const byPos = Object.fromEntries((body.items || []).map((i: any) => [i.position_id, i]));
+    expect(byPos['pos-nurse']).toBeDefined();
+    expect(byPos['pos-nurse'].url).toContain('tkn-nurse');
+    expect(byPos['pos-nurse'].ai_pass).toBe(true);
+    expect(byPos['pos-pm']).toBeDefined();
+    expect(byPos['pos-pm'].url).toContain('tkn-pm');
   });
 });
