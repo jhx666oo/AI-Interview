@@ -648,12 +648,17 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         const aiPass = candidates.filter(isAiPassBatch);
         const row = aiPass.length > 0 ? aiPass[0] : candidates[0]; // 已按 created_at DESC 排序
         const issued = await deps.createScopePublicToken(row.scope_key, row.batch_id);
+        // 自动续期：岗位不消失链接就不失效（每次查看岗位管理页顺延 30 天）
+        const renewedExpiry = plusDays(nowIso, 30);
+        try {
+          await deps.store.refreshBatchExpiry(db, row.batch_id, renewedExpiry);
+        } catch { /* 续期失败不影响返回 */ }
         items.push({
           position_id: positionId,
           url: `${origin}/business-screening/${issued.token}`,
           batch_id: row.batch_id,
           interviewer: row.interviewer_name || '',
-          expires_at: row.expires_at || null,
+          expires_at: renewedExpiry,
           title: row.batch_title || null,
           ai_pass: aiPass.length > 0,
         });
