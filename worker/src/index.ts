@@ -54,6 +54,7 @@ import {
 import { isSmtpConfigured } from './interview-start/smtp';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
+import { getMiaodaMailSyncConfig } from './mail-sync/config';
 import {
   assertDailyReportDate,
   claimScreeningQueueRecord,
@@ -135,6 +136,8 @@ interface Env extends DashboardFeishuSourceEnv {
   RESUMES_KV?: KVNamespace;
   CRON_SECRET?: string;
   RESUME_UPLOAD_API_KEY?: string; // 对外简历上传接口的 API Key（x-api-key header）
+  MIAODA_API_KEY?: string; // 妙搭邮件同步 OpenAPI 鉴权密钥
+  MIAODA_MAIL_SYNC_BASE_URL?: string; // 妙搭邮件同步 OpenAPI 基础地址
   RESUME_PROCESSING_QUEUE: Queue<ResumeProcessingQueueMessage>;
   INTERVIEW_AUTOMATION_QUEUE?: Queue<InterviewAutomationQueueMessage>;
   INTERVIEW_AUTOMATION_ENABLED?: string;
@@ -9814,14 +9817,11 @@ app.post('/api/settings/mail/test', authMiddleware, async (c) => {
 });
 
 // ==================== 邮箱简历同步（妙搭 OpenAPI 代理） ====================
-// 妙搭邮箱管理助手 Base URL 和 API Key
-const MIAODA_BASE = 'https://ywwlaii6ga7.feishuapp.com/app/app_17bcx89zuke/openapi/mail-sync';
-const MIAODA_API_KEY = 'AlomdyIwCuEpOwgaK1LKMphKdwaAWVdSML3NPqE-X2w';
-
 async function callMiaoda(c: any, path: string, options?: { method?: string; body?: any }): Promise<Response> {
-  const url = `${MIAODA_BASE}${path}`;
+  const { baseUrl, apiKey } = getMiaodaMailSyncConfig(c.env);
+  const url = `${baseUrl}${path}`;
   const headers: Record<string, string> = {
-    'Authorization': 'Bearer ' + MIAODA_API_KEY,
+    'Authorization': 'Bearer ' + apiKey,
     'Accept': 'application/json',
   };
   if (options?.body) {
