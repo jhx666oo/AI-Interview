@@ -14384,6 +14384,17 @@ app.post('/api/admin/reparse-work-experience', businessScreeningAuthMiddleware, 
   }
 });
 
+// ==================== 管理端点：面试自动化环境诊断 ====================
+// 返回生产环境面试自动化相关 env 状态（flag/queue/日历），用于排查「安排了面试但未启动排期」。
+app.post('/api/admin/automation-env', businessScreeningAuthMiddleware, async (c) => {
+  return c.json({
+    enabled_raw: String(c.env.INTERVIEW_AUTOMATION_ENABLED ?? ''),
+    enabled: String(c.env.INTERVIEW_AUTOMATION_ENABLED ?? '').toLowerCase() === 'true',
+    has_queue: !!c.env.INTERVIEW_AUTOMATION_QUEUE,
+    calendar_id: String(c.env.FEISHU_RECRUITMENT_CALENDAR_ID || ''),
+  });
+});
+
 // ==================== 管理端点：简历重置为待安排面试 ====================
 // 把简历恢复到「已入库待安排面试」初始阶段：status=approved（已入库，前端「安排面试」按钮可点）、stage=talent_pool，
 // 业务筛选状态重置为 not_ready、hr_disposition=pending、清空批次关联，
