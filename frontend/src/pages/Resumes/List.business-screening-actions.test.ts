@@ -4,10 +4,11 @@ import { describe, expect, it } from 'vitest';
 const source = readFileSync(new URL('./List.tsx', import.meta.url), 'utf8');
 
 describe('resume list business-screening wiring', () => {
-  it('uses manual-push/eliminate endpoints for single-resume AI-result ↔ business-link toggles', () => {
-    expect(source).toContain("request.post('/resumes/business-screening/push'");
-    expect(source).toContain('request.post(`/resumes/${record.id}/business-screening/manual-push`');
+  it('pushes by position from the toolbar (岗位 → 该岗位全部 AI 通过简历) and keeps eliminate for single rows', () => {
+    expect(source).toContain("request.post('/positions/business-screening/push'");
+    expect(source).toContain('position: pushPosition');
     expect(source).toContain('request.post(`/resumes/${record.id}/business-screening/eliminate`');
+    expect(source).not.toContain('request.post(`/resumes/${record.id}/business-screening/manual-push`');
     expect(source).not.toContain('request.post(`/resumes/${record.id}/business-screening/reject`');
     expect(source).not.toContain("request.post(`/resumes/${record.id}/approve-to-talent-pool`");
     expect(source).not.toContain("request.post('/resumes/batch-approve-to-talent-pool'");
@@ -24,10 +25,10 @@ describe('resume list business-screening wiring', () => {
     expect(source).toContain('永久链接长期公开，简历被淘汰或重新推送后自动失效');
   });
 
-  it('renders the push/eliminate action labels and business-screening status copy', () => {
+  it('renders the push-by-position toolbar action and eliminate action labels with business-screening status copy', () => {
     expect(source).toContain("getBusinessScreeningActions(record)");
-    expect(source).toContain("handlePush(record)");
-    expect(source).toContain("handleReject(record)");
+    expect(source).toContain('handlePushByPosition');
+    expect(source).toContain('handleReject(record)');
     expect(source).toContain('批量推送');
     expect(source).toContain('批量淘汰');
     expect(source).toContain('待业务筛选');

@@ -1126,40 +1126,46 @@ const ResumesList: React.FC = () => {
     });
   };
 
-  const handlePush = async (record: any) => {
+  // 按岗位推送：筛选栏选岗位 → 把该岗位所有 AI 通过简历推送到岗位负责人业务链接（含已入库/已决策，按状态标记）
+  const handlePushByPosition = async () => {
+    if (!pushPosition) {
+      message.warning('请先在筛选栏选择推送岗位');
+      return;
+    }
+    setBatchPushing(true);
     try {
-      // 手动推送：AI 不通过 → 改为通过并推送到业务链接（后端一个接口完成）
-      // 可选 position：筛选栏统一选择岗位后按该岗位推送到对应业务的筛选链接；未选择则按简历自身岗位
-      const position = pushPosition;
-      const res = await request.post(`/resumes/${record.id}/business-screening/manual-push`, {
+      const res = await request.post('/positions/business-screening/push', {
+        position: pushPosition,
         expires_in_days: pushExpiry,
-        position: position || undefined,
-      }) as BusinessScreeningPushResult & {
-        ai_result?: string;
-        business_screening_status?: string;
-      };
+      }) as BusinessScreeningPushResult & { position?: string };
       const pushedIds = Array.isArray(res.pushed) ? res.pushed : [];
-      if (pushedIds.includes(record.id)) {
-        setData(prev => prev.map(item => item.id === record.id ? {
-          ...item,
-          screening_result: res.ai_result || '通过',
-          hr_disposition: 'pushed',
-          business_screening_status: res.business_screening_status || 'pending',
-        } : item));
-        mergeBusinessScreeningState([record.id], {
-          hr_disposition: 'pushed',
-          business_screening_status: res.business_screening_status === 'passed' || res.business_screening_status === 'rejected'
-            ? res.business_screening_status
-            : 'pending',
-        });
+      if (pushedIds.length > 0) {
+        mergeBusinessScreeningState(pushedIds, { hr_disposition: 'pushed', business_screening_status: 'pending' });
+        setData(prev => prev.map(item => pushedIds.includes(item.id) ? { ...item, hr_disposition: 'pushed', business_screening_status: 'pending' } : item));
       }
       storePushResult(res);
       message.success(summarizePushResult(res));
       dataCache.current = [];
       loadedRef.current = false;
       fetchResumes(true);
+      // 弹出链接提示，便于直接交付业务方
+      if (res.batches?.length) {
+        Modal.success({
+          title: `岗位「${res.position || pushPosition}」已推送`,
+          content: (
+            <div>
+              <p>业务筛选链接（负责人：{res.batches[0].interviewer}）：</p>
+              <Typography.Text copyable={{ text: res.batches[0].url }} style={{ wordBreak: 'break-all', fontSize: 12 }}>
+                {res.batches[0].url}
+              </Typography.Text>
+            </div>
+          ),
+        });
+      }
     } catch (error: any) {
-      message.error(error?.response?.data?.detail || '推送失败');
+      message.error(error?.response?.data?.detail || '按岗位推送失败');
+    } finally {
+      setBatchPushing(false);
     }
   };
 
@@ -1387,11 +1393,6 @@ const handleUploadClick = () => {
         <Tooltip title="预览"><Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handlePreview(record)} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
         {hardResult?.passed === false && <Tag color="error">❌ 硬性不通过</Tag>}
-        {canBatchPush && (
-          <Button type="primary" size="small" icon={<SendOutlined />} onClick={() => handlePush(record)}>
-            推送
-          </Button>
-        )}
         {businessActions.secondary && (
           <Button size="small" icon={<CloseOutlined />} onClick={() => handleReject(record)}>
             {businessActions.secondary.label}
@@ -1683,6 +1684,9 @@ const handleUploadClick = () => {
                       <Select.Option key={p.id || p.title} value={p.title}>{p.title}</Select.Option>
                     ))}
                   </Select>
+                  <Button type="primary" size="small" icon={<SendOutlined />} loading={batchPushing} disabled={batchPushing} onClick={handlePushByPosition}>
+                    推送
+                  </Button>
                 </Space>
               </div>
             )}
