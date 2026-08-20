@@ -6,11 +6,11 @@ import { hashPublicToken } from '../business-screening/token';
  * 面试管理卡片（Interview Card Link）
  * 把单个候选人的面试情况（各轮面试、评分评价、备注、进度时间线）汇总到一个免登录公开链接，
  * 机制与业务筛选链接一致：token 确定性派生（SHA-256('interview-card::' + id)）、
- * DB 只存哈希、固定 7 天有效、可撤销、可续期。
+ * DB 只存哈希、固定 30 天有效、可撤销、可续期。
  * 面向受众：业务方/用人部门查看面试进度、面试官之间协作查看。
  */
 
-const LINK_TTL_DAYS = 7;
+const LINK_TTL_DAYS = 30;
 const TOKEN_PREFIX = 'ic-';
 
 export interface InterviewCardLinkRow {
@@ -175,7 +175,7 @@ export interface InterviewCardCreateResult {
  * 生成或复用某候选人的面试卡片链接（服务层，路由与面试提醒推送共用）。
  * 一个简历固定一个链接：
  * - 有 resume_id：严格按简历维度唯一（不因姓名相同而合并），新链接 token 由 resume_id
- *   确定性派生（URL 与卡片 id 无关、永不漂移）；已存在则复用同一条并顺延 7 天。
+ *   确定性派生（URL 与卡片 id 无关、永不漂移）；已存在则复用同一条并顺延 30 天。
  * - 无 resume_id（手动面试等）：按姓名+岗位兜底复用，URL 由卡片 id 派生保持稳定。
  * resume_id 与 candidate_name 至少提供其一。
  */
@@ -351,7 +351,7 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
 
   // ==================== 生成 / 复用面试卡片链接（登录态） ====================
   // body: { resume_id?, candidate_name?, position_applied? }
-  // 同一候选人已有链接时复用同一条记录（已过期/已撤销则刷新为 active 并顺延 7 天），
+  // 同一候选人已有链接时复用同一条记录（已过期/已撤销则刷新为 active 并顺延 30 天），
   // URL 由 id 确定性派生，因此始终稳定不变。
   app.post('/api/interview-card-links', deps.authMiddleware, async (c) => {
     const body = await c.req.json().catch(() => ({}));

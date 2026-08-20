@@ -250,7 +250,7 @@ describe('createOrReuseInterviewCardLink service', () => {
     expect(result.reused).toBe(false);
     expect(result.url).toBe(`/interview-card/${result.token}`);
     expect(result.token).toMatch(/^ic-/);
-    expect(result.expires_at).toBe('2026-08-26T00:00:00.000Z');
+    expect(result.expires_at).toBe('2026-09-18T00:00:00.000Z');
     // 幂等：再次调用复用同一条记录，URL 不变
     const again = await createOrReuseInterviewCardLink(h.db, {
       resumeId: 'resume-1', candidateName: '张三',
@@ -342,7 +342,7 @@ describe('POST /api/interview-card-links', () => {
     expect(body.token).toMatch(/^ic-/);
     expect(body.url).toBe(`/interview-card/${body.token}`);
     expect(body.reused).toBe(false);
-    expect(body.expires_at).toBe('2026-08-26T00:00:00.000Z'); // +7 天
+    expect(body.expires_at).toBe('2026-09-18T00:00:00.000Z'); // +30 天
     // DB 只存哈希，不存明文 token
     expect(h.db.links[0].token_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(h.db.links[0].token_hash).not.toContain(body.token);
@@ -372,7 +372,7 @@ describe('POST /api/interview-card-links', () => {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ resume_id: 'resume-1' }),
     }, h.env)).json();
-    h.setNow('2026-09-01T00:00:00.000Z');
+    h.setNow('2026-10-01T00:00:00.000Z');
     const second = await (await h.app.request('/api/interview-card-links', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ resume_id: 'resume-1' }),
@@ -381,7 +381,7 @@ describe('POST /api/interview-card-links', () => {
     expect(second.url).toBe(first.url);
     expect(second.reused).toBe(true);
     expect(h.db.links[0].status).toBe('active');
-    expect(h.db.links[0].expires_at).toBe('2026-09-08T00:00:00.000Z');
+    expect(h.db.links[0].expires_at).toBe('2026-10-31T00:00:00.000Z');
   });
 
   it('rejects when neither resume_id nor candidate_name is provided', async () => {
@@ -545,7 +545,7 @@ describe('GET /api/public/interview-card/:token', () => {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ resume_id: 'resume-1' }),
     }, h.env)).json();
-    h.setNow('2026-09-01T00:00:00.000Z');
+    h.setNow('2026-10-01T00:00:00.000Z');
     const res = await h.app.request(`/api/public/interview-card/${created.token}`, {}, h.env);
     expect(res.status).toBe(410);
   });
@@ -632,7 +632,7 @@ describe('GET /api/public/interview-card/:token/file', () => {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ resume_id: 'resume-1' }),
     }, h2.env)).json();
-    h2.setNow('2026-09-01T00:00:00.000Z');
+    h2.setNow('2026-10-01T00:00:00.000Z');
     const expired = await h2.app.request(`/api/public/interview-card/${created2.token}/file`, {}, h2.env);
     expect(expired.status).toBe(410);
   });
@@ -725,7 +725,7 @@ describe('POST /api/public/interview-card/:token/evaluate', () => {
 
     const h2 = buildHarness({ resumes: [sampleResume], interviews: [sampleInterview()] });
     const token = await createCard(h2);
-    h2.setNow('2026-09-01T00:00:00.000Z');
+    h2.setNow('2026-10-01T00:00:00.000Z');
     const expired = await h2.app.request(`/api/public/interview-card/${token}/evaluate`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ evaluation: 'x', result: 'passed' }),
