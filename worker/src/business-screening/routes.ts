@@ -293,6 +293,8 @@ export interface BusinessScreeningRouteDeps {
   store: BusinessScreeningRouteStore;
   // API Key 身份的飞书归属用户：key 推送时用该用户的飞书 token 发送卡片（未配置则无法发飞书，链接仍生成）
   resolveApiKeyOwnerEmail?: (env: any) => Promise<string | null>;
+  // 公开页「重新解析」：链接内简历信息未提取完整时，由业务方/面试官触发 AI 重新评估（入队去重）
+  enqueueResumeReprocess?: (env: any, resumeId: string) => Promise<{ jobId: string; status: 'queued' | 'running'; queued: boolean }>;
 }
 
 function text(value: unknown): string {
@@ -913,6 +915,38 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         'Cache-Control': 'private, max-age=300',
       },
     });
+  });
+
+  // 公开「重新解析」：链接内简历信息未提取完整时，业务方/面试官可触发 AI 重新评估（免登录，凭链接 token 校验）
+  app.post('/api/public/business-screening/:token/resumes/:resumeId/reparse', async (c) => {
+    const tokenHash = await hashPublicToken(c.req.param('token'));
+    const resumeId = c.req.param('resumeId');
+    const db = c.env.DB as D1Database;
+    const batch = await deps.store.loadBatchByTokenHash(db, tokenHash);
+    if (!batch) return c.json({ detail: 'Not found' }, 404);
+
+    const access = isBatchAccessible(batch, deps.now());
+    if (!access.ok) {
+      if (access.nextStatus) await deps.store.setBatchStatus(db, batch.id, access.nextStatus);
+      return c.json({ detail: 'Link unavailable' }, access.status);
+    }
+
+    const item = await deps.store.loadBatchItem(db, batch.id, resumeId);
+    if (!item) return c.json({ detail: 'Not found' }, 404);
+    if (!deps.enqueueResumeReprocess) return c.json({ detail: '重新解析暂不可用，请联系 HR' }, 503);
+
+    try {
+      const result = await deps.enqueueResumeReprocess(c.env, resumeId);
+      return c.json({
+        ok: true,
+        resume_id: resumeId,
+        job_id: result.jobId,
+        queued: result.queued,
+        status: result.status,
+      });
+    } catch (e: any) {
+      return c.json({ detail: e?.message || '重新解析失败' }, 500);
+    }
   });
 
   app.post('/api/resumes/business-screening/batches/:batchId/resend', deps.authMiddleware, deps.requireRole(['admin', 'hr']), async (c) => {

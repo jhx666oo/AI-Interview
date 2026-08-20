@@ -1603,6 +1603,8 @@ const businessScreeningRoutes = createBusinessScreeningRoutes({
     const row = await env.DB.prepare('SELECT value FROM settings WHERE key = ?').bind(BUSINESS_SCREENING_KEY_OWNER_SETTING).first() as any;
     return typeof row?.value === 'string' && row.value.trim() ? row.value.trim() : null;
   },
+  // 公开页「重新解析」：凭链接 token 免登录触发 AI 重新评估（入队去重）
+  enqueueResumeReprocess: async (env, resumeId) => enqueueResumeReprocess(env.DB, env.RESUME_PROCESSING_QUEUE, resumeId),
   store: createD1BusinessScreeningRouteStore(resolveExactInterviewerOpenId),
 });
 app.route('/', businessScreeningRoutes);
@@ -1626,6 +1628,8 @@ const interviewCardRoutes = createInterviewCardRoutes({
   uuid,
   hashPublicToken,
   getResumeFileBytes,
+  // 公开页「重新解析」：凭链接 token 免登录触发 AI 重新评估（入队去重）
+  enqueueResumeReprocess: async (env, resumeId) => enqueueResumeReprocess(env.DB, env.RESUME_PROCESSING_QUEUE, resumeId),
 });
 app.route('/', interviewCardRoutes);
 

@@ -182,6 +182,8 @@ function buildHarness(options?: {
       bytes: fileBytes && (resumeId === 'resume-1') ? fileBytes : null,
       fileName: 'resume.pdf',
     }),
+    // 公开页「重新解析」mock
+    enqueueResumeReprocess: async (_env, resumeId) => ({ jobId: `job-${resumeId}`, status: 'queued', queued: true }),
   };
   const app = createInterviewCardRoutes(deps);
   const env = { DB: db };
@@ -815,5 +817,59 @@ describe('GET /api/public/interview-card/:token/slots', () => {
     expect(body.ok).toBe(true);
     expect(body.slots).toEqual([]);
     expect(body.reason).toContain('未绑定');
+  });
+});
+
+describe('POST /api/public/interview-card/:token/reparse', () => {
+  it('enqueues a re-parse job for the card-linked resume (token-scoped, no auth)', async () => {
+    const h = buildHarness({ resumes: [sampleResume] });
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1', candidate_name: '张三' }),
+    }, h.env)).json();
+
+    const res = await h.app.request(`/api/public/interview-card/${created.token}/reparse`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    }, h.env);
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: true,
+      resume_id: 'resume-1',
+      job_id: 'job-resume-1',
+      queued: true,
+      status: 'queued',
+    });
+  });
+
+  it('falls back to candidate_name when the card has no resume_id', async () => {
+    const h = buildHarness({ resumes: [sampleResume] });
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ candidate_name: '张三' }),
+    }, h.env)).json();
+
+    const res = await h.app.request(`/api/public/interview-card/${created.token}/reparse`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    }, h.env);
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ ok: true, resume_id: 'resume-1' });
+  });
+
+  it('returns 404 for unknown tokens and 410 for expired links', async () => {
+    const h = buildHarness({ resumes: [sampleResume] });
+    const notFound = await h.app.request('/api/public/interview-card/ic-unknown/reparse', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    }, h.env);
+    expect(notFound.status).toBe(404);
+
+    const created = await (await h.app.request('/api/interview-card-links', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ resume_id: 'resume-1' }),
+    }, h.env)).json();
+    h.setNow('2026-10-01T00:00:00.000Z');
+    const expired = await h.app.request(`/api/public/interview-card/${created.token}/reparse`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
+    }, h.env);
+    expect(expired.status).toBe(410);
   });
 });

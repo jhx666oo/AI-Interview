@@ -35,6 +35,8 @@ function buildHarness(options?: {
   initialBatches?: BatchRow[];
   initialItems?: BusinessScreeningBatchItemView[];
   apiKeyOwnerEmail?: string | null;
+  /** 公开重新解析 mock：模拟该简历已有正在运行的解析任务（去重） */
+  reprocessAlreadyRunning?: boolean;
 }) {
   const resumes = new Map(
     (options?.resumes || [
@@ -507,6 +509,10 @@ function buildHarness(options?: {
     resolveApiKeyOwnerEmail: options?.apiKeyOwnerEmail === undefined
       ? undefined
       : async () => options.apiKeyOwnerEmail as string | null,
+    // 公开页「重新解析」mock：记录入队调用，可配置返回 running（去重）
+    enqueueResumeReprocess: options?.reprocessAlreadyRunning === true
+      ? async (_env, resumeId) => ({ jobId: `job-${resumeId}`, status: 'running' as const, queued: false })
+      : async (_env, resumeId) => ({ jobId: `job-${resumeId}`, status: 'queued' as const, queued: true }),
     store,
   };
 
@@ -3374,5 +3380,109 @@ describe('manual-push / eliminate（AI 结果与业务链接联动）', () => {
       method: 'POST', headers: { Authorization: 'Bearer hr-token', 'Content-Type': 'application/json' }, body: JSON.stringify({}),
     });
     expect(elim.status).toBe(404);
+  });
+});
+
+describe('public reparse（链接内简历信息未提取完整时重新解析）', () => {
+  const reparseBatch = {
+    id: 'batch-reparse',
+    interviewer_id: 'user-zhang',
+    interviewer_name: '张三',
+    interviewer_open_id: 'ou_zhang',
+    token_hash: 'hash-reparse',
+    expires_at: '2026-08-19T00:00:00.000Z',
+    status: 'active' as const,
+    created_by: 'hr@example.com',
+    created_at: '2026-08-12T00:00:00.000Z',
+    last_sent_at: null,
+    scope_key: 'ou_zhang',
+    rawToken: 'reparse-token',
+  };
+
+  it('enqueues a re-parse job for a resume in the batch (token-scoped, no auth)', async () => {
+    const { request } = buildHarness({
+      initialBatches: [reparseBatch],
+      initialItems: [{
+        id: 'item-reparse',
+        batch_id: 'batch-reparse',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T00:00:00.000Z',
+        candidate_name: '候选人甲',
+        mapped_position: '标准运营',
+        hr_disposition: 'pushed',
+        business_screening_status: 'pending',
+      }],
+    });
+    const response = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/reparse-token/resumes/resume-1/reparse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ ok: true, resume_id: 'resume-1', job_id: 'job-resume-1', queued: true, status: 'queued' });
+  });
+
+  it('returns queued=false when the resume already has a running re-parse job', async () => {
+    const { request } = buildHarness({
+      reprocessAlreadyRunning: true,
+      initialBatches: [reparseBatch],
+      initialItems: [{
+        id: 'item-reparse-running',
+        batch_id: 'batch-reparse',
+        resume_id: 'resume-1',
+        position_id: 'position-1',
+        status: 'pending',
+        remark: null,
+        processed_at: null,
+        created_at: '2026-08-12T00:00:00.000Z',
+        candidate_name: '候选人甲',
+        mapped_position: '标准运营',
+        hr_disposition: 'pushed',
+        business_screening_status: 'pending',
+      }],
+    });
+    const response = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/reparse-token/resumes/resume-1/reparse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true, queued: false, status: 'running' });
+  });
+
+  it('returns 404 for resumes not in the batch and 410 for expired links', async () => {
+    const { request } = buildHarness({
+      initialBatches: [
+        reparseBatch,
+        {
+          id: 'batch-reparse-expired',
+          interviewer_id: 'user-zhang',
+          interviewer_name: '张三',
+          interviewer_open_id: 'ou_zhang',
+          token_hash: 'hash-reparse-expired',
+          expires_at: '2026-08-01T00:00:00.000Z',
+          status: 'active' as const,
+          created_by: 'hr@example.com',
+          created_at: '2026-08-01T00:00:00.000Z',
+          last_sent_at: null,
+          scope_key: 'ou_zhang',
+          rawToken: 'reparse-expired-token',
+        },
+      ],
+    });
+    const missing = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/reparse-token/resumes/resume-999/reparse', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    expect(missing.status).toBe(404);
+
+    const expired = await request('https://ai-interview-88r.pages.dev/api/public/business-screening/reparse-expired-token/resumes/resume-1/reparse', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    expect(expired.status).toBe(410);
   });
 });
