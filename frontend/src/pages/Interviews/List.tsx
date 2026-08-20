@@ -155,9 +155,15 @@ const InterviewsList: React.FC = () => {
   const [editRecord, setEditRecord] = useState<MergedRow | null>(null);
   const [editForm] = Form.useForm();
   const [editSubmitting, setEditSubmitting] = useState(false);
+  // 编辑弹窗里按岗位自动匹配的面试官（面试官为空时默认带出岗位配置 + 提示展示）
+  const [editDefaults, setEditDefaults] = useState<ReturnType<typeof resolveScheduleInterviewerDefaults> | null>(null);
 
-  const handleOpenEdit = (record: MergedRow) => {
+  const handleOpenEdit = async (record: MergedRow) => {
     setEditRecord(record);
+    // 岗位配置的面试官自动同步：优先已有岗位列表，缺失时先拉取再匹配（同安排面试弹窗）
+    let positionList = positions;
+    if (positionList.length === 0) positionList = await fetchPositions();
+    setEditDefaults(resolveScheduleInterviewerDefaults(record, positionList));
     setEditModalVisible(true);
   };
 
@@ -1135,8 +1141,8 @@ const InterviewsList: React.FC = () => {
             editForm.resetFields();
             editForm.setFieldsValue({
               position_applied: editRecord.position_applied || editRecord.position || '',
-              primary_interviewer: editRecord.primary_interviewer || editRecord.interviewer || '',
-              secondary_interviewer: editRecord.secondary_interviewer || '',
+              primary_interviewer: editRecord.primary_interviewer || editRecord.interviewer || editDefaults?.interviewerName || '',
+              secondary_interviewer: editRecord.secondary_interviewer || editDefaults?.secondaryInterviewer || '',
               interview_time: editRecord.interview_time ? editRecord.interview_time.substring(0, 16) : '',
               interview_location: editRecord.interview_location || '',
               status: editRecord.interview_status || 'scheduled',
@@ -1155,6 +1161,11 @@ const InterviewsList: React.FC = () => {
           <Form.Item name="primary_interviewer" label="一面面试官">
             <Input placeholder="一面面试官" />
           </Form.Item>
+          {editDefaults?.matchedPositionTitle && !(editRecord?.primary_interviewer || editRecord?.interviewer) && (
+            <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: -12, marginBottom: 16 }}>
+              已按岗位「{editDefaults.matchedPositionTitle}」自动匹配岗位管理的面试官（可修改）
+            </div>
+          )}
           <Form.Item name="secondary_interviewer" label="二面面试官">
             <Input placeholder="二面面试官" />
           </Form.Item>
