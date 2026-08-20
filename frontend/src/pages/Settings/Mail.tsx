@@ -7,11 +7,12 @@ import {
 import {
   SaveOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, EditOutlined,
   ThunderboltOutlined, LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  SyncOutlined, MailOutlined, KeyOutlined, SettingOutlined, HistoryOutlined,
+  SyncOutlined, MailOutlined, KeyOutlined, SettingOutlined, HistoryOutlined, StopOutlined,
 } from '@ant-design/icons';
 import request from '../../utils/request';
 import { useAuth } from '../../contexts/AuthContext';
 import { PageHeader, ResponsiveDataView, ResponsiveModal, ResponsiveToolbar } from '../../components/Responsive';
+import { cancelMailSync } from './mailSyncActions';
 
 const { Text } = Typography;
 
@@ -66,6 +67,7 @@ const MailSettingsPage: React.FC = () => {
   const [configsLoading, setConfigsLoading] = useState(false);
   const [selectedConfigIds, setSelectedConfigIds] = useState<string[]>([]);
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
+  const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
   const [scanStatuses, setScanStatuses] = useState<Record<string, any>>({});
 
   // 添加/编辑配置弹窗
@@ -212,6 +214,40 @@ const MailSettingsPage: React.FC = () => {
       for (const id of ids) {
         setSyncingIds(prev => { const n = new Set(prev); n.delete(id); return n; });
       }
+    }
+  };
+
+  // 停止扫描：通过系统代理同步取消到妙搭，并停止本地轮询
+  const handleCancelSync = async (configId?: string) => {
+    const ids = configId ? [configId] : Array.from(syncingIds);
+    if (ids.length === 0) return;
+
+    setCancellingIds(prev => new Set([...prev, ...ids]));
+    try {
+      const cancelledIds = await cancelMailSync(request, ids);
+      setPollingTimers(prev => {
+        const next = { ...prev };
+        for (const id of cancelledIds) {
+          if (next[id]) clearInterval(next[id]);
+          delete next[id];
+        }
+        return next;
+      });
+      setSyncingIds(prev => {
+        const next = new Set(prev);
+        cancelledIds.forEach(id => next.delete(id));
+        return next;
+      });
+      await Promise.all([fetchLogs(), fetchLogsStats(), fetchConfigs()]);
+      message.success(cancelledIds.length === 1 ? '已停止邮箱同步' : `已停止 ${cancelledIds.length} 个邮箱同步`);
+    } catch (e: any) {
+      message.error('停止同步失败: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setCancellingIds(prev => {
+        const next = new Set(prev);
+        ids.forEach(id => next.delete(id));
+        return next;
+      });
     }
   };
 
@@ -546,15 +582,26 @@ const MailSettingsPage: React.FC = () => {
                     </Col>
                     <Col xs={24} sm={24} md={5}>
                       <Space size="small">
-                        <Button
-                          size="small"
-                          type="primary"
-                          icon={<ThunderboltOutlined />}
-                          loading={isSyncing}
-                          onClick={() => handleTriggerSync(config.id)}
-                        >
-                          同步
-                        </Button>
+                        {isSyncing ? (
+                          <Button
+                            size="small"
+                            danger
+                            icon={<StopOutlined />}
+                            loading={cancellingIds.has(config.id)}
+                            onClick={() => handleCancelSync(config.id)}
+                          >
+                            停止
+                          </Button>
+                        ) : (
+                          <Button
+                            size="small"
+                            type="primary"
+                            icon={<ThunderboltOutlined />}
+                            onClick={() => handleTriggerSync(config.id)}
+                          >
+                            同步
+                          </Button>
+                        )}
                         <Tooltip title="测试连接">
                           <Button size="small" icon={<SyncOutlined />} onClick={() => handleTestConnection(config)} />
                         </Tooltip>
@@ -584,6 +631,16 @@ const MailSettingsPage: React.FC = () => {
             >
               同步选中邮箱 ({selectedConfigIds.length})
             </Button>
+            {syncingIds.size > 0 && (
+              <Button
+                danger
+                icon={<StopOutlined />}
+                loading={Array.from(cancellingIds).some(id => syncingIds.has(id))}
+                onClick={() => handleCancelSync()}
+              >
+                停止同步 ({syncingIds.size})
+              </Button>
+            )}
             <Button
               icon={<ReloadOutlined />}
               onClick={() => handleRetryFailed()}
