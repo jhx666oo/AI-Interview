@@ -725,6 +725,7 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
 
     try {
       const feishuToken = await getTenantAccessToken(c.env);
+      let busyError: string | null = null;
       const slots = await listFreeInterviewSlots({
         token: feishuToken,
         openId,
@@ -732,11 +733,16 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
         durationMinutes: 60,
         skipWorkdays: 2,
         workdays: 3,
+      }, {
+        onBusyError: (message: string) => { busyError = message; },
       });
       return c.json({
         ok: true,
         interviewer: primaryName,
         slots: slots.map((s) => ({ start: formatBeijing(s.startTs), end: formatBeijing(s.endTs) })),
+        reason: slots.length === 0
+          ? (busyError ? `空闲时段查询失败：${busyError}` : '未来两个工作日之后未找到空闲时段')
+          : undefined,
       });
     } catch (e: any) {
       return c.json({ ok: true, slots: [], reason: `空闲时段查询失败：${e?.message || e}` });

@@ -171,6 +171,8 @@ export interface FreeSlotSearchInput {
 export interface FreeSlotSearchDeps {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** freebusy 查询失败时的错误回调（用于调用方提示权限/接口问题） */
+  onBusyError?: (message: string) => void;
 }
 
 /** 拉取 openId 在 windows 覆盖范围内的忙碌区间并合并重叠，失败返回 null */
@@ -180,6 +182,7 @@ async function fetchMergedBusy(
   windows: Array<{ start: number; end: number }>,
   fetchImpl: typeof fetch,
   timeoutMs: number,
+  onBusyError?: (message: string) => void,
 ): Promise<Array<{ start: number; end: number }> | null> {
   let busy: Array<{ start: number; end: number }> = [];
   try {
@@ -204,7 +207,13 @@ async function fetchMergedBusy(
         if (Number.isFinite(s) && Number.isFinite(e)) busy.push({ start: s * 1000, end: e * 1000 });
       }
     }
-  } catch {
+  } catch (error) {
+    // 不吞错：记录原因并回调，调用方据此区分「freebusy 失败」与「真无空闲」
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      console.error(`[freebusy] 查询失败: ${message}`);
+    } catch { /* logging must never break */ }
+    try { onBusyError?.(message); } catch { /* callback must never break */ }
     return null;
   }
   busy.sort((a, b) => a.start - b.start);
@@ -237,7 +246,7 @@ export async function findFirstFreeInterviewSlot(
   const windows = buildFutureInterviewWindows(input.fromTs, skipWorkdays, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
   if (windows.length === 0) return null;
 
-  const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs);
+  const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs, deps.onBusyError);
   if (!merged) return null;
 
   // 在每个工作窗口内找第一个足够长的空闲段
@@ -272,7 +281,7 @@ export async function listFreeInterviewSlots(
   const windows = buildFutureInterviewWindows(input.fromTs, skipWorkdays, workdays).map((w) => ({ start: w.start * 1000, end: w.end * 1000 }));
   if (windows.length === 0) return [];
 
-  const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs);
+  const merged = await fetchMergedBusy(input.token, input.openId, windows, fetchImpl, timeoutMs, deps.onBusyError);
   if (!merged) return [];
 
   const slots: Array<{ startTs: number; endTs: number }> = [];
