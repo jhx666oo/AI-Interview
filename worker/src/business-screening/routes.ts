@@ -937,6 +937,39 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
     });
   });
 
+  /**
+   * 业务卡片「通过」后自动创建待安排面试记录（awaiting_schedule），
+   * 使面试管理列表直接出现该候选人并可点「开始面试」。
+   * 幂等：同一简历已有（待安排/已安排/进行中）面试记录则跳过。
+   */
+  async function ensureApprovedInterview(db: D1Database, resumeId: string, deps: BusinessScreeningRouteDeps) {
+    try {
+      const existing = await db.prepare(
+        "SELECT id FROM interviews WHERE resume_id = ? AND status IN ('awaiting_schedule','scheduled','notification_partial','in_progress') ORDER BY created_at DESC LIMIT 1",
+      ).bind(resumeId).first();
+      if (existing) return;
+      const resume = await db.prepare(
+        'SELECT id, candidate_name, position_applied, mapped_position FROM resumes WHERE id = ?',
+      ).bind(resumeId).first() as any;
+      if (!resume) return;
+      const interviewId = deps.uuid();
+      const nowIso = deps.now();
+      await db.prepare(
+        `INSERT INTO interviews (id, resume_id, candidate_name, position_applied, status, created_at)
+         VALUES (?, ?, ?, ?, 'awaiting_schedule', ?)`,
+      ).bind(
+        interviewId,
+        resumeId,
+        resume.candidate_name || '',
+        resume.mapped_position || resume.position_applied || '',
+        nowIso,
+      ).run();
+      console.log(`[BusinessScreening] 已为通过候选人自动创建待安排面试 ${interviewId}（${resume.candidate_name || resumeId}）`);
+    } catch (e: any) {
+      console.error('[BusinessScreening] 自动创建面试记录失败:', e?.message || e);
+    }
+  }
+
   async function handlePublicDecision(
     c: any,
     status: 'passed' | 'rejected',
@@ -978,6 +1011,12 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         resumeId,
         payload: { round: 1, positionId: item.position_id || undefined, sourceBatchId: batch.id, sourceBatchItemId: item.id },
       });
+    }
+
+    // 业务卡片「通过」后自动创建待安排面试记录（awaiting_schedule），
+    // 使面试管理列表直接出现该候选人并可点「开始面试」，衔接完整闭环（幂等：已有面试记录则跳过）。
+    if (result.status === 'passed' && result.applied) {
+      await ensureApprovedInterview(db, resumeId, deps);
     }
 
     const pendingCount = await deps.store.countPendingBatchItems(db, batch.id);
