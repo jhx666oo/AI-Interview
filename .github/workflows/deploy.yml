@@ -62,24 +62,19 @@ jobs:
       - name: Run pre-deploy checks
         run: node scripts/pre-deploy-check.mjs
 
-      - name: 验证构建产物（functions/ 目录模式）
-        # 排查"部署成功但 Functions 未生效"：确认 CI 构建的 Functions 产物真实存在且包含新端点
+      - name: 验证构建产物（dist/_worker.js 与端点标记）
+        # 排查"部署成功但 Functions 未生效"：确认 CI 构建的 _worker.js 真实存在且包含新端点
         working-directory: frontend
         run: |
           echo "## 构建产物检查" >> "$GITHUB_STEP_SUMMARY"
           ls -la dist/ | head -12 >> "$GITHUB_STEP_SUMMARY" || true
-          ls -la dist/functions/ | head -6 >> "$GITHUB_STEP_SUMMARY" || true
-          if [ -f "dist/functions/[[route]].js" ] && [ -f dist/_worker_src.mjs ]; then
-            echo "worker size: $(wc -c < dist/_worker_src.mjs)" >> "$GITHUB_STEP_SUMMARY"
-            echo "has available-slots: $(grep -c available-slots dist/_worker_src.mjs || true)" >> "$GITHUB_STEP_SUMMARY"
-            echo "has schedule-direct: $(grep -c schedule-direct dist/_worker_src.mjs || true)" >> "$GITHUB_STEP_SUMMARY"
-            grep -q available-slots dist/_worker_src.mjs || { echo "❌ dist/_worker_src.mjs 缺失 available-slots，构建异常"; exit 1; }
-            if [ -f dist/_worker.js ]; then
-              echo "❌ dist/_worker.js 仍存在，与 functions/ 冲突，构建异常" >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
+          if [ -f dist/_worker.js ]; then
+            echo "worker size: $(wc -c < dist/_worker.js)" >> "$GITHUB_STEP_SUMMARY"
+            echo "has available-slots: $(grep -c available-slots dist/_worker.js || true)" >> "$GITHUB_STEP_SUMMARY"
+            echo "has schedule-direct: $(grep -c schedule-direct dist/_worker.js || true)" >> "$GITHUB_STEP_SUMMARY"
+            grep -q available-slots dist/_worker.js || { echo "❌ dist/_worker.js 缺失 available-slots，构建异常"; exit 1; }
           else
-            echo "❌ Functions 产物缺失（functions/[[route]].js 或 _worker_src.mjs）！" >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ dist/_worker.js 不存在！" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 

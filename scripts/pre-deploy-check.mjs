@@ -22,9 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'frontend', 'dist');
-// Functions 目录模式产物（替代 Advanced Mode 的 _worker.js，避免其不生效问题）
-const WORKER_BUNDLE = path.join(DIST, '_worker_src.mjs');
-const FUNCTIONS_ENTRY = path.join(DIST, 'functions', '[[route]].js');
+const WORKER_JS = path.join(DIST, '_worker.js');
 
 let failed = 0;
 const ok = (msg) => console.log(`  ✅ ${msg}`);
@@ -34,22 +32,19 @@ console.log('== 上线前自检 ==\n');
 
 // 1. 构建产物
 console.log('[1] 构建产物检查');
-if (!fs.existsSync(WORKER_BUNDLE)) fail('dist/_worker_src.mjs 不存在，请先 npm run build');
+if (!fs.existsSync(WORKER_JS)) fail('dist/_worker.js 不存在，请先 npm run build');
 else {
-  const age = Date.now() - fs.statSync(WORKER_BUNDLE).mtimeMs;
-  if (age > 30 * 60 * 1000) fail(`dist/_worker_src.mjs 已超过 30 分钟未重新构建（${Math.round(age / 60000)} 分钟前），请重新 build`);
-  else ok(`_worker_src.mjs 存在且新鲜（${Math.round(age / 1000)}s 前构建）`);
+  const age = Date.now() - fs.statSync(WORKER_JS).mtimeMs;
+  if (age > 30 * 60 * 1000) fail(`dist/_worker.js 已超过 30 分钟未重新构建（${Math.round(age / 60000)} 分钟前），请重新 build`);
+  else ok(`_worker.js 存在且新鲜（${Math.round(age / 1000)}s 前构建）`);
 }
-if (!fs.existsSync(FUNCTIONS_ENTRY)) fail('dist/functions/[[route]].js 不存在，请先 npm run build');
-else ok('functions/[[route]].js 入口存在');
-if (fs.existsSync(path.join(DIST, '_worker.js'))) fail('dist/_worker.js 存在——Advanced Mode 会与 functions/ 目录冲突，请删除后重新 build');
 if (!fs.existsSync(path.join(DIST, 'index.html'))) fail('dist/index.html 不存在');
 else ok('index.html 存在');
 
 // 2. Worker 产物路由完整性
 console.log('\n[2] Worker 产物路由完整性');
-if (fs.existsSync(WORKER_BUNDLE)) {
-  const worker = fs.readFileSync(WORKER_BUNDLE, 'utf8');
+if (fs.existsSync(WORKER_JS)) {
+  const worker = fs.readFileSync(WORKER_JS, 'utf8');
   for (const marker of ['feishu/config', 'operation_logs', 'X-Cron-Secret', 'notify-interviewer']) {
     if (worker.includes(marker)) ok(`产物包含 ${marker}`);
     else fail(`产物缺失 ${marker} —— 可能是旧产物覆盖（检查 public/ 下是否混入 _worker.js）`);
