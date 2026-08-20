@@ -62,6 +62,22 @@ jobs:
       - name: Run pre-deploy checks
         run: node scripts/pre-deploy-check.mjs
 
+      - name: 验证构建产物（dist/_worker.js 与端点标记）
+        # 排查"部署成功但 Functions 未生效"：确认 CI 构建的 _worker.js 真实存在且包含新端点
+        working-directory: frontend
+        run: |
+          echo "## 构建产物检查" >> "$GITHUB_STEP_SUMMARY"
+          ls -la dist/ | head -12 >> "$GITHUB_STEP_SUMMARY" || true
+          if [ -f dist/_worker.js ]; then
+            echo "worker size: $(wc -c < dist/_worker.js)" >> "$GITHUB_STEP_SUMMARY"
+            echo "has available-slots: $(grep -c available-slots dist/_worker.js || true)" >> "$GITHUB_STEP_SUMMARY"
+            echo "has schedule-direct: $(grep -c schedule-direct dist/_worker.js || true)" >> "$GITHUB_STEP_SUMMARY"
+            grep -q available-slots dist/_worker.js || { echo "❌ dist/_worker.js 缺失 available-slots，构建异常"; exit 1; }
+          else
+            echo "❌ dist/_worker.js 不存在！" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
       - name: Ensure Pages production branch is main
         # 修复：wrangler pages deploy 只有命中项目 production branch 才会更新生产域名。
         # 直接调 Cloudflare Pages API 把 production_branch 强制设为 main，并校验响应成功
