@@ -5404,6 +5404,7 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
     const timeMs = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(scheduledTime)
       ? Date.parse(`${scheduledTime.replace(' ', 'T')}:00+08:00`)
       : Number.NaN;
+    let createdMeetingLink = '';
     if (Number.isFinite(timeMs) && timeMs > Date.now() - 5 * 60_000) {
       try {
         const startTs = Math.floor(timeMs / 1000);
@@ -5415,14 +5416,62 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
           attendeeOpenIds: interviewerOpenIds,
         }, {}, FEISHU_CONFIG.appId);
         if (event.eventId || event.meetingUrl) {
+          createdMeetingLink = event.meetingUrl || '';
           await c.env.DB.prepare(
             'UPDATE interviews SET interview_time = ?, meeting_link = ?, feishu_event_id = ?, updated_at = ? WHERE id = ?',
-          ).bind(scheduledTime, event.meetingUrl || '', event.eventId, now(), interviewId).run();
+          ).bind(scheduledTime, createdMeetingLink, event.eventId, now(), interviewId).run();
         }
       } catch (e: any) {
         console.error(`[create-from-talent] 创建飞书会议失败（不影响面试创建）: ${e?.message || e}`);
       }
     }
+
+    // == 完整流程（异步）：①提醒面试官（带面试卡片链接/简历）②发候选人邮件（含会议链接） ==
+    const operatorName = currentUser?.full_name || currentUser?.email || '系统';
+    c.executionCtx.waitUntil((async () => {
+      try {
+        const ctx = await loadInterviewStartContext(c.env.DB as D1Database, interviewId);
+        if (ctx) {
+          // ① 提醒面试官：文本 + 面试卡片链接（链接内含候选人简历、可填评价）
+          const userToken = currentUser?.email ? await getValidUserAccessToken(c.env, currentUser.email) : null;
+          const reminder = await sendInterviewerInterviewReminder(c.env, c.env.DB as D1Database, interviewId, {
+            userToken: userToken || await getFeishuToken(c.env),
+            operatorName,
+            userEmail: currentUser?.email,
+          }, {
+            now, uuid, hashPublicToken, getResumeFileBytes,
+            getBotToken: getFeishuToken,
+            refreshUserToken: async (email: string) => {
+              const refreshed = await refreshUserAccessToken(c.env, email);
+              return refreshed?.access_token || null;
+            },
+          });
+          if (reminder.ok) {
+            console.log(`[create-from-talent] 面试官提醒已发送 ${reminder.interviewerName} link=${reminder.cardLinkUrl || '-'}`);
+          } else {
+            console.warn(`[create-from-talent] 面试官提醒未发送: ${reminder.reason || '未知'}`);
+          }
+          // ② 候选人邮件（含会议链接；无邮箱或 SMTP 未配置则跳过）
+          if (ctx.candidateEmail && createdMeetingLink) {
+            const smtpRow = await c.env.DB.prepare(
+              'SELECT smtp_host, smtp_port, smtp_username, smtp_password, mail_from, mail_from_name, mail_enabled FROM system_configs ORDER BY updated_at DESC LIMIT 1',
+            ).first() as any;
+            if (isSmtpConfigured(smtpRow)) {
+              const configRow = await c.env.DB.prepare('SELECT mail_from_name FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+              const result = await sendCandidateInterviewEmail(c.env.DB as D1Database, {
+                ctx,
+                meetingUrl: createdMeetingLink,
+                fromName: (configRow?.mail_from_name && String(configRow.mail_from_name).trim()) || '招聘系统',
+                nowIso: now(),
+              });
+              console.log(`[create-from-talent] 候选人邮件 ${result.status}${result.status === 'sent' ? ` -> ${result.to}` : `: ${result.reason}`}`);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.error(`[create-from-talent] 安排面试后续流程异常: ${e?.message || e}`);
+      }
+    })());
 
     // == 给面试官发飞书私信 ==
     const notificationResults: string[] = [];
