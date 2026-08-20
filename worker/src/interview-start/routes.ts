@@ -169,49 +169,14 @@ export function createInterviewStartRoutes(deps: InterviewInviteRouteDeps) {
     }
   });
 
-  // ==================== 公开写入：面试官改面试时间（同步飞书日程） ====================
-  // body: { interview_time: "YYYY-MM-DD HH:mm" }（北京时间）
+  // ==================== 公开写入（已关闭） ====================
+  // 面试时间必须由登录后的系统流程变更，并通过自动化队列同步日历。
   app.post('/api/public/interview-invite/:token/reschedule', async (c) => {
-    const token = c.req.param('token');
-    const tokenHash = await deps.hashPublicToken(token);
-    const row = await loadInviteRow(c, tokenHash, deps.now());
-    if (!row) return c.json({ detail: 'Link unavailable' }, 410);
-
-    const body = await c.req.json().catch(() => ({}));
-    const interviewTime = text(body.interview_time);
-    const startMs = parseBeijingTime(interviewTime);
-    if (!startMs) {
-      return c.json({ detail: '面试时间格式应为 YYYY-MM-DD HH:mm' }, 400);
-    }
-    if (startMs < Date.now() - 5 * 60_000) {
-      return c.json({ detail: '面试时间不能早于当前时间' }, 400);
-    }
-
-    const nowIso = deps.now();
-    await (c.env.DB as D1Database).prepare(
-      'UPDATE interviews SET interview_time = ?, updated_at = ? WHERE id = ?',
-    ).bind(interviewTime, nowIso, row.id).run();
-
-    // 同步飞书日程（已有日程才更新；失败仅提示，不阻断改时间）
-    let calendarSynced = false;
-    let calendarWarning: string | null = null;
-    const eventId = text(row.feishu_event_id);
-    if (eventId) {
-      const startTs = Math.floor(startMs / 1000);
-      const result = await updateInterviewCalendarEventTime(c.env, eventId, {
-        startTimestamp: startTs,
-        endTimestamp: startTs + 3600,
-      }, {}, undefined);
-      calendarSynced = result.ok;
-      if (!result.ok) calendarWarning = result.error || '飞书日程时间更新失败，请稍后在面试管理页确认';
-    }
-
     return c.json({
-      ok: true,
-      interview_time: interviewTime,
-      calendar_synced: calendarSynced,
-      calendar_warning: calendarWarning,
-    });
+      detail: '公开改期入口已关闭，请登录系统后在面试管理页调整时间',
+      code: 'PUBLIC_WRITE_DISABLED',
+      retryable: false,
+    }, 410);
   });
 
   return app;

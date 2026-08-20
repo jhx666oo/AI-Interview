@@ -149,40 +149,21 @@ describe('POST /api/public/interview-invite/:token/reschedule', () => {
     return { h, token };
   }
 
-  it('有效 token + 合法未来时间 → 更新成功（无日程时不同步飞书）', async () => {
+  it('公开改期入口关闭 → 返回 410 且不改写面试时间', async () => {
     const { h, token } = await makeHarness();
     const res = await h.app.request(`/api/public/interview-invite/${token}/reschedule`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ interview_time: '2026-08-21 10:00' }),
     }, h.env as any);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(410);
     const body = await res.json();
-    expect(body.ok).toBe(true);
-    expect(body.interview_time).toBe('2026-08-21 10:00');
-    expect(body.calendar_synced).toBe(false);
+    expect(body.code).toBe('PUBLIC_WRITE_DISABLED');
+    expect(h.env.DB.interviews?.[0]?.interview_time).toBe('2026-08-20 14:00');
   });
 
-  it('非法时间格式 → 400', async () => {
-    const { h, token } = await makeHarness();
-    const res = await h.app.request(`/api/public/interview-invite/${token}/reschedule`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ interview_time: '下周一下午' }),
-    }, h.env as any);
-    expect(res.status).toBe(400);
-  });
-
-  it('过去时间 → 400', async () => {
-    const { h, token } = await makeHarness();
-    const res = await h.app.request(`/api/public/interview-invite/${token}/reschedule`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ interview_time: '2020-01-01 09:00' }),
-    }, h.env as any);
-    expect(res.status).toBe(400);
-  });
-
-  it('过期链接 → 410', async () => {
-    const { h, token } = await makeHarness({ invite_expires_at: '2026-08-10T00:00:00.000Z' });
-    const res = await h.app.request(`/api/public/interview-invite/${token}/reschedule`, {
+  it('未知 token 也统一返回 410，避免暴露记录存在性', async () => {
+    const h = buildHarness([]);
+    const res = await h.app.request('/api/public/interview-invite/ii-unknown/reschedule', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ interview_time: '2026-08-21 10:00' }),
     }, h.env as any);

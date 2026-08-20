@@ -609,68 +609,14 @@ export function createInterviewCardRoutes(deps: InterviewCardRouteDeps) {
     } satisfies InterviewCardPublicView);
   });
 
-  // ==================== 公开写入：面试官在卡片链接内填写面试评价 ====================
-  // body: { evaluation?, result?, round? }  result: 'passed' | 'failed'，round: 1 | 2
-  // 语义与内部 POST /api/interviews/:id/evaluate 一致（一面通过→待二面，否则→已完成；二面→已完成）
+  // ==================== 公开写入（已关闭） ====================
+  // 评价必须回到登录后的面试管理页提交，避免公开链接直接改写招聘事实。
   app.post('/api/public/interview-card/:token/evaluate', async (c) => {
-    const token = c.req.param('token');
-    const tokenHash = await deps.hashPublicToken(token);
-    const db = c.env.DB as D1Database;
-    const row = (await db.prepare(
-      `SELECT * FROM ${cardTable} WHERE token_hash = ?`,
-    ).bind(tokenHash).first()) as InterviewCardLinkRow | null;
-    if (!row) return c.json({ detail: 'Not found' }, 404);
-    if (!isActiveLink(row, deps.now())) return c.json({ detail: 'Link unavailable' }, 410);
-
-    const body = await c.req.json().catch(() => ({}));
-    const evaluation = text(body.evaluation);
-    const result = text(body.result);
-    if (!evaluation && !result) {
-      return c.json({ detail: '请填写评价或选择结果' }, 400);
-    }
-    if (result && result !== 'passed' && result !== 'failed') {
-      return c.json({ detail: 'result 仅支持 passed / failed' }, 400);
-    }
-    const round = body.round === 2 ? 2 : 1;
-
-    // 找到该候选人关联的面试记录（优先简历维度，缺失时按姓名兜底，取第一条）
-    let interview: any = null;
-    const resumeId = text(row.resume_id);
-    if (resumeId) {
-      interview = await db.prepare(
-        `SELECT * FROM interviews WHERE resume_id = ?
-         ORDER BY COALESCE(round, 99) ASC, COALESCE(interview_time, started_at, created_at) ASC LIMIT 1`,
-      ).bind(resumeId).first();
-    }
-    if (!interview && text(row.candidate_name)) {
-      interview = await db.prepare(
-        `SELECT * FROM interviews WHERE candidate_name = ?
-         ORDER BY COALESCE(round, 99) ASC, COALESCE(interview_time, started_at, created_at) ASC LIMIT 1`,
-      ).bind(text(row.candidate_name)).first();
-    }
-    if (!interview) return c.json({ detail: '该候选人暂无可评价的面试记录' }, 404);
-
-    const nowIso = deps.now();
-    if (round === 1) {
-      const newStatus = result === 'passed' ? 'scheduled' : 'completed';
-      const updates: string[] = ['status = ?'];
-      const binds: any[] = [newStatus];
-      if (evaluation) { updates.push('evaluation = ?'); binds.push(evaluation); }
-      if (result) { updates.push('result = ?'); binds.push(result); }
-      await db.prepare(
-        `UPDATE interviews SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`,
-      ).bind(...binds, nowIso, interview.id).run();
-    } else {
-      const updates: string[] = ['status2 = ?'];
-      const binds: any[] = ['completed'];
-      if (evaluation) { updates.push('evaluation2 = ?'); binds.push(evaluation); }
-      if (result) { updates.push('result2 = ?'); binds.push(result); }
-      await db.prepare(
-        `UPDATE interviews SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`,
-      ).bind(...binds, nowIso, interview.id).run();
-    }
-
-    return c.json({ ok: true, detail: `第${round}面评价已提交`, interview_id: interview.id });
+    return c.json({
+      detail: '公开评价入口已关闭，请登录系统后在面试管理页提交评价',
+      code: 'PUBLIC_WRITE_DISABLED',
+      retryable: false,
+    }, 410);
   });
 
   // ==================== 公开读取：免登录预览/下载候选人简历 PDF ====================

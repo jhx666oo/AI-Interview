@@ -8712,39 +8712,16 @@ app.post('/api/interviews/:id/cancel', authMiddleware, async (c) => {
   const id = c.req.param('id');
   const interview = await c.env.DB.prepare('SELECT * FROM interviews WHERE id = ?').bind(id).first() as any;
   if (!interview) return c.json({ detail: 'Interview not found' }, 404);
-
-  await c.env.DB.prepare("UPDATE interviews SET status = 'cancelled' WHERE id = ?").bind(id).run();
-  // ... (rest of cancel logic)
-
-  await c.env.DB.prepare("UPDATE interviews SET status = 'cancelled' WHERE id = ?").bind(id).run();
-
-  // 若面试关联了人才库记录 → 删除人才库记录并同步飞书
-  const resumeId = interview.resume_id;
-  if (resumeId) {
-    const talent = await c.env.DB.prepare('SELECT * FROM talent_pool WHERE resume_id = ?').bind(resumeId).first() as any;
-    if (talent) {
-      const feishuRecordId = talent.feishu_record_id;
-      await c.env.DB.prepare('DELETE FROM talent_pool WHERE id = ?').bind(talent.id).run();
-
-      // 异步删除飞书多维表格记录
-      if (feishuRecordId) {
-        c.executionCtx.waitUntil((async () => {
-          try {
-            const token = await getFeishuToken(c.env);
-            await fetch(`https://open.feishu.cn/open-apis/bitable/v1/apps/${FEISHU_CONFIG.appToken}/tables/${FEISHU_CONFIG.talentTableId}/records/${feishuRecordId}`, {
-              method: 'DELETE',
-              headers: { 'Authorization': `Bearer ${token}` },
-            });
-            console.log(`[Cancel] 已同步删除飞书人才库记录: ${feishuRecordId}`);
-          } catch (e: any) {
-            console.error(`[Cancel] 同步删除飞书记录失败: ${e.message}`);
-          }
-        })());
-      }
-    }
+  if (interview.status === 'cancelled') {
+    return c.json({ ok: true, id, status: 'cancelled', already_cancelled: true });
   }
 
-  return c.json({ detail: 'Interview cancelled, talent pool record removed' });
+  // 取消只改变面试状态，保留人才库、候选人和历史事实，便于恢复与审计。
+  const updatedAt = now();
+  await c.env.DB.prepare(
+    "UPDATE interviews SET status = 'cancelled', updated_at = ? WHERE id = ?",
+  ).bind(updatedAt, id).run();
+  return c.json({ ok: true, id, status: 'cancelled' });
 });
 
 // 更新面试（编辑所有字段）
