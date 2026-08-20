@@ -5399,6 +5399,31 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
       assignment.secondaryInterviewer,
     ).run();
 
+    // == 定日程：按选定的空闲时段创建飞书会议（失败不阻断面试创建） ==
+    const scheduledTime = String(interview_time || '').trim();
+    const timeMs = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(scheduledTime)
+      ? Date.parse(`${scheduledTime.replace(' ', 'T')}:00+08:00`)
+      : Number.NaN;
+    if (Number.isFinite(timeMs) && timeMs > Date.now() - 5 * 60_000) {
+      try {
+        const startTs = Math.floor(timeMs / 1000);
+        const event = await createInterviewCalendarEvent(c.env, {
+          summary: `面试 - ${candidate_name} - ${position_applied} - 第1轮`,
+          description: `候选人：${candidate_name}\n应聘岗位：${position_applied}\n面试时间：${scheduledTime}\n由 AI-Interview 安排面试流程自动创建。`,
+          startTimestamp: startTs,
+          endTimestamp: startTs + 3600,
+          attendeeOpenIds: interviewerOpenIds,
+        }, {}, FEISHU_CONFIG.appId);
+        if (event.eventId || event.meetingUrl) {
+          await c.env.DB.prepare(
+            'UPDATE interviews SET interview_time = ?, meeting_link = ?, feishu_event_id = ?, updated_at = ? WHERE id = ?',
+          ).bind(scheduledTime, event.meetingUrl || '', event.eventId, now(), interviewId).run();
+        }
+      } catch (e: any) {
+        console.error(`[create-from-talent] 创建飞书会议失败（不影响面试创建）: ${e?.message || e}`);
+      }
+    }
+
     // == 给面试官发飞书私信 ==
     const notificationResults: string[] = [];
     if (interviewerOpenIds.length > 0) {

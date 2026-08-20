@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Table, Button, Space, message, Tag, Modal, Select, Input, Form, Popconfirm,
-  Typography, Card, Tooltip, DatePicker
+  Typography, Card, Tooltip, DatePicker, Radio, Spin
 } from 'antd';
+import dayjs from 'dayjs';
 import SimplePagination from '../../components/SimplePagination';
 import {
   ReloadOutlined, EditOutlined, EyeOutlined, SearchOutlined,
@@ -94,6 +95,10 @@ const InterviewsList: React.FC = () => {
   const [scheduleForm] = Form.useForm();
   const [scheduling, setScheduling] = useState(false);
   const [scheduleDefaults, setScheduleDefaults] = useState<ReturnType<typeof resolveScheduleInterviewerDefaults> | null>(null);
+  // 推荐空闲时段（按一面面试官自动查询，定日程用）
+  const [availableSlots, setAvailableSlots] = useState<Array<{ start: string; end: string }>>([]);
+  const [slotLoading, setSlotLoading] = useState(false);
+  const [slotReason, setSlotReason] = useState<string | null>(null);
   const [positions, setPositions] = useState<PositionAssignment[]>([]);
 
   // 新建面试弹窗（手动创建）
@@ -435,6 +440,31 @@ const InterviewsList: React.FC = () => {
       secondary_interviewer: defaults.secondaryInterviewer || undefined,
     });
     setScheduleModalVisible(true);
+
+    // 自动查一面面试官未来空闲时段 → 推荐定日程（点选或自动选中第一个）
+    setAvailableSlots([]);
+    setSlotReason(null);
+    const interviewerName = defaults.interviewerName || record.interviewer || record.primary_interviewer || '';
+    if (interviewerName) {
+      setSlotLoading(true);
+      try {
+        const res = await request.get('/interviews/available-slots', { params: { interviewer: interviewerName } });
+        const slots = res?.slots || [];
+        setAvailableSlots(slots);
+        if (res?.reason) setSlotReason(res.reason);
+        if (slots.length > 0) {
+          const first = slots[0];
+          scheduleForm.setFieldsValue({
+            interview_date: dayjs(first.start.slice(0, 10)),
+            interview_time: dayjs(first.start.slice(11, 16), 'HH:mm'),
+          });
+        }
+      } catch {
+        setSlotReason('空闲时段查询失败，请手动选择时间');
+      } finally {
+        setSlotLoading(false);
+      }
+    }
   };
 
   const handleScheduleSubmit = async () => {
@@ -970,6 +1000,37 @@ const InterviewsList: React.FC = () => {
         destroyOnHidden
       >
         <Form form={scheduleForm} layout="vertical" preserve={false}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 13, color: '#475569', marginBottom: 6 }}>
+              推荐空闲时段 <span style={{ color: '#94A3B8' }}>（按一面面试官自动查询，点击选用）</span>
+            </div>
+            {slotLoading ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#94A3B8', fontSize: 12 }}>
+                <Spin size="small" /> 正在查询面试官空闲时段...
+              </div>
+            ) : availableSlots.length > 0 ? (
+              <Radio.Group
+                onChange={(e) => {
+                  const picked = availableSlots.find((x) => x.start === e.target.value);
+                  if (picked) {
+                    scheduleForm.setFieldsValue({
+                      interview_date: dayjs(picked.start.slice(0, 10)),
+                      interview_time: dayjs(picked.start.slice(11, 16), 'HH:mm'),
+                    });
+                  }
+                }}
+                style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 170, overflow: 'auto' }}
+              >
+                {availableSlots.map((s) => (
+                  <Radio key={s.start} value={s.start} style={{ lineHeight: '22px', fontSize: 13 }}>
+                    {s.start} ~ {s.end}
+                  </Radio>
+                ))}
+              </Radio.Group>
+            ) : (
+              <div style={{ color: '#d46b08', fontSize: 12 }}>{slotReason || '暂无推荐时段，请手动选择下方时间'}</div>
+            )}
+          </div>
           <Form.Item name="interview_date" label="面试日期">
             <DatePicker style={{ width: '100%' }} placeholder="选择面试日期（可选）" />
           </Form.Item>
