@@ -840,7 +840,7 @@ const InterviewsList: React.FC = () => {
               { key: 'result2', label: '二面结果', level: 'detail', render: record => (columns[10] as any).render(null, record) },
               { key: 'talent_status', label: '候选人状态', level: 'detail', render: record => record.talent_status || '-' },
             ],
-            actions: record => (columns[11] as any).render(null, record),
+            actions: record => (columns[12] as any).render(null, record),
           }}
         />
         <SimplePagination current={tablePage} pageSize={pageSize} total={data.length} onChange={setTablePage} />
