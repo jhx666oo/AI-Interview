@@ -131,20 +131,21 @@ jobs:
         # 全局 authMiddleware 会对 /api/* 直接返回 401，未认证探测无法区分版本；
         # 用 /api/auth/token 登录接口换取线上 SECRET_KEY 签发的有效 JWT（浏览器同款），
         # 请求新端点 available-slots：200=新版已生效；401/404 则部署未生效，失败报警。
+        # 注意：登录接口 body 是 form-urlencoded（URLSearchParams），不是 JSON。
         env:
           ADMIN_EMAIL: ${{ vars.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
           if [ -z "${ADMIN_PASSWORD}" ]; then
-            echo "⚠️ 未配置 ADMIN_PASSWORD secret，跳过 Functions 版本探测（请在仓库 Secrets 中配置）"
+            echo "⚠️ 未配置 ADMIN_PASSWORD secret，跳过 Functions 版本探测"
             exit 0
           fi
           token=$(curl -s -m 30 -X POST "https://ai-interview-88r.pages.dev/api/auth/token" \
-            -H "Content-Type: application/json" \
-            -d "{\"email\":\"${ADMIN_EMAIL:-admin@example.com}\",\"password\":\"${ADMIN_PASSWORD}\"}" \
-            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.token||j.access_token||'')}catch(e){}})")
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=${ADMIN_EMAIL:-admin@example.com}&password=${ADMIN_PASSWORD}" \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.stdout.write(j.access_token||'')}catch(e){}})")
           if [ -z "$token" ]; then
-            echo "❌ 登录换取 token 失败，请检查 ADMIN_PASSWORD 是否正确"
+            echo "❌ 登录换取 token 失败（请检查 secrets.ADMIN_PASSWORD / vars.ADMIN_EMAIL）"
             exit 1
           fi
           code=$(curl -s -o /tmp/avail.txt -w "%{http_code}" --retry 3 --retry-delay 5 \
