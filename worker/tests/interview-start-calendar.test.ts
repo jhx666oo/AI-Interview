@@ -153,16 +153,20 @@ describe('findFirstFreeInterviewSlot / listFreeInterviewSlots', () => {
 
   function busyFetch(busyItems: Array<{ s: number; e: number }>) {
     return (async (url: any, init: any = {}) => {
-      expect(String(url)).toContain('/calendar/v4/freebusy/list');
+      expect(String(url)).toContain('/calendar/v4/freebusy/batch');
       expect(init.method).toBe('POST');
       const body = JSON.parse(init.body);
       expect(body.user_ids).toEqual(['ou_interviewer']);
       expect(body.time_min).toMatch(/\+08:00$/);
-      const items = busyItems.map((b) => ({
-        start: { timestamp: String(b.s), timezone: 'Asia/Shanghai' },
-        end: { timestamp: String(b.e), timezone: 'Asia/Shanghai' },
-      }));
-      return new Response(JSON.stringify({ code: 0, msg: 'success', data: { freebusy_list: [{ user_id: 'ou_interviewer', busy_items: items }] } }), {
+      const items = busyItems.map((b) => {
+        const toBj = (sec: number) => {
+          const d = new Date((sec + 8 * 3600) * 1000);
+          const pad = (n: number) => String(n).padStart(2, '0');
+          return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00+08:00`;
+        };
+        return { start_time: toBj(b.s), end_time: toBj(b.e) };
+      });
+      return new Response(JSON.stringify({ code: 0, msg: 'success', data: { freebusy_lists: [{ user_id: 'ou_interviewer', freebusy_items: items }] } }), {
         status: 200, headers: { 'Content-Type': 'application/json' },
       });
     }) as unknown as typeof fetch;

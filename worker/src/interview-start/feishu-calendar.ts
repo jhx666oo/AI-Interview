@@ -208,7 +208,8 @@ async function fetchMergedBusy(
   let busy: Array<{ start: number; end: number }> = [];
   try {
     const resp = await feishuRequest(
-      `${FEISHU_BASE}/calendar/v4/freebusy/list`,
+      // 飞书文档接口路径为 /calendar/v4/freebusy/batch（旧路径 /freebusy/list 返回 190002 invalid parameters）
+      `${FEISHU_BASE}/calendar/v4/freebusy/batch`,
       {
         method: 'POST',
         body: JSON.stringify({
@@ -222,11 +223,12 @@ async function fetchMergedBusy(
       fetchImpl,
       timeoutMs,
     );
-    for (const item of (resp?.data?.freebusy_list || []) as any[]) {
-      for (const b of (item?.busy_items || []) as any[]) {
-        const s = Number(b?.start?.timestamp);
-        const e = Number(b?.end?.timestamp);
-        if (Number.isFinite(s) && Number.isFinite(e)) busy.push({ start: s * 1000, end: e * 1000 });
+    // 响应结构：data.freebusy_lists[].freebusy_items[].{start_time, end_time}（RFC3339 带时区）
+    for (const item of (resp?.data?.freebusy_lists || []) as any[]) {
+      for (const b of (item?.freebusy_items || []) as any[]) {
+        const s = Date.parse(String(b?.start_time || ''));
+        const e = Date.parse(String(b?.end_time || ''));
+        if (Number.isFinite(s) && Number.isFinite(e) && e > s) busy.push({ start: s, end: e });
       }
     }
   } catch (error) {
