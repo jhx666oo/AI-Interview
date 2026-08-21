@@ -28,11 +28,51 @@ const interviewStatusConfig: Record<string, { color: string; text: string }> = {
   notification_partial: { color: 'warning', text: '部分通知失败' },
   manual_review: { color: 'error', text: '待人工处理' },
   scheduled: { color: 'processing', text: '待面试' },
+  in_progress: { color: 'processing', text: '面试中' },
+  analyzing: { color: 'processing', text: 'AI 分析中' },
   completed: { color: 'success', text: '已完成' },
   cancelled: { color: 'default', text: '已取消' },
   pending_onboarding: { color: 'warning', text: '待入职' },
   onboarded: { color: 'success', text: '已入职' },
   failed: { color: 'error', text: '已淘汰' },
+};
+
+// 自动化状态弹窗的英文枚举 → 中文（面试管理页内展示全部中文化）
+const automationActionLabels: Record<string, string> = {
+  auto_business_screening: '业务自动初筛',
+  create_next_round: '创建二面',
+  schedule: '安排日程',
+  reschedule: '调整日程',
+  cancel: '取消日程',
+  notify_interviewer: '提醒面试官',
+  notify_candidate: '通知候选人',
+  advance: '推进面试',
+};
+const automationJobStatusLabels: Record<string, { color: string; text: string }> = {
+  queued: { color: 'processing', text: '排队中' },
+  running: { color: 'processing', text: '执行中' },
+  succeeded: { color: 'success', text: '成功' },
+  partial: { color: 'warning', text: '部分成功' },
+  failed: { color: 'error', text: '失败' },
+  cancelled: { color: 'default', text: '已取消' },
+};
+const notificationChannelLabels: Record<string, string> = {
+  feishu_card: '飞书卡片',
+  feishu_file: '飞书文件',
+  email: '邮件',
+};
+const notificationRecipientLabels: Record<string, string> = {
+  candidate: '候选人',
+  interviewer: '面试官',
+  primary_interviewer: '一面面试官',
+  secondary_interviewer: '二面面试官',
+};
+const notificationStatusLabels: Record<string, { color: string; text: string }> = {
+  queued: { color: 'processing', text: '排队中' },
+  sent: { color: 'success', text: '已发送' },
+  failed: { color: 'error', text: '失败' },
+  skipped: { color: 'default', text: '已跳过' },
+  cancelled: { color: 'default', text: '已取消' },
 };
 
 const resultLabels: Record<string, { color: string; text: string }> = {
@@ -1168,27 +1208,33 @@ const InterviewsList: React.FC = () => {
         {automationLoading ? <div style={{ padding: 24, textAlign: 'center' }}>加载中...</div> : (
           <Space orientation="vertical" style={{ width: '100%' }}>
             <Text strong>异步作业</Text>
-            {automationData.jobs.length === 0 ? <Text type="secondary">暂无自动化作业</Text> : automationData.jobs.map((job: any) => (
-              <Card size="small" key={job.id}>
-                <Space wrap>
-                  <Tag>{job.action}</Tag>
-                  <Tag color={job.status === 'succeeded' ? 'success' : job.status === 'failed' ? 'error' : 'processing'}>{job.status}</Tag>
-                  {job.error_message && <Text type="danger">{job.error_message}</Text>}
-                </Space>
-              </Card>
-            ))}
+            {automationData.jobs.length === 0 ? <Text type="secondary">暂无自动化作业</Text> : automationData.jobs.map((job: any) => {
+              const jobStatusCfg = automationJobStatusLabels[job.status] || { color: 'default', text: job.status };
+              return (
+                <Card size="small" key={job.id}>
+                  <Space wrap>
+                    <Tag>{automationActionLabels[job.action] || job.action}</Tag>
+                    <Tag color={jobStatusCfg.color}>{jobStatusCfg.text}</Tag>
+                    {job.error_message && <Text type="danger">{job.error_message}</Text>}
+                  </Space>
+                </Card>
+              );
+            })}
             <Text strong>通知投递</Text>
-            {automationData.notifications.length === 0 ? <Text type="secondary">暂无通知记录</Text> : automationData.notifications.map((notification: any) => (
-              <Card size="small" key={notification.id}>
-                <Space wrap>
-                  <Tag>{notification.channel}</Tag>
-                  <Tag>{notification.recipient_type}</Tag>
-                  <Tag color={notification.status === 'sent' ? 'success' : notification.status === 'failed' ? 'error' : 'processing'}>{notification.status}</Tag>
-                  {notification.status === 'failed' && <Button size="small" loading={retryingNotification === notification.id} onClick={() => handleRetryNotification(notification.id)}>重试</Button>}
-                </Space>
-                {notification.last_error && <div style={{ color: '#ff4d4f', marginTop: 4 }}>{notification.last_error}</div>}
-              </Card>
-            ))}
+            {automationData.notifications.length === 0 ? <Text type="secondary">暂无通知记录</Text> : automationData.notifications.map((notification: any) => {
+              const nStatusCfg = notificationStatusLabels[notification.status] || { color: 'default', text: notification.status };
+              return (
+                <Card size="small" key={notification.id}>
+                  <Space wrap>
+                    <Tag>{notificationChannelLabels[notification.channel] || notification.channel}</Tag>
+                    <Tag>{notificationRecipientLabels[notification.recipient_type] || notification.recipient_type}</Tag>
+                    <Tag color={nStatusCfg.color}>{nStatusCfg.text}</Tag>
+                    {notification.status === 'failed' && <Button size="small" loading={retryingNotification === notification.id} onClick={() => handleRetryNotification(notification.id)}>重试</Button>}
+                  </Space>
+                  {notification.last_error && <div style={{ color: '#ff4d4f', marginTop: 4 }}>{notification.last_error}</div>}
+                </Card>
+              );
+            })}
           </Space>
         )}
       </ResponsiveModal>
@@ -1293,7 +1339,9 @@ const InterviewsList: React.FC = () => {
           </Form.Item>
           <Form.Item name="status" label="面试状态">
             <Select>
+              <Select.Option value="awaiting_schedule">待确认时间</Select.Option>
               <Select.Option value="scheduled">待面试</Select.Option>
+              <Select.Option value="in_progress">面试中</Select.Option>
               <Select.Option value="completed">已完成</Select.Option>
               <Select.Option value="cancelled">已取消</Select.Option>
             </Select>

@@ -14627,20 +14627,41 @@ app.post('/api/admin/automation-env', businessScreeningAuthMiddleware, async (c)
 // 业务筛选状态重置为 not_ready、hr_disposition=pending、清空批次关联，
 // 并从所有业务筛选批次移除该简历的条目、删除关联面试记录（AI 初筛结果 screening_result 保持不变）。
 // ids 内部按 90 分批执行（D1 单语句绑定参数上限 100）。
+// 全部重置：不传 ids（或 reset_all=true）时，重置所有已入库候选人（status='approved'）+ 所有有关联面试记录的简历，
+// 并删除无简历关联的手动创建面试记录。
 // 鉴权：JWT admin 或长期 API Key（x-api-key）。
 app.post('/api/admin/reset-resumes-pending-interview', businessScreeningAuthMiddleware, async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const allIds = Array.isArray(body?.ids) ? body.ids.map((s: unknown) => String(s).trim()).filter(Boolean) : [];
-    if (allIds.length === 0) return c.json({ detail: 'ids 不能为空' }, 400);
-
-    const nowIso = now();
     const db = c.env.DB as D1Database;
+    const nowIso = now();
     let removedItems = 0;
     let deletedInterviews = 0;
+    const resetAll = body?.reset_all === true || body?.reset_all === 'true';
+
+    let resetIds: string[] = Array.isArray(body?.ids)
+      ? body.ids.map((s: unknown) => String(s).trim()).filter(Boolean)
+      : [];
+    if (resetAll || resetIds.length === 0) {
+      // 全部重置：所有已入库候选人 + 有关联面试记录（按 resume_id 或候选人姓名匹配）的简历
+      const rows = await db.prepare(
+        `SELECT DISTINCT r.id FROM resumes r
+           WHERE r.status = 'approved'
+              OR EXISTS (SELECT 1 FROM interviews i WHERE i.resume_id = r.id OR i.candidate_name = r.candidate_name)`,
+      ).all();
+      resetIds = [...new Set((rows.results || []).map((r: any) => String(r.id)).filter(Boolean))];
+      // 无简历关联的手动创建面试记录一并删除（面试管理页回到初始状态）
+      const orphanDel = await db.prepare(
+        `DELETE FROM interviews WHERE resume_id IS NULL OR resume_id = ''`,
+      ).run();
+      deletedInterviews += orphanDel.meta?.changes ?? 0;
+    }
+    if (resetIds.length === 0) {
+      return c.json({ ok: true, reset: 0, removed_items: 0, deleted_interviews: deletedInterviews, all: resetAll || true });
+    }
 
     const chunks: string[][] = [];
-    for (let i = 0; i < allIds.length; i += 90) chunks.push(allIds.slice(i, i + 90));
+    for (let i = 0; i < resetIds.length; i += 90) chunks.push(resetIds.slice(i, i + 90));
 
     for (const ids of chunks) {
       const placeholders = ids.map(() => '?').join(',');
@@ -14690,9 +14711,9 @@ app.post('/api/admin/reset-resumes-pending-interview', businessScreeningAuthMidd
     await logOperation(c.env, {
       action: 'admin.reset_resumes_pending_interview',
       actor: (c.get('user') as any)?.email || 'api-key',
-      detail: JSON.stringify({ ids: allIds, removed_items: removedItems, deleted_interviews: deletedInterviews }),
+      detail: JSON.stringify({ all: resetAll || true, reset: resetIds.length, removed_items: removedItems, deleted_interviews: deletedInterviews }),
     });
-    return c.json({ ok: true, reset: allIds.length, removed_items: removedItems, deleted_interviews: deletedInterviews });
+    return c.json({ ok: true, reset: resetIds.length, removed_items: removedItems, deleted_interviews: deletedInterviews, all: true });
   } catch (e: any) {
     return c.json({ ok: false, detail: `重置失败: ${e?.message || e}` }, 500);
   }
