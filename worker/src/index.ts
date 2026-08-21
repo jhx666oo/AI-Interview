@@ -49,6 +49,7 @@ import { sendInterviewerInterviewReminder, sendFeishuTextMessage } from './inter
 import {
   frontendBaseUrl,
   loadInterviewStartContext,
+  parseInterviewTimeToMs,
   resolveEventTimeframe,
   sendCandidateInterviewEmail,
 } from './interview-start/service';
@@ -5610,48 +5611,58 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
     const startTs = Math.floor(timeMs / 1000);
     const endTs = startTs + duration * 60;
     const timeLabel = formatBeijingSlot(startTs);
+    const interviewType = String(body?.interview_type || interview.interview_type || 'video').trim();
+    const isOffline = interviewType === 'onsite' || interviewType === 'offline';
+    const interviewLocation = String(body?.interview_location || '').trim() || String(interview.interview_location || '').trim();
     let meetingLink = String(interview.meeting_link || '').trim();
     let eventId = String(interview.feishu_event_id || '').trim();
 
-    if (eventId) {
-      // 已有日程 → 直连飞书改时间
-      const upd = await updateInterviewCalendarEventTime(c.env, eventId, {
-        startTimestamp: startTs,
-        endTimestamp: endTs,
-      }, {}, FEISHU_CONFIG.appId);
-      if (!upd.ok) return c.json({ detail: upd.error || '更新飞书日程失败' }, 500);
-    } else {
-      // 无日程 → 直连飞书建会议
-      // 日程参与人：主/副面试官（解析到飞书 open_id 才邀请，失败不阻塞），
-      // 使日程自带的「面试前 30 分钟提醒」能触达面试官（第二次提醒）。
-      const attendeeNames = [...new Set(
-        [String(interview.primary_interviewer || '').trim(), String(interview.secondary_interviewer || '').trim()].filter(Boolean),
-      )];
-      const attendeeOpenIds: string[] = [];
-      for (const name of attendeeNames) {
-        try {
-          const openId = await resolveExactInterviewerOpenId(db, name);
-          if (openId) attendeeOpenIds.push(openId);
-        } catch (e: any) {
-          console.warn(`[schedule-direct] 面试官 ${name} 参与人解析失败，跳过: ${e?.message || e}`);
+    // 线下面试：不建飞书会议（无会议链接）；线上面试：建/改飞书会议
+    if (!isOffline) {
+      if (eventId) {
+        // 已有日程 → 直连飞书改时间
+        const upd = await updateInterviewCalendarEventTime(c.env, eventId, {
+          startTimestamp: startTs,
+          endTimestamp: endTs,
+        }, {}, FEISHU_CONFIG.appId);
+        if (!upd.ok) return c.json({ detail: upd.error || '更新飞书日程失败' }, 500);
+      } else {
+        // 无日程 → 直连飞书建会议
+        // 日程参与人：主/副面试官（解析到飞书 open_id 才邀请，失败不阻塞），
+        // 使日程自带的「面试前 30 分钟提醒」能触达面试官（第二次提醒）。
+        const attendeeNames = [...new Set(
+          [String(interview.primary_interviewer || '').trim(), String(interview.secondary_interviewer || '').trim()].filter(Boolean),
+        )];
+        const attendeeOpenIds: string[] = [];
+        for (const name of attendeeNames) {
+          try {
+            const openId = await resolveExactInterviewerOpenId(db, name);
+            if (openId) attendeeOpenIds.push(openId);
+          } catch (e: any) {
+            console.warn(`[schedule-direct] 面试官 ${name} 参与人解析失败，跳过: ${e?.message || e}`);
+          }
         }
+        const event = await createInterviewCalendarEvent(c.env, {
+          summary: `面试 - ${interview.candidate_name || '候选人'} - ${interview.position_applied || '应聘岗位'} - 第${interview.round || 1}轮`,
+          description: `候选人：${interview.candidate_name || ''}\n应聘岗位：${interview.position_applied || ''}\n面试时间：${timeLabel}\n由 AI-Interview 安排面试流程自动创建。`,
+          startTimestamp: startTs,
+          endTimestamp: endTs,
+          attendeeOpenIds,
+        }, {}, FEISHU_CONFIG.appId);
+        eventId = event.eventId;
+        meetingLink = event.meetingUrl || '';
       }
-      const event = await createInterviewCalendarEvent(c.env, {
-        summary: `面试 - ${interview.candidate_name || '候选人'} - ${interview.position_applied || '应聘岗位'} - 第${interview.round || 1}轮`,
-        description: `候选人：${interview.candidate_name || ''}\n应聘岗位：${interview.position_applied || ''}\n面试时间：${timeLabel}\n由 AI-Interview 安排面试流程自动创建。`,
-        startTimestamp: startTs,
-        endTimestamp: endTs,
-        attendeeOpenIds,
-      }, {}, FEISHU_CONFIG.appId);
-      eventId = event.eventId;
-      meetingLink = event.meetingUrl || '';
+    } else {
+      // 线下面试：清空/保留会议链接语义——线下不保留历史会议链接
+      meetingLink = '';
+      eventId = '';
     }
 
     await db.prepare(
-      'UPDATE interviews SET interview_time = ?, meeting_link = ?, feishu_event_id = ?, updated_at = ? WHERE id = ?',
-    ).bind(timeLabel, meetingLink, eventId, now(), id).run();
+      'UPDATE interviews SET interview_time = ?, interview_type = ?, meeting_link = ?, feishu_event_id = ?, interview_location = ?, updated_at = ? WHERE id = ?',
+    ).bind(timeLabel, interviewType, meetingLink, eventId, interviewLocation, now(), id).run();
 
-    // 完整流程（异步）：提醒面试官（带简历链接）+ 发候选人邮件（含会议链接）
+    // 完整流程（异步）：提醒面试官（线上带会议链接/线下带地点）+ 发候选人邮件（线上带链接/线下不带）
     const currentUser = c.get('user') as { email?: string; full_name?: string } | undefined;
     const operatorName = currentUser?.full_name || currentUser?.email || '系统';
     c.executionCtx.waitUntil((async () => {
@@ -5664,6 +5675,8 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
             userToken: userToken || await getFeishuToken(c.env),
             operatorName,
             userEmail: currentUser?.email,
+            meetingLink: isOffline ? null : meetingLink,
+            interviewTypeLabel: isOffline ? '线下面试' : '线上面试',
           }, {
             now, uuid, hashPublicToken, getResumeFileBytes,
             getBotToken: getFeishuToken,
@@ -5673,7 +5686,7 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
             },
           });
           console.log(`[schedule-direct] 面试官提醒 ${reminder.ok ? '已发送' : '未发送: ' + reminder.reason}`);
-          if (ctx.candidateEmail && meetingLink) {
+          if (ctx.candidateEmail && (meetingLink || isOffline)) {
             const smtpRow = await db.prepare(
               'SELECT smtp_host, smtp_port, smtp_username, smtp_password, mail_from, mail_from_name, mail_enabled FROM system_configs ORDER BY updated_at DESC LIMIT 1',
             ).first() as any;
@@ -5681,7 +5694,8 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
               const configRow = await db.prepare('SELECT mail_from_name FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
               const result = await sendCandidateInterviewEmail(db, {
                 ctx,
-                meetingUrl: meetingLink,
+                meetingUrl: isOffline ? null : meetingLink,
+                offline: isOffline,
                 fromName: (configRow?.mail_from_name && String(configRow.mail_from_name).trim()) || '招聘系统',
                 nowIso: now(),
               });
@@ -8756,6 +8770,8 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
   };
 
   const startCtx = await loadInterviewStartContext(c.env.DB as D1Database, id);
+  // 面试形式：线下（onsite/offline）不建飞书会议，提醒/邮件不带会议链接
+  const isOffline = ['onsite', 'offline'].includes(String(startCtx?.interview.interview_type || '').trim());
   if (startCtx) {
     startFlow.candidate_email = startCtx.candidateEmail;
     const existingMeetingLink = String(startCtx.interview.meeting_link || '').trim();
@@ -8798,39 +8814,43 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
             startFlow.warnings.push(`空闲时间查询失败，已按原定时间安排：${e?.message || e}`);
           }
         }
-        // 日程参与人：主/副面试官（解析到飞书 open_id 才邀请，失败不阻塞）
-        const attendeeNames = [...new Set(
-          [String(startCtx.interview.primary_interviewer || '').trim(), String(startCtx.interview.secondary_interviewer || '').trim()].filter(Boolean),
-        )];
-        const attendeeOpenIds: string[] = [];
-        for (const name of attendeeNames) {
-          const openId = await resolveExactInterviewerOpenId(c.env.DB as D1Database, name);
-          if (openId) attendeeOpenIds.push(openId);
-        }
-        const event = await createInterviewCalendarEvent(c.env, {
-          summary: `面试 - ${startCtx.candidateName} - ${startCtx.positionName}`,
-          description: [
-            `候选人：${startCtx.candidateName}`,
-            `应聘岗位：${startCtx.positionName}`,
-            `面试时间：${timeframe.timeLabel}`,
-            '',
-            '由 AI-Interview「开始面试」流程自动创建。',
-          ].join('\n'),
-          startTimestamp: timeframe.startTs,
-          endTimestamp: timeframe.endTs,
-          attendeeOpenIds,
-        }, {}, FEISHU_CONFIG.appId);
-        startFlow.calendar_event_id = event.eventId;
-        if (event.meetingUrl) {
-          await c.env.DB.prepare('UPDATE interviews SET meeting_link = ?, feishu_event_id = ?, updated_at = ? WHERE id = ?')
-            .bind(event.meetingUrl, event.eventId, now(), id).run();
-          startFlow.meeting_link = event.meetingUrl;
+        // 日程参与人：主/副面试官（解析到飞书 open_id 才邀请，失败不阻塞）——仅线上面试建会议
+        if (!isOffline) {
+          const attendeeNames = [...new Set(
+            [String(startCtx.interview.primary_interviewer || '').trim(), String(startCtx.interview.secondary_interviewer || '').trim()].filter(Boolean),
+          )];
+          const attendeeOpenIds: string[] = [];
+          for (const name of attendeeNames) {
+            const openId = await resolveExactInterviewerOpenId(c.env.DB as D1Database, name);
+            if (openId) attendeeOpenIds.push(openId);
+          }
+          const event = await createInterviewCalendarEvent(c.env, {
+            summary: `面试 - ${startCtx.candidateName} - ${startCtx.positionName}`,
+            description: [
+              `候选人：${startCtx.candidateName}`,
+              `应聘岗位：${startCtx.positionName}`,
+              `面试时间：${timeframe.timeLabel}`,
+              '',
+              '由 AI-Interview「开始面试」流程自动创建。',
+            ].join('\n'),
+            startTimestamp: timeframe.startTs,
+            endTimestamp: timeframe.endTs,
+            attendeeOpenIds,
+          }, {}, FEISHU_CONFIG.appId);
+          startFlow.calendar_event_id = event.eventId;
+          if (event.meetingUrl) {
+            await c.env.DB.prepare('UPDATE interviews SET meeting_link = ?, feishu_event_id = ?, updated_at = ? WHERE id = ?')
+              .bind(event.meetingUrl, event.eventId, now(), id).run();
+            startFlow.meeting_link = event.meetingUrl;
+          } else {
+            await c.env.DB.prepare('UPDATE interviews SET feishu_event_id = ?, updated_at = ? WHERE id = ?')
+              .bind(event.eventId, now(), id).run();
+            startFlow.warnings.push('飞书日程已创建，但会议链接尚未生成，请稍后刷新面试详情或手动补充会议链接');
+          }
+          startFlow.warnings.push(...event.attendeeErrors);
         } else {
-          await c.env.DB.prepare('UPDATE interviews SET feishu_event_id = ?, updated_at = ? WHERE id = ?')
-            .bind(event.eventId, now(), id).run();
-          startFlow.warnings.push('飞书日程已创建，但会议链接尚未生成，请稍后刷新面试详情或手动补充会议链接');
+          startFlow.warnings.push('线下面试：已按主面试官空闲时间排定，未创建视频会议');
         }
-        startFlow.warnings.push(...event.attendeeErrors);
       } catch (e: any) {
         startFlow.warnings.push(`飞书会议日程创建失败：${e?.message || e}`);
       }
@@ -8856,7 +8876,8 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
             try {
               const result = await sendCandidateInterviewEmail(c.env.DB as D1Database, {
                 ctx: startCtx,
-                meetingUrl: startFlow.meeting_link,
+                meetingUrl: isOffline ? null : startFlow.meeting_link,
+                offline: isOffline,
                 fromName,
                 nowIso: now(),
               });
@@ -8902,6 +8923,8 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
           userToken: userToken || await getFeishuToken(c.env),
           operatorName: reminderUser?.full_name || reminderUser?.email || '系统',
           userEmail: reminderUser?.email,
+          meetingLink: isOffline ? null : startFlow.meeting_link,
+          interviewTypeLabel: isOffline ? '线下面试' : '线上面试',
         }, {
           now, uuid, hashPublicToken,
           getResumeFileBytes,

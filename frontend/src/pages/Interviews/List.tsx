@@ -506,6 +506,8 @@ const InterviewsList: React.FC = () => {
         await request.post(`/interviews/${scheduleRecord.interview_id}/schedule-direct`, {
           start_at: new Date(localStart).toISOString(),
           duration_minutes: 60,
+          interview_type: values.interview_type === 'onsite' ? 'onsite' : 'video',
+          interview_location: values.interview_location || '',
         });
       } else {
         // 无面试记录：先创建「待安排」面试，再立即触发自动化安排（建会议链接 + 面试官卡片附简历 + 候选人邮件）
@@ -1044,6 +1046,12 @@ const InterviewsList: React.FC = () => {
               <div style={{ color: '#d46b08', fontSize: 12 }}>{slotReason || '暂无推荐时段，请手动选择下方时间'}</div>
             )}
           </div>
+          <Form.Item name="interview_type" label="面试形式" initialValue="video">
+            <Radio.Group>
+              <Radio.Button value="video">线上面试</Radio.Button>
+              <Radio.Button value="onsite">线下面试</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
           <Form.Item name="interview_date" label="面试日期">
             <DatePicker style={{ width: '100%' }} placeholder="选择面试日期（可选）" />
           </Form.Item>

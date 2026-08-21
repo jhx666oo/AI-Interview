@@ -16,6 +16,8 @@ export interface InterviewInvitationEmailInput {
   interviewerName?: string | null;
   /** 视频会议入会链接 */
   meetingUrl?: string | null;
+  /** 是否线下面试（true 时不发会议链接，提示按地点到场） */
+  offline?: boolean;
   /** 发件方名称（如公司名/招聘系统名） */
   fromName: string;
 }
@@ -42,9 +44,17 @@ export function buildInterviewInvitationEmail(input: InterviewInvitationEmailInp
   const position = input.positionName || '应聘岗位';
   const timeLabel = input.timeLabel || '待定（请与 HR 确认）';
   const typeLabel = input.interviewTypeLabel || '线上面试';
-  const meetingLine = input.meetingUrl
-    ? `<p style="margin:4px 0 0;">${linkButton(input.meetingUrl, '进入视频会议')}</p>`
-    : '<p style="margin:4px 0 0;color:#94A3B8;font-size:13px;">会议链接将另行提供，请保持电话畅通。</p>';
+  const isOffline = input.offline === true || typeLabel === '线下面试';
+  // 线上面试：附会议链接；线下面试：提示按地点到场，不发链接（offline 优先）
+  let meetingLine: string;
+  if (!isOffline && input.meetingUrl) {
+    meetingLine = `<p style="margin:4px 0 0;">${linkButton(input.meetingUrl, '进入视频会议')}</p>`;
+  } else if (isOffline) {
+    meetingLine = '<p style="margin:4px 0 0;color:#94A3B8;font-size:13px;">本次为线下面试，请按上方面试地点按时到场。</p>';
+  } else {
+    meetingLine = '<p style="margin:4px 0 0;color:#94A3B8;font-size:13px;">会议链接将另行提供，请保持电话畅通。</p>';
+  }
+  const meetingSectionTitle = isOffline ? '面试安排' : '视频会议';
 
   const subject = `【面试邀请】${name} - ${position} ${input.timeLabel ? `（${input.timeLabel}）` : ''}`;
 
@@ -59,11 +69,11 @@ export function buildInterviewInvitationEmail(input: InterviewInvitationEmailInp
       ${infoRow('面试岗位', position)}
       ${infoRow('面试时间', timeLabel)}
       ${infoRow('面试形式', typeLabel)}
-      ${infoRow('面试地点', input.location || (input.meetingUrl ? '线上（见下方会议链接）' : '—'))}
+      ${infoRow('面试地点', input.location || (input.meetingUrl ? '线上（见下方会议链接）' : (isOffline ? '请与 HR 确认' : '—')))}
       ${input.interviewerName ? infoRow('面试官', input.interviewerName) : ''}
     </table>
     <div style="margin-top:18px;">
-      <div style="font-size:14px;font-weight:600;color:#0F172A;">视频会议</div>
+      <div style="font-size:14px;font-weight:600;color:#0F172A;">${meetingSectionTitle}</div>
       ${meetingLine}
     </div>
     <div style="margin-top:20px;padding:12px 14px;background:#FFFBEB;border-radius:8px;font-size:13px;color:#92400E;line-height:1.7;">
@@ -81,10 +91,10 @@ export function buildInterviewInvitationEmail(input: InterviewInvitationEmailInp
     `面试岗位：${position}`,
     `面试时间：${timeLabel}`,
     `面试形式：${typeLabel}`,
-    `面试地点：${input.location || (input.meetingUrl ? '线上（见会议链接）' : '—')}`,
+    `面试地点：${input.location || (input.meetingUrl ? '线上（见会议链接）' : (isOffline ? '请与 HR 确认' : '—'))}`,
     input.interviewerName ? `面试官：${input.interviewerName}` : '',
     '',
-    input.meetingUrl ? `视频会议：${input.meetingUrl}` : '会议链接将另行提供，请保持电话畅通。',
+    input.meetingUrl ? `视频会议：${input.meetingUrl}` : (isOffline ? '本次为线下面试，请按面试地点按时到场。' : '会议链接将另行提供，请保持电话畅通。'),
     '',
     '温馨提示：请提前 10 分钟入场，如需调整时间请回复本邮件或联系 HR。',
   ].filter((line) => line !== '').join('\n');

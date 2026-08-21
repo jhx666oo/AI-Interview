@@ -98,6 +98,14 @@ function parseInterviewTime(raw: string): number {
   return Date.parse(raw);
 }
 
+/** 解析面试时间字符串 → UTC ms；解析失败/空返回 null（供端点解析 start_at 等） */
+export function parseInterviewTimeToMs(raw: string): number | null {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  const ts = parseInterviewTime(value);
+  return Number.isNaN(ts) ? null : ts;
+}
+
 /**
  * 解析面试时间：interview_time 可为 ISO / "YYYY-MM-DD HH:mm" 等格式
  * （无时区信息时按北京时间解析）；解析失败或缺失时回退为「当前时间 ~ +60 分钟」。
@@ -142,6 +150,8 @@ export interface SendCandidateEmailInput {
   meetingUrl: string | null;
   fromName: string;
   nowIso: string;
+  /** 是否线下面试（true 时邮件不带会议链接，提示按地点到场） */
+  offline?: boolean;
 }
 
 export interface SendCandidateEmailDeps extends SmtpDeps {
@@ -155,7 +165,7 @@ export async function sendCandidateInterviewEmail(
 ): Promise<CandidateEmailStatus> {
   const { ctx } = input;
   if (!ctx.candidateEmail) {
-    return { status: 'skipped', reason: '候选人简历未解析到邮箱，邮件未发送（会议链接已生成，可线下告知）' };
+    return { status: 'skipped', reason: '候选人简历未解析到邮箱，邮件未发送' };
   }
   const config = deps.loadConfig ? await deps.loadConfig(db) : await loadSmtpConfig(db);
   if (!config) {
@@ -169,6 +179,7 @@ export async function sendCandidateInterviewEmail(
     location: text(ctx.interview.interview_location) || null,
     interviewerName: text(ctx.interview.primary_interviewer) || text(ctx.interview.interviewer) || null,
     meetingUrl: input.meetingUrl,
+    offline: input.offline,
     fromName: input.fromName,
   });
   try {

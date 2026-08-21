@@ -115,6 +115,14 @@ export async function sendInterviewerInterviewReminder(
       `岗位：${view.position}`,
       `面试时间：${view.interviewTime}`,
     ];
+    // 线上面试：附会议链接；线下面试：附地点提示，不带链接
+    if (text(input.meetingLink)) {
+      lines.push(`会议链接（${input.interviewTypeLabel || '线上面试'}）：${text(input.meetingLink)}`);
+    } else if (text(view.interviewLocation)) {
+      lines.push(`面试地点（${input.interviewTypeLabel || '线下面试'}）：${text(view.interviewLocation)}`);
+    } else if (input.interviewTypeLabel === '线下面试') {
+      lines.push(`面试形式：线下面试`);
+    }
     if (cardLinkUrl) lines.push(`面试卡片链接：${cardLinkUrl}`);
     await sendFeishuTextMessage(token, openId, lines.join('\n'));
 

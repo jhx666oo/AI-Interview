@@ -236,3 +236,25 @@ describe('buildInterviewInvitationEmail', () => {
     expect(email.html).toContain('会议链接将另行提供');
   });
 });
+
+describe('buildInterviewInvitationEmail 线下模式', () => {
+  it('线下面试：无会议链接，提示按地点到场，标题用「面试安排」', () => {
+    const email = buildInterviewInvitationEmail({
+      candidateName: '张三', positionName: 'P', timeLabel: 'T',
+      interviewTypeLabel: '线下面试', location: 'D5栋·3F·会议室A', meetingUrl: null, offline: true, fromName: 'F',
+    });
+    expect(email.html).toContain('线下面试');
+    expect(email.html).toContain('D5栋·3F·会议室A');
+    expect(email.html).toContain('请按上方面试地点按时到场');
+    expect(email.html).not.toContain('视频会议');
+    expect(email.text).toContain('线下面试');
+  });
+
+  it('线下面试但误传 meetingUrl 时不显示链接（offline 优先）', () => {
+    const email = buildInterviewInvitationEmail({
+      candidateName: '张三', positionName: 'P', timeLabel: 'T', meetingUrl: 'https://vc.feishu.cn/j/x',
+      offline: true, fromName: 'F',
+    });
+    expect(email.html).not.toContain('https://vc.feishu.cn/j/x');
+  });
+});
