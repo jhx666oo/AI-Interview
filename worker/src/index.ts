@@ -1867,7 +1867,7 @@ app.get('/api/auth/feishu-oauth-url', authMiddleware, async (c) => {
   const token = await createJwt(c.env.SECRET_KEY, user.email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const scope = 'im:message im:message.send_as_user contact:user.base:readonly contact:user:search bitable:app:readonly mail:user_mailbox.message:send mail:user_mailbox.message:modify offline_access';
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly contact:user:search bitable:app:readonly mail:user_mailbox.message:send mail:user_mailbox.message:modify calendar:calendar.free_busy:read offline_access';
   const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl });
 });
@@ -1880,7 +1880,7 @@ app.post('/api/auth/feishu-oauth-url', authMiddleware, requireRole(['admin']), a
   const token = await createJwt(c.env.SECRET_KEY, email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const scope = 'im:message im:message.send_as_user contact:user.base:readonly contact:user:search bitable:app:readonly mail:user_mailbox.message:send mail:user_mailbox.message:modify offline_access';
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly contact:user:search bitable:app:readonly mail:user_mailbox.message:send mail:user_mailbox.message:modify calendar:calendar.free_busy:read offline_access';
   const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl, email });
 });
