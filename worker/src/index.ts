@@ -1613,11 +1613,22 @@ app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin',
     const interviewerOid = await resolveExactInterviewerOpenId(db, interviewer);
     if (!interviewerOid) return c.json({ ok: true, slots: [], reason: `面试官「${interviewer}」未绑定飞书身份，暂无法推荐空闲时段` });
 
-    const token = await getFeishuToken(c.env);
+    // freebusy 优先用当前登录用户的 user_access_token（tenant token 调用该接口常被飞书以
+    // 99991663 拒绝），取不到/失败再回退 tenant token
+    const meEmail = ((c.get('user') as any)?.email || '').trim();
+    let token: string | null = null;
+    let tokenSource = 'tenant';
+    if (meEmail) {
+      const userToken = await getValidUserAccessToken(c.env, meEmail).catch(() => null);
+      if (userToken) { token = userToken; tokenSource = 'user'; }
+    }
+    if (!token) {
+      token = await getFeishuToken(c.env);
+    }
     const fromTs = Math.floor(Date.now() / 1000);
     const busyErrors: string[] = [];
     const slots = await listFreeInterviewSlots({
-      token,
+      token: token as string,
       openId: interviewerOid,
       fromTs,
       durationMinutes: 60,
@@ -1630,6 +1641,7 @@ app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin',
     return c.json({
       ok: true,
       interviewer,
+      tokenSource,
       slots: slots.map((s) => ({ start: formatBeijingSlot(s.startTs), end: formatBeijingSlot(s.endTs) })),
       // freebusy 查询异常时透出原因，供前端提示（仍允许手动选择时间）
       ...(busyErrors.length > 0 ? { reason: `空闲时段查询异常（${busyErrors[0]}），可手动输入下方时间` } : {}),

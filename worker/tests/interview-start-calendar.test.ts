@@ -156,7 +156,7 @@ describe('findFirstFreeInterviewSlot / listFreeInterviewSlots', () => {
       expect(String(url)).toContain('/calendar/v4/freebusy/list');
       expect(init.method).toBe('POST');
       const body = JSON.parse(init.body);
-      expect(body.user_id).toBe('ou_interviewer');
+      expect(body.user_ids).toEqual(['ou_interviewer']);
       expect(body.time_min).toMatch(/\+08:00$/);
       const items = busyItems.map((b) => ({
         start: { timestamp: String(b.s), timezone: 'Asia/Shanghai' },

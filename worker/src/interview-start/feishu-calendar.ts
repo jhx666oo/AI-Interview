@@ -214,7 +214,8 @@ async function fetchMergedBusy(
         body: JSON.stringify({
           time_min: toFeishuBeijingIso(windows[0].start),
           time_max: toFeishuBeijingIso(windows[windows.length - 1].end),
-          user_id: openId,
+          // 文档要求 user_ids（数组），而非 user_id（单数）
+          user_ids: [openId],
         }),
       },
       token,
