@@ -70,6 +70,32 @@ describe('listMeetingRooms', () => {
     expect(calls.length).toBe(2);
     expect(calls[1].url).toContain('page_token=next');
   });
+
+  it('空页但游标仍推进时立即终止（防死循环打到 subrequest 上限）', async () => {
+    const { fetchImpl, calls } = makeFetch({
+      '/vc/v1/rooms': () => feishuOk({ rooms: [], page_token: 'still-more' }),
+    });
+    const rooms = await listMeetingRooms(TOKEN, { fetchImpl });
+    expect(rooms.length).toBe(0);
+    // 第一页就发现空页 + 非空游标 → 只发 1 次请求就终止
+    expect(calls.length).toBe(1);
+  });
+
+  it('兼容 items 字段的响应', async () => {
+    const { fetchImpl } = makeFetch({
+      '/vc/v1/rooms': () => feishuOk({ items: [makeRoom('i1', 'Room1')], page_token: '' }),
+    });
+    const rooms = await listMeetingRooms(TOKEN, { fetchImpl });
+    expect(rooms.map((r) => r.room_id)).toEqual(['i1']);
+  });
+
+  it('path 为 ID 数组时转字符串存储', async () => {
+    const { fetchImpl } = makeFetch({
+      '/vc/v1/rooms': () => feishuOk({ rooms: [{ room_id: 'r1', name: 'A', path: ['omb_x', 'omb_y'] }], page_token: '' }),
+    });
+    const rooms = await listMeetingRooms(TOKEN, { fetchImpl });
+    expect(rooms[0].path).toBe('omb_x/omb_y');
+  });
 });
 
 describe('queryRoomAvailability', () => {

@@ -34,7 +34,7 @@ export interface MeetingRoomsDeps {
   maxRooms?: number;
 }
 
-/** 拉取全部会议室（分页，上限 maxRooms） */
+/** 拉取全部会议室（分页，上限 maxRooms；防御空页/游标异常导致的死循环） */
 export async function listMeetingRooms(
   token: string,
   deps: MeetingRoomsDeps = {},
@@ -43,24 +43,31 @@ export async function listMeetingRooms(
   const maxRooms = deps.maxRooms || 500;
   const rooms: MeetingRoomInfo[] = [];
   let pageToken = '';
+  let page = 0;
   do {
+    page += 1;
     const url = `${FEISHU_BASE}/vc/v1/rooms?page_size=100${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
     const resp = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
     const data: any = await resp.json();
     if (!data || data.code !== 0) {
       throw new Error(`会议室列表获取失败: ${data?.code || resp.status} ${data?.msg || ''}`.trim());
     }
-    for (const r of data.data?.rooms || []) {
+    // 兼容 rooms / items 两种响应字段
+    const pageRooms = Array.isArray(data.data?.rooms) ? data.data.rooms : (Array.isArray(data.data?.items) ? data.data.items : []);
+    for (const r of pageRooms || []) {
       rooms.push({
         room_id: String(r.room_id || ''),
         name: String(r.name || ''),
-        path: String(r.path || ''),
+        // path 在飞书接口中是楼栋层级 ID 数组（如 omb_xxx），对人不可读，仅保留首段兜底
+        path: Array.isArray(r.path) ? r.path.map(String).join('/') : String(r.path || ''),
         description: String(r.description || ''),
         capacity: r.capacity ?? null,
       });
     }
     pageToken = data.data?.page_token || '';
-  } while (pageToken && rooms.length < maxRooms);
+    // 空页 + 游标仍在推进 → 数据异常，立即终止避免无限请求（subrequest 上限 50）
+    if (pageRooms.length === 0 && pageToken) break;
+  } while (pageToken && rooms.length < maxRooms && page < 20);
   return rooms;
 }
 

@@ -516,8 +516,9 @@ const InterviewsList: React.FC = () => {
       const rooms = res?.rooms || [];
       if (rooms.length > 0 && !scheduleForm.getFieldValue('interview_location')) {
         const room = rooms[0];
+        // 只填房间名（path 是飞书楼栋 ID，对人不可读）
         scheduleForm.setFieldsValue({
-          interview_location: `${room.name}${room.path ? `（${room.path}）` : ''}`,
+          interview_location: room.name,
         });
       }
     } catch { /* 会议室查询失败不阻塞安排流程 */ }
@@ -1072,6 +1073,8 @@ const InterviewsList: React.FC = () => {
                       interview_date: dayjs(picked.start.slice(0, 10)),
                       interview_time: dayjs(picked.start.slice(11, 16), 'HH:mm'),
                     });
+                    // 切换推荐时段时同步刷新空闲会议室（面试地点为空才覆盖）
+                    autoFillMeetingRoom(picked.start);
                   }
                 }}
                 style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 170, overflow: 'auto' }}

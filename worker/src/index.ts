@@ -1659,7 +1659,16 @@ app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
     const endTs = startTs + durationMinutes * 60_000;
 
     const token = await getFeishuToken(c.env);
-    const { has_d5, rooms } = await findAvailableMeetingRooms({ token, startTs, endTs });
+    let has_d5 = false;
+    let rooms: any[] = [];
+    try {
+      const found = await findAvailableMeetingRooms({ token, startTs, endTs });
+      has_d5 = found.has_d5;
+      rooms = found.rooms;
+    } catch (e: any) {
+      // 分阶段返回错误详情，便于定位是列表拉取还是忙闲查询失败
+      return c.json({ ok: true, has_d5: false, rooms: [], reason: `空闲会议室查询失败（${e?.message || e}）` });
+    }
     return c.json({
       ok: true,
       has_d5,
