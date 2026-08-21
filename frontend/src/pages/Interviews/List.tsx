@@ -1145,7 +1145,7 @@ const InterviewsList: React.FC = () => {
             <AutoComplete
               options={availableRooms.map((r) => ({
                 value: r.name,
-                label: r.building ? `${r.name}（${r.building}栋）` : r.name,
+                label: r.level_name ? `${r.name}（${r.level_name}）` : (r.building ? `${r.name}（${r.building}栋）` : r.name),
               }))}
               placeholder="选择空闲会议室，或手动输入地点/会议链接"
               allowClear

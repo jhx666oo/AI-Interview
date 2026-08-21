@@ -64,8 +64,11 @@ describe('pickPriorityRooms / buildingOf / filterFreeRooms', () => {
 });
 
 describe('listMeetingRooms', () => {
-  it('分页拉取全部会议室', async () => {
+  const cityLevel = (id = 'city1', name = '长沙') => ({ room_level_id: id, name, parent_id: 'root' });
+
+  it('按城市层级分页拉取全部会议室', async () => {
     const { fetchImpl, calls } = makeFetch({
+      '/vc/v1/room_levels': () => feishuOk({ items: [cityLevel()], page_token: '' }),
       '/vc/v1/rooms': (call: any) => {
         if (call.url.includes('page_token=next')) {
           return feishuOk({ rooms: [makeRoom('r3', 'Room3')], page_token: '' });
@@ -75,34 +78,58 @@ describe('listMeetingRooms', () => {
     });
     const rooms = await listMeetingRooms(TOKEN, { fetchImpl });
     expect(rooms.map((r) => r.room_id)).toEqual(['r1', 'r2', 'r3']);
-    expect(calls.length).toBe(2);
-    expect(calls[1].url).toContain('page_token=next');
+    expect(calls.length).toBe(3); // 1 次 room_levels + 2 次 rooms 分页
+    expect(calls[0].url).toContain('/vc/v1/room_levels');
+    expect(calls[1].url).toContain('/vc/v1/rooms');
+    expect(calls[1].url).toContain('room_level_id=city1');
+    expect(calls[2].url).toContain('page_token=next');
   });
 
   it('空页但游标仍推进时立即终止（防死循环打到 subrequest 上限）', async () => {
     const { fetchImpl, calls } = makeFetch({
+      '/vc/v1/room_levels': () => feishuOk({ items: [cityLevel()], page_token: '' }),
       '/vc/v1/rooms': () => feishuOk({ rooms: [], page_token: 'still-more' }),
     });
     const rooms = await listMeetingRooms(TOKEN, { fetchImpl });
     expect(rooms.length).toBe(0);
-    // 第一页就发现空页 + 非空游标 → 只发 1 次请求就终止
-    expect(calls.length).toBe(1);
+    // room_levels + 第一页 rooms 就发现空页 + 非空游标 → 只发 2 次请求就终止
+    expect(calls.length).toBe(2);
   });
 
   it('兼容 items 字段的响应', async () => {
     const { fetchImpl } = makeFetch({
+      '/vc/v1/room_levels': () => feishuOk({ items: [cityLevel()], page_token: '' }),
       '/vc/v1/rooms': () => feishuOk({ items: [makeRoom('i1', 'Room1')], page_token: '' }),
     });
     const rooms = await listMeetingRooms(TOKEN, { fetchImpl });
     expect(rooms.map((r) => r.room_id)).toEqual(['i1']);
   });
 
-  it('path 为 ID 数组时转字符串存储', async () => {
+  it('path 为 ID 数组时转字符串存储并解析城市名', async () => {
     const { fetchImpl } = makeFetch({
-      '/vc/v1/rooms': () => feishuOk({ rooms: [{ room_id: 'r1', name: 'A', path: ['omb_x', 'omb_y'] }], page_token: '' }),
+      '/vc/v1/room_levels': () => feishuOk({ items: [cityLevel('omb_city', '长沙市')], page_token: '' }),
+      '/vc/v1/rooms': () => feishuOk({ rooms: [{ room_id: 'r1', name: 'A', path: ['omb_city', 'omb_y'] }], page_token: '' }),
     });
     const rooms = await listMeetingRooms(TOKEN, { fetchImpl });
-    expect(rooms[0].path).toBe('omb_x/omb_y');
+    expect(rooms[0].path).toBe('omb_city/omb_y');
+    expect(rooms[0].level_name).toBe('长沙市');
+  });
+
+  it('多个城市逐城市拉取，单城市失败不阻塞其他城市', async () => {
+    const { fetchImpl, calls } = makeFetch({
+      '/vc/v1/room_levels': () => feishuOk({ items: [cityLevel('c1', '长沙'), cityLevel('c2', '深圳')], page_token: '' }),
+      '/vc/v1/rooms': (call: any) => {
+        if (call.url.includes('room_level_id=c1')) {
+          return feishuOk({ rooms: [makeRoom('r1', '长沙房')], page_token: '' });
+        }
+        // c2（深圳）接口失败 → 跳过
+        return { code: 99991672, msg: 'no permission' };
+      },
+    });
+    const rooms = await listMeetingRooms(TOKEN, { fetchImpl });
+    expect(rooms.map((r) => r.room_id)).toEqual(['r1']);
+    expect(rooms[0].level_name).toBe('长沙');
+    expect(calls.filter((c) => c.url.includes('/vc/v1/rooms')).length).toBe(2);
   });
 });
 
@@ -122,8 +149,11 @@ describe('queryRoomAvailability', () => {
 });
 
 describe('findAvailableMeetingRooms', () => {
+  const cityLevel = (id = 'city1', name = '长沙') => ({ room_level_id: id, name, parent_id: 'root' });
+
   it('C5/D1 优先且只返回空闲会议室（带楼栋标签）', async () => {
     const { fetchImpl } = makeFetch({
+      '/vc/v1/room_levels': () => feishuOk({ items: [cityLevel()], page_token: '' }),
       '/vc/v1/rooms': () => feishuOk({
         rooms: [
           makeRoom('c5-1', 'C5栋·3F·会议室A', 'C5栋/3F'),
@@ -147,6 +177,7 @@ describe('findAvailableMeetingRooms', () => {
 
   it('无 C5/D1 会议室时回退全部会议室', async () => {
     const { fetchImpl } = makeFetch({
+      '/vc/v1/room_levels': () => feishuOk({ items: [cityLevel()], page_token: '' }),
       '/vc/v1/rooms': () => feishuOk({ rooms: [makeRoom('a1', '会议室A', 'D3栋'), makeRoom('a2', '会议室B', 'D3栋')], page_token: '' }),
       '/meeting_room/freebusy/batch_get': () => feishuOk({ free_busy: {} }),
     });
@@ -158,9 +189,9 @@ describe('findAvailableMeetingRooms', () => {
     expect(result.rooms.every((r) => r.building === '')).toBe(true);
   });
 
-  it('飞书报错时抛错（由端点降级为 reason）', async () => {
+  it('城市层级接口报错时抛错（由端点降级为 reason）', async () => {
     const { fetchImpl } = makeFetch({
-      '/vc/v1/rooms': () => ({ code: 99991672, msg: 'no permission' }),
+      '/vc/v1/room_levels': () => ({ code: 99991672, msg: 'no permission' }),
     });
     await expect(findAvailableMeetingRooms({ token: TOKEN, startTs: 1, endTs: 2 }, { fetchImpl })).rejects.toThrow(/99991672/);
   });
