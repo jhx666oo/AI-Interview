@@ -54,6 +54,7 @@ import {
   sendCandidateInterviewEmail,
 } from './interview-start/service';
 import { isSmtpConfigured } from './interview-start/smtp';
+import { sendFeishuMail } from './interview-start/feishu-mail';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
 import { getMiaodaMailSyncConfig } from './mail-sync/config';
@@ -1863,7 +1864,7 @@ app.get('/api/auth/feishu-oauth-url', authMiddleware, async (c) => {
   const token = await createJwt(c.env.SECRET_KEY, user.email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const scope = 'im:message im:message.send_as_user contact:user.base:readonly bitable:app:readonly offline_access';
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly bitable:app:readonly mail:user_mailbox.message:send offline_access';
   const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl });
 });
@@ -1876,7 +1877,7 @@ app.post('/api/auth/feishu-oauth-url', authMiddleware, requireRole(['admin']), a
   const token = await createJwt(c.env.SECRET_KEY, email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const scope = 'im:message im:message.send_as_user contact:user.base:readonly bitable:app:readonly offline_access';
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly bitable:app:readonly mail:user_mailbox.message:send offline_access';
   const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl, email });
 });
@@ -5523,6 +5524,9 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
                 meetingUrl: createdMeetingLink,
                 fromName: (configRow?.mail_from_name && String(configRow.mail_from_name).trim()) || '招聘系统',
                 nowIso: now(),
+                fromEmail: String(smtpRow?.mail_from || '').trim() || undefined,
+              }, {
+                feishuSender: (m) => sendFeishuMail(m, { getValidToken: (email) => getValidUserAccessToken(c.env, email) }),
               });
               console.log(`[create-from-talent] 候选人邮件 ${result.status}${result.status === 'sent' ? ` -> ${result.to}` : `: ${result.reason}`}`);
             }
@@ -5707,6 +5711,9 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
                 offline: isOffline,
                 fromName: (configRow?.mail_from_name && String(configRow.mail_from_name).trim()) || '招聘系统',
                 nowIso: now(),
+                fromEmail: String(smtpRow?.mail_from || '').trim() || undefined,
+              }, {
+                feishuSender: (m) => sendFeishuMail(m, { getValidToken: (email) => getValidUserAccessToken(c.env, email) }),
               });
               console.log(`[schedule-direct] 候选人邮件 ${result.status}${result.status === 'sent' ? ` -> ${result.to}` : `: ${result.reason}`}`);
             }
@@ -8876,9 +8883,11 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
         startFlow.email_detail = '候选人简历未解析到邮箱，邮件未发送';
       } else {
         const smtpRow = await c.env.DB.prepare('SELECT smtp_host, smtp_port, smtp_username, smtp_password, mail_from, mail_from_name, mail_enabled FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
-        if (!isSmtpConfigured(smtpRow)) {
+        const mailFrom = String(smtpRow?.mail_from || '').trim();
+        // 邮件通道就绪：飞书邮件 API（mail_from 已配置）或 SMTP 完整配置，任一可用即可发送
+        if (!isSmtpConfigured(smtpRow) && !mailFrom) {
           startFlow.email_status = 'skipped';
-          startFlow.email_detail = 'SMTP 邮件服务未启用或配置不完整（系统设置 → 邮件设置），邮件未发送';
+          startFlow.email_detail = '邮件服务未配置（系统设置 → 邮件设置需填写发件人邮箱或 SMTP），邮件未发送';
         } else {
           startFlow.email_status = 'queued';
           c.executionCtx.waitUntil((async () => {
@@ -8889,6 +8898,9 @@ app.post('/api/interviews/:id/start', authMiddleware, async (c) => {
                 offline: isOffline,
                 fromName,
                 nowIso: now(),
+                fromEmail: mailFrom || undefined,
+              }, {
+                feishuSender: (m) => sendFeishuMail(m, { getValidToken: (email) => getValidUserAccessToken(c.env, email) }),
               });
               if (result.status === 'failed') {
                 console.error(`[InterviewStart] 候选人邮件发送失败: ${result.reason}`);

@@ -152,10 +152,27 @@ export interface SendCandidateEmailInput {
   nowIso: string;
   /** 是否线下面试（true 时邮件不带会议链接，提示按地点到场） */
   offline?: boolean;
+  /** 发件人飞书邮箱（用于飞书邮件 API 通道，须对应用户已绑定飞书） */
+  fromEmail?: string;
+}
+
+export interface FeishuSenderInput {
+  fromEmail: string;
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}
+
+export interface FeishuSenderResult {
+  ok: boolean;
+  reason?: string;
 }
 
 export interface SendCandidateEmailDeps extends SmtpDeps {
   loadConfig?: (db: D1Database) => Promise<any>;
+  /** 飞书邮件 API 发送器（生产为 sendFeishuMail + getValidUserAccessToken 的闭包），优先于 SMTP */
+  feishuSender?: (input: FeishuSenderInput) => Promise<FeishuSenderResult>;
 }
 
 export async function sendCandidateInterviewEmail(
@@ -182,6 +199,30 @@ export async function sendCandidateInterviewEmail(
     offline: input.offline,
     fromName: input.fromName,
   });
+
+  // 优先飞书邮件 API 通道（需发件人绑定飞书）；失败自动降级 SMTP
+  if (deps.feishuSender && input.fromEmail) {
+    try {
+      const feishuResult = await deps.feishuSender({
+        fromEmail: input.fromEmail,
+        to: ctx.candidateEmail,
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      });
+      if (feishuResult.ok) {
+        try {
+          await db.prepare('UPDATE interviews SET invite_email_sent_at = ?, updated_at = ? WHERE id = ?')
+            .bind(input.nowIso, input.nowIso, ctx.interview.id).run();
+        } catch { /* 记录发送时间失败不影响结果 */ }
+        return { status: 'sent', to: ctx.candidateEmail };
+      }
+      console.warn(`[CandidateEmail] 飞书邮件发送失败，降级 SMTP：${feishuResult.reason || '未知原因'}`);
+    } catch (e: any) {
+      console.warn(`[CandidateEmail] 飞书邮件发送异常，降级 SMTP：${e?.message || e}`);
+    }
+  }
+
   try {
     await sendSmtpMail(config, { to: ctx.candidateEmail, ...email }, deps);
   } catch (e: any) {

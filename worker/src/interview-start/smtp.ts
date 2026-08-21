@@ -119,7 +119,7 @@ function dotStuff(body: string): string {
   return body.split('\r\n').map((line) => (line.startsWith('.') ? '.' + line : line)).join('\r\n');
 }
 
-function buildMessage(config: SmtpConfig, mail: SmtpMailInput): string {
+export function buildMessage(config: SmtpConfig, mail: SmtpMailInput): string {
   const from = `"${mimeEncodeWord(config.fromName)}" <${config.fromAddress}>`;
   const headers = [
     `From: ${from}`,
