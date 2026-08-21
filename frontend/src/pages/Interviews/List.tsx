@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  Table, Button, Space, message, Tag, Modal, Select, Input, Form, Popconfirm,
+  Table, Button, Space, message, Tag, Modal, Select, Input, AutoComplete, Form, Popconfirm,
   Typography, Card, Tooltip, DatePicker, Radio, Spin
 } from 'antd';
 import dayjs from 'dayjs';
@@ -139,6 +139,10 @@ const InterviewsList: React.FC = () => {
   const [availableSlots, setAvailableSlots] = useState<Array<{ start: string; end: string }>>([]);
   const [slotLoading, setSlotLoading] = useState(false);
   const [slotReason, setSlotReason] = useState<string | null>(null);
+  // 空闲会议室（下拉选项，C5/D1 栋优先，默认选 D1 第一个）
+  const [availableRooms, setAvailableRooms] = useState<Array<{ room_id: string; name: string; building: string }>>([]);
+  // 上次自动填充的会议室名：切换时段时仅当当前值仍是自动填充值才覆盖（手动改过则不覆盖）
+  const lastAutoRoomRef = useRef<string>('');
   const [positions, setPositions] = useState<PositionAssignment[]>([]);
 
   // 新建面试弹窗（手动创建）
@@ -496,8 +500,9 @@ const InterviewsList: React.FC = () => {
           scheduleForm.setFieldsValue({
             interview_date: dayjs(first.start.slice(0, 10)),
             interview_time: dayjs(first.start.slice(11, 16), 'HH:mm'),
+            interview_time_slot: first.start,
           });
-          // 自动查询空闲会议室（D5 栋优先）填充面试地点，未手动填写时才覆盖
+          // 自动查询空闲会议室（C5/D1 优先）填充「面试地点」下拉
           autoFillMeetingRoom(first.start);
         }
       } catch {
@@ -508,18 +513,19 @@ const InterviewsList: React.FC = () => {
     }
   };
 
-  // 按推荐时段自动查空闲会议室（D5 栋优先）填充「面试地点」，失败/无空闲不阻塞
+  // 按推荐时段自动查空闲会议室（C5/D1 栋优先）：刷新下拉选项，默认选中 D1 栋第一个空闲会议室
   const autoFillMeetingRoom = async (startAt: string) => {
     try {
-      if (scheduleForm.getFieldValue('interview_location')) return;
       const res = await request.get('/meeting-rooms/available', { params: { start_at: startAt, duration_minutes: 60 } });
-      const rooms = res?.rooms || [];
-      if (rooms.length > 0 && !scheduleForm.getFieldValue('interview_location')) {
-        const room = rooms[0];
-        // 只填房间名（path 是飞书楼栋 ID，对人不可读）
-        scheduleForm.setFieldsValue({
-          interview_location: room.name,
-        });
+      const rooms = (res?.rooms || []) as Array<{ room_id: string; name: string; building: string }>;
+      setAvailableRooms(rooms);
+      const pick = rooms.find((r) => r.building === 'D1') || rooms[0];
+      if (!pick) return;
+      const current = scheduleForm.getFieldValue('interview_location');
+      // 为空，或当前值仍是上次自动填充的房间（切换时段场景）→ 更新默认值；手动改过则不覆盖
+      if (!current || lastAutoRoomRef.current === current) {
+        scheduleForm.setFieldsValue({ interview_location: pick.name });
+        lastAutoRoomRef.current = pick.name;
       }
     } catch { /* 会议室查询失败不阻塞安排流程 */ }
   };
@@ -1056,39 +1062,32 @@ const InterviewsList: React.FC = () => {
         destroyOnHidden
       >
         <Form form={scheduleForm} layout="vertical" preserve={false}>
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 13, color: '#475569', marginBottom: 6 }}>
-              推荐空闲时段 <span style={{ color: '#94A3B8' }}>（按一面面试官自动查询，点击选用）</span>
-            </div>
-            {slotLoading ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#94A3B8', fontSize: 12 }}>
-                <Spin size="small" /> 正在查询面试官空闲时段...
-              </div>
-            ) : availableSlots.length > 0 ? (
-              <Radio.Group
-                onChange={(e) => {
-                  const picked = availableSlots.find((x) => x.start === e.target.value);
-                  if (picked) {
-                    scheduleForm.setFieldsValue({
-                      interview_date: dayjs(picked.start.slice(0, 10)),
-                      interview_time: dayjs(picked.start.slice(11, 16), 'HH:mm'),
-                    });
-                    // 切换推荐时段时同步刷新空闲会议室（面试地点为空才覆盖）
-                    autoFillMeetingRoom(picked.start);
-                  }
-                }}
-                style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 170, overflow: 'auto' }}
-              >
-                {availableSlots.map((s) => (
-                  <Radio key={s.start} value={s.start} style={{ lineHeight: '22px', fontSize: 13 }}>
-                    {s.start} ~ {s.end}
-                  </Radio>
-                ))}
-              </Radio.Group>
-            ) : (
-              <div style={{ color: '#d46b08', fontSize: 12 }}>{slotReason || '暂无推荐时段，请手动选择下方时间'}</div>
-            )}
-          </div>
+          <Form.Item
+            name="interview_time_slot"
+            label="推荐面试时段"
+            tooltip="按一面面试官自动查询的空闲时段（1 小时），选择后自动带入日期时间并刷新空闲会议室"
+          >
+            <Select
+              placeholder={slotLoading ? '正在查询空闲时段...' : (slotReason || '暂无推荐时段，请手动选择下方日期时间')}
+              loading={slotLoading}
+              notFoundContent={slotLoading ? <Spin size="small" /> : (slotReason || '暂无推荐时段，请手动选择下方日期时间')}
+              options={availableSlots.map((s) => ({
+                value: s.start,
+                label: `${s.start.slice(5, 16)} ~ ${s.end.slice(11, 16)}`,
+              }))}
+              onChange={(val) => {
+                const picked = availableSlots.find((x) => x.start === val);
+                if (picked) {
+                  scheduleForm.setFieldsValue({
+                    interview_date: dayjs(picked.start.slice(0, 10)),
+                    interview_time: dayjs(picked.start.slice(11, 16), 'HH:mm'),
+                  });
+                  // 切换推荐时段时同步刷新空闲会议室（手动改过地点则不覆盖）
+                  autoFillMeetingRoom(picked.start);
+                }
+              }}
+            />
+          </Form.Item>
           <Form.Item name="interview_type" label="面试形式" initialValue="video">
             <Radio.Group>
               <Radio.Button value="video">线上面试</Radio.Button>
@@ -1102,7 +1101,15 @@ const InterviewsList: React.FC = () => {
             <DatePicker.TimePicker style={{ width: '100%' }} placeholder="选择面试时间（可选）" format="HH:mm" />
           </Form.Item>
           <Form.Item name="interview_location" label="面试地点 / 会议链接">
-            <Input placeholder="例如：3楼会议室 / https://meeting.tencent.com/xxx（可选）" />
+            <AutoComplete
+              options={availableRooms.map((r) => ({
+                value: r.name,
+                label: r.building ? `${r.name}（${r.building}栋）` : r.name,
+              }))}
+              placeholder="选择空闲会议室，或手动输入地点/会议链接"
+              allowClear
+              onSelect={(val) => { lastAutoRoomRef.current = val; }}
+            />
           </Form.Item>
           <Form.Item name="interviewer_name" label="一面面试官">
             <Input placeholder="输入一面面试官姓名" />

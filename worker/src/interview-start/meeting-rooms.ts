@@ -3,7 +3,7 @@
  *
  * - 会议室列表：GET /open-apis/vc/v1/rooms（name/path 定位楼栋，权限 vc:room:readonly）
  * - 会议室忙闲：GET /open-apis/meeting_room/freebusy/batch_get（room_ids 复数，权限 calendar:room:readonly）
- * - 公司所在楼栋：优先 D5（按 name/path/description 含 "D5" 筛选），无 D5 时回退全部会议室
+ * - 优先楼栋：C5 栋、D1 栋（按 name/path/description 含 "C5"/"D1" 筛选），无匹配时回退全部会议室
  */
 
 export interface MeetingRoomInfo {
@@ -12,14 +12,28 @@ export interface MeetingRoomInfo {
   path: string;
   description: string;
   capacity: number | null;
+  /** 命中的优先楼栋（C5 / D1），未命中为空字符串 */
+  building?: string;
 }
 
 const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
-const D5_PATTERN = /D5/i;
+/** 优先推荐楼栋：按出现顺序匹配（C5 优先于 D1），名称/路径/描述任一命中即算 */
+const PRIORITY_BUILDINGS: Array<{ key: string; re: RegExp }> = [
+  { key: 'C5', re: /C5/i },
+  { key: 'D1', re: /D1/i },
+];
 
-/** 筛选 D5 栋会议室（纯函数） */
-export function pickD5Rooms(rooms: MeetingRoomInfo[]): MeetingRoomInfo[] {
-  return rooms.filter((r) => D5_PATTERN.test(`${r.name} ${r.path} ${r.description}`));
+/** 筛选优先楼栋（C5/D1）会议室（纯函数） */
+export function pickPriorityRooms(rooms: MeetingRoomInfo[]): MeetingRoomInfo[] {
+  return rooms.filter((r) => PRIORITY_BUILDINGS.some((p) => p.re.test(`${r.name} ${r.path} ${r.description}`)));
+}
+
+/** 返回会议室命中的优先楼栋标识（'C5' | 'D1' | ''） */
+export function buildingOf(room: MeetingRoomInfo): string {
+  for (const p of PRIORITY_BUILDINGS) {
+    if (p.re.test(`${room.name} ${room.path} ${room.description}`)) return p.key;
+  }
+  return '';
 }
 
 /** 过滤空闲会议室：busyMap[room_id] 为空数组/不存在即空闲（纯函数） */
@@ -113,17 +127,17 @@ export interface FindAvailableRoomsResult {
   rooms: MeetingRoomInfo[];
 }
 
-/** 查空闲会议室：D5 栋优先，忙闲过滤（最多取 20 个查忙闲） */
+/** 查空闲会议室：C5/D1 优先（无匹配回退全部），忙闲过滤（最多取 20 个查忙闲），返回带楼栋标签 */
 export async function findAvailableMeetingRooms(
   input: FindAvailableRoomsInput,
   deps: MeetingRoomsDeps = {},
 ): Promise<FindAvailableRoomsResult> {
   const allRooms = await listMeetingRooms(input.token, deps);
-  const d5Rooms = (deps.d5Pattern ? allRooms.filter((r) => (deps.d5Pattern as RegExp).test(`${r.name} ${r.path} ${r.description}`)) : pickD5Rooms(allRooms));
-  const candidates = (d5Rooms.length ? d5Rooms : allRooms).slice(0, 20);
+  const priorityRooms = pickPriorityRooms(allRooms);
+  const candidates = (priorityRooms.length ? priorityRooms : allRooms).slice(0, 20);
   const busyMap = await queryRoomAvailability(input.token, candidates.map((r) => r.room_id), input.startTs, input.endTs, deps);
   return {
-    has_d5: d5Rooms.length > 0,
-    rooms: filterFreeRooms(candidates, busyMap),
+    has_d5: priorityRooms.length > 0,
+    rooms: filterFreeRooms(candidates, busyMap).map((r) => ({ ...r, building: buildingOf(r) })),
   };
 }

@@ -1650,7 +1650,7 @@ app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin',
   }
 });
 
-// 安排面试：查空闲会议室（D5 栋优先）——供弹窗自动填充「面试地点」
+// 安排面试：查空闲会议室（C5/D1 栋优先）——供弹窗下拉选择「面试地点」
 app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
   try {
     const startAt = String(c.req.query('start_at') || '').trim();
@@ -1673,7 +1673,7 @@ app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
     return c.json({
       ok: true,
       has_d5,
-      rooms: rooms.map((r) => ({ room_id: r.room_id, name: r.name, path: r.path, capacity: r.capacity })),
+      rooms: rooms.map((r) => ({ room_id: r.room_id, name: r.name, path: r.path, capacity: r.capacity, building: (r as any).building || '' })),
     });
   } catch (e: any) {
     return c.json({ ok: true, rooms: [], reason: `空闲会议室查询失败：${e?.message || e}` });

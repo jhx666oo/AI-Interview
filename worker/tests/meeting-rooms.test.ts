@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildingOf,
   filterFreeRooms,
   findAvailableMeetingRooms,
   listMeetingRooms,
-  pickD5Rooms,
+  pickPriorityRooms,
   queryRoomAvailability,
   type MeetingRoomInfo,
 } from '../src/interview-start/meeting-rooms';
 
 /**
  * 空闲会议室查询测试：
- * D5 栋筛选优先、忙闲过滤、会议室列表分页、忙闲 API 调用、无 D5 时回退全部。
+ * C5/D1 优先筛选、忙闲过滤、会议室列表分页、忙闲 API 调用、无优先楼栋时回退全部。
  */
 
 const TOKEN = 'tenant-token';
@@ -36,15 +37,22 @@ function makeFetch(routes: Record<string, (call: any) => any>) {
 
 const feishuOk = (data: any) => ({ code: 0, msg: 'success', data });
 
-describe('pickD5Rooms / filterFreeRooms', () => {
-  it('按名称/path/description 筛选 D5 栋', () => {
+describe('pickPriorityRooms / buildingOf / filterFreeRooms', () => {
+  it('按名称/path/description 筛选 C5、D1 栋会议室', () => {
     const rooms = [
-      makeRoom('r1', 'D5栋·3F·会议室A', 'D5栋/3F'),
-      makeRoom('r2', 'D3栋·2F·会议室B', 'D3栋/2F'),
-      makeRoom('r3', '会议室C', 'D5栋/4F'),
+      makeRoom('r1', 'C5栋·3F·会议室A', 'C5栋/3F'),
+      makeRoom('r2', 'D1栋·2F·会议室B', 'D1栋/2F'),
+      makeRoom('r3', '会议室C', 'C5栋/4F'),
+      makeRoom('r4', '会议室D', 'D3栋/4F'),
     ];
-    const d5 = pickD5Rooms(rooms);
-    expect(d5.map((r) => r.room_id)).toEqual(['r1', 'r3']);
+    const priority = pickPriorityRooms(rooms);
+    expect(priority.map((r) => r.room_id)).toEqual(['r1', 'r2', 'r3']);
+  });
+
+  it('buildingOf 返回命中的优先楼栋标识', () => {
+    expect(buildingOf(makeRoom('r1', 'C5栋·3F·会议室A'))).toBe('C5');
+    expect(buildingOf(makeRoom('r2', 'D1栋·2F·会议室B'))).toBe('D1');
+    expect(buildingOf(makeRoom('r3', 'D3栋·4F·会议室C'))).toBe('');
   });
 
   it('busy 为空/不存在即空闲，有忙碌日程则排除', () => {
@@ -114,17 +122,17 @@ describe('queryRoomAvailability', () => {
 });
 
 describe('findAvailableMeetingRooms', () => {
-  it('D5 栋优先且只返回空闲会议室', async () => {
+  it('C5/D1 优先且只返回空闲会议室（带楼栋标签）', async () => {
     const { fetchImpl } = makeFetch({
       '/vc/v1/rooms': () => feishuOk({
         rooms: [
-          makeRoom('d5-1', 'D5栋·3F·会议室A', 'D5栋/3F'),
-          makeRoom('d5-2', 'D5栋·4F·会议室B', 'D5栋/4F'),
+          makeRoom('c5-1', 'C5栋·3F·会议室A', 'C5栋/3F'),
+          makeRoom('d1-1', 'D1栋·4F·会议室B', 'D1栋/4F'),
           makeRoom('d3-1', 'D3栋·2F·会议室C', 'D3栋/2F'),
         ],
         page_token: '',
       }),
-      '/meeting_room/freebusy/batch_get': () => feishuOk({ free_busy: { 'd5-1': [{ start_time: 'x', end_time: 'y' }] } }),
+      '/meeting_room/freebusy/batch_get': () => feishuOk({ free_busy: { 'c5-1': [{ start_time: 'x', end_time: 'y' }] } }),
     });
     const result = await findAvailableMeetingRooms({
       token: TOKEN,
@@ -132,11 +140,12 @@ describe('findAvailableMeetingRooms', () => {
       endTs: Date.parse('2026-08-25T02:30:00Z'),
     }, { fetchImpl });
     expect(result.has_d5).toBe(true);
-    // d5-1 忙被排除，d5-2 空闲；非 D5 的 d3-1 不参与（有 D5 时）
-    expect(result.rooms.map((r) => r.room_id)).toEqual(['d5-2']);
+    // c5-1 忙被排除，d1-1 空闲；非优先楼栋的 d3-1 不参与（有优先楼栋时）
+    expect(result.rooms.map((r) => r.room_id)).toEqual(['d1-1']);
+    expect(result.rooms[0].building).toBe('D1');
   });
 
-  it('无 D5 会议室时回退全部会议室', async () => {
+  it('无 C5/D1 会议室时回退全部会议室', async () => {
     const { fetchImpl } = makeFetch({
       '/vc/v1/rooms': () => feishuOk({ rooms: [makeRoom('a1', '会议室A', 'D3栋'), makeRoom('a2', '会议室B', 'D3栋')], page_token: '' }),
       '/meeting_room/freebusy/batch_get': () => feishuOk({ free_busy: {} }),
@@ -146,6 +155,7 @@ describe('findAvailableMeetingRooms', () => {
     }, { fetchImpl });
     expect(result.has_d5).toBe(false);
     expect(result.rooms.map((r) => r.room_id)).toEqual(['a1', 'a2']);
+    expect(result.rooms.every((r) => r.building === '')).toBe(true);
   });
 
   it('飞书报错时抛错（由端点降级为 reason）', async () => {
