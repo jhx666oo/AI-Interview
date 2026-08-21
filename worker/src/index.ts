@@ -5722,6 +5722,15 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
             },
           });
           console.log(`[schedule-direct] 面试官提醒 ${reminder.ok ? '已发送' : '未发送: ' + reminder.reason}`);
+          // 可观测性：提醒失败写回 last_error_message（成功不写 interview_reminder_sent_at，
+          // 该字段是 cron「面试前 30 分钟第二次提醒」的去重依据，不能占用）。
+          if (!reminder.ok) {
+            try {
+              await db.prepare(
+                'UPDATE interviews SET last_error_message = ?, updated_at = ? WHERE id = ?',
+              ).bind(`面试官提醒未发送: ${reminder.reason || '未知原因'}`, now(), id).run();
+            } catch { /* 记录失败不影响主流程 */ }
+          }
           if (ctx.candidateEmail && (meetingLink || isOffline)) {
             const smtpRow = await db.prepare(
               'SELECT smtp_host, smtp_port, smtp_username, smtp_password, mail_from, mail_from_name, mail_enabled FROM system_configs ORDER BY updated_at DESC LIMIT 1',
