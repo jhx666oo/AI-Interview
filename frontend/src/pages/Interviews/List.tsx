@@ -457,6 +457,8 @@ const InterviewsList: React.FC = () => {
             interview_date: dayjs(first.start.slice(0, 10)),
             interview_time: dayjs(first.start.slice(11, 16), 'HH:mm'),
           });
+          // 自动查询空闲会议室（D5 栋优先）填充面试地点，未手动填写时才覆盖
+          autoFillMeetingRoom(first.start);
         }
       } catch {
         setSlotReason('空闲时段查询失败，请手动选择时间');
@@ -464,6 +466,21 @@ const InterviewsList: React.FC = () => {
         setSlotLoading(false);
       }
     }
+  };
+
+  // 按推荐时段自动查空闲会议室（D5 栋优先）填充「面试地点」，失败/无空闲不阻塞
+  const autoFillMeetingRoom = async (startAt: string) => {
+    try {
+      if (scheduleForm.getFieldValue('interview_location')) return;
+      const res = await request.get('/meeting-rooms/available', { params: { start_at: startAt, duration_minutes: 60 } });
+      const rooms = res?.rooms || [];
+      if (rooms.length > 0 && !scheduleForm.getFieldValue('interview_location')) {
+        const room = rooms[0];
+        scheduleForm.setFieldsValue({
+          interview_location: `${room.name}${room.path ? `（${room.path}）` : ''}`,
+        });
+      }
+    } catch { /* 会议室查询失败不阻塞安排流程 */ }
   };
 
   const handleScheduleSubmit = async () => {

@@ -44,6 +44,7 @@ import { syncAiResultToBusinessScreening, buildBusinessScreeningAutoLinkDeps } f
 import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './interview-card/routes';
 import { createInterviewAutomationRoutes } from './interview-automation/routes';
 import { createInterviewCalendarEvent, findFirstFreeInterviewSlot, listFreeInterviewSlots, updateInterviewCalendarEventTime } from './interview-start/feishu-calendar';
+import { findAvailableMeetingRooms } from './interview-start/meeting-rooms';
 import { sendInterviewerInterviewReminder, sendFeishuTextMessage } from './interview-start/reminders';
 import {
   frontendBaseUrl,
@@ -1646,6 +1647,28 @@ app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin',
     return c.json({ ok: true, slots: [], reason: `空闲时段查询失败：${e?.message || e}` });
   }
 });
+
+// 安排面试：查空闲会议室（D5 栋优先）——供弹窗自动填充「面试地点」
+app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
+  try {
+    const startAt = String(c.req.query('start_at') || '').trim();
+    const durationMinutes = Math.min(480, Math.max(30, Number(c.req.query('duration_minutes')) || 60));
+    let startTs = startAt ? (parseInterviewTimeToMs(startAt) ?? Date.parse(startAt)) : NaN;
+    if (Number.isNaN(startTs)) startTs = Date.now() + 60 * 60_000;
+    const endTs = startTs + durationMinutes * 60_000;
+
+    const token = await getFeishuToken(c.env);
+    const { has_d5, rooms } = await findAvailableMeetingRooms({ token, startTs, endTs });
+    return c.json({
+      ok: true,
+      has_d5,
+      rooms: rooms.map((r) => ({ room_id: r.room_id, name: r.name, path: r.path, capacity: r.capacity })),
+    });
+  } catch (e: any) {
+    return c.json({ ok: true, rooms: [], reason: `空闲会议室查询失败：${e?.message || e}` });
+  }
+});
+
 const businessScreeningRoutes = createBusinessScreeningRoutes({
   authMiddleware: businessScreeningAuthMiddleware,
   requireRole,
