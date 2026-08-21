@@ -1623,6 +1623,7 @@ app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin',
       durationMinutes: 60,
       skipWorkdays: 2,
       workdays: 3,
+    }, {
       onBusyError: (m) => busyErrors.push(m),
     });
 
@@ -1632,6 +1633,8 @@ app.get('/api/interviews/available-slots', authMiddleware, requireRole(['admin',
       slots: slots.map((s) => ({ start: formatBeijingSlot(s.startTs), end: formatBeijingSlot(s.endTs) })),
       // freebusy 查询异常时透出原因，供前端提示（仍允许手动选择时间）
       ...(busyErrors.length > 0 ? { reason: `空闲时段查询异常（${busyErrors[0]}），可手动输入下方时间` } : {}),
+      // 诊断信息（便于排查推荐为空的原因）
+      ...(busyErrors.length > 0 ? { debug: { busyErrors } } : {}),
     });
   } catch (e: any) {
     return c.json({ ok: true, slots: [], reason: `空闲时段查询失败：${e?.message || e}` });
