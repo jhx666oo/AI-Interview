@@ -1666,6 +1666,7 @@ app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
     let has_d5 = false;
     let rooms: any[] = [];
     let cityDiagnostics: Array<{ city: string; count: number; error?: string }> = [];
+    let roomDebug: any = undefined;
     try {
       const found = await findAvailableMeetingRooms({ token, startTs, endTs }, {
         onCityResult: (city: string, count: number, error?: string) => {
@@ -1674,6 +1675,7 @@ app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
       });
       has_d5 = found.has_d5;
       rooms = found.rooms;
+      roomDebug = (found as any).debug;
     } catch (e: any) {
       // 分阶段返回错误详情，便于定位是列表拉取还是忙闲查询失败
       return c.json({ ok: true, has_d5: false, rooms: [], reason: `空闲会议室查询失败（${e?.message || e}）` });
@@ -1684,7 +1686,7 @@ app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
       rooms: rooms.map((r) => ({ room_id: r.room_id, name: r.name, path: r.path, capacity: r.capacity, building: (r as any).building || '', level_name: (r as any).level_name || '' })),
       // 诊断：每城市拉取结果（临时排查用，后续可移除）
       debug_cities: cityDiagnostics,
-      debug: (found as any).debug,
+      debug: roomDebug,
     });
   } catch (e: any) {
     return c.json({ ok: true, rooms: [], reason: `空闲会议室查询失败：${e?.message || e}` });
