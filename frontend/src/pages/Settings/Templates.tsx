@@ -102,12 +102,12 @@ const TemplatesPage: React.FC = () => {
                 },
                 {
                   key: 'reminder',
-                  label: '面试官提醒（飞书消息）',
+                  label: '面试官提醒（飞书卡片）',
                   children: (
                     <>
-                      <Form.Item name="interviewer_reminder" label="提醒文本（每行一条，会议链接/地点/卡片链接由系统自动追加）"
+                      <Form.Item name="interviewer_reminder" label="卡片正文提示语（候选人/岗位/面试时间数据行与会议按钮由系统自动生成）"
                         rules={[{ required: true, message: '请填写提醒文本' }]}>
-                        <TextArea rows={8} placeholder={'面试提醒：{{candidateName}}\n岗位：{{position}}\n面试时间：{{interviewTime}}'} />
+                        <TextArea rows={4} placeholder="请提前 10 分钟进入会议，并查看候选人简历" />
                       </Form.Item>
                       <PlaceholderHint keys={PLACEHOLDERS.interviewer_reminder} />
                     </>

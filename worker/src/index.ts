@@ -45,7 +45,7 @@ import { createInterviewCardRoutes, createOrReuseInterviewCardLink } from './int
 import { createInterviewAutomationRoutes } from './interview-automation/routes';
 import { createInterviewCalendarEvent, findFirstFreeInterviewSlot, listFreeInterviewSlots, updateInterviewCalendarEventTime } from './interview-start/feishu-calendar';
 import { findAvailableMeetingRooms } from './interview-start/meeting-rooms';
-import { sendInterviewerInterviewReminder, sendFeishuTextMessage } from './interview-start/reminders';
+import { sendInterviewerInterviewReminder, sendFeishuCardMessage, sendFeishuTextMessage, buildInterviewerReminderCard } from './interview-start/reminders';
 import {
   frontendBaseUrl,
   loadInterviewStartContext,
@@ -13992,15 +13992,23 @@ app.post('/api/interviews/:id/notify-interviewer', authMiddleware, async (c) => 
       console.error(`[InterviewNotify] 面试卡片链接生成失败（不影响提醒）: ${cardError?.message || cardError}`);
     }
 
-    // 只发链接：文本消息（候选人/岗位/面试时间 + 面试卡片链接），不发卡片、不附 PDF
+    // 面试提醒卡片（候选人/岗位/面试时间数据行 + 正文提示语 + 查看候选人档案按钮）
     const view = buildInterviewReminderView(source);
-    const lines = [
-      `面试提醒：${view.name}`,
-      `岗位：${view.position}`,
-      `面试时间：${view.interviewTime}`,
-    ];
-    if (cardLinkUrl) lines.push(`面试卡片链接：${cardLinkUrl}`);
-    await sendFeishuTextMessage(userToken, openId, lines.join('\n'));
+    const templates = await loadTemplates(c.env.DB as D1Database);
+    const rvars = {
+      candidateName: view.name,
+      position: view.position,
+      interviewTime: view.interviewTime,
+    };
+    const card = buildInterviewerReminderCard({
+      candidateName: view.name,
+      position: view.position,
+      interviewTime: view.interviewTime,
+      bodyText: renderTemplate(templates.interviewer_reminder, rvars).trim(),
+      cardLinkUrl,
+      footer: renderTemplate(templates.card_footer, rvars).trim(),
+    });
+    await sendFeishuCardMessage(userToken, openId, card);
 
     await logOperation(c.env, {
       action: 'interview.notify',

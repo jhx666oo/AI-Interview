@@ -278,7 +278,7 @@ describe('interview reminders', () => {
     expect(workerSource).toContain("ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT");
   });
 
-  it('wires the endpoint to current-user text-link delivery without candidate-body or sender fallback paths', async () => {
+  it('wires the endpoint to current-user card delivery without candidate-body or sender fallback paths', async () => {
     const source = await readFile(resolve(process.cwd(), 'src/index.ts'), 'utf8');
     const route = source.slice(
       source.indexOf("app.post('/api/interviews/:id/notify-interviewer'"),
@@ -287,7 +287,8 @@ describe('interview reminders', () => {
 
     expect(route).toContain('loadInterviewReminderSource(c.env.DB, id)');
     expect(route).toContain('getValidUserAccessToken(c.env, currentUser.email)');
-    expect(route).toContain('sendFeishuTextMessage(userToken, openId,');
+    expect(route).toContain('sendFeishuCardMessage(userToken, openId, card)');
+    expect(route).toContain('buildInterviewerReminderCard({');
     expect(route).toContain('createOrReuseInterviewCardLink(c.env.DB,');
     expect(route).toContain('resolveExactInterviewerOpenId(c.env.DB, interviewerName)');
     expect(route).toContain('need_feishu_auth: true');

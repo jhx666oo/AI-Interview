@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_TEMPLATES, renderTemplate } from '../src/templates/config';
 import { buildFeishuCard } from '../src/business-screening/routes';
+import { buildInterviewerReminderCard } from '../src/interview-start/reminders';
 
 /**
  * 对外卡片模板化测试：系统设置「消息模板」新增的飞书卡片模板，
@@ -72,5 +73,50 @@ describe('buildFeishuCard 模板渲染', () => {
     }) as any;
     expect(card.header.title.content).toBe(' 岗位A');
     expect(card.header.title.content).not.toContain('{{');
+  });
+});
+
+describe('buildInterviewerReminderCard 面试官提醒卡片', () => {
+  it('线上面试：结构化数据行 + 正文提示语 + 会议按钮 + 档案按钮 + 落款', () => {
+    const card = buildInterviewerReminderCard({
+      candidateName: '张三',
+      position: '前端工程师',
+      interviewTime: '2026-08-25 14:00 ~ 15:00',
+      bodyText: '请提前 10 分钟进入会议，并查看候选人简历',
+      meetingLink: 'https://vc.feishu.cn/j/abc',
+      interviewTypeLabel: '线上面试',
+      cardLinkUrl: 'https://ai-interview-88r.pages.dev/business-screening/demo',
+      footer: '发送自 招聘管理智能小助手',
+    }) as any;
+    expect(card.config.wide_screen_mode).toBe(true);
+    expect(card.header.title.content).toBe('🔔 面试提醒');
+    expect(card.header.template).toBe('blue');
+    const text = JSON.stringify(card);
+    expect(text).toContain('**候选人：** 张三');
+    expect(text).toContain('**岗位：** 前端工程师');
+    expect(text).toContain('**面试时间：** 2026-08-25 14:00 ~ 15:00');
+    expect(text).toContain('请提前 10 分钟进入会议');
+    expect(text).toContain('进入视频会议');
+    expect(text).toContain('https://vc.feishu.cn/j/abc');
+    expect(text).toContain('查看候选人档案');
+    expect(text).toContain('面试卡片链接：https://ai-interview-88r.pages.dev/business-screening/demo');
+    expect(text).toContain('发送自 招聘管理智能小助手');
+  });
+
+  it('线下面试：无会议按钮，显示地点，不带会议链接', () => {
+    const card = buildInterviewerReminderCard({
+      candidateName: '李四',
+      position: '后端工程师',
+      interviewTime: '2026-08-26 10:00 ~ 11:00',
+      bodyText: '请准时到场',
+      interviewTypeLabel: '线下面试',
+      location: '北京总部 C5 栋 3 层 会议室1',
+      cardLinkUrl: 'https://ai-interview-88r.pages.dev/business-screening/demo2',
+    }) as any;
+    const text = JSON.stringify(card);
+    expect(text).toContain('**面试地点：** 北京总部 C5 栋 3 层 会议室1');
+    expect(text).toContain('查看候选人档案');
+    expect(text).not.toContain('进入视频会议');
+    expect(text).not.toContain('会议链接');
   });
 });

@@ -24,7 +24,7 @@ export interface DefaultTemplates {
   candidate_email_html: string;
   /** 候选人面试邀请邮件 —— 纯文本正文 */
   candidate_email_text: string;
-  /** 面试官面试提醒（飞书文本消息）—— 会议链接/地点/卡片链接行由系统自动追加 */
+  /** 面试官面试提醒卡片 —— 正文提示语（候选人/岗位/面试时间等数据行与按钮由系统自动生成） */
   interviewer_reminder: string;
   /** 业务筛选推送卡片 —— 标题（发给业务负责人，{{position}} 岗位名） */
   business_card_title: string;
@@ -87,7 +87,7 @@ export const DEFAULT_TEMPLATES: DefaultTemplates = {
     '温馨提示：请提前 10 分钟入场，如需调整时间请回复本邮件或联系 HR。',
   ].join('\n'),
 
-  interviewer_reminder: '面试提醒：{{candidateName}}\n岗位：{{position}}\n面试时间：{{interviewTime}}',
+  interviewer_reminder: '请提前 10 分钟进入会议，并查看候选人简历',
 
   business_card_title: '简历筛选待处理：{{position}}',
   business_card_body: '您有 {{count}} 份候选人简历待处理，已统一汇总到待筛选列表，请点击链接完成筛选',
