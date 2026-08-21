@@ -10397,13 +10397,13 @@ async function batchSyncFeishuOpenIds(
     }
   }
   console.log(`[BatchSyncOpenIds] 通讯录全量拉取 ${allUsers.length} 人`);
+  const details: string[] = [...detailLines, `全量通讯录拉取 ${allUsers.length} 人`];
 
   // 2. 按姓名匹配并 upsert 到 interviewer_mappings
   const nameSet = new Set(names.filter(Boolean));
   const ts = now();
   let synced = 0;
   const notFound: string[] = [];
-  const details: string[] = [...detailLines];
 
   for (const name of nameSet) {
     const found = allUsers.find(u => u.name === name);
@@ -10416,8 +10416,12 @@ async function batchSyncFeishuOpenIds(
       synced++;
       details.push(`${name} → ${found.open_id}`);
     } else {
-      // 兜底：按姓名搜索（search-users 接口规范仅支持 user 身份，优先用用户 token；无用户 token 时回退应用 token）
-      const search = await searchFeishuUserByQuery(searchToken || tenantToken, name);
+      // 兜底：按姓名搜索。应用可见范围=全部时 tenant token 搜索全局可见；
+      // tenant 失败（如未开通搜索权限）再用用户 token（用户可见范围受企业通讯录策略限制）
+      let search = await searchFeishuUserByQuery(tenantToken, name, 'tenant');
+      if (!search?.openId && searchToken) {
+        search = await searchFeishuUserByQuery(searchToken, name, searchTokenSource || 'user');
+      }
       if (search?.openId) {
         await env.DB.prepare(
           `INSERT INTO interviewer_mappings (id, name, open_id, updated_at)
@@ -10425,24 +10429,24 @@ async function batchSyncFeishuOpenIds(
            ON CONFLICT(id) DO UPDATE SET open_id = excluded.open_id, updated_at = excluded.updated_at`
         ).bind(`im_${search.openId}`, name, search.openId, ts).run();
         synced++;
-        details.push(`${name} → ${search.openId}(search${searchTokenSource ? ':' + searchTokenSource : ''})`);
+        details.push(`${name} → ${search.openId}(search${search.source ? ':' + search.source : ''})`);
       } else {
         notFound.push(name);
-        if (search?.error) details.push(`${name} 搜索失败(${searchTokenSource || 'tenant'}): ${search.error}`);
+        if (search?.error) details.push(`${name} 搜索失败(${search.source || 'tenant'}): ${search.error}`);
       }
     }
   }
   return { synced, notFound, details };
 }
 
-interface SearchUserResult { openId: string | null; error?: string }
+interface SearchUserResult { openId: string | null; error?: string; source?: string }
 
 /**
  * 按姓名搜索飞书用户 open_id（POST /contact/v3/users/search）。
- * 与「按授权范围拉全量」互补：通讯录授权范围为空时也可按姓名搜到人。
+ * source 标记调用身份（tenant=应用身份 / user=用户身份），便于诊断。
  * 返回精确姓名命中优先，否则返回首条候选；搜不到/报错时返回 null + 错误信息。
  */
-async function searchFeishuUserByQuery(token: string, name: string): Promise<SearchUserResult> {
+async function searchFeishuUserByQuery(token: string, name: string, source?: string): Promise<SearchUserResult> {
   try {
     const resp = await fetch('https://open.feishu.cn/open-apis/contact/v3/users/search?page_size=20&user_id_type=open_id', {
       method: 'POST',
@@ -10450,14 +10454,14 @@ async function searchFeishuUserByQuery(token: string, name: string): Promise<Sea
       body: JSON.stringify({ query: name }),
     }).then(r => r.json()) as any;
     if (resp.code !== 0) {
-      return { openId: null, error: `${resp.code} ${resp.msg || ''}`.trim() };
+      return { openId: null, error: `${resp.code} ${resp.msg || ''}`.trim(), source };
     }
     const items: Array<{ name?: string; open_id?: string }> = resp?.data?.items || [];
-    if (items.length === 0) return { openId: null };
+    if (items.length === 0) return { openId: null, source };
     const exact = items.find(u => u.name === name);
-    return { openId: (exact || items[0])?.open_id || null };
+    return { openId: (exact || items[0])?.open_id || null, source };
   } catch (e: any) {
-    return { openId: null, error: String(e?.message || e) };
+    return { openId: null, error: String(e?.message || e), source };
   }
 }
 
