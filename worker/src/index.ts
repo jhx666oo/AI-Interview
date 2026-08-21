@@ -10012,7 +10012,32 @@ app.post('/api/settings/prompts/remove', authMiddleware, async (c) => {
 });
 
 app.post('/api/settings/mail/test', authMiddleware, async (c) => {
-  return c.json({ detail: 'Mail sending not available in serverless mode' });
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const to = String(body?.to || '').trim();
+    if (!to) return c.json({ detail: '请提供收件人邮箱 to（如 {"to":"xxx@example.com"}）' }, 400);
+    const row = await c.env.DB.prepare(
+      'SELECT mail_from, mail_from_name FROM system_configs ORDER BY updated_at DESC LIMIT 1',
+    ).first() as any;
+    const fromEmail = String(row?.mail_from || '').trim();
+    if (!fromEmail) return c.json({ detail: '未配置发件人邮箱（系统设置 → 邮件设置 → 发件人地址）' }, 400);
+    const fromName = String(row?.mail_from_name || '').trim() || '招聘系统';
+    const result = await sendFeishuMail({
+      fromEmail,
+      fromName,
+      to,
+      subject: '【测试】邮件服务连通性验证',
+      html: '<p>这是一封由 AI-Interview 邮件服务发送的连通性测试邮件。</p><p>收到即表示飞书邮件通道正常。</p>',
+    }, {
+      getValidToken: (email) => getValidUserAccessToken(c.env, email),
+    });
+    if (result.ok) {
+      return c.json({ ok: true, from: fromEmail, to, channel: 'feishu_mail_api' });
+    }
+    return c.json({ ok: false, detail: result.reason || '发送失败', from: fromEmail, to, channel: 'feishu_mail_api' }, 502);
+  } catch (e: any) {
+    return c.json({ ok: false, detail: `测试发送异常：${e?.message || e}` }, 500);
+  }
 });
 
 // ==================== 邮箱简历同步（妙搭 OpenAPI 代理） ====================
