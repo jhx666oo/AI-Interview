@@ -1126,6 +1126,29 @@ const ResumesList: React.FC = () => {
     });
   };
 
+  // 单条手动推送：AI 不通过 → 改为通过并推送到业务链接（按简历自身岗位）
+  const handlePushSingle = async (record: any) => {
+    try {
+      const res = await request.post(`/resumes/${record.id}/business-screening/manual-push`, {}) as any;
+      const pushedIds = Array.isArray(res.pushed) ? res.pushed : [];
+      if (pushedIds.includes(record.id)) {
+        mergeBusinessScreeningState([record.id], { hr_disposition: 'pushed', business_screening_status: 'pending' });
+        setData(prev => prev.map(item => item.id === record.id
+          ? { ...item, screening_result: '通过', hr_disposition: 'pushed', business_screening_status: 'pending' }
+          : item));
+        dataCache.current = [];
+        loadedRef.current = false;
+        message.success(`${record.candidate_name} 已推送（AI 结果改为通过，已加入业务链接）`);
+      } else {
+        const skipped = (Array.isArray(res.skipped) ? res.skipped : []).find((s: any) => s.id === record.id);
+        const failReason = (Array.isArray(res.failed) ? res.failed[0]?.reason : '') || '';
+        message.error(skipped?.reason || failReason || '推送失败，请确认该简历匹配了标准岗位（可在筛选栏按岗位推送）');
+      }
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '推送失败');
+    }
+  };
+
   // 按岗位推送：筛选栏选岗位 → 把该岗位所有 AI 通过简历推送到岗位负责人业务链接（含已入库/已决策，按状态标记）
   const handlePushByPosition = async () => {
     if (!pushPosition) {
@@ -1393,6 +1416,11 @@ const handleUploadClick = () => {
         <Tooltip title="预览"><Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => handlePreview(record)} /></Tooltip>
         <Tooltip title="下载"><Button type="text" size="small" icon={<DownloadOutlined style={{ color: '#22C55E' }} />} onClick={() => handleDownload(record)} /></Tooltip>
         {hardResult?.passed === false && <Tag color="error">❌ 硬性不通过</Tag>}
+        {businessActions.primary && (
+          <Button type="primary" size="small" icon={<SendOutlined />} onClick={() => handlePushSingle(record)}>
+            {businessActions.primary.label}
+          </Button>
+        )}
         {businessActions.secondary && (
           <Button size="small" icon={<CloseOutlined />} onClick={() => handleReject(record)}>
             {businessActions.secondary.label}
