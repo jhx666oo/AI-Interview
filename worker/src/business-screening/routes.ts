@@ -19,6 +19,7 @@ import {
 import { groupEligibleResumesForPush, isEligibleForPush, type PushEligibilityOptions } from './service';
 import { createPublicToken, createScopePublicToken, hashPublicToken } from './token';
 import { buildPositionMappingFromRows, positionNamesMatch, resolveMappedPosition } from '../position-mapping';
+import { loadTemplates, renderTemplate, type DefaultTemplates } from '../templates/config';
 import { buildBusinessScreeningBatchItemVisibilityClause } from '../resume-list/business-screening-status';
 import type {
   BusinessScreeningResume,
@@ -479,15 +480,35 @@ function attachSameNameProfileFallback(
   }
 }
 
-function buildFeishuCard(input: {
+export function buildFeishuCard(input: {
   positionTitle: string;
   itemCount: number;
   url: string;
+  /** 系统设置「消息模板」中的卡片模板（loadTemplates 已合并默认值）；缺省用内置默认文案 */
+  templates?: DefaultTemplates;
 }): Record<string, unknown> {
+  const tpl = input.templates;
+  const t = (key: keyof DefaultTemplates) => (tpl && tpl[key]) || '';
+  const vars: Record<string, string> = {
+    position: input.positionTitle,
+    count: String(input.itemCount),
+  };
+  const title = t('business_card_title')
+    ? renderTemplate(t('business_card_title'), vars)
+    : `简历筛选待处理：${input.positionTitle}`;
+  const body = t('business_card_body')
+    ? renderTemplate(t('business_card_body'), vars)
+    : `您有 ${input.itemCount} 份候选人简历待处理，已统一汇总到待筛选列表，请点击链接完成筛选`;
+  const button = t('business_card_button')
+    ? renderTemplate(t('business_card_button'), vars)
+    : '进入待筛选简历';
+  const footer = t('card_footer')
+    ? renderTemplate(t('card_footer'), vars)
+    : '发送自 招聘管理智能小助手';
   return {
     config: { wide_screen_mode: true },
     header: {
-      title: { tag: 'plain_text', content: `简历筛选待处理：${input.positionTitle}` },
+      title: { tag: 'plain_text', content: title },
       template: 'blue',
     },
     elements: [
@@ -495,7 +516,7 @@ function buildFeishuCard(input: {
         tag: 'div',
         text: {
           tag: 'lark_md',
-          content: `您有 ${input.itemCount} 份候选人简历待处理，已统一汇总到待筛选列表，请点击链接完成筛选`,
+          content: body,
         },
       },
       {
@@ -504,14 +525,14 @@ function buildFeishuCard(input: {
           {
             tag: 'button',
             type: 'primary',
-            text: { tag: 'plain_text', content: '进入待筛选简历' },
+            text: { tag: 'plain_text', content: button },
             url: input.url,
           },
         ],
       },
       {
         tag: 'note',
-        elements: [{ tag: 'plain_text', content: '发送自 招聘管理智能小助手' }],
+        elements: [{ tag: 'plain_text', content: footer }],
       },
     ],
   };
@@ -1360,6 +1381,7 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
           positionTitle,
           itemCount: pendingCount,
           url,
+          templates: await loadTemplates(db),
         }));
         await deps.store.setBatchLastSentAt(db, nextBatchId, deps.now());
       } catch (error) {
@@ -1779,6 +1801,7 @@ export async function pushResumesToBusinessScreening(
           positionTitle,
           itemCount: pendingCount,
           url,
+          templates: await loadTemplates(db),
         }));
         await deps.store.setBatchLastSentAt(db, batchId, deps.now());
       } catch (error) {

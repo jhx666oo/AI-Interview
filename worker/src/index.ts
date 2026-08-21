@@ -55,7 +55,7 @@ import {
 } from './interview-start/service';
 import { isSmtpConfigured } from './interview-start/smtp';
 import { sendFeishuMail } from './interview-start/feishu-mail';
-import { DEFAULT_TEMPLATES, loadTemplates } from './templates/config';
+import { DEFAULT_TEMPLATES, loadTemplates, renderTemplate } from './templates/config';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
 import { getMiaodaMailSyncConfig } from './mail-sync/config';
@@ -5236,16 +5236,27 @@ app.post('/api/talent-pool/:id/notify-interview', authMiddleware, async (c) => {
     const token = await getFeishuToken(c.env);
     const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
     if (chatId) {
+      const templates = await loadTemplates(c.env.DB as D1Database);
+      const gvars: Record<string, string> = { candidateName: name, position: position || '未指定' };
+      const gTitle = templates.interview_group_notice_title
+        ? renderTemplate(templates.interview_group_notice_title, gvars)
+        : '🎯 面试安排提醒';
+      const gBody = templates.interview_group_notice_body
+        ? renderTemplate(templates.interview_group_notice_body, gvars)
+        : '请相关面试官尽快安排面试。';
+      const gFooter = templates.card_footer
+        ? renderTemplate(templates.card_footer, gvars)
+        : '来自 AI 智能面试系统';
       const msg = {
         msg_type: 'interactive',
         content: JSON.stringify({
           config: { wide_screen_mode: true },
-          header: { title: { tag: 'plain_text', content: `🎯 面试安排提醒` }, template: 'blue' },
+          header: { title: { tag: 'plain_text', content: gTitle }, template: 'blue' },
           elements: [
             { tag: 'div', text: { tag: 'lark_md', content: `**候选人：** ${name}\n**面试岗位：** ${position || '未指定'}` } },
             { tag: 'hr' },
-            { tag: 'div', text: { tag: 'lark_md', content: `请相关面试官尽快安排面试。` } },
-            { tag: 'note', elements: [{ tag: 'plain_text', content: `来自 AI 智能面试系统` }] }
+            { tag: 'div', text: { tag: 'lark_md', content: gBody } },
+            { tag: 'note', elements: [{ tag: 'plain_text', content: gFooter }] }
           ]
         })
       };
@@ -5546,6 +5557,24 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
         const operatorName = currentUser?.name || currentUser?.email || '系统管理员';
         for (const openId of interviewerOpenIds) {
           // 构建卡片内容
+          const templates = await loadTemplates(c.env.DB as D1Database);
+          const ivars: Record<string, string> = {
+            operatorName,
+            candidateName: candidate_name || '',
+            position: positionInterviewers?.title || position_applied || '',
+          };
+          const cardTitle = templates.interview_notice_title
+            ? renderTemplate(templates.interview_notice_title, ivars)
+            : '🎯 面试安排通知';
+          const cardBody = templates.interview_notice_body
+            ? renderTemplate(templates.interview_notice_body, ivars)
+            : `${operatorName} 为候选人安排了面试，请留意后续会议邀请，及时查看候选人简历，面试结束后在系统内填写评价。`;
+          const cardButton = templates.interview_notice_button
+            ? renderTemplate(templates.interview_notice_button, ivars)
+            : '🔍 查看候选人';
+          const cardFooter = templates.card_footer
+            ? renderTemplate(templates.card_footer, ivars)
+            : `${operatorName} | AI 智能面试系统`;
           const cardElements: any[] = [
             { tag: 'div', text: { tag: 'lark_md', content: `**候选人：** ${candidate_name}\n**面试岗位：** ${matchedReqTitle || position_applied || '未指定'}` } },
             { tag: 'hr' },
@@ -5561,14 +5590,14 @@ app.post('/api/interviews/create-from-talent', authMiddleware, async (c) => {
           }
 
           cardElements.push(
-            { tag: 'div', text: { tag: 'lark_md', content: `${operatorName} 为候选人安排了面试，请留意后续会议邀请，及时查看候选人简历，面试结束后在系统内填写评价。` } },
-            { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🔍 查看候选人' }, type: 'primary', url: `https://ai-interview-88r.pages.dev/talent-pool` }] },
-            { tag: 'note', elements: [{ tag: 'plain_text', content: `${operatorName} | AI 智能面试系统` }] }
+            { tag: 'div', text: { tag: 'lark_md', content: cardBody } },
+            { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: cardButton }, type: 'primary', url: `https://ai-interview-88r.pages.dev/talent-pool` }] },
+            { tag: 'note', elements: [{ tag: 'plain_text', content: cardFooter }] }
           );
 
           const cardContent = {
             config: { wide_screen_mode: true },
-            header: { title: { tag: 'plain_text', content: `🎯 面试安排通知` }, template: 'blue' },
+            header: { title: { tag: 'plain_text', content: cardTitle }, template: 'blue' },
             elements: cardElements,
           };
 
@@ -12841,10 +12870,19 @@ async function pushCandidateToGroup(env: Env, record: any): Promise<void> {
     const analysis = (record.ai_analysis || '').substring(0, 800);
     const posNameShort = posName.length > 20 ? posName.substring(0, 20) + '…' : posName;
 
+    const templates = await loadTemplates(env.DB as D1Database);
+    const ncVars: Record<string, string> = { candidateName: record.candidate_name || '' };
+    const ncTitle = templates.new_candidate_card_title
+      ? renderTemplate(templates.new_candidate_card_title, ncVars)
+      : `🆕 新候选人: ${record.candidate_name}`;
+    const ncFooter = templates.card_footer
+      ? renderTemplate(templates.card_footer, ncVars)
+      : '系统自动推送';
+
     const cardContent = {
       config: { wide_screen_mode: true },
       header: {
-        title: { tag: 'plain_text', content: `🆕 新候选人: ${record.candidate_name}` },
+        title: { tag: 'plain_text', content: ncTitle },
         template: 'indigo'
       },
       elements: [
@@ -12863,7 +12901,7 @@ async function pushCandidateToGroup(env: Env, record: any): Promise<void> {
         { tag: 'hr' },
         {
           tag: 'note',
-          elements: [{ tag: 'plain_text', content: `系统自动推送 | ${new Date().toLocaleString('zh-CN')}` }]
+          elements: [{ tag: 'plain_text', content: `${ncFooter} | ${new Date().toLocaleString('zh-CN')}` }]
         }
       ]
     };

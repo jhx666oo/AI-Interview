@@ -13,6 +13,16 @@ const PLACEHOLDERS: Record<string, string[]> = {
   candidate_email_html: ['candidateName', 'position', 'timeLabel', 'typeLabel', 'location', 'interviewerRow', 'meetingSection', 'meetingSectionTitle', 'fromName'],
   candidate_email_text: ['candidateName', 'position', 'timeLabel', 'typeLabel', 'location', 'interviewerText', 'meetingText'],
   interviewer_reminder: ['candidateName', 'position', 'interviewTime'],
+  business_card_title: ['position'],
+  business_card_body: ['count', 'position'],
+  business_card_button: ['position'],
+  interview_notice_title: ['operatorName', 'candidateName', 'position'],
+  interview_notice_body: ['operatorName', 'candidateName', 'position'],
+  interview_notice_button: ['operatorName', 'candidateName', 'position'],
+  interview_group_notice_title: ['candidateName', 'position'],
+  interview_group_notice_body: ['candidateName', 'position'],
+  new_candidate_card_title: ['candidateName'],
+  card_footer: ['candidateName', 'position'],
 };
 
 const PlaceholderHint: React.FC<{ keys: string[] }> = ({ keys }) => (
@@ -103,6 +113,62 @@ const TemplatesPage: React.FC = () => {
                         <TextArea rows={8} placeholder={'面试提醒：{{candidateName}}\n岗位：{{position}}\n面试时间：{{interviewTime}}'} />
                       </Form.Item>
                       <PlaceholderHint keys={PLACEHOLDERS.interviewer_reminder} />
+                    </>
+                  ),
+                },
+                {
+                  key: 'card',
+                  label: '飞书卡片（业务推送/面试通知）',
+                  children: (
+                    <>
+                      <Form.Item name="business_card_title" label="业务筛选推送卡片标题"
+                        rules={[{ required: true, message: '请填写卡片标题' }]}>
+                        <Input placeholder="简历筛选待处理：{{position}}" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.business_card_title} />
+                      <Form.Item name="business_card_body" label="业务筛选推送卡片正文"
+                        rules={[{ required: true, message: '请填写卡片正文' }]}>
+                        <TextArea rows={3} placeholder="您有 {{count}} 份候选人简历待处理，已统一汇总到待筛选列表，请点击链接完成筛选" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.business_card_body} />
+                      <Form.Item name="business_card_button" label="业务筛选推送卡片按钮文案">
+                        <Input placeholder="进入待筛选简历" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.business_card_button} />
+                      <Divider />
+                      <Form.Item name="interview_notice_title" label="面试安排通知卡片标题（发给面试官）"
+                        rules={[{ required: true, message: '请填写卡片标题' }]}>
+                        <Input placeholder="🎯 面试安排通知" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.interview_notice_title} />
+                      <Form.Item name="interview_notice_body" label="面试安排通知卡片正文"
+                        rules={[{ required: true, message: '请填写卡片正文' }]}>
+                        <TextArea rows={3} placeholder="{{operatorName}} 为候选人安排了面试，请留意后续会议邀请，及时查看候选人简历，面试结束后在系统内填写评价。" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.interview_notice_body} />
+                      <Form.Item name="interview_notice_button" label="面试安排通知卡片按钮文案">
+                        <Input placeholder="🔍 查看候选人" />
+                      </Form.Item>
+                      <Divider />
+                      <Form.Item name="interview_group_notice_title" label="面试安排提醒群卡片标题"
+                        rules={[{ required: true, message: '请填写卡片标题' }]}>
+                        <Input placeholder="🎯 面试安排提醒" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.interview_group_notice_title} />
+                      <Form.Item name="interview_group_notice_body" label="面试安排提醒群卡片引导语">
+                        <Input placeholder="请相关面试官尽快安排面试。" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.interview_group_notice_body} />
+                      <Divider />
+                      <Form.Item name="new_candidate_card_title" label="新候选人推送卡片标题"
+                        rules={[{ required: true, message: '请填写卡片标题' }]}>
+                        <Input placeholder="🆕 新候选人：{{candidateName}}" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.new_candidate_card_title} />
+                      <Form.Item name="card_footer" label="卡片统一落款">
+                        <Input placeholder="发送自 招聘管理智能小助手" />
+                      </Form.Item>
+                      <PlaceholderHint keys={PLACEHOLDERS.card_footer} />
                     </>
                   ),
                 },

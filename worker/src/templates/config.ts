@@ -26,6 +26,26 @@ export interface DefaultTemplates {
   candidate_email_text: string;
   /** 面试官面试提醒（飞书文本消息）—— 会议链接/地点/卡片链接行由系统自动追加 */
   interviewer_reminder: string;
+  /** 业务筛选推送卡片 —— 标题（发给业务负责人，{{position}} 岗位名） */
+  business_card_title: string;
+  /** 业务筛选推送卡片 —— 正文（{{count}} 简历份数，{{position}} 岗位名） */
+  business_card_body: string;
+  /** 业务筛选推送卡片 —— 按钮文案 */
+  business_card_button: string;
+  /** 面试安排通知卡片（发给面试官）—— 标题 */
+  interview_notice_title: string;
+  /** 面试安排通知卡片 —— 正文（{{operatorName}} 操作人，{{candidateName}} 候选人，{{position}} 岗位） */
+  interview_notice_body: string;
+  /** 面试安排通知卡片 —— 查看候选人按钮文案 */
+  interview_notice_button: string;
+  /** 面试安排提醒群卡片 —— 标题（{{candidateName}} 候选人，{{position}} 岗位） */
+  interview_group_notice_title: string;
+  /** 面试安排提醒群卡片 —— 引导语（发给招聘群） */
+  interview_group_notice_body: string;
+  /** 新候选人推送卡片 —— 标题（发给招聘群，{{candidateName}} 候选人） */
+  new_candidate_card_title: string;
+  /** 飞书卡片统一落款（note 行） */
+  card_footer: string;
   [key: string]: string;
 }
 
@@ -74,6 +94,17 @@ export const DEFAULT_TEMPLATES: DefaultTemplates = {
   ].join('\n'),
 
   interviewer_reminder: '面试提醒：{{candidateName}}\n岗位：{{position}}\n面试时间：{{interviewTime}}',
+
+  business_card_title: '简历筛选待处理：{{position}}',
+  business_card_body: '您有 {{count}} 份候选人简历待处理，已统一汇总到待筛选列表，请点击链接完成筛选',
+  business_card_button: '进入待筛选简历',
+  interview_notice_title: '🎯 面试安排通知',
+  interview_notice_body: '{{operatorName}} 为候选人安排了面试，请留意后续会议邀请，及时查看候选人简历，面试结束后在系统内填写评价。',
+  interview_notice_button: '🔍 查看候选人',
+  interview_group_notice_title: '🎯 面试安排提醒',
+  interview_group_notice_body: '请相关面试官尽快安排面试。',
+  new_candidate_card_title: '🆕 新候选人：{{candidateName}}',
+  card_footer: '发送自 招聘管理智能小助手',
 };
 
 /** 从 system_configs 读取模板配置，未配置/解析失败时回退默认模板（与线上覆盖合并） */
