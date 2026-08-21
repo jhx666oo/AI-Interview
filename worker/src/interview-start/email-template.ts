@@ -3,7 +3,10 @@
  * 内容包含：面试时间 / 岗位 / 形式 / 地点 / 面试官、视频会议链接。
  * 中文、简单内联样式，兼容主流邮箱客户端。
  * 注意：邮件只含会议链接，不附带候选人免登录详情链接（该链接是面试官协作/评价用的）。
+ * 主题/正文可通过系统设置「消息模板」在线编辑（占位符见 templates/config.ts）。
  */
+
+import { renderTemplate, type DefaultTemplates } from '../templates/config';
 
 export interface InterviewInvitationEmailInput {
   candidateName: string;
@@ -20,6 +23,8 @@ export interface InterviewInvitationEmailInput {
   offline?: boolean;
   /** 发件方名称（如公司名/招聘系统名） */
   fromName: string;
+  /** 系统设置中的消息模板（loadTemplates 已合并默认值）；缺省用内置默认模板 */
+  templates?: DefaultTemplates;
 }
 
 export interface BuiltEmail {
@@ -45,20 +50,60 @@ export function buildInterviewInvitationEmail(input: InterviewInvitationEmailInp
   const timeLabel = input.timeLabel || '待定（请与 HR 确认）';
   const typeLabel = input.interviewTypeLabel || '线上面试';
   const isOffline = input.offline === true || typeLabel === '线下面试';
+  const location = input.location || (input.meetingUrl ? '线上（见下方会议链接）' : (isOffline ? '请与 HR 确认' : '—'));
+  const tpl = input.templates;
+  const t = (key: keyof DefaultTemplates) => (tpl && tpl[key]) || '';
+
   // 线上面试：附会议链接；线下面试：提示按地点到场，不发链接（offline 优先）
-  let meetingLine: string;
+  let meetingSection: string;
   if (!isOffline && input.meetingUrl) {
-    meetingLine = `<p style="margin:4px 0 0;">${linkButton(input.meetingUrl, '进入视频会议')}</p>`;
+    meetingSection = `<p style="margin:4px 0 0;">${linkButton(input.meetingUrl, '进入视频会议')}</p>`;
   } else if (isOffline) {
-    meetingLine = '<p style="margin:4px 0 0;color:#94A3B8;font-size:13px;">本次为线下面试，请按上方面试地点按时到场。</p>';
+    meetingSection = '<p style="margin:4px 0 0;color:#94A3B8;font-size:13px;">本次为线下面试，请按上方面试地点按时到场。</p>';
   } else {
-    meetingLine = '<p style="margin:4px 0 0;color:#94A3B8;font-size:13px;">会议链接将另行提供，请保持电话畅通。</p>';
+    meetingSection = '<p style="margin:4px 0 0;color:#94A3B8;font-size:13px;">会议链接将另行提供，请保持电话畅通。</p>';
   }
   const meetingSectionTitle = isOffline ? '面试安排' : '视频会议';
+  const interviewerRow = input.interviewerName ? infoRow('面试官', input.interviewerName) : '';
+  const interviewerText = input.interviewerName ? `面试官：${input.interviewerName}` : '';
+  const meetingText = input.meetingUrl
+    ? `视频会议：${input.meetingUrl}`
+    : (isOffline ? '本次为线下面试，请按面试地点按时到场。' : '会议链接将另行提供，请保持电话畅通。');
 
-  const subject = `【面试邀请】${name} - ${position} ${input.timeLabel ? `（${input.timeLabel}）` : ''}`;
+  const vars: Record<string, string> = {
+    candidateName: name,
+    position,
+    timeLabel,
+    typeLabel,
+    location,
+    interviewerRow,
+    interviewerText,
+    meetingSection,
+    meetingSectionTitle,
+    meetingText,
+    fromName: input.fromName || '招聘系统',
+  };
 
-  const html = `<div style="font-family:'PingFang SC','Microsoft YaHei',Arial,sans-serif;max-width:640px;margin:0 auto;background:#FFFFFF;">
+  const subject = t('candidate_email_subject')
+    ? renderTemplate(t('candidate_email_subject'), vars)
+    : `【面试邀请】${name} - ${position} ${input.timeLabel ? `（${input.timeLabel}）` : ''}`;
+  const html = t('candidate_email_html')
+    ? renderTemplate(t('candidate_email_html'), vars)
+    : buildDefaultHtml(input, { name, position, timeLabel, typeLabel, location, interviewerRow, meetingSectionTitle, meetingSection });
+  const text = t('candidate_email_text')
+    ? renderTemplate(t('candidate_email_text'), vars)
+    : buildDefaultText({ name, position, timeLabel, typeLabel, location, interviewerText, meetingText });
+
+  return { subject, html, text };
+}
+
+/** 内置默认 HTML 邮件正文（templates 未配置时使用） */
+function buildDefaultHtml(
+  input: InterviewInvitationEmailInput,
+  parts: { name: string; position: string; timeLabel: string; typeLabel: string; location: string; interviewerRow: string; meetingSectionTitle: string; meetingSection: string },
+): string {
+  const { name, position, timeLabel, typeLabel, location, interviewerRow, meetingSectionTitle, meetingSection } = parts;
+  return `<div style="font-family:'PingFang SC','Microsoft YaHei',Arial,sans-serif;max-width:640px;margin:0 auto;background:#FFFFFF;">
   <div style="background:linear-gradient(135deg,#2563EB,#1D4ED8);padding:24px 28px;border-radius:12px 12px 0 0;">
     <div style="color:#FFFFFF;font-size:20px;font-weight:600;">面试邀请</div>
     <div style="color:#BFDBFE;font-size:13px;margin-top:6px;">${input.fromName}</div>
@@ -69,12 +114,12 @@ export function buildInterviewInvitationEmail(input: InterviewInvitationEmailInp
       ${infoRow('面试岗位', position)}
       ${infoRow('面试时间', timeLabel)}
       ${infoRow('面试形式', typeLabel)}
-      ${infoRow('面试地点', input.location || (input.meetingUrl ? '线上（见下方会议链接）' : (isOffline ? '请与 HR 确认' : '—')))}
-      ${input.interviewerName ? infoRow('面试官', input.interviewerName) : ''}
+      ${infoRow('面试地点', location)}
+      ${interviewerRow}
     </table>
     <div style="margin-top:18px;">
       <div style="font-size:14px;font-weight:600;color:#0F172A;">${meetingSectionTitle}</div>
-      ${meetingLine}
+      ${meetingSection}
     </div>
     <div style="margin-top:20px;padding:12px 14px;background:#FFFBEB;border-radius:8px;font-size:13px;color:#92400E;line-height:1.7;">
       温馨提示：<br/>
@@ -84,20 +129,22 @@ export function buildInterviewInvitationEmail(input: InterviewInvitationEmailInp
     </div>
   </div>
 </div>`;
+}
 
-  const text = [
+/** 内置默认纯文本正文 */
+function buildDefaultText(parts: { name: string; position: string; timeLabel: string; typeLabel: string; location: string; interviewerText: string; meetingText: string }): string {
+  const { name, position, timeLabel, typeLabel, location, interviewerText, meetingText } = parts;
+  return [
     `${name} 您好，感谢您应聘「${position}」。您的面试安排如下：`,
     '',
     `面试岗位：${position}`,
     `面试时间：${timeLabel}`,
     `面试形式：${typeLabel}`,
-    `面试地点：${input.location || (input.meetingUrl ? '线上（见会议链接）' : (isOffline ? '请与 HR 确认' : '—'))}`,
-    input.interviewerName ? `面试官：${input.interviewerName}` : '',
+    `面试地点：${location}`,
+    interviewerText,
     '',
-    input.meetingUrl ? `视频会议：${input.meetingUrl}` : (isOffline ? '本次为线下面试，请按面试地点按时到场。' : '会议链接将另行提供，请保持电话畅通。'),
+    meetingText,
     '',
     '温馨提示：请提前 10 分钟入场，如需调整时间请回复本邮件或联系 HR。',
   ].filter((line) => line !== '').join('\n');
-
-  return { subject, html, text };
 }

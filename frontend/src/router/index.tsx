@@ -27,6 +27,7 @@ const UsersList = lazy(() => import('../pages/Settings/Users'));
 const ProfileSettings = lazy(() => import('../pages/Settings/Profile'));
 const SystemSettingsPage = lazy(() => import('../pages/Settings/System'));
 const MailSettings = lazy(() => import('../pages/Settings/Mail'));
+const TemplatesSettings = lazy(() => import('../pages/Settings/Templates'));
 const RequisitionsList = lazy(() => import('../pages/Requisitions/List'));
 const OnboardingList = lazy(() => import('../pages/Onboarding/List'));
 const ProbationList = lazy(() => import('../pages/Probation/List'));
@@ -183,6 +184,10 @@ const router = createBrowserRouter([
       {
         path: 'settings/mail',
         element: <RoleRoute roles={['admin']}><LazyPage><MailSettings /></LazyPage></RoleRoute>,
+      },
+      {
+        path: 'settings/templates',
+        element: <RoleRoute roles={['admin']}><LazyPage><TemplatesSettings /></LazyPage></RoleRoute>,
       },
       {
         path: 'requisitions',

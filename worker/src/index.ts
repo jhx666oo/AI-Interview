@@ -55,6 +55,7 @@ import {
 } from './interview-start/service';
 import { isSmtpConfigured } from './interview-start/smtp';
 import { sendFeishuMail } from './interview-start/feishu-mail';
+import { DEFAULT_TEMPLATES, loadTemplates } from './templates/config';
 import { createPublicQueryRoutes } from './public-api/routes';
 import { resolveInterviewerName } from './public-api/helpers';
 import { getMiaodaMailSyncConfig } from './mail-sync/config';
@@ -9708,6 +9709,35 @@ app.post('/api/settings/system/test', authMiddleware, requireRole(['admin']), as
   }
 });
 
+// 对外消息模板（系统设置 → 消息模板）：候选人邮件 / 面试官提醒等，全部可在线编辑
+app.get('/api/settings/templates', authMiddleware, async (c) => {
+  const templates = await loadTemplates(c.env.DB as D1Database);
+  return c.json({ templates, defaults: DEFAULT_TEMPLATES });
+});
+
+app.put('/api/settings/templates', authMiddleware, async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const incoming = (body?.templates && typeof body.templates === 'object') ? body.templates : {};
+    const merged: Record<string, string> = {};
+    for (const key of Object.keys(DEFAULT_TEMPLATES)) {
+      const value = incoming[key];
+      merged[key] = (typeof value === 'string') ? value : DEFAULT_TEMPLATES[key];
+    }
+    const row = await c.env.DB.prepare('SELECT id FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+    if (row) {
+      await c.env.DB.prepare('UPDATE system_configs SET template_configs = ?, updated_at = ? WHERE id = ?')
+        .bind(JSON.stringify(merged), now(), row.id).run();
+    } else {
+      await c.env.DB.prepare('INSERT INTO system_configs (id, template_configs, updated_at) VALUES (?, ?, ?)')
+        .bind(crypto.randomUUID(), JSON.stringify(merged), now()).run();
+    }
+    return c.json({ ok: true, templates: merged });
+  } catch (e: any) {
+    return c.json({ detail: '保存模板失败：' + e?.message || e }, 500);
+  }
+});
+
 app.get('/api/settings/mail', authMiddleware, async (c) => {
   const row = await c.env.DB.prepare('SELECT smtp_host, smtp_port, smtp_username, smtp_password, mail_from, mail_from_name, mail_enabled, frontend_url FROM system_configs ORDER BY updated_at DESC LIMIT 1').first();
   const data = transformRow(row) || {};
@@ -11227,6 +11257,8 @@ app.get('/api/init/status', authMiddleware, requireRole(['admin']), async (c) =>
     "ALTER TABLE users ADD COLUMN feishu_refresh_token TEXT DEFAULT ''",
     "ALTER TABLE users ADD COLUMN feishu_token_expires_at INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN feishu_token_failed_at TEXT",
+    // 对外消息模板（系统设置 → 消息模板 可在线编辑：候选人邮件 / 面试官提醒）
+    "ALTER TABLE system_configs ADD COLUMN template_configs TEXT DEFAULT '{}'",
     "ALTER TABLE positions ADD COLUMN primary_interviewer TEXT DEFAULT ''",
     "ALTER TABLE positions ADD COLUMN secondary_interviewer TEXT DEFAULT ''",
     // 面试自动化灰度开关：岗位 AI 初筛通过后是否自动进入业务筛选/面试推进

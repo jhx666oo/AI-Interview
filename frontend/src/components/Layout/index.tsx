@@ -130,6 +130,12 @@ const AppLayout: React.FC = () => {
       label: '邮件设置',
       roles: ['admin'],
     },
+    {
+      key: '/settings/templates',
+      icon: <MailOutlined />,
+      label: '消息模板',
+      roles: ['admin'],
+    },
   ];
 
   const filteredMenuItems = (menuItems || []).filter(item => {
@@ -144,7 +150,9 @@ const AppLayout: React.FC = () => {
         ? '系统设置'
         : location.pathname.startsWith('/settings/mail')
           ? '邮件设置'
-          : menuItems.find(item => item.key === location.pathname)?.label || 'AI 面试助手';
+          : location.pathname.startsWith('/settings/templates')
+            ? '消息模板'
+            : menuItems.find(item => item.key === location.pathname)?.label || 'AI 面试助手';
 
   const userMenuItems: any[] = [
     {

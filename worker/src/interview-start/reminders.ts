@@ -12,6 +12,7 @@ import {
 } from '../feishu-notifications/reminder-source';
 import { buildInterviewReminderView } from '../feishu-notifications/interview-reminder';
 import { createOrReuseInterviewCardLink } from '../interview-card/routes';
+import { loadTemplates, renderTemplate } from '../templates/config';
 
 export interface InterviewReminderDeps {
   now: () => string;
@@ -110,11 +111,13 @@ export async function sendInterviewerInterviewReminder(
     }
 
     const view = buildInterviewReminderView(source);
-    const lines = [
-      `面试提醒：${view.name}`,
-      `岗位：${view.position}`,
-      `面试时间：${view.interviewTime}`,
-    ];
+    // 固定行文案走系统设置「消息模板」的 interviewer_reminder（可在线编辑），缺省回退内置模板
+    const templates = await loadTemplates(db);
+    const lines = renderTemplate(templates.interviewer_reminder, {
+      candidateName: view.name,
+      position: view.position,
+      interviewTime: view.interviewTime,
+    }).split('\n').map((l) => l.replace(/\s+$/, '')).filter((l) => l.trim() !== '');
     // 线上面试：附会议链接；线下面试：附地点提示，不带链接
     if (text(input.meetingLink)) {
       lines.push(`会议链接（${input.interviewTypeLabel || '线上面试'}）：${text(input.meetingLink)}`);

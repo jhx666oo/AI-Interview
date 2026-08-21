@@ -9,6 +9,7 @@
 
 import { buildInterviewInvitationEmail, type BuiltEmail } from './email-template';
 import { loadSmtpConfig, sendSmtpMail, type SmtpDeps } from './smtp';
+import { loadTemplates } from '../templates/config';
 
 export const DEFAULT_FRONTEND_URL = 'https://ai-interview-88r.pages.dev';
 
@@ -198,6 +199,7 @@ export async function sendCandidateInterviewEmail(
     meetingUrl: input.meetingUrl,
     offline: input.offline,
     fromName: input.fromName,
+    templates: await loadTemplates(db),
   });
 
   // 优先飞书邮件 API 通道（需发件人绑定飞书）；失败自动降级 SMTP
