@@ -162,7 +162,7 @@ const InterviewsList: React.FC = () => {
   const [slotLoading, setSlotLoading] = useState(false);
   const [slotReason, setSlotReason] = useState<string | null>(null);
   // 空闲会议室（下拉选项，C5/D1 栋优先，默认选 D1 第一个）
-  const [availableRooms, setAvailableRooms] = useState<Array<{ room_id: string; name: string; building: string }>>([]);
+  const [availableRooms, setAvailableRooms] = useState<Array<{ room_id: string; name: string; building: string; level_name?: string }>>([]);
   // 上次自动填充的会议室名：切换时段时仅当当前值仍是自动填充值才覆盖（手动改过则不覆盖）
   const lastAutoRoomRef = useRef<string>('');
   const [positions, setPositions] = useState<PositionAssignment[]>([]);
@@ -539,7 +539,7 @@ const InterviewsList: React.FC = () => {
   const autoFillMeetingRoom = async (startAt: string) => {
     try {
       const res = await request.get('/meeting-rooms/available', { params: { start_at: startAt, duration_minutes: 60 } });
-      const rooms = (res?.rooms || []) as Array<{ room_id: string; name: string; building: string }>;
+      const rooms = (res?.rooms || []) as Array<{ room_id: string; name: string; building: string; level_name?: string }>;
       setAvailableRooms(rooms);
       const pick = rooms.find((r) => r.building === 'D1') || rooms[0];
       if (!pick) return;
