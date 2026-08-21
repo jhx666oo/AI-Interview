@@ -53,6 +53,8 @@ export interface MeetingRoomsDeps {
   /** 默认 D5 关键词，可注入覆盖（保留兼容，未使用） */
   d5Pattern?: RegExp;
   maxRooms?: number;
+  /** 每城市拉取结果回调（诊断用）：城市名 + 房间数 + 错误信息 */
+  onCityResult?: (city: string, count: number, error?: string) => void;
 }
 
 interface RoomLevelItem {
@@ -123,6 +125,8 @@ export async function listMeetingRooms(
     if (rooms.length >= maxRooms) break;
     let pageToken = '';
     let page = 0;
+    let cityError: string | undefined;
+    let cityCount = 0;
     do {
       page += 1;
       const url = `${FEISHU_BASE}/vc/v1/rooms?page_size=100&room_level_id=${encodeURIComponent(city.room_level_id)}${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
@@ -131,7 +135,8 @@ export async function listMeetingRooms(
         data = await feishuGet(url, token, fetchImpl);
       } catch (e: any) {
         // 单个城市失败不阻塞其他城市
-        console.warn(`[meeting-rooms] 城市「${city.name}」会议室拉取失败: ${e?.message || e}`);
+        cityError = e?.message || String(e);
+        console.warn(`[meeting-rooms] 城市「${city.name}」会议室拉取失败: ${cityError}`);
         break;
       }
       const pageRooms = Array.isArray(data.data?.rooms) ? data.data.rooms : (Array.isArray(data.data?.items) ? data.data.items : []);
@@ -147,9 +152,11 @@ export async function listMeetingRooms(
           level_name: Array.isArray(r.path) && r.path.length > 0 ? (cityMap.get(String(r.path[0])) || city.name) : city.name,
         });
       }
+      cityCount += pageRooms.length;
       pageToken = data.data?.page_token || '';
       if (pageRooms.length === 0 && pageToken) break;
     } while (pageToken && page < 5 && rooms.length < maxRooms);
+    try { deps.onCityResult?.(city.name, cityCount, cityError); } catch { /* callback must never break */ }
   }
   return rooms;
 }

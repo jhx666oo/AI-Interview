@@ -1665,8 +1665,13 @@ app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
     const token = await getFeishuToken(c.env);
     let has_d5 = false;
     let rooms: any[] = [];
+    let cityDiagnostics: Array<{ city: string; count: number; error?: string }> = [];
     try {
-      const found = await findAvailableMeetingRooms({ token, startTs, endTs });
+      const found = await findAvailableMeetingRooms({ token, startTs, endTs }, {
+        onCityResult: (city: string, count: number, error?: string) => {
+          cityDiagnostics.push({ city, count, error });
+        },
+      });
       has_d5 = found.has_d5;
       rooms = found.rooms;
     } catch (e: any) {
@@ -1677,6 +1682,8 @@ app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
       ok: true,
       has_d5,
       rooms: rooms.map((r) => ({ room_id: r.room_id, name: r.name, path: r.path, capacity: r.capacity, building: (r as any).building || '', level_name: (r as any).level_name || '' })),
+      // 诊断：每城市拉取结果（临时排查用，后续可移除）
+      debug_cities: cityDiagnostics,
     });
   } catch (e: any) {
     return c.json({ ok: true, rooms: [], reason: `空闲会议室查询失败：${e?.message || e}` });
