@@ -10434,10 +10434,48 @@ async function batchSyncFeishuOpenIds(env: Env, names: string[]): Promise<{ sync
       synced++;
       details.push(`${name} → ${found.open_id}`);
     } else {
-      notFound.push(name);
+      // 兜底：按姓名搜索（不依赖通讯录授权范围；需要 contact:user.search:readonly 或 contact:user.base:readonly）
+      const openId = await searchFeishuUserByQuery(token, name);
+      if (openId) {
+        await env.DB.prepare(
+          `INSERT INTO interviewer_mappings (id, name, open_id, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET open_id = excluded.open_id, updated_at = excluded.updated_at`
+        ).bind(`im_${openId}`, name, openId, ts).run();
+        synced++;
+        details.push(`${name} → ${openId}(search)`);
+      } else {
+        notFound.push(name);
+      }
     }
   }
   return { synced, notFound, details };
+}
+
+/**
+ * 按姓名搜索飞书用户 open_id（POST /contact/v3/users/search）。
+ * 与「按授权范围拉全量」互补：通讯录授权范围为空时也可按姓名搜到人。
+ * 返回精确姓名命中优先，否则返回首条候选；搜不到返回 null。
+ */
+async function searchFeishuUserByQuery(token: string, name: string): Promise<string | null> {
+  try {
+    const resp = await fetch('https://open.feishu.cn/open-apis/contact/v3/users/search?page_size=20&user_id_type=open_id', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: name }),
+    }).then(r => r.json()) as any;
+    if (resp.code !== 0) {
+      console.warn(`[BatchSyncOpenIds] 搜索「${name}」失败: ${resp.code} ${resp.msg}`);
+      return null;
+    }
+    const items: Array<{ name?: string; open_id?: string }> = resp?.data?.items || [];
+    if (items.length === 0) return null;
+    const exact = items.find(u => u.name === name);
+    return (exact || items[0])?.open_id || null;
+  } catch (e: any) {
+    console.warn(`[BatchSyncOpenIds] 搜索「${name}」异常: ${e?.message || e}`);
+    return null;
+  }
 }
 
 /**
