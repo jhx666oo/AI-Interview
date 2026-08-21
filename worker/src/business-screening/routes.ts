@@ -941,6 +941,8 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
    * 业务卡片「通过」后自动创建待安排面试记录（awaiting_schedule），
    * 使面试管理列表直接出现该候选人并可点「开始面试」。
    * 幂等：同一简历已有（待安排/已安排/进行中）面试记录则跳过。
+   * 面试官：从岗位配置（positions.primary_interviewer / secondary_interviewer）解析并写入，
+   * 保证后续「安排面试/开始面试」的会议参与人与面试官提醒能真实触达面试官。
    */
   async function ensureApprovedInterview(db: D1Database, resumeId: string, deps: BusinessScreeningRouteDeps) {
     try {
@@ -952,19 +954,42 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
         'SELECT id, candidate_name, position_applied, mapped_position FROM resumes WHERE id = ?',
       ).bind(resumeId).first() as any;
       if (!resume) return;
+      // 解析岗位配置的面试官（按标准岗位名匹配，口径与面试管理列表展示一致）
+      let primary = '';
+      let secondary = '';
+      try {
+        const rawTitle = text(resume.mapped_position || resume.position_applied);
+        if (rawTitle) {
+          const posRows = await queryAll<{ title: string; primary_interviewer: string | null; secondary_interviewer: string | null }>(
+            db,
+            `SELECT title, primary_interviewer, secondary_interviewer FROM positions`,
+            [],
+          );
+          const matched = posRows.find((p) => positionNamesMatch(p.title, rawTitle));
+          if (matched) {
+            primary = text(matched.primary_interviewer);
+            secondary = text(matched.secondary_interviewer);
+          }
+        }
+      } catch (e: any) {
+        console.error('[BusinessScreening] 解析岗位面试官失败:', e?.message || e);
+      }
       const interviewId = deps.uuid();
       const nowIso = deps.now();
       await db.prepare(
-        `INSERT INTO interviews (id, resume_id, candidate_name, position_applied, status, created_at)
-         VALUES (?, ?, ?, ?, 'awaiting_schedule', ?)`,
+        `INSERT INTO interviews (id, resume_id, candidate_name, position_applied, status, created_at, primary_interviewer, secondary_interviewer, interviewer)
+         VALUES (?, ?, ?, ?, 'awaiting_schedule', ?, ?, ?, ?)`,
       ).bind(
         interviewId,
         resumeId,
         resume.candidate_name || '',
         resume.mapped_position || resume.position_applied || '',
         nowIso,
+        primary,
+        secondary,
+        primary || null,
       ).run();
-      console.log(`[BusinessScreening] 已为通过候选人自动创建待安排面试 ${interviewId}（${resume.candidate_name || resumeId}）`);
+      console.log(`[BusinessScreening] 已为通过候选人自动创建待安排面试 ${interviewId}（${resume.candidate_name || resumeId}），一面=${primary || '未配置'} 二面=${secondary || '未配置'}`);
     } catch (e: any) {
       console.error('[BusinessScreening] 自动创建面试记录失败:', e?.message || e);
     }

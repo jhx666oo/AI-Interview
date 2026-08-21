@@ -5631,6 +5631,28 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
     let meetingLink = String(interview.meeting_link || '').trim();
     let eventId = String(interview.feishu_event_id || '').trim();
 
+    // 面试官：优先数据库已存值；为空时从岗位配置解析（与面试管理列表展示口径一致）并回写，
+    // 保证会议参与人邀请与面试官提醒真实触达（业务通过自动创建的记录曾缺失面试官）。
+    let primaryInterviewer = String(interview.primary_interviewer || '').trim();
+    let secondaryInterviewer = String(interview.secondary_interviewer || '').trim();
+    if (!primaryInterviewer && !secondaryInterviewer) {
+      try {
+        const positionName = String(body?.position_applied || interview.position_applied || '').trim();
+        const position = await findPositionByName(db, positionName);
+        if (position) {
+          primaryInterviewer = String(position.primary_interviewer || '').trim();
+          secondaryInterviewer = String(position.secondary_interviewer || '').trim();
+          if (primaryInterviewer) {
+            await db.prepare(
+              'UPDATE interviews SET primary_interviewer = ?, secondary_interviewer = ?, interviewer = ?, updated_at = ? WHERE id = ?',
+            ).bind(primaryInterviewer, secondaryInterviewer, primaryInterviewer, now(), id).run();
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[schedule-direct] 岗位面试官解析失败，跳过: ${e?.message || e}`);
+      }
+    }
+
     // 线下面试：不建飞书会议（无会议链接）；线上面试：建/改飞书会议
     if (!isOffline) {
       if (eventId) {
@@ -5645,7 +5667,7 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
         // 日程参与人：主/副面试官（解析到飞书 open_id 才邀请，失败不阻塞），
         // 使日程自带的「面试前 30 分钟提醒」能触达面试官（第二次提醒）。
         const attendeeNames = [...new Set(
-          [String(interview.primary_interviewer || '').trim(), String(interview.secondary_interviewer || '').trim()].filter(Boolean),
+          [primaryInterviewer, secondaryInterviewer].filter(Boolean),
         )];
         const attendeeOpenIds: string[] = [];
         for (const name of attendeeNames) {
@@ -5673,7 +5695,7 @@ app.post('/api/interviews/:id/schedule-direct', authMiddleware, requireRole(['ad
     }
 
     await db.prepare(
-      'UPDATE interviews SET interview_time = ?, interview_type = ?, meeting_link = ?, feishu_event_id = ?, interview_location = ?, updated_at = ? WHERE id = ?',
+      "UPDATE interviews SET status = 'scheduled', interview_time = ?, interview_type = ?, meeting_link = ?, feishu_event_id = ?, interview_location = ?, updated_at = ? WHERE id = ?",
     ).bind(timeLabel, interviewType, meetingLink, eventId, interviewLocation, now(), id).run();
 
     // 完整流程（异步）：提醒面试官（线上带会议链接/线下带地点）+ 发候选人邮件（线上带链接/线下不带）
