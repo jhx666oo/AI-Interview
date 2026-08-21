@@ -557,9 +557,10 @@ const InterviewsList: React.FC = () => {
     try {
       const values = await scheduleForm.validateFields();
 
-      // 兜底：推荐时段框手动输入的时间，若日期/时间未被填上则从这里解析（格式如 2026-08-25 14:00）
+      // 优先采用「推荐面试时段」框的值：下拉选中或手动输入（如 2026-08-25 14:00）均可解析，
+      // 手动输入覆盖旧的自动填充日期/时间，保证用户最新意图生效
       let { interview_date: vDate, interview_time: vTime } = values;
-      if ((!vDate || !vTime) && values.interview_time_slot) {
+      if (values.interview_time_slot) {
         const parsed = parseManualSlot(values.interview_time_slot);
         if (parsed) {
           vDate = parsed.date;
