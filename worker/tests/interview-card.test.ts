@@ -718,15 +718,15 @@ describe('POST /api/public/interview-card/:token/reschedule', () => {
     const token = await createCard(h);
     const res = await h.app.request(`/api/public/interview-card/${token}/reschedule`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ interview_time: '2026-08-21 10:00' }),
+      body: JSON.stringify({ interview_time: '2099-01-01 10:00' }),
     }, h.env);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.interview_time).toBe('2026-08-21 10:00');
+    expect(body.interview_time).toBe('2099-01-01 10:00');
     expect(body.calendar_synced).toBe(false);
     const iv = h.db.interviews.find((r: any) => r.id === 'iv-1');
-    expect(iv.interview_time).toBe('2026-08-21 10:00');
+    expect(iv.interview_time).toBe('2099-01-01 10:00');
   });
 
   it('非法时间格式 → 400；过去时间 → 400', async () => {
