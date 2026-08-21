@@ -1271,6 +1271,18 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
       }));
       if (current) {
         await deps.store.appendBatchItemsIfAbsent(db, nextItems);
+        // 已有条目（INSERT OR IGNORE 跳过）会沿用旧 dispatch group，
+        // 而 markResumesPushed 会把简历的 dispatch_group_id 更新为新组 → 决策时组不一致返回 409。
+        // 统一把该批次待处理条目更新为本次重发的 dispatch group，保持与简历一致。
+        const pendingResumeIds = pendingItems.map((item) => item.resume_id);
+        if (pendingResumeIds.length > 0) {
+          const ph = pendingResumeIds.map(() => '?').join(',');
+          await db.prepare(
+            `UPDATE resume_push_batch_items
+                SET dispatch_group_id = ?, updated_at = ?
+              WHERE batch_id = ? AND resume_id IN (${ph}) AND status = 'pending'`,
+          ).bind(dispatchGroupId, nowIso, nextBatchId, ...pendingResumeIds).run();
+        }
         await deps.store.resetBatchActive(db, nextBatchId);
         await deps.store.refreshBatchExpiry(db, nextBatchId, resolveExpiresAt(nowIso, body.expires_in_days));
         await deps.store.updateBatchPresentation(db, nextBatchId, {
