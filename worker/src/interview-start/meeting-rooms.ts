@@ -203,8 +203,14 @@ export async function findAvailableMeetingRooms(
 ): Promise<FindAvailableRoomsResult> {
   const allRooms = await listMeetingRooms(input.token, deps);
   const priorityRooms = pickPriorityRooms(allRooms);
-  const candidates = (priorityRooms.length ? priorityRooms : allRooms).slice(0, 40);
-  const busyMap = await queryRoomAvailability(input.token, candidates.map((r) => r.room_id), input.startTs, input.endTs, deps);
+  const candidates = (priorityRooms.length ? priorityRooms : allRooms).slice(0, 100);
+  // 忙闲查询按 50 个一批（freebusy/batch_get 对 room_ids 数量有限制）
+  const busyMap: Record<string, any[]> = {};
+  for (let i = 0; i < candidates.length; i += 50) {
+    const batch = candidates.slice(i, i + 50);
+    const part = await queryRoomAvailability(input.token, batch.map((r) => r.room_id), input.startTs, input.endTs, deps);
+    Object.assign(busyMap, part);
+  }
   return {
     has_d5: priorityRooms.length > 0,
     rooms: filterFreeRooms(candidates, busyMap).map((r) => ({ ...r, building: buildingOf(r) })),
