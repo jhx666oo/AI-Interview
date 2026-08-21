@@ -20,6 +20,28 @@ import { buildCreateFromTalentPayload, resolveScheduleInterviewerDefaults, resol
 
 const { Text } = Typography;
 
+/**
+ * 解析手动输入的面试时段文本（如「2026-08-25 14:00」「2026-08-25T14:00」「08-25 14:00」）。
+ * 返回 { date, time }（dayjs），格式不合法返回 null。
+ */
+function parseManualSlot(raw: string): { date: ReturnType<typeof dayjs>; time: ReturnType<typeof dayjs> } | null {
+  const text = (raw || '').trim();
+  if (!text) return null;
+  const m = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})[T\s]+(\d{1,2}):(\d{2})$/);
+  if (m) {
+    const date = dayjs(`${m[1]}-${m[2]}-${m[3]}`);
+    const time = dayjs(`${m[4]}:${m[5]}`, 'HH:mm');
+    return date.isValid() && time.isValid() ? { date, time } : null;
+  }
+  const m2 = text.match(/^(\d{1,2})[-/.](\d{1,2})[T\s]+(\d{1,2}):(\d{2})$/);
+  if (m2) {
+    const date = dayjs(`${dayjs().year()}-${m2[1]}-${m2[2]}`);
+    const time = dayjs(`${m2[3]}:${m2[4]}`, 'HH:mm');
+    return date.isValid() && time.isValid() ? { date, time } : null;
+  }
+  return null;
+}
+
 // =================== 统一候选人面试管理 ===================
 
 const interviewStatusConfig: Record<string, { color: string; text: string }> = {
@@ -534,22 +556,35 @@ const InterviewsList: React.FC = () => {
     if (!scheduleRecord) return;
     try {
       const values = await scheduleForm.validateFields();
+
+      // 兜底：推荐时段框手动输入的时间，若日期/时间未被填上则从这里解析（格式如 2026-08-25 14:00）
+      let { interview_date: vDate, interview_time: vTime } = values;
+      if ((!vDate || !vTime) && values.interview_time_slot) {
+        const parsed = parseManualSlot(values.interview_time_slot);
+        if (parsed) {
+          vDate = parsed.date;
+          vTime = parsed.time;
+          scheduleForm.setFieldsValue({ interview_date: vDate, interview_time: vTime });
+        }
+      }
+      // 安排面试必须要有具体日期和时间（推荐时段下拉选择或手动输入均可）
+      if (!vDate || !vTime) {
+        message.error('请选择或输入面试日期和时间（可在推荐时段输入，如 2026-08-25 14:00）');
+        return;
+      }
+
       const name = scheduleRecord.candidate_name || '该候选人';
       setScheduling(true);
 
       let interviewTime = '';
-      if (values.interview_date && values.interview_time) {
-        interviewTime = `${values.interview_date.format('YYYY-MM-DD')} ${values.interview_time.format('HH:mm')}`;
-      } else if (values.interview_date) {
-        interviewTime = values.interview_date.format('YYYY-MM-DD');
+      if (vDate && vTime) {
+        interviewTime = `${vDate.format('YYYY-MM-DD')} ${vTime.format('HH:mm')}`;
+      } else if (vDate) {
+        interviewTime = vDate.format('YYYY-MM-DD');
       }
 
       if (scheduleRecord.interview_id) {
-        if (!values.interview_date || !values.interview_time) {
-          message.error('自动化安排面试必须填写日期和时间');
-          return;
-        }
-        const localStart = `${values.interview_date.format('YYYY-MM-DD')}T${values.interview_time.format('HH:mm')}:00+08:00`;
+        const localStart = `${vDate.format('YYYY-MM-DD')}T${vTime.format('HH:mm')}:00+08:00`;
         await request.post(`/interviews/${scheduleRecord.interview_id}/schedule-direct`, {
           start_at: new Date(localStart).toISOString(),
           duration_minutes: 60,
@@ -558,19 +593,15 @@ const InterviewsList: React.FC = () => {
         });
       } else {
         // 无面试记录：先创建「待安排」面试，再立即触发自动化安排（建会议链接 + 面试官卡片附简历 + 候选人邮件）
-        if (!values.interview_date || !values.interview_time) {
-          message.error('自动化安排面试必须填写日期和时间');
-          return;
-        }
         const created = await request.post('/interviews/create-from-talent', buildCreateFromTalentPayload({
           record: scheduleRecord,
-          values,
+          values: { ...values, interview_date: vDate, interview_time: vTime },
           defaults: scheduleDefaults,
           interviewTime,
         })) as any;
         const interviewId = created?.id || created?.interview_id;
         if (interviewId) {
-          const localStart = `${values.interview_date.format('YYYY-MM-DD')}T${values.interview_time.format('HH:mm')}:00+08:00`;
+          const localStart = `${vDate.format('YYYY-MM-DD')}T${vTime.format('HH:mm')}:00+08:00`;
           await request.post(`/interviews/${interviewId}/schedule`, {
             start_at: new Date(localStart).toISOString(),
             duration_minutes: 60,
@@ -1065,17 +1096,17 @@ const InterviewsList: React.FC = () => {
           <Form.Item
             name="interview_time_slot"
             label="推荐面试时段"
-            tooltip="按一面面试官自动查询的空闲时段（1 小时），选择后自动带入日期时间并刷新空闲会议室"
+            tooltip="按一面面试官自动查询的空闲时段（1 小时）。可直接下拉选择，或手动输入具体时间（格式：2026-08-25 14:00），输入后自动带入日期时间并刷新空闲会议室"
           >
-            <Select
-              placeholder={slotLoading ? '正在查询空闲时段...' : (slotReason || '暂无推荐时段，请手动选择下方日期时间')}
-              loading={slotLoading}
-              notFoundContent={slotLoading ? <Spin size="small" /> : (slotReason || '暂无推荐时段，请手动选择下方日期时间')}
+            <AutoComplete
+              placeholder={slotLoading ? '正在查询空闲时段...' : (slotReason || '暂无推荐时段，可直接输入时间，如 2026-08-25 14:00')}
+              notFoundContent={slotLoading ? <Spin size="small" /> : (slotReason || '暂无推荐时段，可直接输入时间，如 2026-08-25 14:00')}
+              allowClear
               options={availableSlots.map((s) => ({
                 value: s.start,
                 label: `${s.start.slice(5, 16)} ~ ${s.end.slice(11, 16)}`,
               }))}
-              onChange={(val) => {
+              onSelect={(val) => {
                 const picked = availableSlots.find((x) => x.start === val);
                 if (picked) {
                   scheduleForm.setFieldsValue({
@@ -1084,6 +1115,15 @@ const InterviewsList: React.FC = () => {
                   });
                   // 切换推荐时段时同步刷新空闲会议室（手动改过地点则不覆盖）
                   autoFillMeetingRoom(picked.start);
+                }
+              }}
+              onBlur={(e) => {
+                // 手动输入兜底：下拉里没有的时段，只要格式合法就解析成日期+时间
+                const value = (e.target as HTMLInputElement).value ?? '';
+                const parsed = parseManualSlot(value);
+                if (parsed && !scheduleForm.getFieldValue('interview_date')) {
+                  scheduleForm.setFieldsValue({ interview_date: parsed.date, interview_time: parsed.time });
+                  autoFillMeetingRoom(parsed.date.format('YYYY-MM-DD') + ' ' + parsed.time.format('HH:mm'));
                 }
               }}
             />
