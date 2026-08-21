@@ -1375,12 +1375,12 @@ describe('business screening routes', () => {
     });
     expect(pushResp.status).toBe(200);
     const batch = [...batches.values()][0];
-    // 标题随本次推送岗位变化（默认取岗位名），subtitle 保持为空
+    // 标题随本次推送岗位变化（默认取岗位名），subtitle 随岗位联动生成说明文案
     expect(batch.batch_title).toBe('标准运营');
-    expect(batch.batch_subtitle).toBeNull();
+    expect(batch.batch_subtitle).toBe('标准运营 AI 初筛通过候选人，请查看档案并完成入库/不入库决策');
     const json = await pushResp.json() as any;
     expect(json.batches[0].title).toBe('标准运营');
-    expect(json.batches[0]).not.toHaveProperty('subtitle');
+    expect(json.batches[0].subtitle).toBe('标准运营 AI 初筛通过候选人，请查看档案并完成入库/不入库决策');
   });
 
   it('updates the existing stable link title when a new push supplies title', async () => {

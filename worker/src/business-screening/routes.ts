@@ -1661,7 +1661,11 @@ export async function pushResumesToBusinessScreening(
       ? group.positionTitles[0]
       : `多个岗位（${group.positionTitles.length}个）`;
     const batchTitle = requestedTitle ?? positionTitleForCard ?? existing?.batch_title ?? null;
-    const batchSubtitle = requestedSubtitle ?? existing?.batch_subtitle ?? null;
+    // 说明文案随岗位联动：与历史模板一致（「XX岗位 AI 初筛通过候选人，请查看档案并完成入库/不入库决策」），
+    // 避免追加已有批次时残留旧岗位文案导致链接页副标题错配
+    const batchSubtitle = requestedSubtitle ?? (batchTitle
+      ? `${batchTitle} AI 初筛通过候选人，请查看档案并完成入库/不入库决策`
+      : null);
     const isNewBatch = !existing;
 
     let batchId: string;
@@ -1670,10 +1674,10 @@ export async function pushResumesToBusinessScreening(
       // 上一批简历已处理完（completed）时复用链接追加新简历，需重新激活
       await deps.store.resetBatchActive(db, batchId);
       await deps.store.refreshBatchExpiry(db, batchId, expiresAt);
-      // 追加已有批次也随本次岗位更新标题，保证链接页面与飞书卡片标题一致
+      // 追加已有批次也随本次岗位更新标题/说明，保证链接页面与飞书卡片标题一致
       await deps.store.updateBatchPresentation(db, batchId, {
         title: requestedTitle ?? positionTitleForCard,
-        subtitle: requestedSubtitle ?? null,
+        subtitle: batchSubtitle,
       });
     } else {
       batchId = deps.uuid();
