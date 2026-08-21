@@ -1279,9 +1279,9 @@ export function createBusinessScreeningRoutes(deps: BusinessScreeningRouteDeps) 
           const ph = pendingResumeIds.map(() => '?').join(',');
           await db.prepare(
             `UPDATE resume_push_batch_items
-                SET dispatch_group_id = ?, updated_at = ?
+                SET dispatch_group_id = ?
               WHERE batch_id = ? AND resume_id IN (${ph}) AND status = 'pending'`,
-          ).bind(dispatchGroupId, nowIso, nextBatchId, ...pendingResumeIds).run();
+          ).bind(dispatchGroupId, nextBatchId, ...pendingResumeIds).run();
         }
         await deps.store.resetBatchActive(db, nextBatchId);
         await deps.store.refreshBatchExpiry(db, nextBatchId, resolveExpiresAt(nowIso, body.expires_in_days));
