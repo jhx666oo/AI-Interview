@@ -250,6 +250,26 @@ describe('buildInterviewInvitationEmail 线下模式', () => {
     expect(email.text).toContain('线下面试');
   });
 
+  it('自定义模板覆盖：主题/正文用模板渲染占位符', () => {
+    const email = buildInterviewInvitationEmail({
+      candidateName: '张三', positionName: '前端工程师', timeLabel: '2026-08-20 14:00 ~ 15:00',
+      interviewTypeLabel: '线上面试', location: null, interviewerName: '李四',
+      meetingUrl: 'https://vc.feishu.cn/j/abc', fromName: 'XX招聘',
+      templates: {
+        candidate_email_subject: '【测试通知】{{candidateName}} - {{position}}',
+        candidate_email_html: '<p>候选人：{{candidateName}}</p><p>时间：{{timeLabel}}</p>{{meetingSection}}',
+        candidate_email_text: '候选人：{{candidateName}}\n时间：{{timeLabel}}\n{{meetingText}}',
+        interviewer_reminder: 'x',
+      },
+    });
+    expect(email.subject).toBe('【测试通知】张三 - 前端工程师');
+    expect(email.subject).not.toContain('面试邀请');
+    expect(email.html).toContain('候选人：张三');
+    expect(email.html).toContain('https://vc.feishu.cn/j/abc'); // meetingSection 注入会议按钮
+    expect(email.text).toContain('时间：2026-08-20 14:00 ~ 15:00');
+    expect(email.text).toContain('https://vc.feishu.cn/j/abc');
+  });
+
   it('线下面试但误传 meetingUrl 时不显示链接（offline 优先）', () => {
     const email = buildInterviewInvitationEmail({
       candidateName: '张三', positionName: 'P', timeLabel: 'T', meetingUrl: 'https://vc.feishu.cn/j/x',
