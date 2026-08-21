@@ -4,7 +4,7 @@ import { buildFeishuCard } from '../src/business-screening/routes';
 
 /**
  * 对外卡片模板化测试：系统设置「消息模板」新增的飞书卡片模板，
- * 覆盖业务筛选推送卡片 / 面试安排通知 / 群提醒 / 新候选人推送标题 / 统一落款。
+ * 覆盖业务筛选推送卡片 / 面试安排通知 / 统一落款。
  * 默认值应包含全部新增 key，且 buildFeishuCard 能用自定义模板渲染占位符。
  */
 
@@ -15,9 +15,6 @@ const CARD_KEYS = [
   'interview_notice_title',
   'interview_notice_body',
   'interview_notice_button',
-  'interview_group_notice_title',
-  'interview_group_notice_body',
-  'new_candidate_card_title',
   'card_footer',
 ] as const;
 

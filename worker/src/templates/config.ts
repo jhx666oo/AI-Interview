@@ -38,12 +38,6 @@ export interface DefaultTemplates {
   interview_notice_body: string;
   /** 面试安排通知卡片 —— 查看候选人按钮文案 */
   interview_notice_button: string;
-  /** 面试安排提醒群卡片 —— 标题（{{candidateName}} 候选人，{{position}} 岗位） */
-  interview_group_notice_title: string;
-  /** 面试安排提醒群卡片 —— 引导语（发给招聘群） */
-  interview_group_notice_body: string;
-  /** 新候选人推送卡片 —— 标题（发给招聘群，{{candidateName}} 候选人） */
-  new_candidate_card_title: string;
   /** 飞书卡片统一落款（note 行） */
   card_footer: string;
   [key: string]: string;
@@ -101,9 +95,6 @@ export const DEFAULT_TEMPLATES: DefaultTemplates = {
   interview_notice_title: '🎯 面试安排通知',
   interview_notice_body: '{{operatorName}} 为候选人安排了面试，请留意后续会议邀请，及时查看候选人简历，面试结束后在系统内填写评价。',
   interview_notice_button: '🔍 查看候选人',
-  interview_group_notice_title: '🎯 面试安排提醒',
-  interview_group_notice_body: '请相关面试官尽快安排面试。',
-  new_candidate_card_title: '🆕 新候选人：{{candidateName}}',
   card_footer: '发送自 招聘管理智能小助手',
 };
 

@@ -5236,27 +5236,16 @@ app.post('/api/talent-pool/:id/notify-interview', authMiddleware, async (c) => {
     const token = await getFeishuToken(c.env);
     const chatId = FEISHU_CONFIG.recruitmentGroupChatId;
     if (chatId) {
-      const templates = await loadTemplates(c.env.DB as D1Database);
-      const gvars: Record<string, string> = { candidateName: name, position: position || '未指定' };
-      const gTitle = templates.interview_group_notice_title
-        ? renderTemplate(templates.interview_group_notice_title, gvars)
-        : '🎯 面试安排提醒';
-      const gBody = templates.interview_group_notice_body
-        ? renderTemplate(templates.interview_group_notice_body, gvars)
-        : '请相关面试官尽快安排面试。';
-      const gFooter = templates.card_footer
-        ? renderTemplate(templates.card_footer, gvars)
-        : '来自 AI 智能面试系统';
       const msg = {
         msg_type: 'interactive',
         content: JSON.stringify({
           config: { wide_screen_mode: true },
-          header: { title: { tag: 'plain_text', content: gTitle }, template: 'blue' },
+          header: { title: { tag: 'plain_text', content: `🎯 面试安排提醒` }, template: 'blue' },
           elements: [
             { tag: 'div', text: { tag: 'lark_md', content: `**候选人：** ${name}\n**面试岗位：** ${position || '未指定'}` } },
             { tag: 'hr' },
-            { tag: 'div', text: { tag: 'lark_md', content: gBody } },
-            { tag: 'note', elements: [{ tag: 'plain_text', content: gFooter }] }
+            { tag: 'div', text: { tag: 'lark_md', content: `请相关面试官尽快安排面试。` } },
+            { tag: 'note', elements: [{ tag: 'plain_text', content: `来自 AI 智能面试系统` }] }
           ]
         })
       };
@@ -12870,19 +12859,10 @@ async function pushCandidateToGroup(env: Env, record: any): Promise<void> {
     const analysis = (record.ai_analysis || '').substring(0, 800);
     const posNameShort = posName.length > 20 ? posName.substring(0, 20) + '…' : posName;
 
-    const templates = await loadTemplates(env.DB as D1Database);
-    const ncVars: Record<string, string> = { candidateName: record.candidate_name || '' };
-    const ncTitle = templates.new_candidate_card_title
-      ? renderTemplate(templates.new_candidate_card_title, ncVars)
-      : `🆕 新候选人: ${record.candidate_name}`;
-    const ncFooter = templates.card_footer
-      ? renderTemplate(templates.card_footer, ncVars)
-      : '系统自动推送';
-
     const cardContent = {
       config: { wide_screen_mode: true },
       header: {
-        title: { tag: 'plain_text', content: ncTitle },
+        title: { tag: 'plain_text', content: `🆕 新候选人: ${record.candidate_name}` },
         template: 'indigo'
       },
       elements: [
@@ -12901,7 +12881,7 @@ async function pushCandidateToGroup(env: Env, record: any): Promise<void> {
         { tag: 'hr' },
         {
           tag: 'note',
-          elements: [{ tag: 'plain_text', content: `${ncFooter} | ${new Date().toLocaleString('zh-CN')}` }]
+          elements: [{ tag: 'plain_text', content: `系统自动推送 | ${new Date().toLocaleString('zh-CN')}` }]
         }
       ]
     };
