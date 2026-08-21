@@ -1865,7 +1865,7 @@ app.get('/api/auth/feishu-oauth-url', authMiddleware, async (c) => {
   const token = await createJwt(c.env.SECRET_KEY, user.email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const scope = 'im:message im:message.send_as_user contact:user.base:readonly bitable:app:readonly mail:user_mailbox.message:send mail:user_mailbox.message:modify offline_access';
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly contact:user:search bitable:app:readonly mail:user_mailbox.message:send mail:user_mailbox.message:modify offline_access';
   const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl });
 });
@@ -1878,7 +1878,7 @@ app.post('/api/auth/feishu-oauth-url', authMiddleware, requireRole(['admin']), a
   const token = await createJwt(c.env.SECRET_KEY, email);
   const baseUrl = getFeishuRedirectUri(c);
   const appId = c.env.FEISHU_APP_ID || FEISHU_CONFIG.appId;
-  const scope = 'im:message im:message.send_as_user contact:user.base:readonly bitable:app:readonly mail:user_mailbox.message:send mail:user_mailbox.message:modify offline_access';
+  const scope = 'im:message im:message.send_as_user contact:user.base:readonly contact:user:search bitable:app:readonly mail:user_mailbox.message:send mail:user_mailbox.message:modify offline_access';
   const oauthUrl = `https://accounts.feishu.cn/open-apis/authen/v1/authorize?client_id=${appId}&redirect_uri=${encodeURIComponent(baseUrl)}&response_type=code&state=${token}&scope=${encodeURIComponent(scope)}`;
   return c.json({ url: oauthUrl, email });
 });
@@ -10363,12 +10363,17 @@ app.get('/api/settings/interviewers/search', authMiddleware, async (c) => {
  * 用于让未 OAuth 绑定的面试官也能收到飞书通知
  * 注意：通讯录API返回的 open_id 是当前应用(cli_aad2cb7fab385cb6)的，可用于发消息
  */
-async function batchSyncFeishuOpenIds(env: Env, names: string[]): Promise<{ synced: number; notFound: string[]; details: string[] }> {
-  const token = await getFeishuToken(env);
+async function batchSyncFeishuOpenIds(
+  env: Env,
+  names: string[],
+  searchToken?: string | null,
+  searchTokenSource?: string,
+): Promise<{ synced: number; notFound: string[]; details: string[] }> {
+  const tenantToken = await getFeishuToken(env);
 
   // 1. 获取应用通讯录授权范围（部门列表 + 用户列表）
   const scopeResp = await fetch('https://open.feishu.cn/open-apis/contact/v3/scopes', {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${tenantToken}` },
   }).then(r => r.json()) as any;
   if (scopeResp.code !== 0) throw new Error(`获取通讯录范围失败: ${scopeResp.code} ${scopeResp.msg}`);
 
@@ -10384,7 +10389,7 @@ async function batchSyncFeishuOpenIds(env: Env, names: string[]): Promise<{ sync
     let pageCount = 0;
     while (hasMore && pageCount < 20) {
       const url = `https://open.feishu.cn/open-apis/contact/v3/users/find_by_department?department_id=${deptId}&page_size=50&user_id_type=open_id${pageToken ? `&page_token=${pageToken}` : ''}`;
-      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as any;
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${tenantToken}` } }).then(r => r.json()) as any;
       if (resp.code !== 0) {
         console.warn(`[BatchSyncOpenIds] 部门 ${deptId} 拉取失败: ${resp.code} ${resp.msg}`);
         break;
@@ -10405,7 +10410,7 @@ async function batchSyncFeishuOpenIds(env: Env, names: string[]): Promise<{ sync
     if (!allUsers.some(u => u.open_id === openId)) {
       try {
         const userResp = await fetch(`https://open.feishu.cn/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${tenantToken}` },
         }).then(r => r.json()) as any;
         if (userResp.code === 0 && userResp?.data?.user?.name) {
           allUsers.push({ name: userResp.data.user.name, open_id: openId });
@@ -10434,8 +10439,8 @@ async function batchSyncFeishuOpenIds(env: Env, names: string[]): Promise<{ sync
       synced++;
       details.push(`${name} → ${found.open_id}`);
     } else {
-      // 兜底：按姓名搜索（不依赖通讯录授权范围；需要 contact:user.search:readonly 或 contact:user.base:readonly）
-      const search = await searchFeishuUserByQuery(token, name);
+      // 兜底：按姓名搜索（search-users 接口规范仅支持 user 身份，优先用用户 token；无用户 token 时回退应用 token）
+      const search = await searchFeishuUserByQuery(searchToken || tenantToken, name);
       if (search?.openId) {
         await env.DB.prepare(
           `INSERT INTO interviewer_mappings (id, name, open_id, updated_at)
@@ -10443,10 +10448,10 @@ async function batchSyncFeishuOpenIds(env: Env, names: string[]): Promise<{ sync
            ON CONFLICT(id) DO UPDATE SET open_id = excluded.open_id, updated_at = excluded.updated_at`
         ).bind(`im_${search.openId}`, name, search.openId, ts).run();
         synced++;
-        details.push(`${name} → ${search.openId}(search)`);
+        details.push(`${name} → ${search.openId}(search${searchTokenSource ? ':' + searchTokenSource : ''})`);
       } else {
         notFound.push(name);
-        if (search?.error) details.push(`${name} 搜索失败: ${search.error}`);
+        if (search?.error) details.push(`${name} 搜索失败(${searchTokenSource || 'tenant'}): ${search.error}`);
       }
     }
   }
@@ -10531,8 +10536,17 @@ app.post('/api/settings/interviewers/batch-sync-from-feishu', authMiddleware, re
       return c.json({ ok: true, synced: 0, notFound: [], details: [], message: '没有需要同步的面试官（请先添加招聘任务或面试记录）' });
     }
 
-    const result = await batchSyncFeishuOpenIds(c.env, Array.from(names));
-    return c.json({ ok: true, ...result, total_names: names.size });
+    // 搜索身份：search-users 接口规范仅支持 user 身份，优先用已绑定飞书的用户 token（默认 mail_from，可 body.email 指定）
+    const body = await c.req.json().catch(() => ({}));
+    const cfgRow = await c.env.DB.prepare('SELECT mail_from FROM system_configs ORDER BY updated_at DESC LIMIT 1').first() as any;
+    const searchEmail = String(body?.email || '').trim() || String(cfgRow?.mail_from || '').trim() || '';
+    let userToken: string | null = null;
+    if (searchEmail) {
+      try { userToken = await getValidUserAccessToken(c.env, searchEmail); } catch { userToken = null; }
+    }
+
+    const result = await batchSyncFeishuOpenIds(c.env, Array.from(names), userToken, searchEmail || undefined);
+    return c.json({ ok: true, ...result, total_names: names.size, search_identity: userToken ? searchEmail : 'tenant(应用身份)' });
   } catch (e: any) {
     return c.json({ detail: '批量同步失败: ' + e.message }, 500);
   }
