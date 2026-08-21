@@ -1684,6 +1684,7 @@ app.get('/api/meeting-rooms/available', authMiddleware, async (c) => {
       rooms: rooms.map((r) => ({ room_id: r.room_id, name: r.name, path: r.path, capacity: r.capacity, building: (r as any).building || '', level_name: (r as any).level_name || '' })),
       // 诊断：每城市拉取结果（临时排查用，后续可移除）
       debug_cities: cityDiagnostics,
+      debug: (found as any).debug,
     });
   } catch (e: any) {
     return c.json({ ok: true, rooms: [], reason: `空闲会议室查询失败：${e?.message || e}` });

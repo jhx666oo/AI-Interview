@@ -201,9 +201,11 @@ export interface FindAvailableRoomsInput {
 export interface FindAvailableRoomsResult {
   has_d5: boolean;
   rooms: MeetingRoomInfo[];
+  /** 诊断（临时）：候选总数、亚洲馆候选及其忙闲状态 */
+  debug?: { candidateCount: number; asiaCandidates: Array<{ name: string; busy: boolean }> };
 }
 
-/** 查空闲会议室：按城市全量拉取 → C5/D1 优先（无匹配回退全部）→ 忙闲过滤（最多取 40 个查忙闲） */
+/** 查空闲会议室：按城市全量拉取 → C5/D1 优先（无匹配回退全部）→ 忙闲过滤（最多取 100 个查忙闲） */
 export async function findAvailableMeetingRooms(
   input: FindAvailableRoomsInput,
   deps: MeetingRoomsDeps = {},
@@ -218,8 +220,12 @@ export async function findAvailableMeetingRooms(
     const part = await queryRoomAvailability(input.token, batch.map((r) => r.room_id), input.startTs, input.endTs, deps);
     Object.assign(busyMap, part);
   }
+  const asiaCandidates = candidates
+    .filter((r) => r.name.includes('亚洲馆'))
+    .map((r) => ({ name: r.name, busy: (busyMap[r.room_id] || []).length > 0 }));
   return {
     has_d5: priorityRooms.length > 0,
     rooms: filterFreeRooms(candidates, busyMap).map((r) => ({ ...r, building: buildingOf(r) })),
+    debug: { candidateCount: candidates.length, asiaCandidates },
   };
 }
