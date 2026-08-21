@@ -10453,6 +10453,7 @@ async function batchSyncFeishuOpenIds(
       } else {
         notFound.push(name);
         if (search?.error) details.push(`${name} 搜索失败(${search.source || 'tenant'}): ${search.error}`);
+        else if (search?.source) details.push(`${name} 搜索无结果(${search.source})`);
       }
     }
   }
